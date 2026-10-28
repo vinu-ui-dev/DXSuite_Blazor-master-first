@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Dependency-light contracts shared by the Sentinel cloud module and the edge
+    gateway agent (DXSuite.SentinelGateway). Deliberately has NO AspNetCore / EF /
+    web references so the edge agent can reference it with a minimal footprint.
+    Only the wire protocol lives here: topic schema, message DTOs, JSON options.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+</Project>

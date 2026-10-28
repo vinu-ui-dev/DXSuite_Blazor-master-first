@@ -1,0 +1,12 @@
+@using DXSuite.Director.Services
+@inject IDirectorService DirectorService
+
+<div class="card">
+    <div class="card-body">
+        <h5 class="card-title">Director Status</h5>
+        <p class="card-text">
+            <span class="badge bg-success me-2">Online</span>
+            @DirectorService.GetStatus()
+        </p>
+    </div>
+</div>

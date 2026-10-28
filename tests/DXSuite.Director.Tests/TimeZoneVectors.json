@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "Vectors for the pure functions of the time zone scheduling work (docs/spec/time-zone-scheduling.md section 11).",
+    "Two rules govern every vector here.",
+    "1. Expected offsets are pinned as literals, never computed by the test.",
+    "2. Vector years are legislated years only, present and past. No vector reaches into a future year: an offset pair asserted for 2035 is a guess about legislation, one asserted for 2026 is a fact. Parameterisation is proved by varying the year inside that range.",
+    "The file is JSON rather than C# so a TypeScript runner could read it, which costs nothing here. It is not a plan: neither Engage repo has a test runner and neither ever has.",
+    "Case 12 exists to fail if somebody halves the two-instant probe: it differs from case 11 only in the intended zone, and a January-only probe passes both because Phoenix and Denver are both -7 in winter."
+  ],
+  "windowRule": [
+    { "start": "09:00", "end": "17:00", "localTime": "09:00:00", "expected": true,  "note": "start inclusive" },
+    { "start": "09:00", "end": "17:00", "localTime": "12:00:00", "expected": true,  "note": "inside" },
+    { "start": "09:00", "end": "17:00", "localTime": "17:00:00", "expected": false, "note": "end exclusive" },
+    { "start": "09:00", "end": "17:00", "localTime": "08:59:59", "expected": false, "note": "before start" },
+    { "start": "22:00", "end": "06:00", "localTime": "22:00:00", "expected": true,  "note": "wrap, start inclusive" },
+    { "start": "22:00", "end": "06:00", "localTime": "23:30:00", "expected": true,  "note": "wrap, before midnight" },
+    { "start": "22:00", "end": "06:00", "localTime": "05:59:59", "expected": true,  "note": "wrap, after midnight" },
+    { "start": "22:00", "end": "06:00", "localTime": "06:00:00", "expected": false, "note": "wrap, end exclusive" },
+    { "start": "22:00", "end": "06:00", "localTime": "12:00:00", "expected": false, "note": "wrap, outside" },
+    { "start": "08:00", "end": "23:59", "localTime": "23:59:30", "expected": true,  "note": "23:59 means through end of day" },
+    { "start": "08:00", "end": "23:59", "localTime": "23:59:59", "expected": true,  "note": "23:59 means through end of day" },
+    { "start": "08:00", "end": "23:59", "localTime": "07:59:59", "expected": false, "note": "before start" },
+    { "start": "09:00", "end": null,    "localTime": "08:59:59", "expected": false, "note": "one-sided start" },
+    { "start": "09:00", "end": null,    "localTime": "23:59:59", "expected": true,  "note": "one-sided start" },
+    { "start": null,    "end": "17:00", "localTime": "00:00:00", "expected": true,  "note": "one-sided end" },
+    { "start": null,    "end": "17:00", "localTime": "17:00:00", "expected": false, "note": "one-sided end, exclusive" },
+    { "start": null,    "end": null,    "localTime": "03:17:00", "expected": true,  "note": "always open" }
+  ],
+  "conversion": [
+    { "instant": "2026-01-15T12:00:00Z", "zone": "America/Chicago", "expectedLocal": "2026-01-15T06:00:00", "note": "CST" },
+    { "instant": "2026-07-15T12:00:00Z", "zone": "America/Chicago", "expectedLocal": "2026-07-15T07:00:00", "note": "CDT" },
+    { "instant": "2026-01-15T12:00:00Z", "zone": "America/Denver",  "expectedLocal": "2026-01-15T05:00:00", "note": "MST" },
+    { "instant": "2026-07-15T12:00:00Z", "zone": "America/Denver",  "expectedLocal": "2026-07-15T06:00:00", "note": "MDT" },
+    { "instant": "2026-01-15T12:00:00Z", "zone": "America/Phoenix", "expectedLocal": "2026-01-15T05:00:00", "note": "Arizona, no DST" },
+    { "instant": "2026-07-15T12:00:00Z", "zone": "America/Phoenix", "expectedLocal": "2026-07-15T05:00:00", "note": "Arizona, no DST, and this is where it diverges from Denver" },
+    { "instant": "2025-01-15T12:00:00Z", "zone": "America/Chicago", "expectedLocal": "2025-01-15T06:00:00", "note": "a past legislated year, proving the year is a parameter" },
+    { "instant": "2025-07-15T12:00:00Z", "zone": "America/Chicago", "expectedLocal": "2025-07-15T07:00:00", "note": "a past legislated year, proving the year is a parameter" },
+    { "instant": "2026-01-15T12:00:00Z", "zone": "UNSET",           "expectedLocal": null,                  "note": "the seed sentinel: unresolved, and it does not throw" },
+    { "instant": "2026-03-08T07:30:00Z", "zone": "America/Chicago", "expectedLocal": "2026-03-08T01:30:00", "note": "US spring forward 2026, before the gap" },
+    { "instant": "2026-03-08T08:30:00Z", "zone": "America/Chicago", "expectedLocal": "2026-03-08T03:30:00", "note": "one hour later in UTC, two hours later on the wall" },
+    { "instant": "2026-03-08T07:30:00Z", "zone": "America/Phoenix", "expectedLocal": "2026-03-08T00:30:00", "note": "same instant, no gap in Arizona" },
+    { "instant": "2026-03-08T08:30:00Z", "zone": "America/Phoenix", "expectedLocal": "2026-03-08T01:30:00", "note": "one hour later in UTC, one hour later on the wall" }
+  ],
+  "verificationBadge": [
+    { "intended": "America/Phoenix", "reportedJanuary": -7, "reportedJuly": -7, "year": 2026, "appliedMatches": true,  "expected": "Verified", "note": "Arizona, correct" },
+    { "intended": "America/Denver",  "reportedJanuary": -7, "reportedJuly": -6, "year": 2026, "appliedMatches": true,  "expected": "Verified", "note": "Denver, correct" },
+    { "intended": "America/Phoenix", "reportedJanuary": -7, "reportedJuly": -6, "year": 2026, "appliedMatches": true,  "expected": "Mismatch", "note": "case 12: Phoenix intended, Denver rules in force. A January-only probe would pass this" },
+    { "intended": "America/Phoenix", "reportedJanuary": -1, "reportedJuly": -1, "year": 2026, "appliedMatches": true,  "expected": "Mismatch", "note": "the wrong MST1, six hours out in the Atlantic" },
+    { "intended": "America/Phoenix", "reportedJanuary": -7, "reportedJuly": -6, "year": 2026, "appliedMatches": false, "expected": "Pending",  "note": "the bootloader has not applied it yet" },
+    { "intended": "America/Phoenix", "reportedJanuary": null, "reportedJuly": null, "year": null, "appliedMatches": false, "expected": "NotReported", "note": "nothing reported at all" },
+    { "intended": "America/Phoenix", "reportedJanuary": -7, "reportedJuly": -7, "year": null, "appliedMatches": true,  "expected": "NotReported", "note": "no year, so nothing to compare against" },
+    { "intended": "America/Chicago", "reportedJanuary": -6, "reportedJuly": -5, "year": 2025, "appliedMatches": true,  "expected": "Verified", "note": "a past legislated year, proving the year is a parameter" }
+  ]
+}

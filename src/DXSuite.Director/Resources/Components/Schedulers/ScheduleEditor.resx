@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_ScheduleEditor">
+    <value>Schedule Editor</value>
+  </data>
+  <data name="Label_ConfigureDescription">
+    <value>Configure display content and scheduling options</value>
+  </data>
+  <data name="Header_AddMediaContent">
+    <value>Add Media Content</value>
+  </data>
+  <data name="Button_AddMedia">
+    <value>ADD MEDIA +</value>
+  </data>
+  <data name="Button_AddWeb">
+    <value>ADD WEB +</value>
+  </data>
+  <data name="Button_AddStream">
+    <value>ADD STREAM +</value>
+  </data>
+  <data name="Button_CreateMedia">
+    <value>CREATE MEDIA +</value>
+  </data>
+  <data name="Header_AvailableAssets">
+    <value>Available Assets</value>
+  </data>
+  <data name="Label_Video">
+    <value>Video</value>
+  </data>
+  <data name="Label_Corporate">
+    <value>Corporate</value>
+  </data>
+  <data name="Header_ScheduleContent">
+    <value>Schedule Content</value>
+  </data>
+  <data name="Button_FadeOn">
+    <value>FADE ON</value>
+  </data>
+  <data name="Button_FadeOff">
+    <value>FADE OFF</value>
+  </data>
+  <data name="Label_DragAssetsHere">
+    <value>Drag assets here to add to schedule</value>
+  </data>
+  <data name="Button_SaveDuration">
+    <value>Save Duration</value>
+  </data>
+  <data name="Label_Duration">
+    <value>Duration:</value>
+  </data>
+  <data name="Button_EditDuration">
+    <value>Edit Duration</value>
+  </data>
+  <data name="Header_ScheduleConfiguration">
+    <value>Schedule Configuration</value>
+  </data>
+  <data name="Label_DefaultContent">
+    <value>Default Content</value>
+  </data>
+  <data name="Label_DefaultContentDescription">
+    <value>Check to update the default content for this display</value>
+  </data>
+  <data name="Header_SchedulePeriod">
+    <value>Schedule Period</value>
+  </data>
+  <data name="Label_Start">
+    <value>Start</value>
+  </data>
+  <data name="Label_End">
+    <value>End</value>
+  </data>
+  <data name="Label_Date">
+    <value>Date</value>
+  </data>
+  <data name="Label_Time">
+    <value>Time</value>
+  </data>
+  <data name="Label_NoStartLimit">
+    <value>Leave blank for no start limit</value>
+  </data>
+  <data name="Label_NoEndLimit">
+    <value>Leave blank for no end limit</value>
+  </data>
+  <data name="Label_AllDay">
+    <value>Leave blank for all-day</value>
+  </data>
+  <data name="Header_ActiveDays">
+    <value>Active Days</value>
+  </data>
+  <data name="Label_Sunday">
+    <value>Sunday</value>
+  </data>
+  <data name="Label_Monday">
+    <value>Monday</value>
+  </data>
+  <data name="Label_Tuesday">
+    <value>Tuesday</value>
+  </data>
+  <data name="Label_Wednesday">
+    <value>Wednesday</value>
+  </data>
+  <data name="Label_Thursday">
+    <value>Thursday</value>
+  </data>
+  <data name="Label_Friday">
+    <value>Friday</value>
+  </data>
+  <data name="Label_Saturday">
+    <value>Saturday</value>
+  </data>
+  <data name="Label_DaysHint">
+    <value>Leave all days unchecked to apply to every day of the week</value>
+  </data>
+  <data name="Header_ClockConfiguration">
+    <value>Clock Configuration</value>
+  </data>
+  <data name="Label_EnableClock">
+    <value>Enable Clock for this Schedule</value>
+  </data>
+  <data name="Label_ClockDescription">
+    <value>Display a clock overlay on this scheduled content</value>
+  </data>
+  <data name="Label_ClockPositionSize">
+    <value>Clock Position &amp; Size</value>
+  </data>
+  <data name="Button_ConfigurePosition">
+    <value>Configure Position</value>
+  </data>
+  <data name="Label_Position">
+    <value>Position:</value>
+  </data>
+  <data name="Label_Size">
+    <value>Size:</value>
+  </data>
+  <data name="Button_SaveScheduleEntry">
+    <value>SAVE SCHEDULE ENTRY</value>
+  </data>
+  <data name="Label_AwaitingApproval">
+    <value>Awaiting Approval</value>
+  </data>
+  <data name="Label_Declined">
+    <value>Declined</value>
+  </data>
+</root>

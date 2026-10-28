@@ -1,0 +1,390 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Travel Items</h4>
+        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="BeginAdd">+ Add Item</button>
+    </div>
+
+    @if (items is null)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (items.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No items defined</h5>
+            <p class="dx-text-muted">Search for a NetSuite item to add it to this list.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: minmax(140px,1fr) minmax(180px,2fr) 90px 110px 110px 90px 110px;">
+                    <div>Name</div>
+                    <div>Description</div>
+                    <div style="text-align:center">Per Person</div>
+                    <div style="text-align:right">Default Cost</div>
+                    <div style="text-align:right">Default Sell</div>
+                    <div>NS Item ID</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var item in items)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: minmax(140px,1fr) minmax(180px,2fr) 90px 110px 110px 90px 110px;">
+                        <div>@item.Name</div>
+                        <div style="font-size:.85rem; color:var(--dx-text-muted,#6c757d)">@item.Description</div>
+                        <div style="text-align:center">
+                            @if (item.IsPerPerson)
+                            {
+                                <span class="dx-badge dx-badge-blue" style="font-size:.65rem">Per Person</span>
+                            }
+                            else
+                            {
+                                <span class="dx-badge dx-badge-gray" style="font-size:.65rem">Flat</span>
+                            }
+                        </div>
+                        <div style="text-align:right">@item.DefaultCost.ToString("N2")</div>
+                        <div style="text-align:right">@item.DefaultSellPrice.ToString("N2")</div>
+                        <div style="font-size:.75rem; color:var(--dx-text-muted,#6c757d)">@item.NetsuiteItemId</div>
+                        <div style="display:flex; gap:4px;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => BeginEdit(item)">Edit</button>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteAsync(item)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (deleteError is not null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin:8px 20px;">@deleteError</div>
+    }
+</div>
+
+@* ── Add / Edit modal ─────────────────────────────────────────────────────── *@
+@if (formVisible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseForm">
+        <div class="dx-modal" style="min-width:500px; max-width:620px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>@(editId == 0 ? "Add Travel Item" : "Edit Item")</span>
+                <button class="dx-modal-close" @onclick="CloseForm">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+
+                @if (editId == 0)
+                {
+                    @* ── NS Item search — only shown when adding *@
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">NetSuite Item <span style="color:var(--dx-red,#dc3545)">*</span></label>
+                        @if (formNsItemId is not null)
+                        {
+                            <div class="lt-ns-chip">
+                                <span>@formNsItemName</span>
+                                <button class="lt-ns-clear" @onclick="ClearNsItem">&times;</button>
+                            </div>
+                        }
+                        else
+                        {
+                            <div style="position:relative">
+                                <input class="dx-form-control" value="@formNsSearch"
+                                       @oninput="OnNsSearchInput"
+                                       placeholder="Search NetSuite items (2+ chars)…" />
+                                @if (formNsSearching)
+                                {
+                                    <div style="font-size:.8rem; color:var(--dx-text-muted,#6c757d); margin-top:3px">Searching…</div>
+                                }
+                                @if (formNsResults is not null && formNsResults.Count > 0)
+                                {
+                                    <div class="ct-search-results">
+                                        @foreach (var r in formNsResults)
+                                        {
+                                            <div class="ct-search-result" @onclick="() => SelectNsItem(r)">
+                                                <div class="ct-search-result-name">@r.ItemId</div>
+                                                <div class="ct-search-result-sub">@r.PurchaseDescription</div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    @* ── Read-only NS Item ID when editing *@
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">NetSuite Item ID</label>
+                        <div class="dx-form-control" style="background:var(--dx-bg-subtle,#f8f9fa); color:var(--dx-text-muted,#6c757d)">@formNsItemId</div>
+                    </div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name <span style="color:var(--dx-red,#dc3545)">*</span></label>
+                    <input class="dx-form-control" @bind="formName" placeholder="e.g. Airfare — Southeast" />
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Description</label>
+                    <input class="dx-form-control" @bind="formDescription" placeholder="Optional description" />
+                </div>
+
+                <div class="dx-form-group tt-per-person-group">
+                    <label class="tt-per-person-label">
+                        <input type="checkbox" @bind="formIsPerPerson" />
+                        Per Person
+                    </label>
+                    <div style="font-size:.75rem; color:var(--dx-text-muted,#6c757d); margin-top:3px; margin-left:23px">
+                        When checked, cost is multiplied by the number of traveling roles per scenario.
+                        Uncheck for flat costs charged once (e.g. a group hotel block).
+                    </div>
+                </div>
+
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Default Cost</label>
+                        <input type="number" step="0.01" min="0" class="dx-form-control" @bind="formCost" />
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Default Sell Price</label>
+                        <input type="number" step="0.01" min="0" class="dx-form-control" @bind="formSell" />
+                    </div>
+                </div>
+
+                @if (formError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@formError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseForm">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@saving">
+                    @(saving ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .tt-per-person-group {
+        background: var(--dx-blue-tint, #e8f0fe);
+        border: 1px solid var(--dx-blue-light, #b3ccf5);
+        border-radius: 6px;
+        padding: 10px 14px;
+    }
+    .tt-per-person-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 500;
+        cursor: pointer;
+        user-select: none;
+    }
+    .tt-per-person-label input[type=checkbox] {
+        width: 15px;
+        height: 15px;
+        accent-color: var(--dx-blue, #0071BC);
+        cursor: pointer;
+    }
+    .lt-ns-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--dx-bg-subtle, #f8f9fa);
+        border: 1px solid var(--dx-border, #dee2e6);
+        border-radius: 4px;
+        padding: 5px 10px;
+        font-size: .88rem;
+    }
+    .lt-ns-clear {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 1rem;
+        color: var(--dx-text-muted, #6c757d);
+        line-height: 1;
+        padding: 0 2px;
+    }
+    .lt-ns-clear:hover { color: var(--dx-red, #dc3545); }
+</style>
+
+@code {
+    private List<TblDesignMiscItem>? items;
+    private string? deleteError;
+
+    // Form state
+    private bool formVisible;
+    private int editId;
+    private string formName = "";
+    private string formDescription = "";
+    private decimal formCost;
+    private decimal formSell;
+    private bool formIsPerPerson = true;
+    private string? formNsItemId;
+    private string? formNsItemName;
+    private string formNsSearch = "";
+    private List<NetsuiteItem>? formNsResults;
+    private bool formNsSearching;
+    private CancellationTokenSource? _nsCts;
+    private string? formError;
+    private bool saving;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.TblDesignMiscItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode && i.IsTravel)
+            .OrderBy(i => i.SortOrder)
+            .ThenBy(i => i.Name)
+            .ToListAsync();
+    }
+
+    private void BeginAdd()
+    {
+        editId = 0; formName = ""; formDescription = ""; formCost = 0; formSell = 0;
+        formIsPerPerson = true;
+        formNsItemId = null; formNsItemName = null; formNsSearch = ""; formNsResults = null;
+        formError = null;
+        formVisible = true;
+    }
+
+    private void BeginEdit(TblDesignMiscItem item)
+    {
+        editId = item.MiscItemId;
+        formName = item.Name;
+        formDescription = item.Description ?? "";
+        formCost = item.DefaultCost;
+        formSell = item.DefaultSellPrice;
+        formIsPerPerson = item.IsPerPerson;
+        formNsItemId = item.NetsuiteItemId;
+        formNsItemName = item.NetsuiteItemId;
+        formNsSearch = "";
+        formNsResults = null;
+        formError = null;
+        formVisible = true;
+    }
+
+    private void CloseForm()
+    {
+        formVisible = false;
+        formError = null;
+        _nsCts?.Cancel();
+        formNsResults = null;
+    }
+
+    private async Task OnNsSearchInput(ChangeEventArgs e)
+    {
+        formNsSearch = e.Value?.ToString() ?? "";
+        _nsCts?.Cancel();
+        _nsCts = new CancellationTokenSource();
+        var cts = _nsCts;
+        formNsResults = null;
+        if (formNsSearch.Length < 2) return;
+        formNsSearching = true;
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            formNsResults = await NetsuiteService.SearchItemsAsync(formNsSearch, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { formNsResults = []; }
+        finally { formNsSearching = false; }
+        StateHasChanged();
+    }
+
+    private void SelectNsItem(NetsuiteItem item)
+    {
+        formNsItemId = item.Id;
+        formNsItemName = item.ItemId;
+        formName = item.ItemId;
+        formDescription = item.PurchaseDescription;
+        formCost = item.Cost;
+        formSell = item.Rate;
+        formNsResults = null;
+        formNsSearch = "";
+    }
+
+    private void ClearNsItem() { formNsItemId = null; formNsItemName = null; formNsSearch = ""; }
+
+    private async Task SaveAsync()
+    {
+        formError = null;
+        if (string.IsNullOrWhiteSpace(formName)) { formError = "Name is required."; return; }
+        if (editId == 0 && formNsItemId is null) { formError = "Select a NetSuite item."; return; }
+
+        saving = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (editId == 0)
+            {
+                var maxSort = items?.Count > 0
+                    ? items.Max(i => i.SortOrder) + 10
+                    : 10;
+                db.TblDesignMiscItems.Add(new TblDesignMiscItem
+                {
+                    CustomerId = Tenant.CustomerCode,
+                    IsTravel = true,
+                    NetsuiteItemId = formNsItemId!,
+                    Name = formName.Trim(),
+                    Description = string.IsNullOrWhiteSpace(formDescription) ? null : formDescription.Trim(),
+                    DefaultCost = formCost,
+                    DefaultSellPrice = formSell,
+                    IsPerPerson = formIsPerPerson,
+                    IsActive = true,
+                    SortOrder = maxSort,
+                });
+            }
+            else
+            {
+                var entity = await db.TblDesignMiscItems.FindAsync(editId);
+                if (entity is not null)
+                {
+                    entity.Name = formName.Trim();
+                    entity.Description = string.IsNullOrWhiteSpace(formDescription) ? null : formDescription.Trim();
+                    entity.DefaultCost = formCost;
+                    entity.DefaultSellPrice = formSell;
+                    entity.IsPerPerson = formIsPerPerson;
+                }
+            }
+
+            await db.SaveChangesAsync();
+            formVisible = false;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            formError = $"Save failed: {ex.Message}";
+        }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteAsync(TblDesignMiscItem item)
+    {
+        deleteError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var inTravel = await db.TblDesignWorksheetTravelRows.AnyAsync(r => r.MiscItemId == item.MiscItemId);
+        var inMisc   = await db.TblDesignWorksheetMiscRows.AnyAsync(r => r.MiscItemId == item.MiscItemId);
+        if (inTravel || inMisc)
+        {
+            deleteError = $"Cannot delete \"{item.Name}\" — it is used in one or more worksheets.";
+            return;
+        }
+
+        db.TblDesignMiscItems.Remove(item);
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+}

@@ -1,0 +1,773 @@
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@using DXSuite.Shared.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject IUserGroupService userGroupService
+@inject IAdGroupSyncService adGroupSyncService
+@inject IServiceScopeFactory scopeFactory
+@inject IOptions<FeatureFlags> featureFlags
+@inject ILogger<GroupsListView> Logger
+@inject IStringLocalizer<GroupsListView> L
+@inject IStringLocalizer<SharedResources> LS
+
+@if (featureFlags.Value.GroupDiscovery)
+{
+    <div class="sg-subtab-bar">
+        <button class="sg-subtab @(activeSubTab == "groups" ? "sg-subtab-active" : "")"
+                @onclick="@(() => SwitchSubTab("groups"))">Groups</button>
+        <button class="sg-subtab @(activeSubTab == "undiscovered" ? "sg-subtab-active" : "")"
+                @onclick="@(() => SwitchSubTab("undiscovered"))">Undiscovered Groups</button>
+    </div>
+}
+
+@if (activeSubTab == "undiscovered")
+{
+    <!-- Undiscovered AD Groups Panel -->
+    <div class="sg-undiscovered-panel">
+        <div class="sg-undiscovered-scroll">
+        <table class="table sg-undiscovered-table">
+            <thead>
+                <tr>
+                    <th>Display Name</th>
+                    <th>Object ID</th>
+                    <th>First Seen</th>
+                    <th>Last Seen</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @if (undiscoveredGroups != null && undiscoveredGroups.Any())
+                {
+                    @foreach (var dg in undiscoveredGroups)
+                    {
+                        <tr>
+                            <td>@(dg.DisplayName ?? "—")</td>
+                            <td style="font-family: monospace; font-size: 12px;">@dg.ObjectId</td>
+                            <td>@dg.FirstSeenDate.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>@dg.LastSeenDate.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td>
+                                <button class="dx-btn dx-btn-blue" style="padding: 4px 10px; font-size: 12px;" @onclick="@(() => AdoptGroup(dg.DiscoveredAdGroupId))">Adopt</button>
+                            </td>
+                        </tr>
+                    }
+                }
+                else
+                {
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #999; padding: 30px;">No undiscovered AD groups found.</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+        </div>
+
+        @if (!string.IsNullOrEmpty(undiscoveredStatusMessage))
+        {
+            <div class="alert @(undiscoveredStatusIsError ? "alert-danger" : "alert-success") mt-2" style="padding: 8px;">@undiscoveredStatusMessage</div>
+        }
+    </div>
+}
+else
+{
+    <div class="sg-layout @(isAddingNew || selectedGroup != null ? "sg-has-selection" : "")">
+        <!-- Left Panel: Group List -->
+        <div class="sg-list-panel">
+            <div class="sg-list-header">
+                <input type="text" class="dx-form-control sg-search-input" placeholder="Search groups..."
+                       @oninput="OnSearchInput" value="@searchTerm" />
+                <button class="dx-btn dx-btn-blue sg-add-btn" @onclick="StartAddGroup">@L["Button_AddGroup"]</button>
+            </div>
+
+            <div class="sg-group-list">
+                @if (filteredGroups != null)
+                {
+                    @foreach (var group in filteredGroups)
+                    {
+                        <div class="sg-group-item @(selectedGroup?.UserGroupId == group.UserGroupId ? "sg-selected" : "")"
+                             @onclick="@(() => SelectGroup(group))">
+                            <div class="sg-group-info">
+                                <span class="sg-group-name">@group.GroupName</span>
+                                <span class="sg-type-badge sg-type-@group.GroupType">@group.GroupType</span>
+                            </div>
+                            <div class="sg-group-meta">
+                                <span class="sg-member-count">@group.Memberships.Count @L["Column_Members"]</span>
+                                @if (!group.IsActive)
+                                {
+                                    <span class="sg-inactive">@L["Label_Inactive"]</span>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @if (!filteredGroups.Any())
+                    {
+                        <div class="sg-empty-list">@L["Label_NoGroups"]</div>
+                    }
+                }
+            </div>
+        </div>
+
+        <!-- Right Panel: Detail/Edit Form -->
+        <div class="sg-detail-panel">
+            @if (isAddingNew || selectedGroup != null)
+            {
+                @* Phones show either the list or the detail; this returns to the list *@
+                <button class="dx-btn dx-btn-gray dx-btn-sm sg-back-btn"
+                        @onclick="@(() => { selectedGroup = null; isAddingNew = false; })">
+                    &#8592; Back to groups
+                </button>
+                <div class="sg-detail-header">
+                    <h5 class="sg-detail-name">@(isAddingNew ? L["Label_NewGroup"] : L["Label_EditGroup"])</h5>
+                </div>
+
+                <!-- Group Name -->
+                <div class="sg-section">
+                    <label>@L["Label_GroupName"]</label>
+                    <input class="dx-form-control" @bind="editName" />
+                </div>
+
+                <!-- Type -->
+                <div class="sg-section">
+                    <label>@LS["Label_Type"]</label>
+                    <select class="dx-form-control" @bind="editType">
+                        <option value="director">Director</option>
+                        <option value="ad-sync">AD Sync</option>
+                    </select>
+                </div>
+
+                <!-- Description -->
+                <div class="sg-section">
+                    <label>@LS["Label_Description"]</label>
+                    <input class="dx-form-control" @bind="editDescription" />
+                </div>
+
+                <!-- External ID -->
+                <div class="sg-section">
+                    @if (editType == "ad-sync")
+                    {
+                        <label>Azure AD Object ID (required)</label>
+                        <input class="dx-form-control @(externalIdValidationError != null ? "is-invalid" : "")"
+                               @bind="editExternalId"
+                               placeholder="e.g. a1b2c3d4-e5f6-7890-abcd-ef1234567890" />
+                        @if (externalIdValidationError != null)
+                        {
+                            <div class="invalid-feedback" style="display: block;">@externalIdValidationError</div>
+                        }
+                    }
+                    else
+                    {
+                        <label>@L["Label_ExternalId"]</label>
+                        <input class="dx-form-control" @bind="editExternalId" />
+                    }
+                </div>
+
+                <!-- Active Toggle (only for existing groups) -->
+                @if (!isAddingNew)
+                {
+                    <div class="sg-section">
+                        <label class="sg-checkbox-label">
+                            <input type="checkbox" class="dx-checkbox" @bind="editIsActive" />
+                            @LS["Label_Active"]
+                        </label>
+                    </div>
+                }
+
+                <!-- Save / Delete buttons -->
+                <div class="sg-section sg-actions">
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveGroup">@LS["Button_Save"]</button>
+                    @if (!isAddingNew)
+                    {
+                        <button class="dx-btn dx-btn-red" @onclick="DeleteGroup">@LS["Button_Delete"]</button>
+                    }
+                    @if (isAddingNew)
+                    {
+                        <button class="dx-btn dx-btn-gray" @onclick="CancelAdd">@LS["Button_Cancel"]</button>
+                    }
+                </div>
+
+                @if (!string.IsNullOrEmpty(statusMessage))
+                {
+                    <div class="alert @(statusIsError ? "alert-danger" : "alert-success") mt-2" style="padding: 8px;">@statusMessage</div>
+                }
+
+                @if (!isAddingNew && selectedGroup != null)
+                {
+                    <!-- Member Management -->
+                    <div class="sg-section" style="margin-top: 24px;">
+                        <label style="font-size: 14px; font-weight: 700;">@L["Label_Members"]</label>
+
+                        @if (selectedGroup.GroupType == "ad-sync")
+                        {
+                            <div class="sg-ad-sync-notice">
+                                Membership is managed automatically via Azure AD group sync.
+                            </div>
+
+                            @if (groupMembers != null && groupMembers.Any())
+                            {
+                                <ul class="sg-member-list">
+                                    @foreach (var member in groupMembers)
+                                    {
+                                        <li class="sg-member-item">
+                                            <span>@(member.FriendlyName ?? member.UserPrincipalName ?? "—")</span>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            else
+                            {
+                                <p style="color: #888; font-size: 13px; margin-top: 8px;">@L["Label_NoMembers"]</p>
+                            }
+                        }
+                        else
+                        {
+                            <div class="sg-inline-group">
+                                <select class="dx-form-control" @bind="selectedUserIdToAdd">
+                                    <option value="0">@L["Label_SelectUserToAdd"]</option>
+                                    @if (availableUsersForPicker != null)
+                                    {
+                                        @foreach (var user in availableUsersForPicker)
+                                        {
+                                            <option value="@user.UserId">@(user.FriendlyName ?? user.UserPrincipalName ?? $"User {user.UserId}")</option>
+                                        }
+                                    }
+                                </select>
+                                <button class="dx-btn dx-btn-blue" @onclick="AddMember" disabled="@(selectedUserIdToAdd == 0)">ADD</button>
+                            </div>
+
+                            @if (groupMembers != null && groupMembers.Any())
+                            {
+                                <ul class="sg-member-list">
+                                    @foreach (var member in groupMembers)
+                                    {
+                                        <li class="sg-member-item">
+                                            <span>@(member.FriendlyName ?? member.UserPrincipalName ?? "—")</span>
+                                            <button class="dx-btn dx-btn-red sg-remove-btn" @onclick="@(() => RemoveMember(member.UserId))">@LS["Button_Remove"]</button>
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                            else
+                            {
+                                <p style="color: #888; font-size: 13px; margin-top: 8px;">@L["Label_NoMembers"]</p>
+                            }
+                        }
+                    </div>
+
+                    <!-- Group Metadata -->
+                    <div class="sg-section">
+                        <DXSuite.Shared.Components.Settings.GroupMetadataEditor UserGroupId="@selectedGroup.UserGroupId" />
+                    </div>
+
+                    @if (AdditionalGroupContent != null)
+                    {
+                        <div class="sg-section">
+                            @AdditionalGroupContent(selectedGroup.UserGroupId)
+                        </div>
+                    }
+                }
+            }
+            else
+            {
+                <div class="sg-no-selection">
+                    <p>Select a group from the list to view details.</p>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>
+    /// Optional module-specific content rendered below Group Metadata for the selected group.
+    /// Receives the selected group's UserGroupId.
+    /// </summary>
+    [Parameter] public RenderFragment<int>? AdditionalGroupContent { get; set; }
+
+    private List<TblUserGroup> allGroups = new();
+    private List<TblUserGroup> filteredGroups = new();
+    private TblUserGroup? selectedGroup;
+    private string searchTerm = "";
+    private bool isAddingNew;
+    private string activeSubTab = "groups";
+
+    private string editName = "";
+    private string editType = "director";
+    private string editDescription = "";
+    private string editExternalId = "";
+    private bool editIsActive = true;
+    private string? externalIdValidationError;
+
+    private List<TblUser>? groupMembers;
+    private List<TblUser>? availableUsersForPicker;
+    private int selectedUserIdToAdd;
+
+    private string? statusMessage;
+    private bool statusIsError;
+
+    private List<TblDiscoveredAdGroup>? undiscoveredGroups;
+    private string? undiscoveredStatusMessage;
+    private bool undiscoveredStatusIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGroups();
+    }
+
+    private async Task SwitchSubTab(string tab)
+    {
+        activeSubTab = tab;
+        if (tab == "undiscovered")
+        {
+            await LoadUndiscoveredGroups();
+        }
+    }
+
+    private async Task LoadUndiscoveredGroups()
+    {
+        try
+        {
+            undiscoveredGroups = await adGroupSyncService.GetUndiscoveredGroupsAsync();
+            undiscoveredStatusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading undiscovered AD groups");
+            undiscoveredGroups = new();
+            undiscoveredStatusMessage = $"Error loading groups: {ex.Message}";
+            undiscoveredStatusIsError = true;
+        }
+    }
+
+    private async Task AdoptGroup(int discoveredGroupId)
+    {
+        try
+        {
+            await adGroupSyncService.AdoptGroupAsync(discoveredGroupId, "system");
+            undiscoveredStatusMessage = "Group adopted successfully.";
+            undiscoveredStatusIsError = false;
+            await LoadUndiscoveredGroups();
+            await LoadGroups();
+        }
+        catch (Exception ex)
+        {
+            undiscoveredStatusMessage = $"Error: {ex.Message}";
+            undiscoveredStatusIsError = true;
+        }
+    }
+
+    private async Task LoadGroups()
+    {
+        try
+        {
+            allGroups = await userGroupService.GetAllGroupsAsync() ?? new();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading groups");
+            allGroups = new();
+        }
+
+        ApplyFilter();
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        ApplyFilter();
+    }
+
+    private void ApplyFilter()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            filteredGroups = allGroups;
+        }
+        else
+        {
+            filteredGroups = allGroups
+                .Where(g => g.GroupName.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private async Task SelectGroup(TblUserGroup group)
+    {
+        isAddingNew = false;
+        selectedGroup = group;
+        editName = group.GroupName;
+        editType = group.GroupType;
+        editDescription = group.Description ?? "";
+        editExternalId = group.ExternalId ?? "";
+        editIsActive = group.IsActive;
+        statusMessage = null;
+        externalIdValidationError = null;
+
+        await LoadMembers();
+    }
+
+    private void StartAddGroup()
+    {
+        isAddingNew = true;
+        selectedGroup = null;
+        editName = "";
+        editType = "director";
+        editDescription = "";
+        editExternalId = "";
+        editIsActive = true;
+        groupMembers = null;
+        availableUsersForPicker = null;
+        statusMessage = null;
+        externalIdValidationError = null;
+    }
+
+    private void CancelAdd()
+    {
+        isAddingNew = false;
+        selectedGroup = null;
+        statusMessage = null;
+        externalIdValidationError = null;
+    }
+
+    private bool ValidateExternalId()
+    {
+        externalIdValidationError = null;
+
+        if (editType == "ad-sync")
+        {
+            if (string.IsNullOrWhiteSpace(editExternalId))
+            {
+                externalIdValidationError = "Azure AD Object ID is required for AD Sync groups.";
+                return false;
+            }
+
+            if (!Guid.TryParse(editExternalId.Trim(), out _))
+            {
+                externalIdValidationError = "Must be a valid GUID (e.g. a1b2c3d4-e5f6-7890-abcd-ef1234567890).";
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    private async Task SaveGroup()
+    {
+        if (string.IsNullOrWhiteSpace(editName)) return;
+        if (!ValidateExternalId()) return;
+
+        try
+        {
+            if (isAddingNew)
+            {
+                await userGroupService.CreateGroupAsync(
+                    editName.Trim(),
+                    editType,
+                    string.IsNullOrWhiteSpace(editDescription) ? null : editDescription.Trim(),
+                    string.IsNullOrWhiteSpace(editExternalId) ? null : editExternalId.Trim(),
+                    "system");
+
+                isAddingNew = false;
+                statusMessage = "Group created.";
+                statusIsError = false;
+            }
+            else if (selectedGroup != null)
+            {
+                await userGroupService.UpdateGroupAsync(
+                    selectedGroup.UserGroupId,
+                    editName.Trim(),
+                    editType,
+                    string.IsNullOrWhiteSpace(editDescription) ? null : editDescription.Trim(),
+                    string.IsNullOrWhiteSpace(editExternalId) ? null : editExternalId.Trim(),
+                    editIsActive,
+                    "system");
+
+                statusMessage = "Group saved.";
+                statusIsError = false;
+            }
+
+            await LoadGroups();
+
+            if (selectedGroup != null)
+            {
+                var refreshed = allGroups.FirstOrDefault(g => g.UserGroupId == selectedGroup.UserGroupId);
+                if (refreshed != null)
+                    await SelectGroup(refreshed);
+            }
+            else
+            {
+                var newest = allGroups.OrderByDescending(g => g.UserGroupId).FirstOrDefault();
+                if (newest != null)
+                    await SelectGroup(newest);
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+    }
+
+    private async Task DeleteGroup()
+    {
+        if (selectedGroup == null) return;
+
+        try
+        {
+            await userGroupService.DeleteGroupAsync(selectedGroup.UserGroupId);
+            selectedGroup = null;
+            groupMembers = null;
+            availableUsersForPicker = null;
+            statusMessage = null;
+            await LoadGroups();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+    }
+
+    private async Task LoadMembers()
+    {
+        if (selectedGroup == null) return;
+
+        groupMembers = await userGroupService.GetGroupMembersAsync(selectedGroup.UserGroupId);
+
+        if (selectedGroup.GroupType != "ad-sync")
+        {
+            await RefreshMemberPicker();
+        }
+    }
+
+    private async Task RefreshMemberPicker()
+    {
+        using var __scope = scopeFactory.CreateScope();
+        var directorDb = __scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+        var memberIds = (groupMembers ?? new()).Select(m => m.UserId).ToHashSet();
+        var allUsers = await directorDb.TblUsers.AsNoTracking().OrderBy(u => u.FriendlyName).ToListAsync();
+        availableUsersForPicker = allUsers.Where(u => !memberIds.Contains(u.UserId)).ToList();
+        selectedUserIdToAdd = 0;
+    }
+
+    private async Task AddMember()
+    {
+        if (selectedGroup == null || selectedUserIdToAdd == 0) return;
+
+        try
+        {
+            await userGroupService.AddMemberAsync(selectedGroup.UserGroupId, selectedUserIdToAdd);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+
+        await LoadMembers();
+        await LoadGroups();
+
+        var refreshed = allGroups.FirstOrDefault(g => g.UserGroupId == selectedGroup.UserGroupId);
+        if (refreshed != null) selectedGroup = refreshed;
+    }
+
+    private async Task RemoveMember(int userId)
+    {
+        if (selectedGroup == null) return;
+
+        try
+        {
+            await userGroupService.RemoveMemberAsync(selectedGroup.UserGroupId, userId);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+
+        await LoadMembers();
+        await LoadGroups();
+
+        var refreshed = allGroups.FirstOrDefault(g => g.UserGroupId == selectedGroup.UserGroupId);
+        if (refreshed != null) selectedGroup = refreshed;
+    }
+}
+
+<style>
+    .sg-layout {
+        display: flex;
+        gap: 0;
+        min-height: 600px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    .sg-list-panel {
+        width: 38%;
+        min-width: 280px;
+        border-right: 1px solid #e0e0e0;
+        display: flex;
+        flex-direction: column;
+        background: #fafafa;
+    }
+
+    .sg-list-header {
+        padding: 12px;
+        border-bottom: 1px solid #e0e0e0;
+        background: #f0f0f0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+    }
+
+    .sg-search-input { font-size: 14px; flex: 1; }
+    .sg-add-btn { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
+    .sg-group-list { flex: 1; overflow-y: auto; max-height: 580px; }
+
+    .sg-group-item {
+        padding: 10px 14px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+        transition: background-color 0.15s;
+    }
+
+    .sg-group-item:hover { background-color: #e8f0fe; }
+
+    .sg-group-item.sg-selected {
+        background-color: #d4e4fc;
+        border-left: 3px solid #0071BC;
+    }
+
+    .sg-group-info { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+
+    .sg-group-name {
+        font-weight: 500;
+        font-size: 14px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .sg-type-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .sg-type-director { background: #e3f2fd; color: #1565c0; }
+    .sg-type-ad-sync { background: #fff3e0; color: #e65100; }
+    .sg-group-meta { display: flex; gap: 10px; align-items: center; }
+    .sg-member-count { font-size: 12px; color: #666; }
+    .sg-inactive { color: #c62828; font-size: 12px; }
+
+    .sg-detail-panel { flex: 1; padding: 20px; overflow-y: auto; max-height: 620px; }
+
+    .sg-detail-header { margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #e0e0e0; }
+    .sg-detail-name { margin: 0; font-family: "BAHNSCHRIFT", sans-serif; }
+    .sg-section { margin-bottom: 14px; }
+    .sg-section > label { font-weight: 600; font-size: 13px; margin-bottom: 4px; display: block; }
+    .sg-inline-group { display: flex; gap: 8px; align-items: center; }
+    .sg-inline-group .dx-form-control { flex: 1; }
+
+    .sg-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-weight: normal !important;
+    }
+
+    .sg-checkbox-label input { accent-color: #0071BC; }
+    .sg-actions { display: flex; gap: 8px; }
+
+    .sg-member-list { list-style: none; padding: 0; margin: 8px 0 0 0; max-height: 200px; overflow-y: auto; }
+
+    .sg-member-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 6px 10px;
+        background: #e9ecef;
+        border-radius: 4px;
+        margin-bottom: 4px;
+        font-size: 13px;
+    }
+
+    .sg-remove-btn { height: 28px; padding: 2px 10px; font-size: 11px; }
+    .sg-no-selection { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 15px; }
+    .sg-empty-list { padding: 30px; text-align: center; color: #999; }
+
+    .sg-subtab-bar { display: flex; gap: 0; margin-bottom: 12px; border-bottom: 2px solid #e0e0e0; }
+
+    .sg-subtab {
+        padding: 8px 20px;
+        border: none;
+        background: transparent;
+        cursor: pointer;
+        font-size: 14px;
+        font-weight: 500;
+        color: #666;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: color 0.15s, border-color 0.15s;
+    }
+
+    .sg-subtab:hover { color: #333; }
+    .sg-subtab-active { color: #0071BC; border-bottom-color: #0071BC; }
+
+    .sg-undiscovered-panel {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+        max-height: 600px;
+    }
+
+    .sg-undiscovered-scroll { overflow-y: auto; flex: 1; }
+
+    .sg-undiscovered-table { margin-bottom: 0; font-size: 13px; }
+
+    .sg-undiscovered-table th {
+        background: #f0f0f0;
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.3px;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+
+    .sg-undiscovered-table td { vertical-align: middle; }
+
+    .sg-ad-sync-notice {
+        background: #fff3e0;
+        border: 1px solid #ffe0b2;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-size: 13px;
+        color: #e65100;
+        margin-bottom: 8px;
+    }
+
+    .sg-back-btn { display: none; }
+
+    /* Phones show one column: the list until a group is picked, then the detail with a back button */
+    @@media (max-width: 768px) {
+        .sg-layout { min-height: 0; }
+
+        .sg-list-panel {
+            width: 100%;
+            min-width: 0;
+            border-right: none;
+        }
+
+        .sg-detail-panel { display: none; }
+
+        .sg-layout.sg-has-selection .sg-list-panel { display: none; }
+
+        .sg-layout.sg-has-selection .sg-detail-panel {
+            display: block;
+            max-height: none;
+        }
+
+        .sg-back-btn { display: inline-flex; margin-bottom: 12px; }
+    }
+</style>

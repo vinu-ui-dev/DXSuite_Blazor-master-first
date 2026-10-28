@@ -1,0 +1,70 @@
+@page "/design/catalog"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject ISessionState Session
+
+<PageTitle>Catalog — DXSuite</PageTitle>
+
+@if (isLoading)
+{
+    <!-- Blank until the async permission check resolves, to avoid an Unauthorized flash -->
+}
+else if (!isAuthorized)
+{
+    <div class="unauthorized-wrapper">
+        <h1>Unauthorized</h1>
+        <p>You do not have permission to view this page.</p>
+        <a href="/">Return Home</a>
+    </div>
+}
+else
+{
+<div style="display:flex; flex-direction:column; height:calc(100vh - 5.5rem);">
+    <h2 style="margin-bottom:16px; flex-shrink:0;">Catalog</h2>
+
+    <div class="dx-tab-nav" style="flex-shrink:0;">
+        <button class="dx-tab-btn @Tab("items")" @onclick='() => SetTab("items")'>Items</button>
+        <button class="dx-tab-btn @Tab("categories")" @onclick='() => SetTab("categories")'>Categories</button>
+        <button class="dx-tab-btn @Tab("labor")" @onclick='() => SetTab("labor")'>Labor</button>
+        <button class="dx-tab-btn @Tab("attributes")" @onclick='() => SetTab("attributes")'>Attributes</button>
+        <button class="dx-tab-btn @Tab("misc")" @onclick='() => SetTab("misc")'>Misc</button>
+        <button class="dx-tab-btn @Tab("travel")" @onclick='() => SetTab("travel")'>Travel</button>
+        <button class="dx-tab-btn @Tab("materials")" @onclick='() => SetTab("materials")'>Materials</button>
+    </div>
+
+    <div class="dx-tab-content" style="flex:1; min-height:0; overflow:hidden;">
+        @if (activeTab == "items")           { <ItemsTab /> }
+        else if (activeTab == "categories")  { <CategoriesTab /> }
+        else if (activeTab == "labor")       { <LaborTab /> }
+        else if (activeTab == "attributes")  { <AttributesTab /> }
+        else if (activeTab == "misc")        { <MiscTab /> }
+        else if (activeTab == "travel")      { <TravelTab /> }
+        else if (activeTab == "materials")   { <MaterialsTab /> }
+    </div>
+</div>
+}
+
+@code {
+    private string activeTab = "items";
+    private string Tab(string t) => activeTab == t ? "active" : "";
+    private void SetTab(string t) => activeTab = t;
+
+    private bool isAuthorized;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await Session.HasPermissionAsync(PermissionKeys.PageDesign);
+        isLoading = false;
+        if (!isAuthorized)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        await CategorySeed.SeedAsync(db, Tenant.CustomerCode);
+        await AttributeSeed.SeedAsync(db, Tenant.CustomerCode);
+        await ColumnSeed.SeedAsync(DbFactory, Tenant.CustomerCode);
+        await MaterialsSeed.SeedAsync(db, Tenant.CustomerCode);
+    }
+}

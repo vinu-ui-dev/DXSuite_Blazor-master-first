@@ -1,0 +1,384 @@
+@using DXSuite.Design.Models
+@inject IJSRuntime JS
+@implements IAsyncDisposable
+
+<!-- Sentinel: 1px tall, sits just above the header in normal document flow.
+     IntersectionObserver watches this — when it leaves the viewport the header switches
+     to position:fixed; when it returns the header goes back to normal flow. -->
+<div id="wsh-sentinel" style="height:1px; pointer-events:none; visibility:hidden;"></div>
+
+<!-- Spacer: invisible, zero-height by default. JS sets its height to match the full
+     expanded header the instant the header goes fixed, so the document flow doesn't
+     shift. The header collapses inside its fixed layer — the page never sees it. -->
+<div id="wsh-spacer" style="display:none;" aria-hidden="true"></div>
+
+<div id="wsh-header" class="wsh-sticky">
+    <!-- ── Total Project hero strip — always visible ─────────────────────── -->
+    <div class="wsh-hero">
+        <div class="wsh-hero-main">
+            <span class="wsh-hero-label">Total Project</span>
+            <span class="wsh-hero-value">@Fmt(Summary.TotalProject)</span>
+        </div>
+        <div class="wsh-hero-sep"></div>
+        <div class="wsh-hero-stat">
+            <span class="wsh-hero-label">Profit</span>
+            <span class="wsh-hero-value @PctClass(Summary.OverallProfitPct, 31, 25)">
+                @Fmt(Summary.OverallProfit)
+                <span class="wsh-hero-pct">@Summary.OverallProfitPct.ToString("F1")%</span>
+            </span>
+        </div>
+        <div class="wsh-hero-stat">
+            <span class="wsh-hero-label">HW Margin</span>
+            <span class="wsh-hero-value @PctClass(Summary.EquipmentMarginPct, 22, 20)">
+                @Summary.EquipmentMarginPct.ToString("F1")%
+            </span>
+        </div>
+        <div class="wsh-hero-stat">
+            <span class="wsh-hero-label">Labor</span>
+            <span class="wsh-hero-value @PctClass(Summary.LaborPct, 25, 23)">
+                @Summary.LaborPct.ToString("F1")%
+            </span>
+        </div>
+        <!-- Toggle only appears (via CSS) when the header is stuck -->
+        <div class="wsh-hero-toggle">
+            <button class="wsh-toggle" @onclick="Toggle" title="Toggle detail rows">
+                <span class="wsh-lbl-expand">▼ Details</span>
+                <span class="wsh-lbl-collapse">▲ Less</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- ── Detail groups — always in DOM; CSS shows/hides based on stuck state ── -->
+    <!-- Outer wrapper owns the animated height; inner div owns the horizontal scroll -->
+    <div class="wsh-groups-outer">
+    <div class="wsh-groups">
+
+        <!-- Group 1: Hardware (catalog items + materials combined) -->
+        <div class="wsh-group">
+            <div class="wsh-group-title">Hardware</div>
+            <div class="wsh-row">
+                <span class="wsh-label">Cost</span>
+                <span class="wsh-value">@Fmt(Summary.EquipmentCost)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Sell</span>
+                <span class="wsh-value">@Fmt(Summary.EquipmentSell)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Margin</span>
+                <span class="wsh-value">
+                    @Fmt(Summary.EquipmentMarginDollars)
+                    <span class="@PctClass(Summary.EquipmentMarginPct, 22, 20)">
+                        (@Summary.EquipmentMarginPct.ToString("F1")%)
+                    </span>
+                </span>
+            </div>
+        </div>
+
+        <!-- Group 2: Project context -->
+        <div class="wsh-group">
+            <div class="wsh-group-title">Project</div>
+            <div class="wsh-row">
+                <span class="wsh-label">Contribution</span>
+                <span class="wsh-value">@Fmt(Summary.Contribution)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Labor $</span>
+                <span class="wsh-value">@Fmt(Summary.LaborDollars)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Labor %</span>
+                <span class="wsh-value @PctClass(Summary.LaborPct, 25, 23)">
+                    @Summary.LaborPct.ToString("F1")%
+                </span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Materials %</span>
+                <span class="wsh-value @PctClass(Summary.MaterialsPct, 5, 3)">
+                    @Summary.MaterialsPct.ToString("F1")%
+                </span>
+            </div>
+        </div>
+
+        <!-- Group 3: All Us -->
+        <div class="wsh-group wsh-group-scenario">
+            <div class="wsh-group-title">All Us</div>
+            <div class="wsh-row">
+                <span class="wsh-label">Cost</span>
+                <span class="wsh-value">@Fmt(Summary.TotalCostAllUs)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit</span>
+                <span class="wsh-value">@Fmt(Summary.ProfitAllUs)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit %</span>
+                <span class="wsh-value @PctClass(Summary.ProfitPctAllUs, 31, 25)">
+                    @Summary.ProfitPctAllUs.ToString("F1")%
+                </span>
+            </div>
+        </div>
+
+        <!-- Group 4: Our Leads -->
+        <div class="wsh-group wsh-group-scenario">
+            <div class="wsh-group-title">Our Leads</div>
+            <div class="wsh-row">
+                <span class="wsh-label">Cost</span>
+                <span class="wsh-value">@Fmt(Summary.TotalCostOurLeads)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit</span>
+                <span class="wsh-value">@Fmt(Summary.ProfitOurLeads)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit %</span>
+                <span class="wsh-value @PctClass(Summary.ProfitPctOurLeads, 31, 25)">
+                    @Summary.ProfitPctOurLeads.ToString("F1")%
+                </span>
+            </div>
+        </div>
+
+        <!-- Group 5: Subs (travel costs for Internal+IsTravelingRole roles still included) -->
+        <div class="wsh-group wsh-group-scenario">
+            <div class="wsh-group-title">Subs</div>
+            <div class="wsh-row">
+                <span class="wsh-label">Cost</span>
+                <span class="wsh-value">@Fmt(Summary.TotalCostSubs)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit</span>
+                <span class="wsh-value">@Fmt(Summary.ProfitSubs)</span>
+            </div>
+            <div class="wsh-row">
+                <span class="wsh-label">Profit %</span>
+                <span class="wsh-value @PctClass(Summary.ProfitPctSubs, 31, 25)">
+                    @Summary.ProfitPctSubs.ToString("F1")%
+                </span>
+            </div>
+        </div>
+
+    </div>
+    </div> <!-- /wsh-groups-outer -->
+</div>
+
+@code {
+    [Parameter, EditorRequired] public WorksheetSummary Summary { get; set; } = null!;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+            await JS.InvokeVoidAsync("worksheetInterop.initScrollWatcher");
+    }
+
+    private async Task Toggle()
+    {
+        // JS toggles the CSS class directly — no Blazor re-render needed.
+        await JS.InvokeVoidAsync("worksheetInterop.toggleDetails");
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JS.InvokeVoidAsync("worksheetInterop.disposeScrollWatcher"); }
+        catch (JSDisconnectedException) { }
+        catch (InvalidOperationException) { }
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    private static string Fmt(decimal v) => "$" + v.ToString("N0");
+
+    /// <summary>
+    /// Returns a color class where higher values are better (green ≥ good, amber ≥ warn, red below warn).
+    /// Thresholds match the spreadsheet's conditional formatting:
+    ///   Profit %        — good=31, warn=25
+    ///   Equipment Margin % — good=22, warn=20
+    ///   Labor %         — good=25, warn=23  (higher labor content = more billable services)
+    ///   Materials %     — good=5,  warn=3
+    /// </summary>
+    private static string PctClass(decimal pct, decimal good, decimal warn) =>
+        pct >= good ? "wsh-good" : pct >= warn ? "wsh-warn" : "wsh-danger";
+}
+
+<style>
+    /* ── Header wrapper ─────────────────────────────────────────────────────── */
+    .wsh-sticky {
+        background: var(--surface, #fff);
+        border-bottom: 2px solid var(--dx-blue, #0071BC);
+        box-shadow: 0 3px 14px rgba(0,0,0,.10);
+    }
+
+    /* Stuck state: float above the page with no effect on document flow.
+       JS simultaneously shows #wsh-spacer at the full expanded height so the
+       content below never shifts. The collapse then animates inside the fixed
+       layer, which is invisible to the document flow. */
+    .wsh-sticky.wsh-is-stuck {
+        position: fixed;
+        top: 3.5rem;   /* dock below .dx-navbar (height: 3.5rem) */
+        left: 0;
+        right: 0;
+        z-index: 20;
+    }
+
+    /* ── Hero strip — always visible ─────────────────────────────────────────── */
+    .wsh-hero {
+        display: flex;
+        align-items: center;
+        padding: 7px 14px 6px;
+        background: var(--dx-blue, #0071BC);
+        color: #fff;
+    }
+
+    .wsh-hero-main {
+        display: flex;
+        align-items: baseline;
+        gap: 8px;
+        margin-right: 20px;
+    }
+
+    .wsh-hero-label {
+        font-size: .68rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        opacity: .8;
+        white-space: nowrap;
+    }
+
+    .wsh-hero-value {
+        font-size: 1.05rem;
+        font-weight: 700;
+        white-space: nowrap;
+    }
+
+    .wsh-hero-pct {
+        font-size: .78rem;
+        font-weight: 600;
+        opacity: .85;
+        margin-left: 4px;
+    }
+
+    .wsh-hero-sep {
+        width: 1px;
+        height: 28px;
+        background: rgba(255,255,255,.3);
+        margin: 0 16px;
+        flex-shrink: 0;
+    }
+
+    .wsh-hero-stat {
+        display: flex;
+        align-items: baseline;
+        gap: 6px;
+        margin-right: 20px;
+    }
+
+    .wsh-hero-stat .wsh-hero-label { font-size: .65rem; }
+    .wsh-hero-stat .wsh-hero-value { font-size: .88rem; font-weight: 700; }
+
+    .wsh-hero-toggle { margin-left: auto; }
+
+    /* Color overrides for hero's blue background */
+    .wsh-hero .wsh-good   { color: #86efac; }
+    .wsh-hero .wsh-warn   { color: #fcd34d; }
+    .wsh-hero .wsh-danger { color: #fca5a5; }
+
+    /* ── Toggle button ────────────────────────────────────────────────────────── */
+    /* Hidden by default; appears only when the header is stuck (via JS class) */
+    .wsh-toggle {
+        display: none;
+        background: rgba(255,255,255,.1);
+        border: 1px solid rgba(255,255,255,.4);
+        border-radius: 4px;
+        padding: 3px 8px;
+        color: #fff;
+        font-size: .72rem;
+        cursor: pointer;
+        white-space: nowrap;
+    }
+    .wsh-toggle:hover { background: rgba(255,255,255,.2); }
+
+    /* Show expand label by default when toggle is visible */
+    .wsh-lbl-expand   { display: inline; }
+    .wsh-lbl-collapse { display: none; }
+
+    /* When stuck: show the toggle button with "▼ Details" */
+    .wsh-is-stuck .wsh-toggle { display: inline-block; }
+
+    /* When stuck + user-expanded: swap to "▲ Less" */
+    .wsh-is-stuck.wsh-user-expanded .wsh-lbl-expand   { display: none; }
+    .wsh-is-stuck.wsh-user-expanded .wsh-lbl-collapse { display: inline; }
+
+    /* ── Detail groups ────────────────────────────────────────────────────────── */
+
+    /* Outer wrapper: owns the height animation so the page content slides smoothly
+       rather than jumping when the header enters or leaves sticky mode. */
+    .wsh-groups-outer {
+        overflow: hidden;
+        /* 200px generously exceeds the tallest the groups will ever be (~130px).
+           Using a realistic ceiling keeps the ease-out feeling proportional. */
+        max-height: 200px;
+        transition: max-height 0.22s ease-out;
+    }
+
+    /* When stuck: collapse to zero height. Page content slides up smoothly. */
+    .wsh-is-stuck .wsh-groups-outer                            { max-height: 0; }
+    /* User expanded while stuck: animate back open. */
+    .wsh-is-stuck.wsh-user-expanded .wsh-groups-outer          { max-height: 200px; }
+    /* Restoring: groups animate open while header is still fixed (higher specificity
+       wins over the plain wsh-is-stuck rule). JS removes wsh-is-stuck only AFTER this
+       animation completes, so the header enters normal flow already at full height. */
+    .wsh-is-stuck.wsh-is-restoring .wsh-groups-outer           { max-height: 200px; }
+
+    /* Inner div: always flex; handles horizontal overflow independently of the height animation. */
+    .wsh-groups {
+        display: flex;
+        align-items: stretch;
+        overflow-x: auto;
+    }
+
+    .wsh-group {
+        flex: 1;
+        padding: 9px 14px 10px;
+        border-right: 1px solid var(--border, #dee2e6);
+        min-width: 130px;
+    }
+
+    .wsh-group-scenario { flex: 0.85; min-width: 110px; }
+    .wsh-group:last-of-type { border-right: none; }
+
+    .wsh-group-title {
+        font-size: .63rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        color: var(--dx-blue, #0071BC);
+        margin-bottom: 6px;
+        white-space: nowrap;
+    }
+
+    .wsh-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 6px;
+        line-height: 1.7;
+    }
+
+    .wsh-label {
+        font-size: .71rem;
+        color: var(--text-muted, #6c757d);
+        white-space: nowrap;
+    }
+
+    .wsh-value {
+        font-size: .8rem;
+        font-weight: 600;
+        white-space: nowrap;
+        text-align: right;
+    }
+
+    /* ── Conditional percentage colors ───────────────────────────────────────── */
+    .wsh-good   { color: #15803d; }
+    .wsh-warn   { color: #b45309; }
+    .wsh-danger { color: #dc2626; }
+</style>

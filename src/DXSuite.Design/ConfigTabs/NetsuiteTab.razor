@@ -1,0 +1,337 @@
+@using DXSuite.Design.Entities
+@using DXSuite.Design.Services
+@using DXSuite.Shared.Multitenancy
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject NetsuiteCredentialProtector Protector
+@inject INetsuiteService NetsuiteService
+@inject ITenantContext Tenant
+@inject IJSRuntime JS
+
+<div class="tab-panel">
+    <div class="panel-header">
+        <h3>NetSuite Integration</h3>
+    </div>
+    <div class="panel-content">
+        <p class="netsuite-tab-description">
+            Connect to a NetSuite instance to search Opportunities and Items,
+            and to push Design Worksheets as Estimates.
+            Uses Token-Based Authentication (TBA) via the NetSuite REST Record API.
+        </p>
+
+        @if (loadError is not null)
+        {
+            <div class="form-message error">@loadError</div>
+        }
+
+        <div class="sentinel-inline-form">
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Account ID</label>
+                    <input class="dx-form-control" placeholder="e.g. 1234567 or 1234567_SB1" @bind="accountId" />
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Consumer Key</label>
+                    <input class="dx-form-control" @bind="consumerKey" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label>Consumer Secret</label>
+                    <input type="password" class="dx-form-control" @bind="consumerSecret" autocomplete="new-password" />
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Token ID</label>
+                    <input class="dx-form-control" @bind="tokenId" autocomplete="off" />
+                </div>
+                <div class="form-group">
+                    <label>Token Secret</label>
+                    <input type="password" class="dx-form-control" @bind="tokenSecret" autocomplete="new-password" />
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label>Estimate Form ID</label>
+                    <input class="dx-form-control" placeholder="e.g. 163" @bind="customFormId" autocomplete="off" />
+                    <small class="netsuite-field-hint">NS internal ID of the custom estimate form (customForm). Leave blank to use the account default.</small>
+                </div>
+            </div>
+
+            <div class="form-actions">
+                <button class="blue-btn" @onclick="SaveAsync" disabled="@isBusy">
+                    @(isBusy && !isTesting ? "SAVING..." : "SAVE")
+                </button>
+                <button class="outline-btn" @onclick="TestAsync" disabled="@isBusy">
+                    @(isTesting ? "TESTING..." : "TEST CONNECTION")
+                </button>
+            </div>
+
+            @if (saveMessage is not null)
+            {
+                <div class="form-message @(saveSuccess ? "success" : "error")">@saveMessage</div>
+            }
+
+            @if (testResult is not null)
+            {
+                <div class="form-message @(testResult.Success ? "success" : "error")">
+                    @if (testResult.Success)
+                    {
+                        <text>Connection successful.</text>
+                    }
+                    else
+                    {
+                        <text>
+                            Connection failed@(testResult.StatusCode is int sc ? $" (HTTP {sc})" : "").
+                            @if (!string.IsNullOrWhiteSpace(testResult.Message))
+                            {
+                                <pre style="margin-top:6px;white-space:pre-wrap;word-break:break-word;font-size:.8rem;">@testResult.Message</pre>
+                            }
+                        </text>
+                    }
+                </div>
+            }
+        </div>
+
+        <!-- ── API Explorer ─────────────────────────────────────────────────── -->
+        <div style="margin-top:24px;border-top:1px solid var(--border,#dee2e6);padding-top:16px">
+            <button style="background:none;border:none;cursor:pointer;font-size:.8rem;color:var(--text-muted,#6c757d);padding:0;display:flex;align-items:center;gap:6px"
+                    @onclick="() => _explorerOpen = !_explorerOpen">
+                @(_explorerOpen ? "▾" : "▸") API Explorer
+            </button>
+            @if (_explorerOpen)
+            {
+                <div style="margin-top:10px">
+                    <p style="font-size:.78rem;color:var(--text-muted,#6c757d);margin-bottom:8px">
+                        Fire a signed GET request to any REST Record API path. Uses the saved credentials above.
+                    </p>
+                    <div style="display:flex;gap:8px;align-items:center">
+                        <span style="font-size:.78rem;color:var(--text-muted,#6c757d);white-space:nowrap">
+                            /record/v1/
+                        </span>
+                        <input class="dx-form-control" style="flex:1"
+                               @bind="_explorerPath"
+                               placeholder='e.g. inventoryitem/123?expandSubResources=true' />
+                        <button class="outline-btn" style="white-space:nowrap"
+                                @onclick="FetchExplorerAsync" disabled="@_explorerBusy">
+                            @(_explorerBusy ? "Fetching…" : "GET")
+                        </button>
+                    </div>
+                    @if (_explorerResult is not null)
+                    {
+                        <div style="margin-top:8px;font-size:.75rem;color:var(--text-muted,#6c757d);display:flex;align-items:center;gap:10px">
+                            <span>HTTP @_explorerStatus</span>
+                            <button class="outline-btn" style="font-size:.72rem;padding:2px 10px"
+                                    @onclick="CopyExplorerResultAsync">
+                                @(_copied ? "Copied!" : "Copy")
+                            </button>
+                        </div>
+                        <pre style="margin-top:4px;max-height:400px;overflow:auto;font-size:.73rem;background:#f8f9fa;border:1px solid var(--border,#dee2e6);border-radius:4px;padding:10px;white-space:pre-wrap;word-break:break-word">@_explorerResult</pre>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    private string? accountId;
+    private string? consumerKey;
+    private string? consumerSecret;
+    private string? tokenId;
+    private string? tokenSecret;
+    private string? customFormId;
+
+    private bool isBusy;
+    private bool isTesting;
+    private string? saveMessage;
+    private bool saveSuccess;
+    private NetsuiteTestResult? testResult;
+    private string? loadError;
+
+    private int? existingConnectionId;
+
+    // ── API Explorer ──────────────────────────────────────────────────────────
+    private bool _explorerOpen;
+    private string _explorerPath = "";
+    private bool _explorerBusy;
+    private string? _explorerResult;
+    private string? _explorerStatus;
+    private bool _copied;
+
+    private async Task CopyExplorerResultAsync()
+    {
+        if (string.IsNullOrEmpty(_explorerResult)) return;
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", _explorerResult);
+            _copied = true;
+            StateHasChanged();
+            await Task.Delay(2000);
+            _copied = false;
+            await InvokeAsync(StateHasChanged);
+        }
+        catch { /* clipboard access denied — silently ignore */ }
+    }
+
+    private async Task FetchExplorerAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_explorerPath)) return;
+        _explorerBusy = true;
+        _explorerResult = null;
+        _explorerStatus = null;
+        try
+        {
+            var (success, statusCode, body) = await NetsuiteService.FetchRawAsync(_explorerPath.Trim());
+            _explorerStatus = statusCode is int sc ? sc.ToString() : (success ? "OK" : "Error");
+            // Pretty-print JSON when possible
+            try
+            {
+                var doc = System.Text.Json.JsonDocument.Parse(body);
+                _explorerResult = System.Text.Json.JsonSerializer.Serialize(
+                    doc, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+            }
+            catch
+            {
+                _explorerResult = body;
+            }
+        }
+        catch (Exception ex)
+        {
+            _explorerStatus = "Error";
+            _explorerResult = ex.Message;
+        }
+        finally
+        {
+            _explorerBusy = false;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var conn = await db.TblDesignNetsuiteConnections
+                .Where(c => c.CustomerId == Tenant.CustomerCode && c.IsActive)
+                .FirstOrDefaultAsync();
+
+            if (conn is not null)
+            {
+                existingConnectionId = conn.ConnectionId;
+                accountId = conn.AccountId;
+                consumerKey = conn.ConsumerKey;
+                consumerSecret = Protector.Decrypt(conn.ConsumerSecret);
+                tokenId = conn.TokenId;
+                tokenSecret = Protector.Decrypt(conn.TokenSecret);
+                customFormId = conn.CustomFormId;
+            }
+        }
+        catch (Exception ex)
+        {
+            loadError = $"Failed to load configuration: {ex.Message}";
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        isBusy = true;
+        saveMessage = null;
+        testResult = null;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            TblDesignNetsuiteConnection conn;
+
+            if (existingConnectionId.HasValue)
+            {
+                conn = await db.TblDesignNetsuiteConnections.FindAsync(existingConnectionId.Value)
+                    ?? new TblDesignNetsuiteConnection { CustomerId = Tenant.CustomerCode };
+                if (conn.ConnectionId == 0)
+                    db.TblDesignNetsuiteConnections.Add(conn);
+            }
+            else
+            {
+                // Deactivate any stale active connections for this tenant before adding a new one
+                var stale = await db.TblDesignNetsuiteConnections
+                    .Where(c => c.CustomerId == Tenant.CustomerCode && c.IsActive)
+                    .ToListAsync();
+                foreach (var s in stale)
+                    s.IsActive = false;
+
+                conn = new TblDesignNetsuiteConnection { CustomerId = Tenant.CustomerCode };
+                db.TblDesignNetsuiteConnections.Add(conn);
+            }
+
+            conn.AccountId = accountId?.Trim();
+            conn.ConsumerKey = consumerKey?.Trim();
+            conn.ConsumerSecret = Protector.Encrypt(consumerSecret?.Trim());
+            conn.TokenId = tokenId?.Trim();
+            conn.TokenSecret = Protector.Encrypt(tokenSecret?.Trim());
+            conn.CustomFormId = string.IsNullOrWhiteSpace(customFormId) ? null : customFormId.Trim();
+            conn.IsActive = true;
+            conn.LastEditDate = DateTime.UtcNow;
+
+            await db.SaveChangesAsync();
+            existingConnectionId = conn.ConnectionId;
+
+            saveMessage = "Configuration saved.";
+            saveSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            saveMessage = $"Save failed: {ex.Message}";
+            saveSuccess = false;
+        }
+        finally
+        {
+            isBusy = false;
+        }
+    }
+
+    private async Task TestAsync()
+    {
+        isBusy = true;
+        isTesting = true;
+        testResult = null;
+        saveMessage = null;
+
+        try
+        {
+            var tempConn = new TblDesignNetsuiteConnection
+            {
+                CustomerId = Tenant.CustomerCode,
+                AccountId = accountId?.Trim(),
+                ConsumerKey = consumerKey?.Trim(),
+                // Pass encrypted form so Decrypt round-trips correctly
+                ConsumerSecret = Protector.Encrypt(consumerSecret?.Trim()),
+                TokenId = tokenId?.Trim(),
+                TokenSecret = Protector.Encrypt(tokenSecret?.Trim()),
+            };
+
+            testResult = await NetsuiteService.TestConnectionDetailedAsync(tempConn);
+        }
+        finally
+        {
+            isBusy = false;
+            isTesting = false;
+        }
+    }
+}
+
+<style>
+    .netsuite-tab-description {
+        color: var(--dx-text-muted, #6c757d);
+        margin-bottom: 1.5rem;
+        font-size: 0.9rem;
+    }
+
+    .netsuite-field-hint {
+        display: block;
+        font-size: .75rem;
+        color: var(--dx-text-muted, #6c757d);
+        margin-top: 4px;
+    }
+</style>

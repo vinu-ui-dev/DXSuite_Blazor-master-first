@@ -1,0 +1,15 @@
+/* DXSuite brand palette applied to Material's "custom" primary/accent slots.
+   Values mirror --dx-blue / --dx-blue-hover from src/DXSuite.Shared/wwwroot/dxsuite.css
+   so the help site matches the application chrome. */
+
+:root {
+  --md-primary-fg-color:        #0071BC;
+  --md-primary-fg-color--light: #20a6ff;
+  --md-primary-fg-color--dark:  #005a96;
+  --md-accent-fg-color:         #20a6ff;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:        #0071BC;
+  --md-accent-fg-color:         #20a6ff;
+}

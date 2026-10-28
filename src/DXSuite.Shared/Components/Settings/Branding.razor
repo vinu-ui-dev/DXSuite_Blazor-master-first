@@ -1,0 +1,137 @@
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment env
+@inject DXSuite.Shared.Multitenancy.ITenantContext tenantContext
+@inject IStringLocalizer<Branding> L
+@inject IJSRuntime JS
+
+@* Branding images are server-global, so uploads from a non-owner tenant would rebrand
+   every tenant on the deployment. The settings page already hides this tab when the
+   tenant lacks BrandingManagement; this guard covers any other render path. *@
+@if (!brandingAllowed)
+{
+    <div style="text-align:center; margin-top:80px;">
+        <h3>Access Denied</h3>
+        <p>Branding is not enabled for this tenant.</p>
+    </div>
+    return;
+}
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">Branding</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">
+        Manage images used across the site for branding and login customization.
+    </p>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:700px; margin-bottom:12px;">
+            @statusMessage
+        </div>
+    }
+
+    <div class="dx-settings-list" style="max-width:700px;">
+        <div class="dx-settings-list-header" style="grid-template-columns: 80px 1fr 160px;">
+            <div>Preview</div>
+            <div>Image</div>
+            <div style="text-align:right;">Actions</div>
+        </div>
+        @foreach (var img in brandingImages)
+        {
+            <div class="dx-settings-list-row" style="grid-template-columns: 80px 1fr 160px; align-items:center;">
+                <div>
+                    <img src="@($"images/branding/{img.FileName}?{imageVersion}")"
+                         style="width:64px; height:48px; object-fit:cover; border-radius:3px; border:1px solid #ddd; cursor:pointer; background:#f0f0f0;"
+                         @onclick="() => PreviewImage(img.FileName)"
+                         onerror="this.style.opacity='0.3';"
+                         title="Click to preview" />
+                </div>
+                <div>
+                    <div class="dx-settings-list-label">@img.Label</div>
+                    <div class="dx-settings-list-desc">@img.Description</div>
+                </div>
+                <div style="display:flex; gap:6px; justify-content:flex-end;">
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => OpenUploader(img.FileName)">Upload</button>
+                    @if (ImageExists(img.FileName))
+                    {
+                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => DeleteImage(img.FileName)">Delete</button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+<ImageUploader @ref="imageUploader"
+               TargetDirectory="@brandingDirectory"
+               TargetFileName="@activeFileName"
+               OnUploaded="OnImageUploaded" />
+
+@code {
+    private record BrandingImage(string FileName, string Label, string Description);
+
+    private static readonly BrandingImage[] brandingImages =
+    [
+        new("header.png", "Website Header Image", "Displayed in the navigation bar across all pages"),
+        new("login.png", "Login Block Image", "Displayed on the sign-in page above the login buttons"),
+        new("login-bg.png", "Login Background Image", "Full-screen background behind the sign-in card"),
+        new("favicon.png", "Site Favicon", "Browser tab icon shown in bookmarks and browser tabs"),
+    ];
+
+    private ImageUploader? imageUploader;
+    private string brandingDirectory = "";
+    private string activeFileName = "";
+    private long imageVersion = DateTime.Now.Ticks;
+    private string? statusMessage;
+    private bool statusIsError;
+    private bool brandingAllowed;
+
+    protected override void OnInitialized()
+    {
+        brandingAllowed = tenantContext.IsPopulated && tenantContext.Features.BrandingManagement;
+        brandingDirectory = DXSuite.Shared.Storage.BrandingStorage.ResolveDirectory(env);
+    }
+
+    private void OpenUploader(string fileName)
+    {
+        activeFileName = fileName;
+        imageUploader?.Open();
+    }
+
+    private void OnImageUploaded()
+    {
+        imageVersion = DateTime.Now.Ticks;
+        statusMessage = $"Image uploaded successfully.";
+        statusIsError = false;
+        StateHasChanged();
+    }
+
+    private bool ImageExists(string fileName)
+    {
+        return File.Exists(Path.Combine(brandingDirectory, fileName));
+    }
+
+    private void DeleteImage(string fileName)
+    {
+        try
+        {
+            var path = Path.Combine(brandingDirectory, fileName);
+            if (File.Exists(path))
+            {
+                File.Delete(path);
+                imageVersion = DateTime.Now.Ticks;
+                statusMessage = $"Image deleted.";
+                statusIsError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Failed to delete: {ex.Message}";
+            statusIsError = true;
+        }
+    }
+
+    private async Task PreviewImage(string fileName)
+    {
+        var url = $"images/branding/{fileName}?{imageVersion}";
+        await JS.InvokeVoidAsync("open", url, "_blank");
+    }
+}

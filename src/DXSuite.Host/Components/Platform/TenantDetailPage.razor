@@ -1,0 +1,161 @@
+@page "/platform/tenants/{TenantId}"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Entities.Registry
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantProvisioningService ProvisioningService
+@inject IPlatformElevationService? ElevationService
+@inject IPlatformAuditService? AuditService
+@inject IPlatformIdentityService? IdentityService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (tenant == null)
+    {
+        <p class="dx-text-muted">Tenant not found.</p>
+    }
+    else
+    {
+        <div class="dx-platform-header">
+            <h2>@tenant.DisplayName</h2>
+            @if (ProvisioningService.IsAvailable)
+            {
+                <a href="/platform/tenants/@TenantId/edit" class="dx-btn dx-btn-gray dx-btn-sm">Edit</a>
+            }
+        </div>
+
+        <dl class="dx-dl">
+            <dt>Tenant ID</dt>    <dd>@tenant.TenantId</dd>
+            <dt>Subdomain</dt>   <dd>@tenant.Subdomain</dd>
+            <dt>Customer Code</dt><dd>@tenant.CustomerCode</dd>
+            <dt>Status</dt>      <dd>@(tenant.IsEnabled ? "Active" : "Disabled")</dd>
+            <dt>Created</dt>     <dd>@tenant.CreatedDate.ToString("yyyy-MM-dd")</dd>
+        </dl>
+
+        <h4 style="margin-top:1.5rem;">Users (@users.Count)</h4>
+        @if (users.Count > 0)
+        {
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: 2fr 1.5fr 70px;">
+                    <div>Email</div>
+                    <div>Display Name</div>
+                    <div>Operator</div>
+                </div>
+                @foreach (var u in users)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 1.5fr 70px;">
+                        <div><a href="/platform/users/@u.PlatformUserId">@u.PrimaryEmail</a></div>
+                        <div>@(u.DisplayName ?? "—")</div>
+                        <div>@(u.IsPlatformOperator ? "Yes" : "No")</div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="dx-text-muted">No users found for this tenant.</p>
+        }
+
+        <h4 style="margin-top:1.5rem;">Recent Elevations (@elevations.Count)</h4>
+        @if (elevations.Count > 0)
+        {
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: 2fr 120px 100px 130px 130px;">
+                    <div>Operator</div>
+                    <div>Role</div>
+                    <div>Status</div>
+                    <div>Issued</div>
+                    <div>Expires</div>
+                </div>
+                @foreach (var e in elevations)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 120px 100px 130px 130px;">
+                        <div>@(e.PlatformUser?.PrimaryEmail ?? e.PlatformUserId.ToString("N")[..8])</div>
+                        <div>@e.RoleName</div>
+                        <div><span class="dx-badge @StatusBadge(e.Status)">@e.Status</span></div>
+                        <div>@e.IssuedAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                        <div>@e.ExpiresAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="dx-text-muted">No elevation history.</p>
+        }
+
+        <h4 style="margin-top:1.5rem;">Recent Audit Events (@auditEvents.Count)</h4>
+        @if (auditEvents.Count > 0)
+        {
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: 130px 1fr 80px 2fr;">
+                    <div>Time</div>
+                    <div>Event</div>
+                    <div>User</div>
+                    <div>Reason</div>
+                </div>
+                @foreach (var a in auditEvents)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 130px 1fr 80px 2fr;">
+                        <div>@a.EventTime.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                        <div>@a.EventType</div>
+                        <div>@(a.PlatformUserId?.ToString("N")[..8] ?? "—")</div>
+                        <div class="dx-truncate" title="@a.Reason">@(a.Reason ?? "—")</div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <p class="dx-text-muted">No audit events.</p>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public string TenantId { get; set; } = "";
+
+    private TblTenant? tenant;
+    private List<PlatformUserSummary> users = new();
+    private List<TblPlatformElevation> elevations = new();
+    private List<TblPlatformAuditLog> auditEvents = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        tenant = await ProvisioningService.GetTenantAsync(TenantId);
+        if (tenant != null)
+        {
+            var userTask      = IdentityService?.GetPlatformUsersAsync(TenantId) ?? Task.FromResult<IReadOnlyList<PlatformUserSummary>>(Array.Empty<PlatformUserSummary>());
+            var elevationTask = ElevationService?.GetElevationsForTenantAsync(TenantId) ?? Task.FromResult(new List<TblPlatformElevation>());
+            var auditTask     = AuditService?.GetAuditLogAsync(TenantId) ?? Task.FromResult(new List<TblPlatformAuditLog>());
+
+            await Task.WhenAll(userTask, elevationTask, auditTask);
+
+            users       = (await userTask).ToList();
+            elevations  = await elevationTask;
+            auditEvents = await auditTask;
+        }
+
+        loading = false;
+    }
+
+    private static string StatusBadge(string status) => status switch
+    {
+        ElevationStatus.Active  => "dx-badge-green",
+        ElevationStatus.Revoked => "dx-badge-red",
+        _                       => "dx-badge-blue"
+    };
+}

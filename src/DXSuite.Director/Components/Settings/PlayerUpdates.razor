@@ -1,0 +1,969 @@
+﻿@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using System.IO.Compression
+@inject IServiceScopeFactory scopeFactory
+@inject IUpdateService updateService
+@inject IPlayerArtifactStore artifactStore
+@inject ISessionState SessionState
+@inject IBatchDeploymentService batchDeploymentService
+@inject IBatchDeploymentStateService batchDeploymentStateService
+@inject IConfiguration config
+@inject ILogger<PlayerUpdates> Logger
+@inject IStringLocalizer<PlayerUpdates> L
+@inject IStringLocalizer<SharedResources> LS
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">@L["Label_Platform"] Updates</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">Manage client application versions and deployments to player devices.</p>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="dx-alert @(isError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:900px; margin-bottom:12px;">
+            @statusMessage
+        </div>
+    }
+
+    <div class="dx-form-group" style="max-width:250px; margin-bottom:16px;">
+        <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_Platform"]</label>
+        <select class="dx-form-control" @bind="selectedPlatformId" @bind:after="OnPlatformChanged">
+            <option value="0">@L["Label_AllPlatforms"]</option>
+            @foreach (var platform in platforms)
+            {
+                <option value="@platform.PlatformId">@platform.PlatformName</option>
+            }
+        </select>
+    </div>
+
+    <div class="dx-form-group" style="max-width:250px; margin-bottom:16px;">
+        <label class="dx-form-label" style="font-size:0.8rem;">Artifact Kind</label>
+        <select class="dx-form-control" @bind="selectedArtifactKind" @bind:after="OnPlatformChanged">
+            <option value="">All kinds</option>
+            <option value="@ArtifactKinds.App">App bundle</option>
+            <option value="@ArtifactKinds.Bootloader">Bootloader</option>
+        </select>
+    </div>
+
+    <div class="dx-tab-nav" style="margin-bottom:0;">
+        <button class="dx-tab-btn @(activeTab == "versions" ? "active" : "")" @onclick="@(() => activeTab = "versions")">
+            @L["Tab_Versions"]
+        </button>
+        <button class="dx-tab-btn @(activeTab == "deployments" ? "active" : "")" @onclick="@(() => activeTab = "deployments")">
+            @L["Tab_Deployments"]
+        </button>
+        <button class="dx-tab-btn @(activeTab == "devices" ? "active" : "")" @onclick="ShowDeviceStatuses">
+            Device Status
+        </button>
+    </div>
+    <div class="dx-tab-content">
+        @if (activeTab == "versions")
+        {
+            <div style="margin-bottom:16px;">
+                <button class="dx-btn dx-btn-blue" @onclick="ShowUploadForm">
+                    <i class="bi bi-upload"></i> @L["Button_UploadNewVersion"]
+                </button>
+            </div>
+
+            @if (showUploadForm)
+            {
+                <div class="dx-card" style="max-width:700px; margin-bottom:16px;">
+                    <div class="dx-card-body">
+                        <strong style="display:block; margin-bottom:12px;">@L["Label_UploadNewVersion"]</strong>
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_Platform"]</label>
+                                <select class="dx-form-control" @bind="uploadPlatformId">
+                                    @foreach (var platform in platforms)
+                                    {
+                                        <option value="@platform.PlatformId">@platform.PlatformName</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="dx-form-group" style="flex:2;">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_ZipFileLabel"]</label>
+                                <InputFile class="dx-form-control" OnChange="OnFileSelected" accept=".zip" />
+                            </div>
+                        </div>
+                        @if (string.IsNullOrEmpty(selectedArtifactKind) || selectedArtifactKind == ArtifactKinds.App)
+                        {
+                            <div class="dx-form-row">
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_MinBootloaderVersion"]</label>
+                                    <input class="dx-form-control" @bind="uploadMinBootloaderVersion" placeholder="@L["Placeholder_MinBootloaderVersion"]" />
+                                    <span class="dx-text-muted" style="font-size:0.75rem;">@L["Help_MinBootloaderVersion"]</span>
+                                </div>
+                            </div>
+                        }
+                        @if (isUploading)
+                        {
+                            <div class="dx-alert dx-alert-info" style="margin-bottom:12px;">@L["Label_Uploading"]</div>
+                        }
+                        <div style="display:flex; gap:8px;">
+                            <button class="dx-btn dx-btn-blue" @onclick="UploadVersion" disabled="@(isUploading || selectedFile == null)">
+                                @L["Button_Upload"]
+                            </button>
+                            <button class="dx-btn dx-btn-gray" @onclick="@(() => showUploadForm = false)">@LS["Button_Cancel"]</button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1fr 110px 1fr 100px 175px 200px;">
+                    <div>@L["Column_Platform"]</div>
+                    <div>Kind</div>
+                    <div>@L["Column_Version"]</div>
+                    <div>@L["Column_Size"]</div>
+                    <div>@L["Column_Created"]</div>
+                    <div style="text-align:right;">@LS["Label_Actions"]</div>
+                </div>
+                @foreach (var version in FilteredVersions)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1fr 110px 1fr 100px 175px 200px;">
+                        <div class="dx-col-primary">@version.Platform?.PlatformName</div>
+                        <div>
+                            <span class="dx-badge @(version.ArtifactKind == ArtifactKinds.Bootloader ? "dx-badge-blue" : "dx-badge-gray")">
+                                @version.ArtifactKind
+                            </span>
+                        </div>
+                        <div>
+                            @version.VersionNumber
+                            @if (!string.IsNullOrEmpty(version.MinBootloaderVersion))
+                            {
+                                <span class="dx-text-muted" style="font-size:0.75rem; display:block;">needs bootloader @version.MinBootloaderVersion+</span>
+                            }
+                        </div>
+                        <div class="dx-col-hide">@FormatFileSize(version.ZipFileSize)</div>
+                        <div class="dx-col-hide" style="white-space:nowrap;">@version.CreatedDate.ToString("yyyy-MM-dd HH:mm")</div>
+                        <div class="dx-col-actions" style="display:flex; gap:4px; justify-content:flex-end;">
+                            @if (version.ArtifactKind == ArtifactKinds.Bootloader && knownGoodBootloaderId != version.AppVersionId)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                        title="Bless this bootloader as the image a broken player is rescued with"
+                                        @onclick="@(() => SetKnownGood(version))">
+                                    Bless
+                                </button>
+                            }
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="@(() => DeleteVersion(version))">
+                                @LS["Button_Delete"]
+                            </button>
+                        </div>
+                    </div>
+                }
+                @if (!FilteredVersions.Any())
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">No versions uploaded yet.</div>
+                }
+            </div>
+        }
+        else if (activeTab == "devices")
+        {
+            <div class="dx-table dx-collapse" style="margin-top:16px;">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr 140px;">
+                    <div>Device</div>
+                    <div>App version</div>
+                    <div>App target</div>
+                    <div>Bootloader</div>
+                    <div>Bootloader target</div>
+                    <div>Status</div>
+                </div>
+                @foreach (var status in deviceStatuses)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1.2fr 1fr 1fr 1fr 1fr 140px;">
+                        <div class="dx-col-primary">
+                            @status.DeviceId
+                            @if (!string.IsNullOrEmpty(status.PlatformName))
+                            {
+                                <span class="dx-text-muted" style="font-size:0.75rem; display:block;">@status.PlatformName</span>
+                            }
+                        </div>
+                        <div>@(status.CurrentVersion ?? "—")</div>
+                        <div>@(status.TargetVersion ?? "—")</div>
+                        <div>@(status.CurrentBootloaderVersion ?? "—")</div>
+                        <div>@(status.TargetBootloaderVersion ?? "—")</div>
+                        <div>
+                            <span class="dx-badge @GetUpdateStatusBadge(status.UpdateStatus)"
+                                  title="@status.BlockedReason">@status.UpdateStatus</span>
+                        </div>
+                    </div>
+                }
+                @if (!deviceStatuses.Any())
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">
+                        @(isLoadingDeviceStatuses ? "Loading..." : "No devices to report on.")
+                    </div>
+                }
+            </div>
+
+            @if (deviceStatuses.Any(s => s.UpdateStatus == "BLOCKED"))
+            {
+                <div class="dx-alert dx-alert-warning" style="max-width:900px; margin-top:12px;">
+                    <strong>@(deviceStatuses.Count(s => s.UpdateStatus == "BLOCKED")) device(s) blocked.</strong>
+                    A blocked device is held behind a requirement its running artifacts do not meet.
+                    It is not up to date, and it will not become so on its own.
+                </div>
+            }
+        }
+        else if (activeTab == "deployments")
+        {
+            <div style="margin-bottom:16px;">
+                <button class="dx-btn dx-btn-blue" @onclick="ShowNewDeploymentForm">
+                    <i class="bi bi-plus-circle"></i> @L["Button_NewDeployment"]
+                </button>
+            </div>
+
+            @if (showDeploymentForm)
+            {
+                <div class="dx-card" style="max-width:700px; margin-bottom:16px;">
+                    <div class="dx-card-body">
+                        <strong style="display:block; margin-bottom:12px;">@(editingDeployment == null ? L["Label_CreateNewDeployment"] : L["Label_EditDeployment"])</strong>
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_Platform"]</label>
+                                <select class="dx-form-control" @bind="deploymentPlatformId" @bind:after="OnDeploymentPlatformChanged">
+                                    <option value="0">@L["Label_SelectPlatform"]</option>
+                                    @foreach (var p in platforms)
+                                    {
+                                        <option value="@p.PlatformId">@p.PlatformName</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_TargetVersion"]</label>
+                                <select class="dx-form-control" @bind="deploymentVersionId" disabled="@(deploymentPlatformId == 0)">
+                                    <option value="0">@L["Label_SelectVersion"]</option>
+                                    @* The kind is part of the identity, not decoration: an app bundle and a
+                                       bootloader can share a version number under one platform row, so
+                                       without it the list reads as duplicates and the two deploy nothing
+                                       alike. One installs into the idle A/B slot and swaps with no reboot;
+                                       the other replaces autorun.brs and costs a reboot. *@
+                                    @foreach (var v in versions.Where(v => v.PlatformId == deploymentPlatformId
+                                                                       && (string.IsNullOrEmpty(selectedArtifactKind) || v.ArtifactKind == selectedArtifactKind))
+                                                               .OrderBy(v => v.ArtifactKind).ThenByDescending(v => v.AppVersionId))
+                                    {
+                                        <option value="@v.AppVersionId">@v.VersionNumber (@(v.ArtifactKind == ArtifactKinds.Bootloader ? "bootloader" : "app bundle"))</option>
+                                    }
+                                </select>
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_Scope"]</label>
+                                <select class="dx-form-control" @bind="deploymentScope" disabled="@(deploymentPlatformId == 0)">
+                                    <option value="DEVICE">@L["Label_SpecificDevices"]</option>
+                                    <option value="LOCATION">@L["Label_Location"]</option>
+                                    <option value="ALL">@L["Label_AllDevicesPlatform"]</option>
+                                </select>
+                            </div>
+                        </div>
+                        @if (deploymentScope == "LOCATION")
+                        {
+                            <div class="dx-form-group" style="max-width:250px;">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_Location"]</label>
+                                <select class="dx-form-control" @bind="deploymentLocationId">
+                                    <option value="">@L["Label_SelectLocation"]</option>
+                                    @foreach (var loc in locations)
+                                    {
+                                        <option value="@loc.LocationId">@loc.LocationName</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                        @if (deploymentScope == "DEVICE" && deploymentPlatformId > 0)
+                        {
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_SelectDevices"]</label>
+                                <div class="dx-scrollable" style="max-height:200px; border:1px solid var(--dx-border-color); border-radius:var(--dx-border-radius); padding:8px;">
+                                    @foreach (var device in allDevices.Where(d => d.PlatformId == deploymentPlatformId))
+                                    {
+                                        <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.85rem; padding:2px 0;">
+                                            <input type="checkbox" class="dx-checkbox"
+                                                   checked="@selectedDeviceIds.Contains(device.DeviceId)"
+                                                   @onchange="@(e => ToggleDevice(device.DeviceId, (bool)e.Value!))" />
+                                            @(device.Description ?? device.DeviceId)
+                                            <span class="dx-text-muted" style="font-size:0.8rem;">(@device.Location?.LocationName)</span>
+                                        </label>
+                                    }
+                                </div>
+                                <span class="dx-form-hint">@selectedDeviceIds.Count @L["Label_DevicesSelected"]</span>
+                            </div>
+                        }
+                        <div style="border-top:1px solid var(--dx-border-color); padding-top:12px; margin-top:4px;">
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-weight:600; font-size:0.9rem;">
+                                <input type="checkbox" class="dx-checkbox" @bind="allowDowngrade" />
+                                Allow downgrade
+                            </label>
+                            <span class="dx-form-hint" style="display:block; margin-bottom:8px;">
+                                Off by default. A deployment only sends a player to a newer version; tick this
+                                to send one back to an older build, which is how you undo a bad release that
+                                still boots.
+                            </span>
+                            @if (allowDowngrade)
+                            {
+                                <span class="dx-form-hint" style="display:block; margin-bottom:8px; color:var(--dx-warning-color, #b45309);">
+                                    A player moved back to a build that cannot reach Director cannot be moved
+                                    again from here. Recovering it takes physical or local network access.
+                                </span>
+                            }
+                        </div>
+                        <div style="border-top:1px solid var(--dx-border-color); padding-top:12px; margin-top:4px;">
+                            <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-weight:600; font-size:0.9rem;">
+                                <input type="checkbox" class="dx-checkbox" @bind="enableBatching" />
+                                @L["Label_EnableBatchDeployment"]
+                            </label>
+                            <span class="dx-form-hint" style="display:block; margin-bottom:8px;">@L["Label_BatchDescription"]</span>
+                        </div>
+                        @if (enableBatching)
+                        {
+                            <div class="dx-form-group" style="max-width:200px;">
+                                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_BatchSize"]</label>
+                                <input type="number" class="dx-form-control" @bind="batchSize" min="1" max="100" />
+                                <span class="dx-form-hint">@L["Label_BatchSizeDesc"]</span>
+                            </div>
+                        }
+                        <div style="display:flex; gap:8px; margin-top:8px;">
+                            <button class="dx-btn dx-btn-blue" @onclick="SaveDeployment" disabled="@(deploymentPlatformId == 0 || deploymentVersionId == 0)">
+                                @(editingDeployment == null ? L["Button_CreateDeployment"] : L["Button_SaveChanges"])
+                            </button>
+                            <button class="dx-btn dx-btn-gray" @onclick="@(() => showDeploymentForm = false)">@LS["Button_Cancel"]</button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 0.7fr 110px 80px 1fr 80px 140px 175px 215px;">
+                    <div>@L["Column_Platform"]</div>
+                    <div>Kind</div>
+                    <div>@L["Column_Version"]</div>
+                    <div>@L["Column_Scope"]</div>
+                    <div>@LS["Label_Status"]</div>
+                    <div>@L["Column_Batch"]</div>
+                    <div>@L["Column_Created"]</div>
+                    <div style="text-align:right;">@LS["Label_Actions"]</div>
+                </div>
+                @foreach (var deployment in deployments)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 0.7fr 110px 80px 1fr 80px 140px 175px 215px;">
+                        <div class="dx-col-primary">@deployment.AppVersion?.Platform?.PlatformName</div>
+                        @* A version number alone is ambiguous here: the two artifact kinds carry
+                           independent version lines, so one platform can show the same number as
+                           both a bootloader and an app bundle, and the rows deploy nothing alike. *@
+                        <div>
+                            <span class="dx-badge @(deployment.AppVersion?.ArtifactKind == ArtifactKinds.Bootloader ? "dx-badge-blue" : "dx-badge-gray")">
+                                @deployment.AppVersion?.ArtifactKind
+                            </span>
+                        </div>
+                        <div>@deployment.AppVersion?.VersionNumber</div>
+                        <div>
+                            @switch (deployment.DeploymentScope)
+                            {
+                                case "ALL":
+                                    <span>@L["Label_AllDevices"]</span>
+                                    break;
+                                case "LOCATION":
+                                    <span>@deployment.Location?.LocationName</span>
+                                    break;
+                                case "DEVICE":
+                                    <span>@deployment.DeploymentDevices.Count device(s)</span>
+                                    break;
+                            }
+                        </div>
+                        <div>
+                            @if (deployment.IsActive)
+                            {
+                                <span class="dx-badge dx-badge-green">Active</span>
+                            }
+                            else
+                            {
+                                <span class="dx-badge dx-badge-gray">Inactive</span>
+                            }
+                        </div>
+                        <div class="dx-col-hide">
+                            @if (deployment.EnableBatching)
+                            {
+                                @if (!string.IsNullOrEmpty(deployment.BatchStatus))
+                                {
+                                    <span class="dx-badge @GetBatchBadgeClass(deployment.BatchStatus)">
+                                        @deployment.BatchStatus (@deployment.CurrentBatchNumber/@deployment.TotalBatches)
+                                    </span>
+                                }
+                                else
+                                {
+                                    <span class="dx-badge dx-badge-blue">Enabled (Size: @deployment.BatchSize)</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="dx-text-muted">-</span>
+                            }
+                        </div>
+                        <div class="dx-text-muted dx-col-hide" style="font-size:0.85rem; white-space:nowrap;">@deployment.CreatedDate.ToString("yyyy-MM-dd HH:mm")</div>
+                        <div class="dx-col-actions" style="display:flex; gap:4px; justify-content:flex-end; flex-wrap:wrap;">
+                            @if (deployment.EnableBatching && deployment.IsActive)
+                            {
+                                @if (string.IsNullOrEmpty(deployment.BatchStatus) || deployment.BatchStatus == "PENDING")
+                                {
+                                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="@(() => StartBatchDeployment(deployment))">
+                                        Start
+                                    </button>
+                                }
+                                else if (deployment.BatchStatus == "IN_PROGRESS")
+                                {
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => ShowBatchProgress(deployment))">
+                                        Progress
+                                    </button>
+                                }
+                                else if (deployment.BatchStatus == "PAUSED")
+                                {
+                                    <button class="dx-btn dx-btn-green dx-btn-sm" @onclick="@(() => ResumeBatchDeployment(deployment))">
+                                        Resume
+                                    </button>
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => ShowBatchProgress(deployment))">
+                                        Progress
+                                    </button>
+                                }
+                            }
+                            @if (deployment.IsActive)
+                            {
+                                <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="@(() => ToggleDeployment(deployment, false))">
+                                    Deactivate
+                                </button>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => ToggleDeployment(deployment, true))">
+                                    Activate
+                                </button>
+                            }
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="@(() => DeleteDeployment(deployment))">
+                                Delete
+                            </button>
+                        </div>
+                    </div>
+                }
+                @if (!deployments.Any())
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">No deployments configured yet.</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<TblAppPlatform> platforms = new();
+    private List<TblAppVersion> versions = new();
+    private string selectedArtifactKind = "";
+    private List<DeviceUpdateStatusInfo> deviceStatuses = new();
+    private bool isLoadingDeviceStatuses;
+    private int? knownGoodBootloaderId;
+
+    private IEnumerable<TblAppVersion> FilteredVersions =>
+        string.IsNullOrEmpty(selectedArtifactKind)
+            ? versions
+            : versions.Where(v => v.ArtifactKind == selectedArtifactKind);
+    private List<TblUpdateDeployment> deployments = new();
+    private List<TblDevice> allDevices = new();
+    private List<TblLocation> locations = new();
+
+    private int selectedPlatformId = 0;
+    private string activeTab = "versions";
+
+    // Upload form
+    private bool showUploadForm = false;
+    private int uploadPlatformId = 1;
+    private string uploadMinBootloaderVersion = "";
+    private IBrowserFile? selectedFile;
+    private bool isUploading = false;
+
+    // Deployment form
+    private bool showDeploymentForm = false;
+    private TblUpdateDeployment? editingDeployment;
+    private int deploymentPlatformId = 0;
+    private int deploymentVersionId = 0;
+    private string deploymentScope = "DEVICE";
+    private int? deploymentLocationId;
+    private HashSet<string> selectedDeviceIds = new();
+    private bool enableBatching = false;
+    private bool allowDowngrade = false;
+    private int batchSize = 10;
+
+    // Status messages
+    private string statusMessage = "";
+    private bool isError = false;
+
+    // Download form
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        platforms = await updateService.GetAllPlatformsAsync();
+        await LoadVersions();
+        await LoadDeployments();
+        await LoadAllDevices();
+        await LoadLocations();
+    }
+
+    /// <summary>
+    /// Blesses a bootloader as the rescue image. Deliberately separate from any rollout target:
+    /// conflating them would let a candidate under test become the image that rescues players it
+    /// may itself have broken.
+    /// </summary>
+    private async Task ShowDeviceStatuses()
+    {
+        activeTab = "devices";
+        isLoadingDeviceStatuses = true;
+        try
+        {
+            deviceStatuses = await updateService.GetDeviceUpdateStatusesAsync(
+                selectedPlatformId == 0 ? null : selectedPlatformId);
+        }
+        finally
+        {
+            isLoadingDeviceStatuses = false;
+        }
+    }
+
+    private static string GetUpdateStatusBadge(string status) => status switch
+    {
+        "UP_TO_DATE" => "dx-badge-green",
+        "UPDATE_AVAILABLE" => "dx-badge-blue",
+        "IN_PROGRESS" => "dx-badge-gray",
+        "FAILED" => "dx-badge-red",
+        "BLOCKED" => "dx-badge-yellow",
+        _ => "dx-badge-gray",
+    };
+
+    private async Task SetKnownGood(TblAppVersion version)
+    {
+        try
+        {
+            await updateService.SetKnownGoodBootloaderAsync(version.AppVersionId, SessionState.UserName);
+            knownGoodBootloaderId = version.AppVersionId;
+            ShowStatus($"Bootloader {version.VersionNumber} is now the known-good rescue image.", false);
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to set known-good bootloader: {ex.Message}", true);
+        }
+    }
+
+    private async Task LoadVersions()
+    {
+        int? platformFilter = selectedPlatformId > 0 ? selectedPlatformId : null;
+        versions = await updateService.GetAllVersionsAsync(platformFilter);
+
+        // Read rather than derived from a flag, which also makes "nothing is blessed yet" a
+        // visible state rather than an empty query.
+        knownGoodBootloaderId = (await updateService.GetKnownGoodBootloaderAsync())?.AppVersionId;
+    }
+
+    private async Task LoadDeployments()
+    {
+        deployments = await updateService.GetAllDeploymentsAsync();
+    }
+
+    private async Task LoadAllDevices()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        allDevices = await db.TblDevices
+            .Include(d => d.Location)
+            .Include(d => d.Platform)
+            .OrderBy(d => d.Location!.LocationName)
+            .ThenBy(d => d.Description)
+            .ToListAsync();
+    }
+
+    private async Task LoadLocations()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        locations = await db.TblLocations.OrderBy(l => l.LocationName).ToListAsync();
+    }
+
+    private async Task OnPlatformChanged()
+    {
+        await LoadVersions();
+    }
+
+    private void ShowUploadForm()
+    {
+        showUploadForm = true;
+        selectedFile = null;
+        uploadMinBootloaderVersion = "";
+        if (platforms.Any())
+        {
+            uploadPlatformId = platforms.First().PlatformId;
+        }
+    }
+
+    private void OnFileSelected(InputFileChangeEventArgs e)
+    {
+        selectedFile = e.File;
+    }
+
+    private async Task UploadVersion()
+    {
+        if (selectedFile == null)
+        {
+            ShowStatus("Please select a ZIP file.", true);
+            return;
+        }
+
+        isUploading = true;
+        StateHasChanged();
+
+        try
+        {
+            var platform = platforms.FirstOrDefault(p => p.PlatformId == uploadPlatformId);
+            if (platform == null)
+            {
+                ShowStatus("Invalid platform selected.", true);
+                return;
+            }
+
+            await using var stream = selectedFile.OpenReadStream(maxAllowedSize: 500_000_000);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            memoryStream.Position = 0;
+
+            // The artifact declares its own version: manifest.json for Engage for BrightSign,
+            // config.json for legacy SignageOS applets. Resolved through the same reader the
+            // publish API uses, because these two paths diverged once and this form then refused
+            // every BrightSign artifact ever built.
+            var extractedVersion = ArtifactManifest.TryReadDeclaredVersion(memoryStream, out var versionError);
+            if (extractedVersion == null)
+            {
+                ShowStatus(versionError ?? "Artifact carries no version.", true);
+                return;
+            }
+
+            var existingVersion = versions.FirstOrDefault(v =>
+                v.PlatformId == uploadPlatformId &&
+                v.VersionNumber == extractedVersion);
+            if (existingVersion != null)
+            {
+                ShowStatus($"Version {extractedVersion} already exists for {platform.PlatformName}. Delete it first or use a different version number.", true);
+                return;
+            }
+
+            var kind = string.IsNullOrEmpty(selectedArtifactKind) ? ArtifactKinds.App : selectedArtifactKind;
+
+            var relativeDirectory = kind == ArtifactKinds.Bootloader
+                ? $"PlayerContent/{platform.FolderName}/bootloader/{extractedVersion}"
+                : $"PlayerContent/{platform.FolderName}/{extractedVersion}";
+
+            var fileName = kind == ArtifactKinds.Bootloader
+                ? $"Bootloader_{platform.FolderName}_v{extractedVersion}.zip"
+                : $"DirectorClient_{platform.FolderName}_v{extractedVersion}.zip";
+
+            // Through the artifact store, so this path cannot put a new artifact back under the
+            // web root where static-file middleware would serve it to anyone.
+            memoryStream.Position = 0;
+            var storedPath = await artifactStore.SaveAsync(memoryStream, $"{relativeDirectory}/{fileName}");
+
+            var hash = updateService.ComputeFileHash(artifactStore.ResolveExisting(storedPath)!);
+
+            var version = new TblAppVersion
+            {
+                PlatformId = uploadPlatformId,
+                VersionNumber = extractedVersion,
+                VersionName = null,
+                ReleaseNotes = null,
+                ArtifactKind = kind,
+                // Only an app can be gated on a bootloader floor, and without one a player can
+                // take a bundle its bootloader is too old to run.
+                MinBootloaderVersion = kind == ArtifactKinds.App && !string.IsNullOrWhiteSpace(uploadMinBootloaderVersion)
+                    ? uploadMinBootloaderVersion.Trim()
+                    : null,
+                ZipFileName = fileName,
+                ZipFilePath = storedPath,
+                ZipFileSize = selectedFile.Size,
+                ZipFileHash = hash
+            };
+
+            // Nothing recorded who put code on a fleet: this path omitted CreatedBy entirely.
+            await updateService.CreateVersionAsync(version, artifactStore, SessionState.UserName);
+
+            ShowStatus($"Version {extractedVersion} uploaded successfully!", false);
+            showUploadForm = false;
+            await LoadVersions();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Upload failed: {ex.Message}", true);
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private void ShowNewDeploymentForm()
+    {
+        showDeploymentForm = true;
+        editingDeployment = null;
+        deploymentPlatformId = 0;
+        deploymentVersionId = 0;
+        deploymentScope = "DEVICE";
+        deploymentLocationId = null;
+        selectedDeviceIds.Clear();
+        enableBatching = false;
+        allowDowngrade = false;
+        batchSize = 10;
+    }
+
+    private void OnDeploymentPlatformChanged()
+    {
+        deploymentVersionId = 0;
+        selectedDeviceIds.Clear();
+    }
+
+    private void ToggleDevice(string deviceId, bool selected)
+    {
+        if (selected)
+            selectedDeviceIds.Add(deviceId);
+        else
+            selectedDeviceIds.Remove(deviceId);
+    }
+
+    private async Task SaveDeployment()
+    {
+        if (deploymentPlatformId == 0 || deploymentVersionId == 0)
+        {
+            ShowStatus("Please select a platform and version.", true);
+            return;
+        }
+
+        if (deploymentScope == "DEVICE" && !selectedDeviceIds.Any())
+        {
+            ShowStatus("Please select at least one device.", true);
+            return;
+        }
+
+        if (deploymentScope == "LOCATION" && !deploymentLocationId.HasValue)
+        {
+            ShowStatus("Please select a location.", true);
+            return;
+        }
+
+        try
+        {
+            var selectedVersion = versions.FirstOrDefault(v => v.AppVersionId == deploymentVersionId);
+            var platformName = platforms.FirstOrDefault(p => p.PlatformId == deploymentPlatformId)?.PlatformName ?? "Unknown";
+
+            var autoName = $"{platformName} - {selectedVersion?.VersionNumber} - {deploymentScope}";
+
+            var deployment = new TblUpdateDeployment
+            {
+                DeploymentName = autoName,
+                Description = null,
+                AppVersionId = deploymentVersionId,
+                DeploymentScope = deploymentScope,
+                LocationId = deploymentScope == "LOCATION" ? deploymentLocationId : null,
+                IsActive = false,
+                AllowDowngrade = allowDowngrade,
+                EnableBatching = enableBatching,
+                BatchSize = enableBatching ? batchSize : 10
+            };
+
+            var deviceIds = deploymentScope == "DEVICE" ? selectedDeviceIds.ToList() : null;
+            await updateService.CreateDeploymentAsync(deployment, deviceIds);
+
+            ShowStatus($"Deployment created successfully.", false);
+            showDeploymentForm = false;
+            await LoadDeployments();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to create deployment: {ex.Message}", true);
+        }
+    }
+
+    private async Task ToggleDeployment(TblUpdateDeployment deployment, bool active)
+    {
+        try
+        {
+            if (active)
+            {
+                var platformId = deployment.AppVersion?.PlatformId;
+
+                // Two deployments conflict only when they target the same artifact kind. The
+                // resolver answers "what is targeted at this device" once per kind, so a bootloader
+                // deployment and an app deployment are both required at once: a player below the
+                // app bundle's minimum bootloader is offered the bootloader first and the app on a
+                // later poll. Without this, activating one switched the other off and the fleet
+                // could never cross a release that moved both.
+                var artifactKind = deployment.AppVersion?.ArtifactKind;
+
+                if (deployment.DeploymentScope == "ALL" && platformId.HasValue)
+                {
+                    var conflicting = deployments
+                        .Where(d => d.IsActive &&
+                                    d.DeploymentScope == "ALL" &&
+                                    d.AppVersion?.PlatformId == platformId &&
+                                    d.AppVersion?.ArtifactKind == artifactKind &&
+                                    d.DeploymentId != deployment.DeploymentId)
+                        .ToList();
+
+                    foreach (var conflict in conflicting)
+                    {
+                        conflict.IsActive = false;
+                        await updateService.UpdateDeploymentAsync(conflict);
+                    }
+                }
+                else if (deployment.DeploymentScope == "LOCATION" && platformId.HasValue)
+                {
+                    var conflicting = deployments
+                        .Where(d => d.IsActive &&
+                                    d.DeploymentScope == "LOCATION" &&
+                                    d.AppVersion?.PlatformId == platformId &&
+                                    d.AppVersion?.ArtifactKind == artifactKind &&
+                                    d.LocationId == deployment.LocationId &&
+                                    d.DeploymentId != deployment.DeploymentId)
+                        .ToList();
+
+                    foreach (var conflict in conflicting)
+                    {
+                        conflict.IsActive = false;
+                        await updateService.UpdateDeploymentAsync(conflict);
+                    }
+                }
+                else if (deployment.DeploymentScope == "DEVICE" && platformId.HasValue)
+                {
+                    var thisDeviceIds = deployment.DeploymentDevices.Select(dd => dd.DeviceId).ToHashSet();
+                    var conflicting = deployments
+                        .Where(d => d.IsActive &&
+                                    d.DeploymentScope == "DEVICE" &&
+                                    d.AppVersion?.PlatformId == platformId &&
+                                    d.AppVersion?.ArtifactKind == artifactKind &&
+                                    d.DeploymentId != deployment.DeploymentId &&
+                                    d.DeploymentDevices.Any(dd => thisDeviceIds.Contains(dd.DeviceId)))
+                        .ToList();
+
+                    foreach (var conflict in conflicting)
+                    {
+                        conflict.IsActive = false;
+                        await updateService.UpdateDeploymentAsync(conflict);
+                    }
+                }
+            }
+
+            deployment.IsActive = active;
+            await updateService.UpdateDeploymentAsync(deployment);
+            await LoadDeployments();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to update deployment: {ex.Message}", true);
+        }
+    }
+
+    private async Task DeleteDeployment(TblUpdateDeployment deployment)
+    {
+        try
+        {
+            await updateService.DeleteDeploymentAsync(deployment.DeploymentId);
+            ShowStatus($"Deployment deleted.", false);
+            await LoadDeployments();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to delete deployment: {ex.Message}", true);
+        }
+    }
+
+    private async Task DeleteVersion(TblAppVersion version)
+    {
+        try
+        {
+            await updateService.DeleteVersionAsync(version.AppVersionId, artifactStore);
+            ShowStatus($"Version {version.VersionNumber} deleted successfully.", false);
+            await LoadVersions();
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Failed to delete version: {ex.Message}", true);
+        }
+    }
+
+    private void ShowStatus(string message, bool error)
+    {
+        statusMessage = message;
+        isError = error;
+        StateHasChanged();
+    }
+
+    private string FormatFileSize(long? bytes)
+    {
+        if (!bytes.HasValue) return "-";
+        var kb = bytes.Value / 1024.0;
+        if (kb < 1024) return $"{kb:F1} KB";
+        var mb = kb / 1024.0;
+        return $"{mb:F1} MB";
+    }
+
+    private string GetBatchBadgeClass(string? status) => status switch
+    {
+        "IN_PROGRESS" => "dx-badge-blue",
+        "PAUSED" => "dx-badge-yellow",
+        "COMPLETED" => "dx-badge-green",
+        "FAILED" => "dx-badge-red",
+        "PENDING" => "dx-badge-gray",
+        _ => "dx-badge-gray"
+    };
+
+    private async Task StartBatchDeployment(TblUpdateDeployment deployment)
+    {
+        try
+        {
+            var result = await batchDeploymentService.StartBatchDeploymentAsync(deployment.DeploymentId);
+            if (result.Success)
+            {
+                ShowStatus($"Batch deployment started: {result.TotalDevices} devices in {result.TotalBatches} batches", false);
+                await batchDeploymentStateService.ShowModalAsync(deployment.DeploymentId);
+                await LoadDeployments();
+            }
+            else
+            {
+                ShowStatus($"Failed to start batch deployment: {result.ErrorMessage}", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error starting batch deployment: {ex.Message}", true);
+        }
+    }
+
+    private async Task ResumeBatchDeployment(TblUpdateDeployment deployment)
+    {
+        try
+        {
+            var success = await batchDeploymentService.ResumeBatchDeploymentAsync(deployment.DeploymentId);
+            if (success)
+            {
+                ShowStatus("Batch deployment resumed", false);
+                await batchDeploymentStateService.ShowModalAsync(deployment.DeploymentId);
+                await LoadDeployments();
+            }
+            else
+            {
+                ShowStatus("Failed to resume batch deployment", true);
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowStatus($"Error resuming batch deployment: {ex.Message}", true);
+        }
+    }
+
+    private async Task ShowBatchProgress(TblUpdateDeployment deployment)
+    {
+        await batchDeploymentStateService.ShowModalAsync(deployment.DeploymentId);
+    }
+}

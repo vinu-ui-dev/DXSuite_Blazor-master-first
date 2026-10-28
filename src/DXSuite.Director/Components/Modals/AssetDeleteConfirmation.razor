@@ -1,0 +1,193 @@
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+@inject IAssetApprovalService AssetApprovalService
+@inject AssetThumbnailCleanupService ThumbnailCleanup
+@inject ILogger<AssetDeleteConfirmation> Logger
+@inject IAssetSoftDeleteService AssetSoftDelete
+
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal asset-delete-modal" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5>Delete Asset</h5>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close"
+                        @onclick="Close"></button>
+            </div>
+            <div class="dx-modal-body">
+                @if (displaysUsingAsset.Count > 0)
+                {
+                    <p>This asset is used by the following display(s):</p>
+                    <ul style="margin-bottom:12px;">
+                        @foreach (var d in displaysUsingAsset)
+                        {
+                            <li>@d.DisplayName</li>
+                        }
+                    </ul>
+                    <p class="text-muted" style="font-size:13px;">
+                        Deleting this asset will not remove it from displays where it is currently assigned,
+                        but it will no longer be selectable in the schedule builder.
+                    </p>
+                }
+                else
+                {
+                    <p>Are you sure you want to delete this asset?</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-red" @onclick="Confirm" disabled="@isDeleting">Delete</button>
+                <button class="dx-btn dx-btn-gray" @onclick="Close" disabled="@isDeleting">Cancel</button>
+            </div>
+
+            @if (isDeleting)
+            {
+                <div class="asset-delete-overlay">
+                    <div class="dx-spinner"></div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnAssetDeleted { get; set; }
+    [Parameter] public EventCallback<MediaFile> OnAssetDeletedMediaFile { get; set; }
+    [Parameter] public RenderFragment? ChildContent { get; set; }
+
+    private bool isVisible;
+    private bool isDeleting;
+    private int? assetId;
+    private int? locationId;
+    private MediaFile? pendingMediaFile;
+    private List<TblDisplay> displaysUsingAsset = new();
+
+    public async Task Open(int assetId, int locationId, object? mediaFile = null)
+    {
+        this.assetId = assetId;
+        this.locationId = locationId;
+        pendingMediaFile = mediaFile as MediaFile;
+        isDeleting = false;
+        displaysUsingAsset.Clear();
+
+        // Load displays currently referencing this asset so the user knows the impact
+        if (pendingMediaFile == null && assetId > 0)
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            // Displays with this asset set as their override asset
+            var overrideDisplays = await db.TblDisplays
+                .Where(d => d.OverrideAssetId == assetId)
+                .ToListAsync();
+
+            foreach (var d in overrideDisplays)
+                displaysUsingAsset.Add(d);
+
+            // Displays whose schedule events reference this asset in ContentAssignment JSON
+            if (locationId > 0)
+            {
+                var locationDisplayIds = await db.TblDisplays
+                    .Where(d => d.LocationId == locationId)
+                    .Select(d => d.DisplayId)
+                    .ToListAsync();
+
+                var scheduleEvents = await db.TblScheduleEvents
+                    .Where(e => locationDisplayIds.Contains(e.DisplayId))
+                    .Include(e => e.Display)
+                    .ToListAsync();
+
+                foreach (var evt in scheduleEvents)
+                {
+                    if (string.IsNullOrWhiteSpace(evt.ContentAssignment)) continue;
+                    try
+                    {
+                        var ca = System.Text.Json.JsonSerializer.Deserialize<ContentAssignment>(
+                            evt.ContentAssignment,
+                            new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (ca?.Content?.Any(c => c.AssetId == assetId) == true)
+                        {
+                            if (!displaysUsingAsset.Any(d => d.DisplayId == evt.DisplayId))
+                                displaysUsingAsset.Add(evt.Display);
+                        }
+                    }
+                    catch { /* malformed JSON — skip */ }
+                }
+            }
+
+            displaysUsingAsset = displaysUsingAsset.OrderBy(d => d.DisplayId).ToList();
+        }
+
+        isVisible = true;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        if (isDeleting) return;
+        isVisible = false;
+        pendingMediaFile = null;
+        displaysUsingAsset.Clear();
+        StateHasChanged();
+    }
+
+    private async Task Confirm()
+    {
+        isDeleting = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            if (pendingMediaFile != null)
+            {
+                // MediaFile path — physical file deletion handled by the caller
+                await OnAssetDeletedMediaFile.InvokeAsync(pendingMediaFile);
+            }
+            else if (assetId.HasValue && assetId.Value > 0)
+            {
+                var asset = await AssetSoftDelete.SoftDeleteAsync(assetId.Value);
+                if (asset != null)
+                {
+                    await ThumbnailCleanup.CleanUpAsync(asset);
+                    Logger.LogInformation("Asset {AssetId} soft-deleted", assetId.Value);
+                }
+
+                // Withdraw any pending approval records so the asset leaves the approval queues
+                await AssetApprovalService.WithdrawPendingForAssetAsync(assetId.Value);
+
+                await OnAssetDeleted.InvokeAsync();
+            }
+
+            // Brief pause so the spinner is visible before the modal closes
+            await Task.Delay(400);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting asset {AssetId}", assetId);
+        }
+        finally
+        {
+            isVisible = false;
+            isDeleting = false;
+            pendingMediaFile = null;
+            displaysUsingAsset.Clear();
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}
+
+<style>
+    .asset-delete-modal {
+        position: relative;
+    }
+
+    .asset-delete-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(255, 255, 255, 0.85);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        border-radius: inherit;
+    }
+</style>

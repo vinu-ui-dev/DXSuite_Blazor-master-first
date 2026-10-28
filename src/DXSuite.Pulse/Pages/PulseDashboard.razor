@@ -1,0 +1,48 @@
+@page "/pulse"
+@using DXSuite.Shared.Services
+@using Microsoft.Extensions.DependencyInjection
+@rendermode InteractiveServer
+@inject IPulseService pulseService
+@inject IServiceProvider serviceProvider
+
+<PageTitle>Pulse Dashboard</PageTitle>
+
+<h1 style="margin-bottom:20px;">Pulse Dashboard</h1>
+
+<div style="display:flex; gap:20px; flex-wrap:wrap;">
+    <div style="flex:1; min-width:300px;">
+        <DXSuite.Pulse.Components.PulseHealthCard />
+    </div>
+    <div style="flex:1; min-width:300px;">
+        <div class="dx-card">
+            <div class="dx-card-body">
+                <h5 style="font-weight:600; margin-bottom:8px;">Sentinel Integration</h5>
+                @if (sentinelAvailable == true)
+                {
+                    <span class="dx-badge dx-badge-green">Connected</span>
+                    <p class="dx-text-muted" style="margin-top:8px;">Sentinel module is active. Device monitoring data is available.</p>
+                }
+                else if (sentinelAvailable == false)
+                {
+                    <span class="dx-badge dx-badge-gray">Unavailable</span>
+                    <p class="dx-text-muted" style="margin-top:8px;">Sentinel module is not active. Enable it for full device monitoring.</p>
+                }
+                else
+                {
+                    <span class="dx-badge dx-badge-yellow">Not Installed</span>
+                    <p class="dx-text-muted" style="margin-top:8px;">Sentinel module is not registered.</p>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private bool? sentinelAvailable;
+
+    protected override void OnInitialized()
+    {
+        var sentinel = serviceProvider.GetService<ISentinelAvailabilityService>();
+        sentinelAvailable = sentinel?.IsAvailable;
+    }
+}

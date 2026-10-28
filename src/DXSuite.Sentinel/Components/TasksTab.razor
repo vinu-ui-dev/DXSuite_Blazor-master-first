@@ -1,0 +1,638 @@
+@using System.Security.Cryptography
+@using System.Text
+@using DXSuite.Sentinel.Services.Gateway
+@using DXSuite.Sentinel.Services.Tasks
+@inject ISentinelDBContext sentinelDb
+@inject ITaskExecutionService taskExecutor
+@inject IGatewayConnectionManager gatewayManager
+@inject IConfiguration configuration
+@inject ISessionState sessionState
+@inject ILogger<TasksTab> Logger
+
+<div class="tab-panel">
+    <div class="panel-header">
+        <h3>Tasks <DXSuite.Shared.Components.HelpLink Page="tasks/overview" Title="Tasks help" /></h3>
+        <button class="dx-btn dx-btn-blue" @onclick="StartAddTask">ADD TASK</button>
+    </div>
+    <div class="panel-content">
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <div class="form-message @(messageIsError ? "error" : "success")">@message</div>
+        }
+
+        @if (showForm && editing is not null)
+        {
+            <div class="sentinel-inline-form">
+                <h4>@(editing.TaskId > 0 ? "Edit Task" : "New Task")</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Name</label>
+                        <input class="dx-form-control" @bind="editing.Name" placeholder="e.g. Clear Chromium cache" />
+                    </div>
+                    <div class="form-group">
+                        <label>Script Type</label>
+                        <select class="dx-form-control" @bind="editing.ScriptType">
+                            <option value="powershell">PowerShell</option>
+                            <option value="cmd">cmd</option>
+                            <option value="bash">bash</option>
+                            <option value="js">JavaScript (SoC)</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Execution Location</label>
+                        <select class="dx-form-control" @bind="editing.ExecutionLocation">
+                            <option value="windows-agent">Windows agent</option>
+                            <option value="linux-agent">Linux agent</option>
+                            <option value="soc-player">SoC player</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label>Timeout (ms)</label>
+                        <input type="number" class="dx-form-control" @bind="editing.TimeoutMs" />
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input class="dx-form-control" @bind="editing.Description" />
+                </div>
+                <div class="form-group">
+                    <label>Script</label>
+                    <textarea class="dx-form-control script-editor" rows="10" @bind="editing.ScriptContent"
+                              placeholder="# Script body — runs on the target agent"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group" style="flex:0 0 auto;">
+                        <label><input type="checkbox" class="dx-checkbox" @bind="editing.RequiresApproval" /> Requires approval (high-risk)</label>
+                    </div>
+                    <div class="form-group" style="flex:0 0 auto;">
+                        <label><input type="checkbox" class="dx-checkbox" @bind="editing.IsActive" /> Active</label>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveTask">SAVE</button>
+                    <button class="dx-btn dx-btn-gray" @onclick="CancelForm">CANCEL</button>
+                </div>
+            </div>
+        }
+
+        @if (tasks is null)
+        {
+            <div style="text-align:center; padding:40px;"><div class="dx-spinner" role="status"></div></div>
+        }
+        else if (!tasks.Any())
+        {
+            <div class="no-devices">
+                <h4>No tasks defined</h4>
+                <p>Create a task to run scripts on your agents on demand, on a schedule, or reactively.</p>
+            </div>
+        }
+        else
+        {
+            <div class="task-grid-header">
+                <div>Name</div><div>Type</div><div>Location</div><div>Active</div><div class="ta-right">Actions</div>
+            </div>
+            @foreach (var t in tasks)
+            {
+                <div class="task-row">
+                    <div class="t-name">@t.Name</div>
+                    <div>@t.ScriptType</div>
+                    <div>@t.ExecutionLocation</div>
+                    <div><span class="active-badge @(t.IsActive ? "badge-green" : "badge-gray")">@(t.IsActive ? "Active" : "Inactive")</span></div>
+                    <div class="ta-right">
+                        <button class="action-link" @onclick="() => OpenRun(t)">Run</button>
+                        <button class="action-link" @onclick="() => OpenSchedule(t)">Schedule</button>
+                        <button class="action-link" @onclick="() => StartEditTask(t)">Edit</button>
+                        <button class="action-link danger" @onclick="() => DeleteTask(t)">Delete</button>
+                    </div>
+                </div>
+
+                @if (runTaskId == t.TaskId)
+                {
+                    <div class="run-panel">
+                        @{ var online = gatewayManager.GetConnectedGateways(); }
+                        @if (!online.Any())
+                        {
+                            <span class="run-hint">No agents are online to run this task.</span>
+                        }
+                        else
+                        {
+                            <label>Run on agent:</label>
+                            <select class="dx-form-control run-select" @bind="runGatewayId">
+                                @foreach (var g in online)
+                                {
+                                    <option value="@g.GatewayId">Gateway @g.GatewayId @(string.IsNullOrEmpty(g.GatewayVersion) ? "" : $"(v{g.GatewayVersion})")</option>
+                                }
+                            </select>
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="DoRun" disabled="@isRunning">@(isRunning ? "Running…" : "Run now")</button>
+                        }
+                        <button class="action-link" @onclick="() => runTaskId = null">close</button>
+
+                        @if (runResult is not null)
+                        {
+                            <div class="run-result @(runResult.Success ? "ok" : "fail")">
+                                <strong>@(runResult.Success ? "Success" : "Failed")</strong> — exit @(runResult.ExitCode?.ToString() ?? "?")
+                                @if (!string.IsNullOrEmpty(runResult.Stdout)) { <pre>@runResult.Stdout</pre> }
+                                @if (!string.IsNullOrEmpty(runResult.Error)) { <pre class="err">@runResult.Error</pre> }
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (scheduleTaskId == t.TaskId)
+                {
+                    <div class="sched-panel">
+                        <div class="sched-col">
+                            <h5>Targets <span class="sched-sub">where it runs</span></h5>
+                            @if (targets is null) { <span class="run-hint">Loading…</span> }
+                            else
+                            {
+                                @if (!targets.Any()) { <p class="run-hint">No targets yet. Add one so scheduled runs have somewhere to go.</p> }
+                                @foreach (var tg in targets)
+                                {
+                                    <div class="sched-item">
+                                        <span>@(tg.TargetScope == "all" ? "All online agents" : $"Gateway {tg.TargetRef}")</span>
+                                        <button class="action-link danger" @onclick="() => RemoveTarget(tg)">remove</button>
+                                    </div>
+                                }
+                                <div class="sched-add">
+                                    <select class="dx-form-control" @bind="newTargetValue">
+                                        <option value="all">All online agents</option>
+                                        @foreach (var g in gatewayManager.GetConnectedGateways())
+                                        {
+                                            <option value="@g.GatewayId">Gateway @g.GatewayId</option>
+                                        }
+                                    </select>
+                                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => AddTarget(t)">Add target</button>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="sched-col">
+                            <h5>Schedules <span class="sched-sub">when it runs (UTC)</span></h5>
+                            @if (schedules is null) { <span class="run-hint">Loading…</span> }
+                            else
+                            {
+                                @if (!schedules.Any()) { <p class="run-hint">No schedules.</p> }
+                                @foreach (var sc in schedules)
+                                {
+                                    <div class="sched-item">
+                                        <span>
+                                            <span class="active-badge @(sc.IsEnabled ? "badge-green" : "badge-gray")">@(sc.IsEnabled ? "on" : "off")</span>
+                                            @DescribeSchedule(sc)
+                                            <span class="sched-meta">next @(sc.NextRunUtc?.ToString("MMM dd HH:mm") ?? "—")@(sc.LastStatus is null ? "" : $" · last {sc.LastStatus}")</span>
+                                        </span>
+                                        <span>
+                                            <button class="action-link" @onclick="() => ToggleSchedule(sc)">@(sc.IsEnabled ? "disable" : "enable")</button>
+                                            <button class="action-link danger" @onclick="() => RemoveSchedule(sc)">remove</button>
+                                        </span>
+                                    </div>
+                                }
+                                <div class="sched-add">
+                                    <select class="dx-form-control" @bind="newSchedMode">
+                                        <option value="interval">Every N seconds</option>
+                                        <option value="daily">Daily at time</option>
+                                        <option value="weekly">Weekly on days at time</option>
+                                        <option value="once">Once at time</option>
+                                    </select>
+                                    @if (newSchedMode == "interval")
+                                    {
+                                        <input type="number" class="dx-form-control sched-narrow" @bind="newSchedFrequency" placeholder="seconds" />
+                                    }
+                                    else
+                                    {
+                                        <input type="time" step="1" class="dx-form-control sched-narrow" @bind="newSchedTime" />
+                                    }
+                                    @if (newSchedMode == "weekly")
+                                    {
+                                        <span class="sched-days">
+                                            @for (int d = 0; d < 7; d++)
+                                            {
+                                                var day = d;
+                                                <label><input type="checkbox" checked="@newSchedDays.Contains(day)" @onchange="e => ToggleDay(day, e)" /> @DayAbbr(day)</label>
+                                            }
+                                        </span>
+                                    }
+                                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => AddSchedule(t)">Add schedule</button>
+                                </div>
+                            }
+                        </div>
+
+                        <button class="action-link sched-close" @onclick="() => scheduleTaskId = null">close</button>
+                    </div>
+                }
+            }
+
+            <h4 class="history-title">Recent executions</h4>
+            @if (recentRuns is null || !recentRuns.Any())
+            {
+                <p class="run-hint">No executions yet.</p>
+            }
+            else
+            {
+                <div class="task-grid-header history-grid">
+                    <div>Task</div><div>Status</div><div>Exit</div><div>Started</div><div>Duration</div><div>Trigger</div>
+                </div>
+                @foreach (var r in recentRuns)
+                {
+                    <div class="task-row history-grid">
+                        <div>@(r.Task?.Name ?? $"#{r.TaskId}")</div>
+                        <div><span class="active-badge @StatusBadge(r.Status)">@r.Status</span></div>
+                        <div>@(r.ExitCode?.ToString() ?? "—")</div>
+                        <div>@r.StartUtc.ToString("MMM dd HH:mm:ss")</div>
+                        <div>@(r.DurationMs.HasValue ? $"{r.DurationMs} ms" : "—")</div>
+                        <div class="t-trigger">@r.TriggeredBy</div>
+                    </div>
+                }
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private List<SentinelTask>? tasks;
+    private List<SentinelTaskExecutionLog>? recentRuns;
+    private SentinelTask? editing;
+    private bool showForm;
+    private string? message;
+    private bool messageIsError;
+
+    private int? runTaskId;
+    private int runGatewayId;
+    private bool isRunning;
+    private TaskExecutionResult? runResult;
+
+    private int? scheduleTaskId;
+    private List<SentinelTaskTarget>? targets;
+    private List<SentinelTaskSchedule>? schedules;
+    private string newTargetValue = "all";
+    private string newSchedMode = "interval";
+    private int newSchedFrequency = 3600;
+    private TimeOnly newSchedTime = new(2, 0);
+    private readonly HashSet<int> newSchedDays = new();
+
+    private string CustomerCode => configuration["CustomerInfo:CustomerCode"] ?? "RAD";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadTasks();
+        await LoadRecentRuns();
+    }
+
+    private async Task LoadTasks()
+    {
+        try
+        {
+            tasks = await sentinelDb.SentinelTasks
+                .AsNoTracking()
+                .Where(t => t.CustomerId == CustomerCode)
+                .OrderBy(t => t.Name)
+                .ToListAsync();
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error loading tasks"); tasks = new(); }
+    }
+
+    private async Task LoadRecentRuns()
+    {
+        try
+        {
+            recentRuns = await sentinelDb.SentinelTaskExecutionLogs
+                .AsNoTracking()
+                .Include(l => l.Task)
+                .OrderByDescending(l => l.CreateDate)
+                .Take(20)
+                .ToListAsync();
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error loading task history"); recentRuns = new(); }
+    }
+
+    private void StartAddTask()
+    {
+        editing = new SentinelTask
+        {
+            CustomerId = CustomerCode,
+            ScriptType = "powershell",
+            ExecutionLocation = "windows-agent",
+            TimeoutMs = 60000,
+            IsActive = true,
+            CreateDate = DateTime.UtcNow
+        };
+        showForm = true;
+        message = null;
+    }
+
+    private void StartEditTask(SentinelTask t)
+    {
+        editing = new SentinelTask
+        {
+            TaskId = t.TaskId,
+            CustomerId = t.CustomerId,
+            Name = t.Name,
+            Description = t.Description,
+            ScriptType = t.ScriptType,
+            ExecutionLocation = t.ExecutionLocation,
+            ScriptContent = t.ScriptContent,
+            TimeoutMs = t.TimeoutMs,
+            RequiresApproval = t.RequiresApproval,
+            IsActive = t.IsActive,
+            CreateDate = t.CreateDate
+        };
+        showForm = true;
+        message = null;
+    }
+
+    private async Task SaveTask()
+    {
+        if (editing is null) return;
+        if (string.IsNullOrWhiteSpace(editing.Name) || string.IsNullOrWhiteSpace(editing.ScriptContent))
+        {
+            ShowMessage("Name and script body are required.", true);
+            return;
+        }
+
+        try
+        {
+            var hash = ComputeSha256(editing.ScriptContent);
+            if (editing.TaskId > 0)
+            {
+                var existing = await sentinelDb.SentinelTasks.FindAsync(editing.TaskId);
+                if (existing is null) { ShowMessage("Task not found.", true); return; }
+                existing.Name = editing.Name;
+                existing.Description = editing.Description;
+                existing.ScriptType = editing.ScriptType;
+                existing.ExecutionLocation = editing.ExecutionLocation;
+                existing.ScriptContent = editing.ScriptContent;
+                existing.ContentHash = hash;
+                existing.TimeoutMs = editing.TimeoutMs;
+                existing.RequiresApproval = editing.RequiresApproval;
+                existing.IsActive = editing.IsActive;
+                existing.LastEditDate = DateTime.UtcNow;
+                existing.LastEditUser = sessionState.User?.UserId.ToString();
+            }
+            else
+            {
+                editing.ContentHash = hash;
+                editing.CreatedBy = sessionState.User?.UserId.ToString();
+                sentinelDb.SentinelTasks.Add(editing);
+            }
+            await sentinelDb.SaveChangesAsync();
+            showForm = false;
+            editing = null;
+            await LoadTasks();
+            ShowMessage("Task saved.", false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving task");
+            ShowMessage($"Error saving task: {ex.Message}", true);
+        }
+    }
+
+    private async Task DeleteTask(SentinelTask t)
+    {
+        try
+        {
+            var existing = await sentinelDb.SentinelTasks.FindAsync(t.TaskId);
+            if (existing is not null)
+            {
+                sentinelDb.SentinelTasks.Remove(existing);
+                await sentinelDb.SaveChangesAsync();
+            }
+            await LoadTasks();
+            await LoadRecentRuns();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting task");
+            ShowMessage($"Error deleting task: {ex.Message}", true);
+        }
+    }
+
+    private void CancelForm() { showForm = false; editing = null; message = null; }
+
+    private void OpenRun(SentinelTask t)
+    {
+        runTaskId = t.TaskId;
+        runResult = null;
+        var online = gatewayManager.GetConnectedGateways();
+        runGatewayId = online.FirstOrDefault()?.GatewayId ?? 0;
+    }
+
+    private async Task DoRun()
+    {
+        if (runTaskId is null || runGatewayId <= 0) return;
+        isRunning = true;
+        runResult = null;
+        try
+        {
+            var triggeredBy = $"manual:{sessionState.User?.UserId.ToString() ?? "ui"}";
+            runResult = await taskExecutor.RunTaskAsync(runTaskId.Value, runGatewayId, triggeredBy);
+            await LoadRecentRuns();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error running task");
+            runResult = new TaskExecutionResult(false, null, null, null, ex.Message, 0);
+        }
+        finally { isRunning = false; }
+    }
+
+    private async Task OpenSchedule(SentinelTask t)
+    {
+        if (scheduleTaskId == t.TaskId) { scheduleTaskId = null; return; }
+        scheduleTaskId = t.TaskId;
+        runTaskId = null;
+        await LoadScheduleData(t.TaskId);
+    }
+
+    private async Task LoadScheduleData(int taskId)
+    {
+        targets = await sentinelDb.SentinelTaskTargets.AsNoTracking()
+            .Where(x => x.TaskId == taskId).ToListAsync();
+        schedules = await sentinelDb.SentinelTaskSchedules.AsNoTracking()
+            .Where(x => x.TaskId == taskId).OrderBy(x => x.ScheduleId).ToListAsync();
+    }
+
+    private async Task AddTarget(SentinelTask t)
+    {
+        var target = new SentinelTaskTarget
+        {
+            TaskId = t.TaskId,
+            IsEnabled = true,
+            CreateDate = DateTime.UtcNow,
+            TargetScope = newTargetValue == "all" ? "all" : "gateway",
+            TargetRef = newTargetValue == "all" ? null : newTargetValue
+        };
+        sentinelDb.SentinelTaskTargets.Add(target);
+        await sentinelDb.SaveChangesAsync();
+        await LoadScheduleData(t.TaskId);
+    }
+
+    private async Task RemoveTarget(SentinelTaskTarget tg)
+    {
+        var existing = await sentinelDb.SentinelTaskTargets.FindAsync(tg.TargetId);
+        if (existing is not null) { sentinelDb.SentinelTaskTargets.Remove(existing); await sentinelDb.SaveChangesAsync(); }
+        await LoadScheduleData(tg.TaskId);
+    }
+
+    private async Task AddSchedule(SentinelTask t)
+    {
+        var sched = new SentinelTaskSchedule
+        {
+            TaskId = t.TaskId,
+            ExecutionMode = newSchedMode,
+            IsEnabled = true,
+            CreateDate = DateTime.UtcNow,
+            FrequencySeconds = newSchedMode == "interval" ? newSchedFrequency : null,
+            TimeOfDay = newSchedMode == "interval" ? null : newSchedTime.ToString("HH:mm:ss"),
+            DaysOfWeek = newSchedMode == "weekly" ? string.Join(",", newSchedDays.OrderBy(d => d)) : null
+        };
+        sched.NextRunUtc = SentinelTaskSchedulerService.ComputeInitialRun(sched, DateTime.UtcNow);
+        sentinelDb.SentinelTaskSchedules.Add(sched);
+        await sentinelDb.SaveChangesAsync();
+        await LoadScheduleData(t.TaskId);
+    }
+
+    private async Task ToggleSchedule(SentinelTaskSchedule sc)
+    {
+        var existing = await sentinelDb.SentinelTaskSchedules.FindAsync(sc.ScheduleId);
+        if (existing is not null)
+        {
+            existing.IsEnabled = !existing.IsEnabled;
+            existing.NextRunUtc = existing.IsEnabled
+                ? SentinelTaskSchedulerService.ComputeInitialRun(existing, DateTime.UtcNow)
+                : null;
+            await sentinelDb.SaveChangesAsync();
+        }
+        await LoadScheduleData(sc.TaskId);
+    }
+
+    private async Task RemoveSchedule(SentinelTaskSchedule sc)
+    {
+        var existing = await sentinelDb.SentinelTaskSchedules.FindAsync(sc.ScheduleId);
+        if (existing is not null) { sentinelDb.SentinelTaskSchedules.Remove(existing); await sentinelDb.SaveChangesAsync(); }
+        await LoadScheduleData(sc.TaskId);
+    }
+
+    private void ToggleDay(int day, ChangeEventArgs e)
+    {
+        if (e.Value is true) newSchedDays.Add(day); else newSchedDays.Remove(day);
+    }
+
+    private static string DayAbbr(int d) => new[] { "Su", "Mo", "Tu", "We", "Th", "Fr", "Sa" }[d];
+
+    private static string DescribeSchedule(SentinelTaskSchedule s) => s.ExecutionMode switch
+    {
+        "interval" => $"every {s.FrequencySeconds}s",
+        "daily" => $"daily at {s.TimeOfDay}",
+        "weekly" => $"{(string.IsNullOrEmpty(s.DaysOfWeek) ? "weekly" : string.Join("/", s.DaysOfWeek.Split(',').Select(d => int.TryParse(d, out var n) ? DayAbbr(n) : d)))} at {s.TimeOfDay}",
+        "once" => $"once at {s.TimeOfDay}",
+        _ => s.ExecutionMode
+    };
+
+    private void ShowMessage(string m, bool isError) { message = m; messageIsError = isError; }
+
+    private static string StatusBadge(string status) => status switch
+    {
+        "success" => "badge-green",
+        "running" => "badge-blue",
+        _ => "badge-red"
+    };
+
+    private static string ComputeSha256(string content) =>
+        Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(content))).ToLowerInvariant();
+}
+
+<style>
+    .panel-header {
+        background-color: #CCCCCC; color: #333; padding: 16px 20px;
+        display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;
+    }
+    .panel-header h3 { margin: 0; font-size: 1.25rem; font-weight: 600; }
+    .panel-content { flex: 1; overflow-y: auto; padding: 20px; }
+
+    .sentinel-inline-form { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+    .sentinel-inline-form h4 { margin: 0 0 16px; font-size: 16px; color: #333; }
+    .form-row { display: flex; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+    .form-group { flex: 1; min-width: 180px; margin-bottom: 8px; }
+    .form-group label { display: block; font-size: 13px; font-weight: 600; color: #555; margin-bottom: 4px; }
+    .form-group .dx-form-control { font-size: 14px; }
+    .script-editor { font-family: Consolas, "Courier New", monospace; font-size: 13px; white-space: pre; }
+    .form-actions { display: flex; gap: 8px; margin-top: 12px; }
+    .form-message { margin-bottom: 12px; padding: 8px 12px; border-radius: 4px; font-size: 13px; }
+    .form-message.success { background: #e8f5e9; color: #2e7d32; }
+    .form-message.error { background: #ffebee; color: #c62828; }
+
+    .task-grid-header, .task-row {
+        display: grid; grid-template-columns: 2fr 1fr 1.2fr 90px 200px; gap: 8px; align-items: center; padding: 10px 12px;
+    }
+    .task-grid-header { background: #f5f5f5; font-size: 0.8rem; font-weight: 600; color: #555; text-transform: uppercase; border-bottom: 2px solid #e0e0e0; }
+    .task-row { border-bottom: 1px solid #eee; font-size: 0.9rem; }
+    .task-row:hover { background: #fafafa; }
+    .t-name { font-weight: 600; }
+    .ta-right { text-align: right; }
+
+    .history-grid { grid-template-columns: 2fr 1fr 70px 1.3fr 1fr 1.5fr; }
+
+    /* Phones: rows collapse to name + status badge, actions on their own line;
+       history rows keep task + status + started */
+    @@media (max-width: 768px) {
+        .task-grid-header { display: none; }
+
+        .task-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 10px;
+        }
+
+        .task-row:not(.history-grid) > div:nth-child(2),
+        .task-row:not(.history-grid) > div:nth-child(3) { display: none; }
+
+        .task-row.history-grid > div:nth-child(3),
+        .task-row.history-grid > div:nth-child(5),
+        .task-row.history-grid > div:nth-child(6) { display: none; }
+
+        .task-row .ta-right {
+            flex-basis: 100%;
+            margin-top: 6px;
+            text-align: left;
+        }
+    }
+    .history-title { margin: 24px 0 8px; font-size: 15px; color: #333; }
+    .t-trigger { font-size: 0.8rem; color: #666; }
+
+    .run-panel { background: #f0f7ff; border: 1px solid #cfe3fb; border-radius: 6px; padding: 10px 12px; margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    .run-panel label { font-size: 13px; color: #555; font-weight: 600; }
+    .run-select { width: auto; min-width: 220px; }
+    .run-hint { font-size: 13px; color: #666; }
+    .run-result { width: 100%; margin-top: 6px; font-size: 13px; }
+    .run-result.ok strong { color: #2e7d32; }
+    .run-result.fail strong { color: #c62828; }
+    .run-result pre { background: #1e1e1e; color: #d4d4d4; padding: 8px; border-radius: 4px; max-height: 220px; overflow: auto; white-space: pre-wrap; }
+    .run-result pre.err { color: #f48771; }
+
+    .active-badge { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; text-transform: uppercase; }
+    .badge-green { background: #e8f5e9; color: #2e7d32; }
+    .badge-gray { background: #f5f5f5; color: #616161; }
+    .badge-blue { background: #e3f2fd; color: #1565c0; }
+    .badge-red { background: #ffebee; color: #c62828; }
+
+    .action-link { color: #0071BC; background: none; border: none; cursor: pointer; font-size: 13px; padding: 0 4px; }
+    .action-link:hover { text-decoration: underline; }
+    .action-link.danger { color: #c62828; }
+
+    .no-devices { text-align: center; padding: 40px 20px; color: #666; }
+
+    .sched-panel { background: #f7f9fc; border: 1px solid #dbe4f0; border-radius: 6px; padding: 12px 14px; margin: 0 0 8px; display: flex; flex-wrap: wrap; gap: 24px; position: relative; }
+    .sched-col { flex: 1; min-width: 280px; }
+    .sched-col h5 { margin: 0 0 8px; font-size: 13px; color: #333; text-transform: uppercase; }
+    .sched-sub { font-weight: 400; text-transform: none; color: #888; font-size: 12px; }
+    .sched-item { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 0; font-size: 13px; border-bottom: 1px solid #eef2f7; }
+    .sched-meta { color: #888; font-size: 12px; margin-left: 8px; }
+    .sched-add { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 8px; }
+    .sched-add .dx-form-control { width: auto; }
+    .sched-narrow { max-width: 120px; }
+    .sched-days { display: flex; gap: 6px; font-size: 12px; }
+    .sched-days label { display: inline-flex; align-items: center; gap: 2px; }
+    .sched-close { position: absolute; top: 10px; right: 12px; }
+</style>

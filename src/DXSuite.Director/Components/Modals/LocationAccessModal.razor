@@ -1,0 +1,1203 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDirectorLocationAccessService accessService
+@inject IContentScopeService contentScopeService
+@inject IApprovalChainService approvalChainService
+@inject IUserGroupService userGroupService
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ISessionState sessionState
+@inject ITenantContext tenantContext
+@inject LocationAccessBroadcastService accessBroadcast
+@inject ILogger<LocationAccessModal> logger
+@inject IAssetApprovalService assetApprovalService
+
+<div class="dx-modal-overlay">
+    <div class="dx-modal lam-modal">
+        <div class="dx-modal-header">
+            <h4>Access Control — @Location?.LocationName</h4>
+            <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+        </div>
+        <div class="dx-modal-body">
+            @if (isLoading)
+            {
+                <div style="display:flex; justify-content:center; align-items:center; padding:40px;">
+                    <div class="dx-spinner"></div>
+                </div>
+            }
+            else
+            {
+                @* ── ACCESS RULES SECTION ── *@
+                <div class="lam-section-header">
+                    <h6 class="lam-section-title-inline">ACCESS RULES</h6>
+                    <input type="search" class="dx-form-control lam-rules-search" placeholder="Search..."
+                           value="@rulesSearchQuery" @oninput="@(e => rulesSearchQuery = e.Value?.ToString() ?? "")" />
+                </div>
+
+                @if (accessRules.Any())
+                {
+                    <div class="dx-table lam-dense-table lam-scrollable-table" style="margin-bottom:12px;">
+                        <div class="dx-table-header" style="grid-template-columns: 1fr 80px @(supportsContentWorkflows ? "90px 140px" : "") 100px 75px;">
+                            <div class="lam-sort-header" @onclick='() => SortBy("Target")'>Target@(SortIndicator("Target"))</div>
+                            <div class="lam-sort-header" style="text-align:center;" @onclick='() => SortBy("Type")'>Type@(SortIndicator("Type"))</div>
+                            @if (supportsContentWorkflows)
+                            {
+                                <div class="lam-sort-header" style="text-align:center;" @onclick='() => SortBy("Access")'>Access@(SortIndicator("Access"))</div>
+                                <div class="lam-sort-header" @onclick='() => SortBy("Sees")'>Sees@(SortIndicator("Sees"))</div>
+                            }
+                            <div style="text-align:center;">Schedule</div>
+                            <div></div>
+                        </div>
+                        @foreach (var rule in FilteredSortedRules)
+                        {
+                            <div class="dx-table-row" style="grid-template-columns: 1fr 80px @(supportsContentWorkflows ? "90px 140px" : "") 100px 75px;">
+                                <div class="dx-truncate">
+                                    @if (rule.User != null)
+                                    {
+                                        <span>@(rule.User.FriendlyName ?? rule.User.UserPrincipalName)</span>
+                                    }
+                                    else if (rule.UserGroup != null)
+                                    {
+                                        <span>@rule.UserGroup.GroupName</span>
+                                    }
+                                </div>
+                                <div style="text-align:center;">
+                                    <span class="dx-badge @(rule.UserId.HasValue ? "dx-badge-blue" : "dx-badge-gray")">
+                                        @(rule.UserId.HasValue ? "User" : "Group")
+                                    </span>
+                                </div>
+                                @if (supportsContentWorkflows)
+                                {
+                                    <div style="text-align:center;">
+                                        <span class="dx-badge @GetAccessBadge(rule.AccessLevel)">@AccessLevelLabel(rule.AccessLevel)</span>
+                                    </div>
+                                    <div class="dx-truncate">
+                                        <span class="dx-text-muted">@SeesLabel(rule)</span>
+                                    </div>
+                                }
+                                <div style="text-align:center;">
+                                    @{
+                                        var schedCount = ruleScheduleCounts.GetValueOrDefault(rule.LocationAccessRuleId, 0);
+                                    }
+                                    <button class="lam-schedule-btn @(schedCount > 0 ? "lam-has-schedules" : "")"
+                                            @onclick="() => OpenScheduleEditor(rule)">
+                                        @(schedCount > 0 ? $"{schedCount} schedule{(schedCount > 1 ? "s" : "")}" : "Always")
+                                    </button>
+                                </div>
+                                <div>
+                                    <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteRule(rule)">
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="dx-text-muted" style="font-size:0.85rem;">No access rules configured. All users with location visibility can access this location.</p>
+                }
+
+                @if (!showAddRuleForm)
+                {
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => showAddRuleForm = true">
+                        + Add Rule
+                    </button>
+                }
+                else
+                {
+                    <div class="lam-add-rule-form">
+                        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+                            <div style="min-width:120px;">
+                                <label class="lam-field-label">Target Type</label>
+                                <select class="dx-form-control" @bind="newRuleTargetType">
+                                    <option value="user">User</option>
+                                    <option value="group">Group</option>
+                                </select>
+                            </div>
+                            <div style="flex:1; min-width:200px;">
+                                <label class="lam-field-label">@(newRuleTargetType == "user" ? "User" : "Group")</label>
+                                @if (newRuleTargetType == "user")
+                                {
+                                    <select class="dx-form-control" @bind="newRuleUserId">
+                                        <option value="0">— Select user —</option>
+                                        @foreach (var u in allUsers)
+                                        {
+                                            <option value="@u.UserId">@(u.FriendlyName ?? u.UserPrincipalName)</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <select class="dx-form-control" @bind="newRuleGroupId">
+                                        <option value="0">— Select group —</option>
+                                        @foreach (var g in allGroups)
+                                        {
+                                            <option value="@g.UserGroupId">@g.GroupName</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
+                            @if (supportsContentWorkflows)
+                            {
+                                <div style="min-width:120px;">
+                                    <label class="lam-field-label">Access Level</label>
+                                    <select class="dx-form-control" @bind="newRuleAccessLevel">
+                                        <option value="full">Full</option>
+                                        <option value="partial">Scoped</option>
+                                        <option value="view">View only</option>
+                                    </select>
+                                </div>
+                                @if (newRuleAccessLevel == "view")
+                                {
+                                    <div style="min-width:140px;">
+                                        <label class="lam-field-label">Sees</label>
+                                        <select class="dx-form-control" @bind="newRuleViewScope">
+                                            <option value="@ContentScope.ViewScopeNone">Their scope</option>
+                                            <option value="@ContentScope.ViewScopeAll">All content</option>
+                                        </select>
+                                    </div>
+                                }
+                            }
+                        </div>
+                        @if (supportsContentWorkflows && newRuleAccessLevel != "full")
+                        {
+                            <div class="dx-form-hint">
+                                @(newRuleAccessLevel == "view" && newRuleViewScope == ContentScope.ViewScopeAll
+                                    ? "They see all content here and cannot change any of it."
+                                    : "They see content that matches their metadata values on this location's content metadata fields.")
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(addRuleError))
+                        {
+                            <div class="dx-text-red" style="font-size:0.85rem; margin-top:4px;">@addRuleError</div>
+                        }
+                        <div style="display:flex; gap:8px; margin-top:8px;">
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddRule">Add</button>
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelAddRule">Cancel</button>
+                        </div>
+                    </div>
+                }
+
+                @* ── APPROVAL WORKFLOWS SECTION ── *@
+                @if (supportsContentWorkflows)
+                {
+                    <h6 class="lam-section-title" style="margin-top:20px;">APPROVAL WORKFLOWS</h6>
+
+                    <div style="margin-bottom:12px;">
+                        <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                            <input type="checkbox" @bind="chainEnabled" />
+                            <span>Enable Approval Chain</span>
+                        </label>
+                    </div>
+
+                    @if (chainEnabled)
+                    {
+                        @if (!chainWasEnabledOnOpen)
+                        {
+                            <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+                                <label style="display:flex; align-items:center; gap:8px; cursor:pointer; margin:0;">
+                                    <input type="checkbox" @bind="blanketApproveExisting" />
+                                    <span style="font-size:0.85rem; font-weight:500;">Approve all existing content</span>
+                                </label>
+                                <span style="font-size:0.8rem; color:#888;">Creates approval records for content already uploaded to this location</span>
+                            </div>
+                        }
+
+                        <div style="display:flex; flex-direction:column; gap:8px; margin-bottom:12px;">
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                <input type="checkbox" @bind="chainAutoApproveMembers" />
+                                <span style="font-size:0.85rem;">Auto-approve when uploader is in an approver group</span>
+                            </label>
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                <input type="checkbox" @bind="requireApprovalOnOverwrite" />
+                                <span style="font-size:0.85rem;">Require approval when content is replaced</span>
+                            </label>
+                            @if (requireApprovalOnOverwrite)
+                            {
+                                <span style="font-size:0.8rem; color:#888; margin-left:24px;">The current content keeps playing until the replacement is approved</span>
+                            }
+                            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                                <input type="checkbox" checked="@chainEnableLlm"
+                                       @onchange="@(e => OnLlmAutoApprovalToggled((bool)(e.Value ?? false)))" />
+                                <span style="font-size:0.85rem;">Enable LLM Auto-Approval</span>
+                            </label>
+                            @if (chainEnableLlm)
+                            {
+                                <span style="font-size:0.8rem; color:#888; margin-left:24px;">Content that passes LLM moderation will be auto-approved up to the selected stage</span>
+                            }
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <span style="font-size:0.85rem;">Auto-delete declined content after</span>
+                                <input type="number" class="dx-form-control" style="width:60px; font-size:0.85rem; padding:2px 6px;" @bind="chainRetentionDays" min="1" max="90" />
+                                <span style="font-size:0.85rem;">days</span>
+                            </div>
+                        </div>
+
+                        <div class="lam-stages">
+                            @for (int si = 0; si < stages.Count; si++)
+                            {
+                                var stageIdx = si;
+                                var stage = stages[stageIdx];
+                                @if (stageIdx > 0)
+                                {
+                                    <div class="lam-stage-connector">THEN</div>
+                                }
+                                <div class="lam-stage-card @(chainEnableLlm && stageIdx <= llmAutoApprovalUpToStage ? "lam-stage-auto" : "")">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                        <div style="display:flex; gap:8px; align-items:center;">
+                                            <strong>Stage @(stageIdx + 1)</strong>
+                                            @if (stage.GroupIds.Count > 1)
+                                            {
+                                                <select class="dx-form-control" style="width:auto; font-size:0.8rem; padding:2px 6px;"
+                                                        @bind="stage.IntraStageOperator">
+                                                    <option value="OR">OR (any group)</option>
+                                                    <option value="AND">AND (all groups)</option>
+                                                </select>
+                                            }
+                                        </div>
+                                        <div style="display:flex; gap:8px; align-items:center;">
+                                            @if (stages.Count > 1)
+                                            {
+                                                <button class="dx-btn dx-btn-red dx-btn-sm" style="font-size:1rem; line-height:1; padding:2px 8px;" @onclick="() => RemoveStage(stageIdx)">×</button>
+                                            }
+                                            <label class="lam-auto-radio @(!chainEnableLlm ? "lam-auto-radio-disabled" : "")"
+                                                   title="LLM auto-approve up to this stage">
+                                                <input type="radio" name="llmAutoStage"
+                                                       checked="@(llmAutoApprovalUpToStage == stageIdx)"
+                                                       disabled="@(!chainEnableLlm)"
+                                                       @onchange="@(() => llmAutoApprovalUpToStage = stageIdx)" />
+                                                <span style="font-size:0.75rem;">LLM Auto</span>
+                                            </label>
+                                        </div>
+                                    </div>
+                                    @for (int gi = 0; gi < stage.GroupIds.Count; gi++)
+                                    {
+                                        var groupIdx = gi;
+                                        <div style="display:flex; gap:8px; margin-bottom:4px; align-items:center;">
+                                            <select class="dx-form-control" style="flex:1; font-size:0.85rem;"
+                                                    value="@stage.GroupIds[groupIdx]"
+                                                    @onchange="@((ChangeEventArgs e) => stage.GroupIds[groupIdx] = int.TryParse(e.Value?.ToString(), out var v) ? v : 0)">
+                                                <option value="0">— Select group —</option>
+                                                @foreach (var g in allGroups)
+                                                {
+                                                    <option value="@g.UserGroupId">@g.GroupName</option>
+                                                }
+                                            </select>
+                                            @if (stage.GroupIds.Count > 1)
+                                            {
+                                                <button class="dx-btn dx-btn-red dx-btn-sm" style="font-size:1rem; line-height:1; padding:2px 8px;" @onclick="() => RemoveGroupFromStage(stageIdx, groupIdx)">×</button>
+                                            }
+                                        </div>
+                                    }
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" style="margin-top:4px;"
+                                            @onclick="() => AddGroupToStage(stageIdx)">
+                                        + Add Group
+                                    </button>
+                                </div>
+                            }
+                        </div>
+
+                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" style="margin-top:8px;"
+                                @onclick="AddStage">
+                            + Add Stage
+                        </button>
+
+                        @if (!string.IsNullOrEmpty(chainError))
+                        {
+                            <div class="dx-text-red" style="font-size:0.85rem; margin-top:8px;">@chainError</div>
+                        }
+                    }
+                }
+            }
+        </div>
+        <div class="dx-modal-footer">
+            @if (supportsContentWorkflows && chainEnabled)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="SaveApprovalChain" disabled="@isSaving">
+                    @(isSaving ? "Saving..." : "Save")
+                </button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAndClose" disabled="@isSaving">
+                    Save &amp; Close
+                </button>
+            }
+            <button class="dx-btn dx-btn-gray" @onclick="Close">Close</button>
+        </div>
+    </div>
+</div>
+
+@* ── SCHEDULE EDITOR SUB-MODAL ── *@
+@if (showScheduleEditor)
+{
+    <div class="dx-modal-overlay" style="z-index: 10000;">
+        <div class="dx-modal" style="width:750px; max-width:95vw;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Schedules — @editingRuleTarget</h4>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="CloseScheduleEditor"></button>
+            </div>
+            <div class="dx-modal-body">
+
+                @if (editingSchedules.Any())
+                {
+                    <div class="dx-table lam-dense-table" style="margin-bottom:12px;">
+                        <div class="dx-table-header" style="grid-template-columns: 1fr 1fr 70px 110px 90px 70px 75px;">
+                            <div>Display</div>
+                            <div>Constraint</div>
+                            <div>Meta Key</div>
+                            <div>Dates</div>
+                            <div>Time</div>
+                            <div>Days</div>
+                            <div></div>
+                        </div>
+                        @foreach (var sched in editingSchedules)
+                        {
+                            <div class="dx-table-row" style="grid-template-columns: 1fr 1fr 70px 110px 90px 70px 75px;">
+                                <div>@(sched.DisplayId.HasValue ? displayLookup.GetValueOrDefault(sched.DisplayId.Value, $"Display {sched.DisplayId}") : "All")</div>
+                                <div>@(sched.ConstraintId.HasValue ? constraintLookup.GetValueOrDefault(sched.ConstraintId.Value, $"#{sched.ConstraintId}") : "—")</div>
+                                <div class="dx-truncate">@(sched.MetadataKey ?? "—")</div>
+                                <div>@FormatDateRange(sched)</div>
+                                <div>@FormatTimeRange(sched)</div>
+                                <div>@FormatDays(sched)</div>
+                                <div>
+                                    <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteSchedule(sched)">
+                                        Delete
+                                    </button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="dx-text-muted" style="font-size:0.85rem;">No schedules — rule is always active.</p>
+                }
+
+                <div class="las-add-form">
+                    <h6 class="lam-section-title" style="font-size:0.75rem;">ADD SCHEDULE</h6>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                        <div style="flex:1; min-width:160px;">
+                            <label class="lam-field-label">Display (optional)</label>
+                            <select class="dx-form-control" @bind="newScheduleDisplayId">
+                                <option value="0">All displays</option>
+                                @foreach (var d in locationDisplays)
+                                {
+                                    <option value="@d.DisplayId">@d.DisplayName</option>
+                                }
+                            </select>
+                        </div>
+                        <div style="flex:1; min-width:160px;">
+                            <label class="lam-field-label">Constraint (optional)</label>
+                            <select class="dx-form-control" @bind="newScheduleConstraintId">
+                                <option value="0">None</option>
+                                @foreach (var c in locationConstraints)
+                                {
+                                    <option value="@c.ConstraintId">@c.ConstraintName</option>
+                                }
+                            </select>
+                        </div>
+                        @if (newScheduleConstraintId > 0)
+                        {
+                            <div style="flex:1; min-width:160px;">
+                                <label class="lam-field-label">Metadata Key (optional)</label>
+                                <select class="dx-form-control" @bind="newScheduleMetadataKey">
+                                    <option value="">— None —</option>
+                                    @foreach (var def in metadataDefs)
+                                    {
+                                        <option value="@def.MetadataKey">@DefinitionLabel(def)</option>
+                                    }
+                                </select>
+                            </div>
+                        }
+                    </div>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+                        <div>
+                            <label class="lam-field-label">Start Date</label>
+                            <input type="date" class="dx-form-control" @bind="newScheduleStartDate" />
+                        </div>
+                        <div>
+                            <label class="lam-field-label">End Date</label>
+                            <input type="date" class="dx-form-control" @bind="newScheduleEndDate" />
+                        </div>
+                        <div>
+                            <label class="lam-field-label">Start Time</label>
+                            <input type="time" class="dx-form-control" @bind="newScheduleStartTime" />
+                        </div>
+                        <div>
+                            <label class="lam-field-label">End Time</label>
+                            <input type="time" class="dx-form-control" @bind="newScheduleEndTime" />
+                        </div>
+                    </div>
+                    <div style="margin-bottom:8px;">
+                        <label class="lam-field-label">Days of Week</label>
+                        <div class="las-day-checkboxes">
+                            <label><input type="checkbox" @bind="newScheduleSun" /> Sun</label>
+                            <label><input type="checkbox" @bind="newScheduleMon" /> Mon</label>
+                            <label><input type="checkbox" @bind="newScheduleTue" /> Tue</label>
+                            <label><input type="checkbox" @bind="newScheduleWed" /> Wed</label>
+                            <label><input type="checkbox" @bind="newScheduleThu" /> Thu</label>
+                            <label><input type="checkbox" @bind="newScheduleFri" /> Fri</label>
+                            <label><input type="checkbox" @bind="newScheduleSat" /> Sat</label>
+                            <span class="dx-text-muted" style="font-size:0.8rem; margin-left:8px;">(none = every day)</span>
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(scheduleValidationError))
+                    {
+                        <div class="dx-text-red" style="font-size:0.85rem; margin-bottom:6px;">@scheduleValidationError</div>
+                    }
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddSchedule">Add Schedule</button>
+                </div>
+
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseScheduleEditor">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .lam-modal {
+        width: 900px;
+        max-width: 95vw;
+    }
+
+    /* Section title row with right-justified search */
+    .lam-section-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .lam-section-title-inline {
+        margin-bottom: 0;
+        padding-bottom: 0;
+        border-bottom: none;
+    }
+
+    .lam-rules-search {
+        width: 160px;
+        font-size: 0.8rem;
+        padding: 3px 8px;
+        height: auto;
+    }
+
+    /* Sortable column headers */
+    .lam-sort-header {
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .lam-sort-header:hover {
+        color: var(--dx-blue);
+    }
+
+    /* Blue accent on all checkboxes in this modal */
+    input[type="checkbox"] {
+        accent-color: var(--dx-blue);
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+    }
+
+    .lam-dense-table .dx-table-header > div,
+    .lam-dense-table .dx-table-row > div {
+        padding: 8px 4px;
+    }
+
+    /* Table scrolls internally; header sticks within the table, not the modal */
+    .lam-scrollable-table {
+        max-height: 260px;
+        overflow-y: auto;
+    }
+
+    .lam-scrollable-table .dx-table-header {
+        position: sticky;
+        top: 0;
+        z-index: 1;
+        background: #f5f6f7;
+    }
+
+    .lam-section-title {
+        font-size: 0.8rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        color: var(--dx-text-muted);
+        letter-spacing: 0.5px;
+        margin-bottom: 10px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid #e0e0e0;
+    }
+
+    .lam-add-rule-form {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin-top: 8px;
+    }
+
+    .lam-field-label {
+        display: block;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #666;
+        margin-bottom: 2px;
+    }
+
+    .lam-stages {
+        margin-top: 8px;
+    }
+
+    .lam-stage-card {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+    }
+
+    .lam-stage-connector {
+        text-align: center;
+        font-size: 0.75rem;
+        font-weight: 700;
+        color: var(--dx-blue);
+        padding: 4px 0;
+    }
+
+    .lam-stage-auto {
+        background: #d4edda;
+    }
+
+    .lam-stage-auto input[type="radio"] {
+        accent-color: var(--dx-blue);
+    }
+
+    .lam-auto-radio {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+        font-size: 0.75rem;
+        color: var(--dx-blue);
+    }
+
+    .lam-auto-radio-disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    .lam-schedule-btn {
+        font-size: 0.75rem;
+        padding: 2px 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f8f9fa;
+        cursor: pointer;
+        color: #666;
+        white-space: nowrap;
+    }
+
+    .lam-schedule-btn.lam-has-schedules {
+        border-color: var(--dx-blue);
+        background: #e8f0fe;
+        color: var(--dx-blue);
+        font-weight: 600;
+    }
+
+    .las-add-form {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px;
+        margin-top: 12px;
+    }
+
+    .las-day-checkboxes {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+        align-items: center;
+        margin-top: 4px;
+    }
+
+    .las-day-checkboxes label {
+        font-size: 0.85rem;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        cursor: pointer;
+    }
+</style>
+
+@code {
+    [Parameter] public TblLocation Location { get; set; } = null!;
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool supportsContentWorkflows;
+
+    // Access rules state
+    private List<TblLocationAccessRule> accessRules = new();
+    private List<TblUser> allUsers = new();
+    private List<TblUserGroup> allGroups = new();
+    private List<MetadataDefinitionDto> metadataDefs = new();
+
+    // Search and sort state for access rules table
+    private string rulesSearchQuery = "";
+    private string rulesSortColumn = "Target";
+    private bool rulesSortAscending = true;
+
+    private IEnumerable<TblLocationAccessRule> FilteredSortedRules
+    {
+        get
+        {
+            var q = accessRules.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(rulesSearchQuery))
+            {
+                var search = rulesSearchQuery.Trim();
+                q = q.Where(r =>
+                    GetTargetName(r).Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                    SeesLabel(r).Contains(search, StringComparison.OrdinalIgnoreCase));
+            }
+
+            q = rulesSortColumn switch
+            {
+                "Target"    => rulesSortAscending ? q.OrderBy(GetTargetName) : q.OrderByDescending(GetTargetName),
+                "Type"      => rulesSortAscending ? q.OrderBy(r => r.UserId.HasValue ? "User" : "Group") : q.OrderByDescending(r => r.UserId.HasValue ? "User" : "Group"),
+                "Access"    => rulesSortAscending ? q.OrderBy(r => r.AccessLevel) : q.OrderByDescending(r => r.AccessLevel),
+                "Sees"      => rulesSortAscending ? q.OrderBy(SeesLabel) : q.OrderByDescending(SeesLabel),
+                _           => q.OrderBy(GetTargetName)
+            };
+
+            return q;
+        }
+    }
+
+    // Users see Full, Scoped and View only; the database keeps full, partial and view.
+    private static string AccessLevelLabel(string accessLevel) => accessLevel switch
+    {
+        "partial" => "Scoped",
+        "view" => "View only",
+        _ => "Full"
+    };
+
+    private static string SeesLabel(TblLocationAccessRule rule) =>
+        rule.AccessLevel == "full" || rule.ViewScope == ContentScope.ViewScopeAll ? "All content" : "Their scope";
+
+    // Two registry keys can share a display name, so the key is always shown.
+    private static string DefinitionLabel(MetadataDefinitionDto def) =>
+        string.Equals(def.DisplayName, def.MetadataKey, StringComparison.Ordinal)
+            ? def.MetadataKey
+            : $"{def.DisplayName} ({def.MetadataKey})";
+
+    private static string GetTargetName(TblLocationAccessRule rule) =>
+        rule.User != null
+            ? (rule.User.FriendlyName ?? rule.User.UserPrincipalName ?? "")
+            : rule.UserGroup?.GroupName ?? "";
+
+    private void SortBy(string column)
+    {
+        if (rulesSortColumn == column)
+            rulesSortAscending = !rulesSortAscending;
+        else
+        {
+            rulesSortColumn = column;
+            rulesSortAscending = true;
+        }
+    }
+
+    private string SortIndicator(string column) =>
+        rulesSortColumn == column ? (rulesSortAscending ? " ▲" : " ▼") : "";
+
+    // Schedule editor state
+    private bool showScheduleEditor;
+    private int editingRuleId;
+    private string editingRuleTarget = "";
+    private List<TblAccessSchedule> editingSchedules = new();
+    private Dictionary<int, int> ruleScheduleCounts = new();
+    private int newScheduleDisplayId;
+    private int newScheduleConstraintId;
+    private string newScheduleMetadataKey = "";
+    private DateTime? newScheduleStartDate;
+    private DateTime? newScheduleEndDate;
+    private TimeOnly? newScheduleStartTime;
+    private TimeOnly? newScheduleEndTime;
+    private bool newScheduleSun, newScheduleMon, newScheduleTue, newScheduleWed, newScheduleThu, newScheduleFri, newScheduleSat;
+    private string? scheduleValidationError;
+    private List<TblDisplay> locationDisplays = new();
+    private List<TblConstraint> locationConstraints = new();
+    private Dictionary<int, string> displayLookup = new();
+    private Dictionary<int, string> constraintLookup = new();
+
+    // Add rule form
+    private bool showAddRuleForm;
+    private string newRuleTargetType = "user";
+    private int newRuleUserId;
+    private int newRuleGroupId;
+    private string newRuleAccessLevel = "full";
+    private string newRuleViewScope = ContentScope.ViewScopeNone;
+    private string? addRuleError;
+
+    // Approval chain state
+    private bool chainEnabled;
+    private bool chainAutoApproveMembers;
+    private bool chainEnableLlm;
+    private bool requireApprovalOnOverwrite;
+    private int chainRetentionDays = 3;
+    private int llmAutoApprovalUpToStage;
+    private List<StageDefinition> stages = new();
+    private string? chainError;
+    private bool chainWasEnabledOnOpen;
+    private bool blanketApproveExisting;
+
+    protected override async Task OnInitializedAsync()
+    {
+        supportsContentWorkflows = true;
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        try
+        {
+            accessRules = await accessService.GetRulesForLocationAsync(Location.LocationId);
+            await LoadScheduleCountsAsync();
+
+            await using var db = await dbFactory.CreateDbContextAsync();
+            allUsers = await db.TblUsers.AsNoTracking().OrderBy(u => u.FriendlyName ?? u.UserPrincipalName).ToListAsync();
+            allGroups = await userGroupService.GetAllGroupsAsync();
+            metadataDefs = await metadataDefinitionService.GetAllDefinitionsAsync();
+
+            // Load existing approval chain
+            if (supportsContentWorkflows)
+            {
+                var chain = await approvalChainService.GetChainForLocationAsync(Location.LocationId);
+                if (chain != null)
+                {
+                    chainEnabled = chain.IsEnabled;
+                    chainAutoApproveMembers = chain.AutoApproveMembers;
+                    chainEnableLlm = chain.EnableLlmAutoApproval;
+                    chainRetentionDays = chain.DeclinedContentRetentionDays;
+                    llmAutoApprovalUpToStage = chain.LlmAutoApprovalUpToStageOrder;
+
+                    // Load stages
+                    stages = chain.Stages
+                        .OrderBy(s => s.StageOrder)
+                        .Select(s => new StageDefinition
+                        {
+                            StageOrder = s.StageOrder,
+                            StageName = s.StageName,
+                            IntraStageOperator = s.IntraStageOperator,
+                            GroupIds = s.StageGroups.Select(sg => sg.UserGroupId).ToList()
+                        })
+                        .ToList();
+                }
+                chainWasEnabledOnOpen = chainEnabled;
+                blanketApproveExisting = false;
+
+                var extData = ExtendedDataHelper.Parse<DXSuite.Director.Models.LocationExtendedData>(Location.ExtendedData);
+                requireApprovalOnOverwrite = extData?.RequireApprovalOnOverwrite ?? false;
+            }
+
+            if (stages.Count == 0)
+                stages.Add(new StageDefinition { StageOrder = 0, GroupIds = new List<int> { 0 } });
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Error loading access data for location {LocationId}", Location.LocationId);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+
+    // ── Access Rules ──
+
+    private async Task AddRule()
+    {
+        addRuleError = null;
+
+        int? userId = newRuleTargetType == "user" && newRuleUserId > 0 ? newRuleUserId : null;
+        int? groupId = newRuleTargetType == "group" && newRuleGroupId > 0 ? newRuleGroupId : null;
+
+        if (userId == null && groupId == null)
+        {
+            addRuleError = $"Please select a {newRuleTargetType}.";
+            return;
+        }
+
+        var accessLevel = supportsContentWorkflows ? newRuleAccessLevel : "full";
+        string? viewScope = accessLevel == "view" ? newRuleViewScope : null;
+
+        try
+        {
+            // A scoped rule with nothing to scope by would show its holder nothing, so it is a mistake, not a grant.
+            if (await contentScopeService.ResolvesToNothingAsync(Location.LocationId, userId, groupId, accessLevel, viewScope))
+            {
+                addRuleError = $"This {newRuleTargetType} has no values for this location's content metadata fields, so they would see nothing. "
+                    + "Give them values, add fields to the location, or choose Full.";
+                return;
+            }
+
+            await accessService.CreateRuleAsync(
+                Location.LocationId,
+                userId,
+                groupId,
+                accessLevel,
+                viewScope,
+                sessionState.User?.UserId.ToString() ?? "system");
+
+            CancelAddRule();
+            accessRules = await accessService.GetRulesForLocationAsync(Location.LocationId);
+            await NotifyAccessChangedAsync(userId, groupId);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            addRuleError = $"Failed to add rule: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// Tells affected users' live circuits to re-resolve location access. Group rules
+    /// fan out to the group's current members.
+    /// </summary>
+    private async Task NotifyAccessChangedAsync(int? userId, int? userGroupId)
+    {
+        try
+        {
+            if (!tenantContext.IsPopulated) return;
+
+            List<int> affected;
+            if (userId.HasValue)
+                affected = new List<int> { userId.Value };
+            else if (userGroupId.HasValue)
+                affected = (await userGroupService.GetGroupMembersAsync(userGroupId.Value)).Select(u => u.UserId).ToList();
+            else
+                return;
+
+            accessBroadcast.NotifyUsers(tenantContext.TenantId, affected);
+        }
+        catch (Exception ex)
+        {
+            logger.LogWarning(ex, "Failed to broadcast access change for location {LocationId}", Location.LocationId);
+        }
+    }
+
+    private void CancelAddRule()
+    {
+        showAddRuleForm = false;
+        newRuleTargetType = "user";
+        newRuleUserId = 0;
+        newRuleGroupId = 0;
+        newRuleAccessLevel = "full";
+        newRuleViewScope = ContentScope.ViewScopeNone;
+        addRuleError = null;
+    }
+
+    private async Task DeleteRule(TblLocationAccessRule rule)
+    {
+        try
+        {
+            await accessService.DeleteRuleAsync(rule.LocationAccessRuleId);
+            accessRules = await accessService.GetRulesForLocationAsync(Location.LocationId);
+            await NotifyAccessChangedAsync(rule.UserId, rule.UserGroupId);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to delete access rule {RuleId}", rule.LocationAccessRuleId);
+        }
+    }
+
+    // ── Schedule Editor ──
+
+    private async Task LoadScheduleCountsAsync()
+    {
+        var ruleIds = accessRules.Select(r => r.LocationAccessRuleId);
+        ruleScheduleCounts = await accessService.GetScheduleCountsAsync(ruleIds);
+    }
+
+    private async Task OpenScheduleEditor(TblLocationAccessRule rule)
+    {
+        editingRuleId = rule.LocationAccessRuleId;
+        editingRuleTarget = rule.User != null
+            ? (rule.User.FriendlyName ?? rule.User.UserPrincipalName ?? $"User {rule.UserId}")
+            : (rule.UserGroup?.GroupName ?? $"Rule #{rule.LocationAccessRuleId}");
+
+        editingSchedules = await accessService.GetSchedulesForRuleAsync(editingRuleId);
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+        locationDisplays = await db.TblDisplays
+            .AsNoTracking()
+            .Where(d => d.LocationId == Location.LocationId)
+            .OrderBy(d => d.SortOrder)
+            .ToListAsync();
+
+        locationConstraints = await db.TblConstraints
+            .AsNoTracking()
+            .Where(c => c.IsGlobal || c.OwningLocationId == Location.LocationId)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        displayLookup = locationDisplays.ToDictionary(d => d.DisplayId, d => d.DisplayName);
+        constraintLookup = locationConstraints.ToDictionary(c => c.ConstraintId, c => c.ConstraintName ?? $"#{c.ConstraintId}");
+
+        ResetScheduleForm();
+        showScheduleEditor = true;
+        StateHasChanged();
+    }
+
+    private void CloseScheduleEditor()
+    {
+        showScheduleEditor = false;
+        StateHasChanged();
+    }
+
+    private void ResetScheduleForm()
+    {
+        newScheduleDisplayId = 0;
+        newScheduleConstraintId = 0;
+        newScheduleMetadataKey = "";
+        newScheduleStartDate = null;
+        newScheduleEndDate = null;
+        newScheduleStartTime = null;
+        newScheduleEndTime = null;
+        newScheduleSun = newScheduleMon = newScheduleTue = newScheduleWed =
+            newScheduleThu = newScheduleFri = newScheduleSat = false;
+        scheduleValidationError = null;
+    }
+
+    private async Task AddSchedule()
+    {
+        scheduleValidationError = null;
+
+        var schedule = new TblAccessSchedule
+        {
+            LocationAccessRuleId = editingRuleId,
+            DisplayId = newScheduleDisplayId > 0 ? newScheduleDisplayId : null,
+            ConstraintId = newScheduleConstraintId > 0 ? newScheduleConstraintId : null,
+            MetadataKey = newScheduleConstraintId > 0 && !string.IsNullOrWhiteSpace(newScheduleMetadataKey)
+                ? newScheduleMetadataKey.Trim() : null,
+            StartDate = newScheduleStartDate,
+            EndDate = newScheduleEndDate,
+            StartTime = newScheduleStartTime,
+            EndTime = newScheduleEndTime,
+            Sunday = newScheduleSun,
+            Monday = newScheduleMon,
+            Tuesday = newScheduleTue,
+            Wednesday = newScheduleWed,
+            Thursday = newScheduleThu,
+            Friday = newScheduleFri,
+            Saturday = newScheduleSat
+        };
+
+        var fieldErrors = AccessScheduleValidator.ValidateFields(schedule);
+        if (fieldErrors.Count > 0)
+        {
+            scheduleValidationError = string.Join(" ", fieldErrors);
+            return;
+        }
+
+        var overlapErrors = AccessScheduleValidator.ValidateNoOverlap(editingSchedules, schedule);
+        if (overlapErrors.Count > 0)
+        {
+            scheduleValidationError = string.Join(" ", overlapErrors);
+            return;
+        }
+
+        try
+        {
+            var saved = await accessService.AddScheduleAsync(schedule,
+                sessionState.User?.UserId.ToString() ?? "system");
+            editingSchedules.Add(saved);
+            ruleScheduleCounts[editingRuleId] = editingSchedules.Count;
+            ResetScheduleForm();
+        }
+        catch (Exception ex)
+        {
+            scheduleValidationError = $"Failed to save schedule: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteSchedule(TblAccessSchedule schedule)
+    {
+        try
+        {
+            await accessService.DeleteScheduleAsync(schedule.AccessScheduleId);
+            editingSchedules.Remove(schedule);
+            ruleScheduleCounts[editingRuleId] = editingSchedules.Count;
+        }
+        catch (Exception ex)
+        {
+            logger.LogError(ex, "Failed to delete schedule {ScheduleId}", schedule.AccessScheduleId);
+        }
+    }
+
+    private static string FormatDateRange(TblAccessSchedule s)
+    {
+        if (!s.StartDate.HasValue && !s.EndDate.HasValue) return "Always";
+        var start = s.StartDate?.ToString("MM/dd/yy") ?? "...";
+        var end = s.EndDate?.ToString("MM/dd/yy") ?? "...";
+        return $"{start} — {end}";
+    }
+
+    private static string FormatTimeRange(TblAccessSchedule s)
+    {
+        if (!s.StartTime.HasValue || !s.EndTime.HasValue) return "All day";
+        return $"{s.StartTime.Value:HH\\:mm} — {s.EndTime.Value:HH\\:mm}";
+    }
+
+    private static string FormatDays(TblAccessSchedule s)
+    {
+        var days = new List<string>();
+        if (s.Sunday) days.Add("Su");
+        if (s.Monday) days.Add("Mo");
+        if (s.Tuesday) days.Add("Tu");
+        if (s.Wednesday) days.Add("We");
+        if (s.Thursday) days.Add("Th");
+        if (s.Friday) days.Add("Fr");
+        if (s.Saturday) days.Add("Sa");
+        return days.Count > 0 ? string.Join(" ", days) : "Every day";
+    }
+
+    // ── Approval Chain ──
+
+    private void OnLlmAutoApprovalToggled(bool enabled)
+    {
+        chainEnableLlm = enabled;
+        if (enabled)
+            llmAutoApprovalUpToStage = Math.Max(0, stages.Count - 1);
+    }
+
+    private void AddStage()
+    {
+        stages.Add(new StageDefinition
+        {
+            StageOrder = stages.Count,
+            IntraStageOperator = "OR",
+            GroupIds = new List<int> { 0 }
+        });
+    }
+
+    private void RemoveStage(int index)
+    {
+        if (stages.Count <= 1) return;
+        stages.RemoveAt(index);
+        for (int i = 0; i < stages.Count; i++)
+            stages[i].StageOrder = i;
+        if (llmAutoApprovalUpToStage >= stages.Count)
+            llmAutoApprovalUpToStage = stages.Count - 1;
+    }
+
+    private void AddGroupToStage(int stageIndex)
+    {
+        stages[stageIndex].GroupIds.Add(0);
+    }
+
+    private void RemoveGroupFromStage(int stageIndex, int groupIndex)
+    {
+        if (stages[stageIndex].GroupIds.Count > 1)
+            stages[stageIndex].GroupIds.RemoveAt(groupIndex);
+    }
+
+    private async Task SaveAndClose()
+    {
+        await SaveApprovalChain();
+        if (string.IsNullOrEmpty(chainError))
+            Close();
+    }
+
+    private async Task SaveApprovalChain()
+    {
+        chainError = null;
+        isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            // Number stages
+            for (int i = 0; i < stages.Count; i++)
+                stages[i].StageOrder = i;
+
+            // Remove empty group entries
+            foreach (var s in stages)
+                s.GroupIds.RemoveAll(id => id <= 0);
+
+            var validation = approvalChainService.ValidateChainDefinition(stages);
+            if (!validation.IsValid)
+            {
+                chainError = string.Join("; ", validation.Errors);
+                return;
+            }
+
+            await approvalChainService.CreateOrUpdateChainAsync(
+                Location.LocationId,
+                chainEnabled,
+                chainEnableLlm,
+                llmAutoApprovalUpToStage,
+                chainAutoApproveMembers,
+                stages,
+                sessionState.User?.UserId.ToString() ?? "system",
+                chainRetentionDays);
+
+            await using (var extDb = await dbFactory.CreateDbContextAsync())
+            {
+                var locationRow = await extDb.TblLocations.FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+                if (locationRow != null)
+                {
+                    locationRow.ExtendedData = ExtendedDataHelper.UpdateProperty<DXSuite.Director.Models.LocationExtendedData>(
+                        locationRow.ExtendedData, d => d.RequireApprovalOnOverwrite = requireApprovalOnOverwrite);
+                    await extDb.SaveChangesAsync();
+                    Location.ExtendedData = locationRow.ExtendedData;
+                }
+            }
+
+            // When first enabling the chain, optionally grandfather in existing content
+            if (chainEnabled && !chainWasEnabledOnOpen && blanketApproveExisting)
+            {
+                var userId = sessionState.User?.UserId ?? 0;
+                await approvalChainService.GetChainForLocationAsync(Location.LocationId); // ensure chain exists
+                var approvedCount = await assetApprovalService.BulkApproveExistingAsync(Location.LocationId, userId);
+                logger.LogInformation("Bulk-approved {Count} existing assets for location {LocationId}", approvedCount, Location.LocationId);
+                blanketApproveExisting = false;
+            }
+
+            chainWasEnabledOnOpen = chainEnabled;
+        }
+        catch (Exception ex)
+        {
+            chainError = $"Failed to save workflow: {ex.Message}";
+            logger.LogError(ex, "Failed to save approval chain for location {LocationId}", Location.LocationId);
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    // ── Helpers ──
+
+    private string GetAccessBadge(string level) => level switch
+    {
+        "full" => "dx-badge-green",
+        "partial" => "dx-badge-yellow",
+        "view" => "dx-badge-gray",
+        _ => "dx-badge-blue"
+    };
+}

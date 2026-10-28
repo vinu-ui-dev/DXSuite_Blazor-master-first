@@ -1,0 +1,329 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Aviation.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject IServiceScopeFactory scopeFactory;
+@inject IDbContextFactory<AviationDbContext> aviationDbFactory
+@inject IOptions<AirlineSchedulingConfig> AirlineConfig;
+
+<style>
+    .custom-checkbox {
+        accent-color: #0071BC;
+        margin-right: 8px;
+        transform: scale(1.2);
+    }
+
+    .day-checkbox-label {
+        display: flex;
+        align-items: center;
+        padding: 10px;
+        background-color: #ffffff;
+        border-radius: 4px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: all 0.2s;
+    }
+
+    .day-checkbox-label:hover {
+        border-color: #0071BC;
+        background-color: #E6F3FF;
+    }
+</style>
+
+<!-- Main Container -->
+<div style="background-color: #CCCCCC; border-radius: 4px; padding: 30px;">
+
+    <!-- Header -->
+    <div style="text-align: center; margin-bottom: 30px; padding-top:30px; border-bottom: 2px solid #B3B3B3; border-top: 2px solid #B3B3B3; padding-bottom: 20px;">
+        <h2 style="color: #333333; font-weight: bold; margin: 0;">Airline Schedule Configuration</h2>
+        <p style="color: #4D4D4D; margin-top: 8px; margin-bottom: 0;">Configure when this airline should be open or closed</p>
+    </div>
+
+    <!-- Airline Selection Section -->
+    @if (ScheduleEvent.ScheduleEventId == 0)
+    {
+        <div style="background-color: #ffffff; border-radius: 4px; border: 1px solid #CCC; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px;">
+                Select Airline & Location
+            </h4>
+
+            @if (GetAirlineLocationOptions().Any())
+            {
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 15px;">
+                    @foreach (var option in GetAirlineLocationOptions())
+                    {
+                        <label style="display: flex; align-items: center; padding: 15px; background-color: #F2F2F2; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.3s; @(selectedOptionValue == option.OptionValue ? "border-color: #0071BC; background-color: #E6F3FF;" : "")"
+                               for="option_@option.OptionValue.Replace("|", "_")">
+                            <input type="radio"
+                                   name="selectedAirlineLocation"
+                                   id="option_@option.OptionValue.Replace("|", "_")"
+                                   value="@option.OptionValue"
+                                   @onchange="@((e) => OnAirlineSelected(e))"
+                                   style="margin-right: 12px; accent-color: #0071BC; transform: scale(1.3);" />
+                            <div>
+                                <div style="font-weight: bold; color: #333333; font-size: 16px;">@option.CarrierName</div>
+                                <div style="color: #4D4D4D; font-size: 14px;">Code: @option.AirlineCode</div>
+                                <div style="color: #666666; font-size: 13px; font-weight: bold;">@option.LocationName</div>
+                            </div>
+                        </label>
+                    }
+                </div>
+            }
+            else
+            {
+                <div style="text-align: center; padding: 40px; color: #4D4D4D;">
+                    <p style="margin: 0; font-style: italic;">No airlines available for scheduling at this location.</p>
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(selectedOptionValue))
+            {
+                <div style="margin-top: 20px; padding: 15px; background-color: #E6F7FF; border-radius: 4px; color: #0071BC; border-left: 4px solid #0071BC;">
+                    <strong>Selected:</strong> @GetSelectedAirlineName() (@selectedAirlineCode) - @GetSelectedLocationName()
+                </div>
+            }
+        </div>
+    }
+    else
+    {
+        <div style="background-color: #ffffff; border-radius: 4px; border: 1px solid #CCC; padding: 25px; margin-bottom: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #0071BC;">
+            <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px;">
+                Editing Schedule
+            </h4>
+            <div style="background-color: #F2F2F2; border-radius: 4px; padding: 15px; text-align: center;">
+                <div style="font-weight: bold; color: #333333; font-size: 18px;">@GetSelectedAirlineName()</div>
+                <div style="color: #4D4D4D; margin-top: 4px;">Airline Code: @selectedAirlineCode</div>
+                <div style="color: #666666; margin-top: 2px; font-weight: bold;">Location: Terminal/1st Floor</div>
+            </div>
+        </div>
+    }
+
+    <!-- Schedule Configuration Card -->
+    <div style="background-color: #ffffff; border-radius: 4px; border: 1px solid #CCC; padding: 25px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+
+        <!-- Date Range Section -->
+        <div style="margin-bottom: 30px;">
+            <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px;">
+                Schedule Period
+            </h4>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 25px; max-width: 600px;">
+            <!-- Start Date/Time -->
+            <div style="background-color: #F2F2F2; border-radius: 4px; padding: 20px;">
+                <h5 style="color: #39B54A; margin-bottom: 15px; font-weight: bold;">Start</h5>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Date</label>
+                    <input type="date" class="form-control" @bind-value="ScheduleEvent.StartDate"
+                           style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                    <small style="color: #4D4D4D; font-size: 12px;">Leave blank for no start limit</small>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Time</label>
+                    <input type="time" class="form-control" @bind-value="ScheduleEvent.StartTime"
+                           style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                    <small style="color: #4D4D4D; font-size: 12px;">Leave blank for all-day</small>
+                </div>
+            </div>
+
+            <!-- End Date/Time -->
+            <div style="background-color: #F2F2F2; border-radius: 4px; padding: 20px;">
+                <h5 style="color: #990000; margin-bottom: 15px; font-weight: bold;">End</h5>
+                <div style="margin-bottom: 15px;">
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Date</label>
+                    <input type="date" class="form-control" @bind-value="ScheduleEvent.EndDate"
+                           style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                    <small style="color: #4D4D4D; font-size: 12px;">Leave blank for no end limit</small>
+                </div>
+                <div>
+                    <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Time</label>
+                    <input type="time" class="form-control" @bind-value="ScheduleEvent.EndTime"
+                           style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                    <small style="color: #4D4D4D; font-size: 12px;">Leave blank for all-day</small>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Days of Week Section -->
+    <div style="margin-bottom: 30px;">
+        <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px;">
+            Active Days
+        </h4>
+        <div style="background-color: #F2F2F2; border-radius: 4px; padding: 20px;">
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px;">
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Sunday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Sunday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Monday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Monday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Tuesday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Tuesday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Wednesday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Wednesday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Thursday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Thursday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Friday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Friday</span>
+                </label>
+                <label class="day-checkbox-label">
+                    <input type="checkbox" @bind="ScheduleEvent.Saturday" class="custom-checkbox" />
+                    <span style="font-weight: 500; color: #333333;">Saturday</span>
+                </label>
+            </div>
+            <small style="display: block; margin-top: 10px; color: #4D4D4D; text-align: center;">
+                Leave all days unchecked to apply to every day of the week
+            </small>
+        </div>
+    </div>
+
+        <!-- Save Button -->
+        <div style="text-align: center; padding-top: 20px; border-top: 1px solid #B3B3B3;">
+            <button class="dx-btn dx-btn-blue" style="@SaveButtonStyle padding: 12px 40px; font-weight: 600;" @onclick="HandleSaveClick">
+                @SaveButtonText
+            </button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public DXSuite.Director.Entities.TblLocation Location { get; set; } = new();
+    [Parameter] public TblScheduleEvent ScheduleEvent { get; set; } = new();
+    [Parameter] public string SaveButtonText { get; set; } = "Save";
+    [Parameter] public string SaveButtonStyle { get; set; } = "height:50px; width: auto;";
+    [Parameter] public EventCallback OnSaveScheduleEntry { get; set; }
+
+    public class AirlineLocationOption
+    {
+        public string AirlineCode { get; set; } = "";
+        public string CarrierName { get; set; } = "";
+        public string LocationName { get; set; } = "";
+        public bool IsLocation1 { get; set; }
+        public string OptionValue => $"{AirlineCode}|{(IsLocation1 ? "1" : "2")}";
+    }
+
+    private List<TblAirline>? airlineList;
+    private string selectedAirlineCode = "";
+    private string selectedOptionValue = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            await LoadAirlines();
+        }
+
+        if (ScheduleEvent != null && !string.IsNullOrEmpty(ScheduleEvent.AirlineCode))
+        {
+            selectedAirlineCode = ScheduleEvent.AirlineCode;
+
+            var config = AirlineConfig.Value;
+            var isLocation1 = ScheduleEvent.DisplayId == config.TerminalDisplayId;
+            selectedOptionValue = $"{ScheduleEvent.AirlineCode}|{(isLocation1 ? "1" : "2")}";
+        }
+    }
+
+    private async Task LoadAirlines()
+    {
+        if (Location == null) return;
+
+        await using var aviationDb = await aviationDbFactory.CreateDbContextAsync();
+
+        airlineList = await aviationDb.TblAirlines
+            .Where(a => a.Tpenabled1 == true || a.Tpenabled2 == true)
+            .OrderBy(x => x.CarrierName)
+            .ToListAsync();
+    }
+
+    private void OnAirlineSelected(ChangeEventArgs e)
+    {
+        selectedOptionValue = e.Value?.ToString() ?? "";
+
+        if (!string.IsNullOrEmpty(selectedOptionValue) && selectedOptionValue.Contains('|'))
+        {
+            var parts = selectedOptionValue.Split('|');
+            selectedAirlineCode = parts[0];
+
+            var config = AirlineConfig.Value;
+            var isLocation1 = parts[1] == "1";
+            ScheduleEvent.DisplayId = isLocation1 ? config.TerminalDisplayId : config.GarageDisplayId;
+        }
+        else
+        {
+            selectedAirlineCode = "";
+        }
+
+        StateHasChanged();
+    }
+
+    private List<AirlineLocationOption> GetAirlineLocationOptions()
+    {
+        var options = new List<AirlineLocationOption>();
+
+        if (airlineList == null) return options;
+
+        foreach (var airline in airlineList)
+        {
+            if (airline.Tpenabled1 == true)
+            {
+                options.Add(new AirlineLocationOption
+                {
+                    AirlineCode = airline.AirlineCode,
+                    CarrierName = airline.CarrierName ?? "",
+                    LocationName = "Terminal/1st Floor",
+                    IsLocation1 = true
+                });
+            }
+
+            if (airline.Tpenabled2 == true)
+            {
+                options.Add(new AirlineLocationOption
+                {
+                    AirlineCode = airline.AirlineCode,
+                    CarrierName = airline.CarrierName ?? "",
+                    LocationName = "Gateway/2nd Floor",
+                    IsLocation1 = false
+                });
+            }
+        }
+
+        return options.OrderBy(x => x.CarrierName).ThenBy(x => x.LocationName).ToList();
+    }
+
+    private string GetSelectedAirlineName()
+    {
+        if (string.IsNullOrEmpty(selectedAirlineCode) || airlineList == null)
+            return "";
+
+        var airline = airlineList.FirstOrDefault(a => a.AirlineCode == selectedAirlineCode);
+        return airline?.CarrierName ?? "";
+    }
+
+    private string GetSelectedLocationName()
+    {
+        if (string.IsNullOrEmpty(selectedOptionValue) || !selectedOptionValue.Contains('|'))
+            return "";
+
+        var parts = selectedOptionValue.Split('|');
+        return parts.Length > 1 && parts[1] == "1" ? "Terminal/1st Floor" : "Gateway/2nd Floor";
+    }
+
+    private async Task HandleSaveClick()
+    {
+        await OnSaveScheduleEntry.InvokeAsync();
+    }
+
+    public string GetSelectedAirlineCode()
+    {
+        return selectedAirlineCode;
+    }
+}

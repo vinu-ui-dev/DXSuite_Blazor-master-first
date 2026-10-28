@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sample Room Signage</title>
+    <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+    <main id="app">
+        <header>
+            <h1 id="welcome">Loading…</h1>
+            <p id="context-line"></p>
+        </header>
+
+        <section id="assets-section" hidden>
+            <h2>Assets</h2>
+            <div id="assets"></div>
+            <label id="upload-label" hidden>
+                Upload image/video: <input type="file" id="upload" />
+            </label>
+        </section>
+
+        <section id="displays-section" hidden>
+            <h2>Displays</h2>
+            <ul id="displays"></ul>
+        </section>
+
+        <section>
+            <h2>Notes (per-location storage)</h2>
+            <textarea id="notes" rows="3" placeholder="Notes persist via dx.storage"></textarea>
+            <button id="save-notes">Save notes</button>
+        </section>
+
+        <footer>
+            <button id="go-dashboard">Back to dashboard</button>
+            <span id="override-info"></span>
+        </footer>
+    </main>
+
+    <script src="/_content/DXSuite.Director/scripts/dx-location.js"></script>
+    <script src="app.js"></script>
+</body>
+</html>

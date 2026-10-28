@@ -1,0 +1,494 @@
+@using Newtonsoft.Json
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@inject IServiceScopeFactory scopeFactory
+@inject WebPreviewService WebPreviewService
+@implements IDisposable
+@rendermode InteractiveServer
+
+@if(Display != null){
+    <div class="@(OnSchedulePage?"display-background":"")" style="position: relative; @((Display.DisplayHeight != 0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;":"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+        @if (isLoading)
+        {
+            <div class="display-loading-placeholder" style="@((Display.DisplayHeight != 0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+                <div class="dx-spinner"></div>
+            </div>
+        }
+        else if (Display.DisplayMode == (int)Types.DisplayMode.Override)
+        {
+            if(Display.OverrideAsset != null)
+            {
+                if (Display.OverrideAsset.AssetTypeId == (int)Types.AssetType.Video)
+                {
+                    @if (PreviewMode)
+                    {
+                        <div style="position:relative; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+                            <img style="width:100%; height:100%; object-fit:cover;"
+                                 src="@GetVideoThumbnailWebPath(Display.OverrideAsset.AssetPath)"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                            <div class="video-content-placeholder" style="display:none; position:absolute; inset:0;">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                                <span>Video</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        @* onerror: media-server codecs (e.g. HAP in .mov) have no browser decoder —
+                           fall back to the ffmpeg-generated thumbnail instead of a black box. *@
+                        <video style="object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")" src="@Display.OverrideAsset.AssetPath" autoplay loop muted playsinline
+                               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"></video>
+                        <img style="display:none; object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")"
+                             src="@GetVideoThumbnailWebPath(Display.OverrideAsset.AssetPath)" />
+                    }
+                }
+                else if (Display.OverrideAsset.AssetTypeId == (int)Types.AssetType.Web)
+                {
+                    @* contain, not cover: a web thumbnail may not match the display's shape
+                       (e.g. a landscape capture on a portrait display) — letterbox rather than crop. *@
+                    <div style="position:relative; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+                        <img style="width:100%; height:100%; object-fit:contain; background-color:#F1F3F5;"
+                             src="@WebPreviewService.GetVersionedThumbnailWebPath(Display.OverrideAsset.AssetId)"
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                        <div class="web-content-placeholder" style="display:none; position:absolute; inset:0;">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                            <span>Web Content</span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <img style="object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")" src="@Display.OverrideAsset.AssetPath" />
+                }
+            }
+        }
+        else if (Display.DisplayMode == (int)Types.DisplayMode.Schedule ||
+                 Display.DisplayMode == (int)Types.DisplayMode.StatusSelector)
+        {
+            @* Guard on Asset, not just the item: a ContentAssignment can reference an AssetId that no
+               longer resolves (e.g. a deleted asset, or content imported from another environment whose
+               asset id was not remapped). Render nothing rather than dereferencing a null Asset. *@
+            if (currentContentItem?.Asset != null)
+            {
+                if (currentContentItem.Asset.AssetTypeId == (int)Types.AssetType.Video)
+                {
+                    @if (PreviewMode)
+                    {
+                        <div style="position:relative; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+                            <img style="width:100%; height:100%; object-fit:cover;"
+                                 src="@GetVideoThumbnailWebPath(currentContentItem.Asset.AssetPath)"
+                                 onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                            <div class="video-content-placeholder" style="display:none; position:absolute; inset:0;">
+                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M8 5v14l11-7z"/>
+                                </svg>
+                                <span>Video</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        @* onerror: media-server codecs (e.g. HAP in .mov) have no browser decoder —
+                           fall back to the ffmpeg-generated thumbnail instead of a black box. *@
+                        <video style="object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")" src="@currentContentItem.Asset.AssetPath" autoplay loop muted playsinline
+                               onerror="this.style.display='none'; this.nextElementSibling.style.display='block';"></video>
+                        <img style="display:none; object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")"
+                             src="@GetVideoThumbnailWebPath(currentContentItem.Asset.AssetPath)" />
+                    }
+                }
+                else if (currentContentItem.Asset.AssetTypeId == (int)Types.AssetType.Web)
+                {
+                    @* contain, not cover: a web thumbnail may not match the display's shape
+                       (e.g. a landscape capture on a portrait display) — letterbox rather than crop. *@
+                    <div style="position:relative; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")">
+                        <img style="width:100%; height:100%; object-fit:contain; background-color:#F1F3F5;"
+                             src="@WebPreviewService.GetVersionedThumbnailWebPath(currentContentItem.Asset.AssetId)"
+                             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+                        <div class="web-content-placeholder" style="display:none; position:absolute; inset:0;">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                            </svg>
+                            <span>Web Content</span>
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <img style="object-fit:cover; @((Display.DisplayHeight !=0.0)? "height:" + (Display.DisplayHeight * ScaleFactor).ToString() + "px;" :"") @((Display.DisplayWidth != 0)? "width:" + (Display.DisplayWidth * ScaleFactor).ToString() + "px;":"")" src="@currentContentItem.Asset.AssetPath" />
+                }
+            }
+        }
+
+        @* Display live clock if enabled in current schedule event *@
+        @if (currentContentAssignment != null && currentContentAssignment.UseClock)
+        {
+            <div class="live-clock"
+                 style="position: absolute;
+                        left: @((currentContentAssignment.ClockX * (ScaleFactor ?? 1.0)).ToString())px;
+                        top: @((currentContentAssignment.ClockY * (ScaleFactor ?? 1.0)).ToString())px;
+                        width: @((currentContentAssignment.ClockWidth * (ScaleFactor ?? 1.0)).ToString())px;
+                        height: @((currentContentAssignment.ClockHeight * (ScaleFactor ?? 1.0)).ToString())px;
+                        background-color: rgba(0, 0, 0, 0.7);
+                        color: white;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        font-family: Arial, sans-serif;
+                        font-weight: bold;
+                        font-size: @(GetClockFontSize())px;
+                        border-radius: 4px;
+                        box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+                        z-index: 10;">
+                @currentTime.ToString("h:mm tt")
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public TblDisplay? Display { get; set; }
+    [Parameter] public double? ScaleFactor { get; set; }
+    [Parameter] public bool OnSchedulePage { get; set; } = false;
+    [Parameter] public bool PreviewMode { get; set; } = false;
+    /// <summary>
+    /// When provided by the parent (e.g. Card.razor), assets are resolved from this
+    /// in-memory list instead of issuing a separate DB query per display component.
+    /// </summary>
+    [Parameter] public IList<TblAsset>? PreloadedAssets { get; set; }
+
+    private TblScheduleEvent? currentScheduledEvent { get; set; }
+
+    private ContentAssignment? currentContentAssignment { get; set; }
+    private ContentItem? currentContentItem { get; set; }
+
+    private Timer? refreshTimer;
+    private Timer? clockTimer;
+    private int currentContentListNo;
+    private DateTime currentTime = DateTime.Now;
+    private bool isLoading = true;
+    private TblDisplay? previousDisplay;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if(ScaleFactor == null){
+            ScaleFactor = 1.0;
+        }
+        previousDisplay = Display;
+        await RefreshSchedule();
+        isLoading = false;
+        StartClockTimer();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Re-resolve the schedule whenever the parent passes a new Display reference,
+        // e.g. after StatusSelectorPage reloads the display following a content change.
+        if (Display != previousDisplay)
+        {
+            previousDisplay = Display;
+            await RefreshSchedule();
+        }
+    }
+
+    private async Task RefreshSchedule() {
+        DateTime now = DateTime.Now;
+        if (Display != null)
+        {
+            currentScheduledEvent = null;
+            //Check If Schedule Event is Present
+            foreach (TblScheduleEvent scheduleEvent in Display.TblScheduleEvents.Where(x => x.DefaultContent == false))
+            {
+                // Date bounds are inclusive and compared by calendar date: a schedule whose start and
+                // end fall on the same day is active for that whole day, and the end date stays active
+                // through 23:59. The time-of-day window below constrains the active hours separately.
+                bool isWithinDateRange = (scheduleEvent.StartDate == null || now.Date >= scheduleEvent.StartDate.Value.Date) &&
+                                        (scheduleEvent.EndDate == null || now.Date <= scheduleEvent.EndDate.Value.Date);
+
+                // Check time range (ScheduleTime handles overnight wrap and treats an
+                // EndTime of 23:59 as running through end of day)
+                bool isWithinTimeRange = true;
+                if (scheduleEvent.StartTime != null || scheduleEvent.EndTime != null)
+                {
+                    isWithinTimeRange = ScheduleTime.IsWithinWindow(
+                        TimeOnly.FromDateTime(now), scheduleEvent.StartTime, scheduleEvent.EndTime);
+                }
+
+                if (isWithinDateRange && isWithinTimeRange)
+                {
+                    if (IsDayActive(scheduleEvent))
+                    {
+                        //Would be active event
+                        currentScheduledEvent = scheduleEvent;
+                    }
+                }
+            }
+            //Fall Back To Default Content
+            if (currentScheduledEvent == null)
+            {
+                currentScheduledEvent = Display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent);
+            }
+            //Resolve Assets From DB
+            if (currentScheduledEvent != null)
+            {
+                currentContentAssignment = await GetContentAssignmentAsync(currentScheduledEvent.ContentAssignment);
+
+                // If the matched event has no content (e.g. a time-block placeholder with empty
+                // ContentAssignment), fall back to the default event rather than showing nothing.
+                if ((currentContentAssignment == null || currentContentAssignment.Content.Count == 0)
+                    && currentScheduledEvent.DefaultContent == false)
+                {
+                    currentScheduledEvent = Display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent);
+                    if (currentScheduledEvent != null)
+                        currentContentAssignment = await GetContentAssignmentAsync(currentScheduledEvent.ContentAssignment);
+                }
+
+                if (currentContentAssignment != null && currentContentAssignment.Content.Count > 0)
+                {
+                    currentContentItem = currentContentAssignment.Content[0];
+                    if (currentContentAssignment.Content.Count > 1)
+                    {
+                        //Start Timer For Trigger
+                        int transitionTimeSpan = (int)Math.Round(currentContentAssignment.Content[0].Duration * 1000);
+
+                        if (refreshTimer != null)
+                        {
+                            await refreshTimer.DisposeAsync();
+                        }
+
+                        refreshTimer = new Timer(NextContentFlip, null, transitionTimeSpan, 0);
+                    }
+                }
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+
+    }
+
+    public async Task RefreshSchedule(TblDisplay? display)
+    {
+        DateTime now = DateTime.Now;
+        if (display != null)
+        {
+            currentScheduledEvent = null;
+
+            //Check If Schedule Event is Present
+            foreach (TblScheduleEvent scheduleEvent in display.TblScheduleEvents.Where(x => x.DefaultContent == false))
+            {
+                // Date bounds are inclusive and compared by calendar date: a schedule whose start and
+                // end fall on the same day is active for that whole day, and the end date stays active
+                // through 23:59. The time-of-day window below constrains the active hours separately.
+                bool isWithinDateRange = (scheduleEvent.StartDate == null || now.Date >= scheduleEvent.StartDate.Value.Date) &&
+                                        (scheduleEvent.EndDate == null || now.Date <= scheduleEvent.EndDate.Value.Date);
+
+                // Check time range (ScheduleTime handles overnight wrap and treats an
+                // EndTime of 23:59 as running through end of day)
+                bool isWithinTimeRange = true;
+                if (scheduleEvent.StartTime != null || scheduleEvent.EndTime != null)
+                {
+                    isWithinTimeRange = ScheduleTime.IsWithinWindow(
+                        TimeOnly.FromDateTime(now), scheduleEvent.StartTime, scheduleEvent.EndTime);
+                }
+
+                if (isWithinDateRange && isWithinTimeRange)
+                {
+                    if (IsDayActive(scheduleEvent))
+                    {
+                        //Would be active event
+                        currentScheduledEvent = scheduleEvent;
+                    }
+                }
+            }
+            //Fall Back To Default Content
+            if (currentScheduledEvent == null)
+            {
+                currentScheduledEvent = display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent);
+            }
+            //Resolve Assets From DB
+            if (currentScheduledEvent != null)
+            {
+                currentContentAssignment = await GetContentAssignmentAsync(currentScheduledEvent.ContentAssignment);
+
+                if ((currentContentAssignment == null || currentContentAssignment.Content.Count == 0)
+                    && currentScheduledEvent.DefaultContent == false)
+                {
+                    currentScheduledEvent = display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent);
+                    if (currentScheduledEvent != null)
+                        currentContentAssignment = await GetContentAssignmentAsync(currentScheduledEvent.ContentAssignment);
+                }
+
+                if (currentContentAssignment != null && currentContentAssignment.Content.Count > 0)
+                {
+                    currentContentItem = currentContentAssignment.Content[0];
+                    if (currentContentAssignment.Content.Count > 1)
+                    {
+                        //Start Timer For Trigger
+                        int transitionTimeSpan = (int)Math.Round(currentContentAssignment.Content[0].Duration * 1000);
+
+                        if (refreshTimer != null)
+                        {
+                            await refreshTimer.DisposeAsync();
+                        }
+
+                        refreshTimer = new Timer(NextContentFlip, null, transitionTimeSpan, 0);
+                    }
+                }
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+
+    }
+
+    private async void NextContentFlip(object? _)
+    {
+        if(currentContentAssignment != null && currentContentAssignment.Content.Count > 1){
+            if(currentContentAssignment.Content.Count > currentContentListNo + 1){
+                //Increment
+                currentContentListNo = currentContentListNo + 1;
+                currentContentItem = currentContentAssignment.Content[currentContentListNo];
+            }
+            else{
+                currentContentListNo = 0;
+                currentContentItem = currentContentAssignment.Content[currentContentListNo];
+            }
+
+            int transitionTimeSpan = (int)Math.Round(currentContentItem.Duration * 1000);
+            if (refreshTimer != null)
+            {
+                await refreshTimer.DisposeAsync();
+            }
+
+            refreshTimer = new Timer(NextContentFlip, null, transitionTimeSpan, 0);
+        }
+        else{
+            if (refreshTimer != null)
+            {
+                await refreshTimer.DisposeAsync();
+            }
+            if(currentContentAssignment != null && currentContentAssignment.Content.Count > 0){
+                currentContentItem = currentContentAssignment.Content[0];
+            }
+            else{
+                currentContentItem = null;
+            }
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task<ContentAssignment?> GetContentAssignmentAsync(string contentAssignmentString){
+        ContentAssignment? contentAssignment = JsonConvert.DeserializeObject<ContentAssignment>(contentAssignmentString);
+        if (contentAssignment != null)
+        {
+            IList<TblAsset> assetList;
+
+            if (PreloadedAssets != null)
+            {
+                // Parent already loaded all location assets — filter in memory to avoid a DB round-trip per display
+                var neededIds = contentAssignment.GetAssetIDList();
+                assetList = PreloadedAssets.Where(x => neededIds.Contains(x.AssetId)).ToList();
+            }
+            else
+            {
+                // Fallback: fetch from DB (used when StandardDisplay is placed outside a preloading parent)
+                using var scope = scopeFactory.CreateScope();
+                var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                assetList = await dbContext.TblAssets
+                    .AsNoTracking()
+                    .Where(x => contentAssignment.GetAssetIDList().Contains(x.AssetId))
+                    .ToListAsync();
+            }
+
+            foreach (ContentItem item in contentAssignment.Content)
+            {
+                TblAsset? assetItem = assetList.FirstOrDefault(x => x.AssetId == item.AssetId);
+                if (assetItem != null)
+                {
+                    item.Asset = assetItem;
+                }
+            }
+        }
+        return contentAssignment;
+    }
+
+    private bool IsDayActive(TblScheduleEvent scheduleEvent)
+    {
+        // If no days are selected, treat as active every day
+        bool noDaysSelected = !scheduleEvent.Sunday && !scheduleEvent.Monday && !scheduleEvent.Tuesday
+                            && !scheduleEvent.Wednesday && !scheduleEvent.Thursday && !scheduleEvent.Friday
+                            && !scheduleEvent.Saturday;
+
+        if (noDaysSelected)
+        {
+            return true;
+        }
+
+        // Otherwise, check if current day is selected
+        DayOfWeek today = DateTime.Now.DayOfWeek;
+        switch (today)
+        {
+            case DayOfWeek.Sunday:
+                return scheduleEvent.Sunday;
+            case DayOfWeek.Monday:
+                return scheduleEvent.Monday;
+            case DayOfWeek.Tuesday:
+                return scheduleEvent.Tuesday;
+            case DayOfWeek.Wednesday:
+                return scheduleEvent.Wednesday;
+            case DayOfWeek.Thursday:
+                return scheduleEvent.Thursday;
+            case DayOfWeek.Friday:
+                return scheduleEvent.Friday;
+            case DayOfWeek.Saturday:
+                return scheduleEvent.Saturday;
+            default:
+                return false;
+        }
+    }
+
+    private void StartClockTimer()
+    {
+        // Update clock every second
+        clockTimer = new Timer(UpdateClock, null, TimeSpan.Zero, TimeSpan.FromSeconds(1));
+    }
+
+    private async void UpdateClock(object? _)
+    {
+        // Skip re-render if this display's current content doesn't show a clock
+        if (currentContentAssignment?.UseClock != true) return;
+        currentTime = DateTime.Now;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private int GetClockFontSize()
+    {
+        if (currentContentAssignment == null || ScaleFactor == null) return 12;
+
+        // Calculate font size based on scaled clock dimensions
+        var scaledWidth = currentContentAssignment.ClockWidth * ScaleFactor.Value;
+        var scaledHeight = currentContentAssignment.ClockHeight * ScaleFactor.Value;
+        var referenceDimension = Math.Min(scaledWidth, scaledHeight);
+
+        // Font size between 8-24px based on clock size
+        return Math.Max(8, Math.Min(24, (int)(referenceDimension * 0.4)));
+    }
+
+    // Derives the web path for a video's generated thumbnail (.png in Thumbnails/ subfolder)
+    private string GetVideoThumbnailWebPath(string assetPath)
+    {
+        var directory = Path.GetDirectoryName(assetPath)?.Replace("\\", "/") ?? "";
+        var fileName = Path.GetFileNameWithoutExtension(assetPath);
+        return $"{directory}/Thumbnails/{fileName}.png";
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+        clockTimer?.Dispose();
+    }
+
+}

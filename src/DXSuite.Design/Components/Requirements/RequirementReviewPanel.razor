@@ -1,0 +1,43 @@
+@using DXSuite.Design.Entities
+
+<div class="rrp-container">
+    <span style="font-size:.8rem; color:var(--text-muted,#6c757d); font-weight:600">Designer Review:</span>
+    <div class="rrp-actions">
+        <button class="rrp-btn rrp-accept @(Requirement.Status == RequirementStatus.Accepted ? "rrp-active" : "")"
+                @onclick="() => SetStatus(RequirementStatus.Accepted)">
+            ✓ Accept
+        </button>
+        <button class="rrp-btn rrp-clarify @(Requirement.Status == RequirementStatus.NeedsClarification ? "rrp-active" : "")"
+                @onclick="() => SetStatus(RequirementStatus.NeedsClarification)">
+            ? Needs Clarification
+        </button>
+        <button class="rrp-btn rrp-challenge @(Requirement.Status == RequirementStatus.Challenged ? "rrp-active" : "")"
+                @onclick="() => SetStatus(RequirementStatus.Challenged)">
+            ✗ Challenge
+        </button>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TblDesignRequirement Requirement { get; set; } = null!;
+    [Parameter, EditorRequired] public EventCallback<TblDesignRequirement> OnStatusChanged { get; set; }
+
+    private void SetStatus(RequirementStatus status)
+    {
+        Requirement.Status = status;
+        OnStatusChanged.InvokeAsync(Requirement);
+    }
+}
+
+<style>
+    .rrp-container { display: flex; align-items: center; gap: 10px; margin: 10px 0; padding: 8px 0; border-top: 1px solid var(--border, #dee2e6); flex-wrap: wrap; }
+    .rrp-actions { display: flex; gap: 6px; }
+    .rrp-btn { padding: 4px 12px; border-radius: 4px; border: 1px solid; cursor: pointer; font-size: .8rem; background: #fff; transition: all .15s; }
+    .rrp-accept { border-color: #198754; color: #198754; }
+    .rrp-accept.rrp-active { background: #198754; color: #fff; }
+    .rrp-clarify { border-color: #fd7e14; color: #fd7e14; }
+    .rrp-clarify.rrp-active { background: #fd7e14; color: #fff; }
+    .rrp-challenge { border-color: #dc3545; color: #dc3545; }
+    .rrp-challenge.rrp-active { background: #dc3545; color: #fff; }
+    .rrp-btn:hover { opacity: .85; }
+</style>

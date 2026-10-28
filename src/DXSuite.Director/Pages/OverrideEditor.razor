@@ -1,0 +1,1377 @@
+@page "/OverrideEditor/{OverrideId:int?}"
+@using DXSuite.Director.Entities
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Forms
+@inject IDirectorDBContext dbContext
+@inject IOverrideService overrideService
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@rendermode InteractiveServer
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    if (!isAuthorized)
+    {
+        <div class="unauthorized-wrapper">
+            <h1>Unauthorized</h1>
+            <p>You do not have permission to access this page.</p>
+            <a href="/director">Return Home</a>
+        </div>
+    }
+    else
+    {
+        <section class="Sub-Header">
+            <div class="Head-flex">
+                <h2>@(isNewOverride ? "CREATE OVERRIDE" : "EDIT OVERRIDE")</h2>
+                <div class="header-buttons">
+                    <button class="dx-btn dx-btn-gray" @onclick="Cancel">CANCEL</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        SAVE
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <section class="Body">
+            <div class="editor-container">
+                <!-- LEFT PANEL: Basic Info & Schedule -->
+                <div class="left-panel">
+                    <div class="panel-section">
+                        <h4>Basic Information</h4>
+                        <div class="form-group">
+                            <label>Override Name <span class="required">*</span></label>
+                            <input type="text" class="dx-form-control" @bind="overrideName" placeholder="Enter override name" />
+                        </div>
+                        @if (!isNewOverride && OverrideId.HasValue)
+                        {
+                            <div class="form-group">
+                                <label>Override ID</label>
+                                <div class="override-id-display">@OverrideId.Value</div>
+                            </div>
+                        }
+                        <div class="form-group">
+                            <label>Description</label>
+                            <textarea class="dx-form-control" @bind="description" rows="3" placeholder="Optional description"></textarea>
+                        </div>
+                    </div>
+
+                    <div class="panel-section">
+                        <h4>Schedule Settings</h4>
+                        <div class="form-check mb-3">
+                            <input type="checkbox" class="dx-checkbox" id="isScheduled" @bind="isScheduled" />
+                            <label class="form-check-label" for="isScheduled">Enable Scheduling</label>
+                        </div>
+
+                        @if (isScheduled)
+                        {
+                            <div class="schedule-fields">
+                                <div class="date-range">
+                                    <div class="form-group">
+                                        <label>Start Date</label>
+                                        <input type="date" class="dx-form-control" @bind="startDate" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>End Date</label>
+                                        <input type="date" class="dx-form-control" @bind="endDate" />
+                                    </div>
+                                </div>
+
+                                <div class="time-range">
+                                    <div class="form-group">
+                                        <label>Start Time</label>
+                                        <input type="time" class="dx-form-control" value="@startTimeStr" @onchange="@(e => startTimeStr = e.Value?.ToString())" />
+                                    </div>
+                                    <div class="form-group">
+                                        <label>End Time</label>
+                                        <input type="time" class="dx-form-control" value="@endTimeStr" @onchange="@(e => endTimeStr = e.Value?.ToString())" />
+                                    </div>
+                                    <small style="color:#4D4D4D; font-size:12px;">Times are each player's local time.</small>
+                                </div>
+
+                                <div class="form-group">
+                                    <label>Days of Week</label>
+                                    <div class="day-checkboxes">
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="sunday" /> Sun</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="monday" /> Mon</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="tuesday" /> Tue</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="wednesday" /> Wed</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="thursday" /> Thu</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="friday" /> Fri</label>
+                                        <label class="day-check"><input type="checkbox" class="dx-checkbox" @bind="saturday" /> Sat</label>
+                                    </div>
+                                    <div class="day-shortcuts">
+                                        <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="SelectAllDays">All</button>
+                                        <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="SelectWeekdays">Weekdays</button>
+                                        <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="SelectWeekends">Weekends</button>
+                                        <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="ClearDays">Clear</button>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <!-- CENTER PANEL: Target Selection (Devices or Displays) -->
+                <div class="center-panel">
+                    <div class="panel-header">
+                        <h4>Target Selection</h4>
+                        <div class="device-controls">
+                            <select class="dx-form-control target-mode-select" value="@targetMode" @onchange="OnTargetModeChanged">
+                                <option value="displays">Displays</option>
+                                <option value="devices">Devices</option>
+                            </select>
+                            <input @bind="deviceSearchFilter" @oninput="OnDeviceSearchChanged"
+                                   class="dx-form-control search-input"
+                                   placeholder="@(targetMode == "devices" ? "Search devices..." : "Search displays...")" />
+                        </div>
+                    </div>
+                    <div class="selection-buttons">
+                        <button type="button" class="dx-btn dx-btn-sm dx-btn-outline-blue" @onclick="SelectAllFiltered">Select All Filtered</button>
+                        <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="UnselectAll">Unselect All</button>
+                        <button type="button" class="dx-btn dx-btn-sm @(showSelectedOnly ? "dx-btn-blue" : "dx-btn-gray")" @onclick="ToggleShowSelected">
+                            @(showSelectedOnly ? "Show All" : "Show Selected")
+                        </button>
+                        <span class="selection-count">
+                            @{
+                                var countParts = new List<string>();
+                                if (selectedDeviceIds.Count > 0) countParts.Add($"{selectedDeviceIds.Count} devices");
+                                if (selectedDisplayIds.Count > 0) countParts.Add($"{selectedDisplayIds.Count} displays");
+                            }
+                            @(countParts.Count > 0 ? string.Join(", ", countParts) + " selected" : "0 selected")
+                        </span>
+                    </div>
+                    <div class="device-list">
+                        @if (targetMode == "devices")
+                        {
+                            @if (FilteredDevices != null && FilteredDevices.Any())
+                            {
+                                <div class="device-table-header">
+                                    <div class="col-check"></div>
+                                    <div class="col-status sortable-header" @onclick="@(() => SetSort("Status"))">
+                                        Status @GetSortCaret("Status")
+                                    </div>
+                                    <div class="col-device-id sortable-header" @onclick="@(() => SetSort("DeviceId"))">
+                                        Device ID @GetSortCaret("DeviceId")
+                                    </div>
+                                    <div class="col-description sortable-header" @onclick="@(() => SetSort("Description"))">
+                                        Description @GetSortCaret("Description")
+                                    </div>
+                                    <div class="col-location sortable-header" @onclick="@(() => SetSort("Location"))">
+                                        Location @GetSortCaret("Location")
+                                    </div>
+                                    <div class="col-resolution sortable-header" @onclick="@(() => SetSort("Resolution"))">
+                                        Resolution @GetSortCaret("Resolution")
+                                    </div>
+                                </div>
+                                <div class="device-table-body">
+                                    @foreach (var device in FilteredDevices)
+                                    {
+                                        <div class="device-row @(selectedDeviceIds.Contains(device.DeviceId) ? "override-device-selected" : "")"
+                                             @onclick="() => ToggleDeviceSelection(device.DeviceId)">
+                                            <div class="col-check">
+                                                <input type="checkbox" class="dx-checkbox" checked="@selectedDeviceIds.Contains(device.DeviceId)"
+                                                       @onclick:stopPropagation="true"
+                                                       @onchange="() => ToggleDeviceSelection(device.DeviceId)" />
+                                            </div>
+                                            <div class="col-status">
+                                                @if (IsDeviceOnline(device.Heartbeat))
+                                                {
+                                                    <span class="status-indicator online" title="Online">&#9679;</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="status-indicator offline" title="Offline">&#9679;</span>
+                                                }
+                                            </div>
+                                            <div class="col-device-id">@device.DeviceId</div>
+                                            <div class="col-description">@(device.Description ?? "-")</div>
+                                            <div class="col-location">@(device.LocationName ?? "-")</div>
+                                            <div class="col-resolution">
+                                                @if (device.DisplayWidth > 0 && device.DisplayHeight > 0)
+                                                {
+                                                    <span>@((int)device.DisplayWidth)x@((int)device.DisplayHeight)</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">-</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="no-devices">
+                                    <p>No devices found</p>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            @if (FilteredDisplays != null && FilteredDisplays.Any())
+                            {
+                                <div class="device-table-header">
+                                    <div class="col-check"></div>
+                                    <div class="col-status"></div>
+                                    <div class="col-device-id sortable-header" @onclick="@(() => SetSort("DisplayName"))">
+                                        Display @GetSortCaret("DisplayName")
+                                    </div>
+                                    <div class="col-description"></div>
+                                    <div class="col-location sortable-header" @onclick="@(() => SetSort("Location"))">
+                                        Location @GetSortCaret("Location")
+                                    </div>
+                                    <div class="col-resolution sortable-header" @onclick="@(() => SetSort("Resolution"))">
+                                        Resolution @GetSortCaret("Resolution")
+                                    </div>
+                                </div>
+                                <div class="device-table-body">
+                                    @foreach (var display in FilteredDisplays)
+                                    {
+                                        <div class="device-row @(selectedDisplayIds.Contains(display.DisplayId) ? "override-device-selected" : "")"
+                                             @onclick="() => ToggleDisplaySelection(display.DisplayId)">
+                                            <div class="col-check">
+                                                <input type="checkbox" class="dx-checkbox" checked="@selectedDisplayIds.Contains(display.DisplayId)"
+                                                       @onclick:stopPropagation="true"
+                                                       @onchange="() => ToggleDisplaySelection(display.DisplayId)" />
+                                            </div>
+                                            <div class="col-status"></div>
+                                            <div class="col-device-id">@display.DisplayName</div>
+                                            <div class="col-description"></div>
+                                            <div class="col-location">@(display.LocationName ?? "-")</div>
+                                            <div class="col-resolution">
+                                                @if (display.DisplayWidth > 0 && display.DisplayHeight > 0)
+                                                {
+                                                    <span>@((int)display.DisplayWidth)x@((int)display.DisplayHeight)</span>
+                                                }
+                                                else
+                                                {
+                                                    <span class="text-muted">-</span>
+                                                }
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="no-devices">
+                                    <p>No displays found</p>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <!-- RIGHT PANEL: Content Assignment -->
+                <div class="right-panel">
+                    <div class="panel-header">
+                        <h4>Content by Resolution</h4>
+                        <button type="button" class="dx-btn dx-btn-sm dx-btn-outline-blue" @onclick="DetectResolutions">
+                            Detect Resolutions
+                        </button>
+                    </div>
+                    <div class="resolution-list">
+                        @if (resolutionContents.Count == 0)
+                        {
+                            <div class="no-resolutions">
+                                <p>Select devices and click "Detect Resolutions" to add content.</p>
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var rc in resolutionContents)
+                            {
+                                <div class="resolution-card">
+                                    <div class="resolution-header">
+                                        <span class="resolution-label">@rc.Width x @rc.Height</span>
+                                        <span class="device-count">(@rc.DeviceCount devices)</span>
+                                        <button type="button" class="dx-btn dx-btn-red" style="padding: 4px 10px; font-size: 0.8rem;" @onclick="() => RemoveResolution(rc)">
+                                            Remove
+                                        </button>
+                                    </div>
+                                    <div class="resolution-content">
+                                        @if (string.IsNullOrEmpty(rc.ContentPath))
+                                        {
+                                            <div class="upload-area">
+                                                <InputFile class="dx-form-control" OnChange="(e) => OnContentUpload(e, rc)" accept="image/*,video/*" />
+                                                <small class="text-muted">Upload image or video</small>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="content-preview">
+                                                @if (rc.ContentPath.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                                                     rc.ContentPath.EndsWith(".webm", StringComparison.OrdinalIgnoreCase))
+                                                {
+                                                    <div class="video-icon">
+                                                        <span>Video: @Path.GetFileName(rc.ContentPath)</span>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <img src="@GetPreviewUrl(rc.ContentPath)" alt="Preview" />
+                                                }
+                                                <button type="button" class="dx-btn dx-btn-sm dx-btn-gray" @onclick="() => ClearContent(rc)">
+                                                    Change
+                                                </button>
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+
+                        <div class="add-resolution">
+                            <button type="button" class="dx-btn dx-btn-gray" @onclick="ShowAddResolutionModal">
+                                + Add Custom Resolution
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </section>
+
+        @if (showAddResolutionModal)
+        {
+            <div class="dx-modal-overlay" @onclick="HideAddResolutionModal">
+                <div class="dx-modal" style="width:380px;" @onclick:stopPropagation="true">
+                    <div class="dx-modal-header">
+                        <h5>Add Custom Resolution</h5>
+                        <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="HideAddResolutionModal"></button>
+                    </div>
+                    <div class="dx-modal-body">
+                        <div style="display:flex; gap:16px;">
+                            <div style="flex:1;">
+                                <label class="dx-label">Width</label>
+                                <input type="number" class="dx-form-control" @bind="newResolutionWidth" min="1" />
+                            </div>
+                            <div style="flex:1;">
+                                <label class="dx-label">Height</label>
+                                <input type="number" class="dx-form-control" @bind="newResolutionHeight" min="1" />
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dx-modal-footer">
+                        <button type="button" class="dx-btn dx-btn-blue" @onclick="AddCustomResolution">Add</button>
+                        <button type="button" class="dx-btn dx-btn-gray" @onclick="HideAddResolutionModal">Cancel</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="dx-alert dx-alert-info alert-dismissible fade show error-toast" role="alert">
+                @errorMessage
+                <button type="button" class="btn-close" @onclick="() => errorMessage = null"></button>
+            </div>
+        }
+    }
+}
+
+<style>
+    .editor-container {
+        display: grid;
+        grid-template-columns: 300px 1fr 350px;
+        gap: 20px;
+        padding: 20px;
+        height: calc(100vh - 200px);
+    }
+
+    .left-panel, .center-panel, .right-panel {
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+    }
+
+    .left-panel {
+        padding: 20px;
+        overflow-y: auto;
+    }
+
+    .panel-section {
+        margin-bottom: 24px;
+    }
+
+    .panel-section h4 {
+        margin-bottom: 16px;
+        padding-bottom: 8px;
+        border-bottom: 2px solid #0071BC;
+        color: #333;
+    }
+
+    .form-group {
+        margin-bottom: 16px;
+    }
+
+    .form-group label {
+        display: block;
+        margin-bottom: 4px;
+        font-weight: 500;
+    }
+
+    .required {
+        color: #dc3545;
+    }
+
+    .override-id-display {
+        font-family: monospace;
+        color: #666;
+        background-color: #f0f0f0;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.9rem;
+    }
+
+    .schedule-fields {
+        background-color: #f8f9fa;
+        padding: 16px;
+        border-radius: 8px;
+    }
+
+    .date-range, .time-range {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        margin-bottom: 16px;
+    }
+
+    .day-checkboxes {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .day-check {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        background-color: #e9ecef;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 0.9rem;
+    }
+
+    .day-check input {
+        margin: 0;
+    }
+
+    .day-shortcuts {
+        display: flex;
+        gap: 8px;
+        flex-wrap: wrap;
+    }
+
+    .center-panel .panel-header {
+        background-color: #CCCCCC;
+        padding: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .center-panel .panel-header h4 {
+        margin: 0;
+        color: #333;
+    }
+
+    .target-mode-select {
+        width: 120px;
+        font-family: var(--dx-font-family);
+        font-size: 12px;
+    }
+
+    .search-input {
+        width: 200px;
+        max-width: 100%;
+    }
+
+    .selection-buttons {
+        display: flex;
+        gap: 8px;
+        padding: 12px 16px;
+        border-bottom: 1px solid #e0e0e0;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .selection-count {
+        margin-left: auto;
+        font-weight: 500;
+        color: #0071BC;
+    }
+
+    .device-list {
+        flex: 1;
+        overflow-y: auto;
+    }
+
+    .device-table-header {
+        display: grid;
+        grid-template-columns: 40px 50px 160px 1fr 150px 100px;
+        gap: 12px;
+        padding: 12px 16px;
+        background-color: #f0f0f0;
+        font-weight: bold;
+        font-size: 0.85rem;
+        text-transform: uppercase;
+        position: sticky;
+        top: 0;
+        z-index: 1;
+    }
+
+    .sortable-header {
+        cursor: pointer;
+        user-select: none;
+        display: flex;
+        align-items: center;
+        gap: 4px;
+    }
+
+    .sortable-header:hover {
+        color: #0071BC;
+    }
+
+    .sort-caret {
+        font-size: 0.7rem;
+        color: #0071BC;
+    }
+
+    .device-table-body {
+        padding: 0 16px;
+    }
+
+    .device-row {
+        display: grid;
+        grid-template-columns: 40px 50px 160px 1fr 150px 100px;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid #e0e0e0;
+        cursor: pointer;
+        align-items: center;
+        transition: background-color 0.2s;
+    }
+
+    .device-row:hover {
+        background-color: #f0f7ff;
+    }
+
+    .device-row.override-device-selected {
+        background-color: #e3f2fd;
+    }
+
+    .col-check {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .col-check input[type="checkbox"] {
+        accent-color: var(--dx-blue);
+        width: 16px;
+        height: 16px;
+        cursor: pointer;
+    }
+
+    .col-status {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    /* Prevent long device IDs or descriptions from overflowing into adjacent columns */
+    .col-device-id, .col-description, .col-location {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        min-width: 0; /* required for ellipsis in grid cells */
+    }
+
+    .status-indicator {
+        font-size: 1.2rem;
+    }
+
+    .status-indicator.online {
+        color: #28a745;
+    }
+
+    .status-indicator.offline {
+        color: #dc3545;
+    }
+
+    .no-devices {
+        text-align: center;
+        padding: 40px;
+        color: #6c757d;
+    }
+
+    .right-panel .panel-header {
+        background-color: #CCCCCC;
+        padding: 16px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .right-panel .panel-header h4 {
+        margin: 0;
+        color: #333;
+    }
+
+    .resolution-list {
+        flex: 1;
+        overflow-y: auto;
+        padding: 16px;
+    }
+
+    .resolution-card {
+        background-color: #f8f9fa;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        overflow: hidden;
+    }
+
+    .resolution-header {
+        background-color: #e9ecef;
+        padding: 12px 16px;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .resolution-label {
+        font-weight: 600;
+        font-size: 1.1rem;
+    }
+
+    .device-count {
+        color: #6c757d;
+        font-size: 0.9rem;
+    }
+
+    .resolution-header button {
+        margin-left: auto;
+    }
+
+    .resolution-content {
+        padding: 16px;
+    }
+
+    .upload-area {
+        border: 2px dashed #ccc;
+        border-radius: 8px;
+        padding: 20px;
+        text-align: center;
+    }
+
+    .content-preview {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .content-preview img {
+        max-width: 100%;
+        max-height: 150px;
+        border-radius: 4px;
+        object-fit: contain;
+    }
+
+    .video-icon {
+        background-color: #333;
+        color: white;
+        padding: 20px;
+        border-radius: 8px;
+        text-align: center;
+    }
+
+    .no-resolutions {
+        text-align: center;
+        padding: 40px;
+        color: #6c757d;
+    }
+
+    .add-resolution {
+        text-align: center;
+        padding: 16px;
+    }
+
+    .header-buttons {
+        display: flex;
+        gap: 10px;
+    }
+
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(255, 255, 255, 0.9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+
+    .unauthorized-wrapper {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    .error-toast {
+        position: fixed;
+        bottom: 20px;
+        right: 20px;
+        z-index: 9999;
+        max-width: min(400px, calc(100vw - 40px));
+    }
+
+    /* --- Responsive layout --- */
+    /* Stack the three editor panels on tablets and below; the fixed side panels
+       otherwise leave the center device table almost no width. */
+    @@media (max-width: 1024px) {
+        .editor-container {
+            grid-template-columns: 1fr;
+            height: auto;
+        }
+
+        /* Keep long device lists scrollable instead of growing the stacked page unbounded */
+        .center-panel {
+            max-height: 70vh;
+        }
+    }
+
+    /* On phones the table becomes a list of two-line cards: checkbox + status +
+       identifier, with the description underneath. The column header row (and
+       header-based sorting) is desktop-only. */
+    @@media (max-width: 768px) {
+        .device-table-header {
+            display: none;
+        }
+
+        .device-row {
+            grid-template-columns: 40px 30px 1fr;
+            grid-template-areas:
+                "check status id"
+                "check status desc";
+            row-gap: 2px;
+        }
+
+        .col-check { grid-area: check; }
+        .col-status { grid-area: status; }
+
+        .col-device-id {
+            grid-area: id;
+            font-weight: 600;
+        }
+
+        .col-description {
+            grid-area: desc;
+            font-size: 0.85rem;
+            color: var(--dx-text-muted);
+        }
+
+        .col-location,
+        .col-resolution {
+            display: none;
+        }
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int? OverrideId { get; set; }
+
+    private bool isLoading = true;
+    private bool isAuthorized = false;
+    private bool isSaving = false;
+    private bool isNewOverride => !OverrideId.HasValue;
+    private string? errorMessage;
+
+    private string overrideName = "";
+    private string? description;
+
+    private bool isScheduled = false;
+    private DateTime? startDate;
+    private DateTime? endDate;
+    private string? startTimeStr;
+    private string? endTimeStr;
+    private bool sunday, monday, tuesday, wednesday, thursday, friday, saturday;
+
+    // Target mode: "displays" (default) or "devices"
+    private string targetMode = "displays";
+
+    private List<DeviceViewModel> allDevices = new();
+    private HashSet<string> selectedDeviceIds = new();
+
+    private List<DisplayViewModel> allDisplays = new();
+    private HashSet<int> selectedDisplayIds = new();
+
+    private string deviceSearchFilter = "";
+    private bool showSelectedOnly = false;
+    private string sortColumn = "DisplayName";
+    private bool sortAscending = true;
+
+    private List<ResolutionContent> resolutionContents = new();
+    private bool showAddResolutionModal = false;
+    private int newResolutionWidth = 1920;
+    private int newResolutionHeight = 1080;
+
+    private IEnumerable<DeviceViewModel> FilteredDevices
+    {
+        get
+        {
+            var filtered = allDevices.AsEnumerable();
+
+            if (showSelectedOnly)
+                filtered = filtered.Where(d => selectedDeviceIds.Contains(d.DeviceId));
+
+            if (!string.IsNullOrWhiteSpace(deviceSearchFilter))
+            {
+                var filter = deviceSearchFilter.ToLower();
+                filtered = filtered.Where(d =>
+                    d.DeviceId.ToLower().Contains(filter) ||
+                    (!string.IsNullOrEmpty(d.Description) && d.Description.ToLower().Contains(filter)) ||
+                    (!string.IsNullOrEmpty(d.LocationName) && d.LocationName.ToLower().Contains(filter))
+                );
+            }
+
+            filtered = sortColumn switch
+            {
+                "Status" => sortAscending
+                    ? filtered.OrderByDescending(d => IsDeviceOnline(d.Heartbeat)).ThenBy(d => d.DeviceId)
+                    : filtered.OrderBy(d => IsDeviceOnline(d.Heartbeat)).ThenBy(d => d.DeviceId),
+                "DeviceId" => sortAscending
+                    ? filtered.OrderBy(d => d.DeviceId)
+                    : filtered.OrderByDescending(d => d.DeviceId),
+                "Description" => sortAscending
+                    ? filtered.OrderBy(d => d.Description ?? "").ThenBy(d => d.DeviceId)
+                    : filtered.OrderByDescending(d => d.Description ?? "").ThenBy(d => d.DeviceId),
+                "Location" => sortAscending
+                    ? filtered.OrderBy(d => d.LocationName ?? "").ThenBy(d => d.DeviceId)
+                    : filtered.OrderByDescending(d => d.LocationName ?? "").ThenBy(d => d.DeviceId),
+                "Resolution" => sortAscending
+                    ? filtered.OrderBy(d => d.DisplayWidth * d.DisplayHeight).ThenBy(d => d.DeviceId)
+                    : filtered.OrderByDescending(d => d.DisplayWidth * d.DisplayHeight).ThenBy(d => d.DeviceId),
+                _ => filtered.OrderBy(d => d.DeviceId)
+            };
+
+            return filtered;
+        }
+    }
+
+    private IEnumerable<DisplayViewModel> FilteredDisplays
+    {
+        get
+        {
+            var filtered = allDisplays.AsEnumerable();
+
+            if (showSelectedOnly)
+                filtered = filtered.Where(d => selectedDisplayIds.Contains(d.DisplayId));
+
+            if (!string.IsNullOrWhiteSpace(deviceSearchFilter))
+            {
+                var filter = deviceSearchFilter.ToLower();
+                filtered = filtered.Where(d =>
+                    d.DisplayName.ToLower().Contains(filter) ||
+                    (!string.IsNullOrEmpty(d.LocationName) && d.LocationName.ToLower().Contains(filter))
+                );
+            }
+
+            filtered = sortColumn switch
+            {
+                "DisplayName" => sortAscending
+                    ? filtered.OrderBy(d => d.DisplayName)
+                    : filtered.OrderByDescending(d => d.DisplayName),
+                "Location" => sortAscending
+                    ? filtered.OrderBy(d => d.LocationName ?? "").ThenBy(d => d.DisplayName)
+                    : filtered.OrderByDescending(d => d.LocationName ?? "").ThenBy(d => d.DisplayName),
+                "Resolution" => sortAscending
+                    ? filtered.OrderBy(d => d.DisplayWidth * d.DisplayHeight).ThenBy(d => d.DisplayName)
+                    : filtered.OrderByDescending(d => d.DisplayWidth * d.DisplayHeight).ThenBy(d => d.DisplayName),
+                _ => filtered.OrderBy(d => d.DisplayName)
+            };
+
+            return filtered;
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (sessionState != null && await sessionState.HasPermissionAsync(PermissionKeys.PageOverrides))
+        {
+            isAuthorized = true;
+            await LoadData();
+        }
+        isLoading = false;
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            var devices = await dbContext.TblDevices
+                .AsNoTracking()
+                .Include(d => d.Location)
+                .Include(d => d.Display)
+                .OrderBy(d => d.DeviceId)
+                .ToListAsync();
+
+            allDevices = devices.Select(d => new DeviceViewModel
+            {
+                DeviceId = d.DeviceId,
+                Description = d.Description,
+                LocationName = d.Location?.LocationName,
+                DisplayWidth = d.Display?.DisplayWidth ?? 0,
+                DisplayHeight = d.Display?.DisplayHeight ?? 0,
+                Heartbeat = d.Heartbeat
+            }).ToList();
+
+            // Load all displays for display-targeting mode
+            var displays = await dbContext.TblDisplays
+                .AsNoTracking()
+                .Include(d => d.Location)
+                .Include(d => d.TblDevices)
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+
+            allDisplays = displays.Select(d => new DisplayViewModel
+            {
+                DisplayId = d.DisplayId,
+                DisplayName = d.DisplayName,
+                LocationName = d.Location?.LocationName,
+                DisplayWidth = d.DisplayWidth,
+                DisplayHeight = d.DisplayHeight,
+                DeviceCount = d.TblDevices.Count
+            }).ToList();
+
+            if (OverrideId.HasValue)
+            {
+                var existingOverride = await overrideService.GetOverrideByIdAsync(OverrideId.Value);
+                if (existingOverride != null)
+                {
+                    overrideName = existingOverride.OverrideName;
+                    description = existingOverride.Description;
+                    isScheduled = existingOverride.IsScheduled;
+                    startDate = existingOverride.StartDate;
+                    endDate = existingOverride.EndDate;
+                    startTimeStr = existingOverride.StartTime?.ToString("HH:mm");
+                    endTimeStr = existingOverride.EndTime?.ToString("HH:mm");
+                    sunday = existingOverride.Sunday;
+                    monday = existingOverride.Monday;
+                    tuesday = existingOverride.Tuesday;
+                    wednesday = existingOverride.Wednesday;
+                    thursday = existingOverride.Thursday;
+                    friday = existingOverride.Friday;
+                    saturday = existingOverride.Saturday;
+
+                    var deviceIds = await overrideService.GetDeviceIdsForOverrideAsync(OverrideId.Value);
+                    selectedDeviceIds = new HashSet<string>(deviceIds);
+
+                    var displayIds = await overrideService.GetDisplayIdsForOverrideAsync(OverrideId.Value);
+                    selectedDisplayIds = new HashSet<int>(displayIds);
+
+                    // Restore the mode that was last used: default to displays unless only devices were saved
+                    if (selectedDeviceIds.Count > 0 && selectedDisplayIds.Count == 0)
+                        targetMode = "devices";
+                    else
+                        targetMode = "displays";
+
+                    var contents = await overrideService.GetContentForOverrideAsync(OverrideId.Value);
+                    foreach (var content in contents.Where(c => c.DeviceId == null))
+                    {
+                        resolutionContents.Add(new ResolutionContent
+                        {
+                            Width = content.ResolutionWidth,
+                            Height = content.ResolutionHeight,
+                            ContentPath = content.ContentPath,
+                            AssetId = content.AssetId,
+                            Duration = content.Duration,
+                            DeviceCount = GetDeviceCountForResolution(content.ResolutionWidth, content.ResolutionHeight)
+                        });
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error loading data: {ex.Message}";
+        }
+    }
+
+    private int GetDeviceCountForResolution(int width, int height)
+    {
+        if (targetMode == "displays")
+        {
+            return allDisplays.Count(d =>
+                selectedDisplayIds.Contains(d.DisplayId) &&
+                (int)d.DisplayWidth == width &&
+                (int)d.DisplayHeight == height);
+        }
+        return allDevices.Count(d =>
+            selectedDeviceIds.Contains(d.DeviceId) &&
+            (int)d.DisplayWidth == width &&
+            (int)d.DisplayHeight == height);
+    }
+
+    private void OnDeviceSearchChanged(ChangeEventArgs e)
+    {
+        deviceSearchFilter = e.Value?.ToString() ?? "";
+        StateHasChanged();
+    }
+
+    private void SetSort(string column)
+    {
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+        StateHasChanged();
+    }
+
+    private MarkupString GetSortCaret(string column)
+    {
+        if (sortColumn != column)
+            return new MarkupString("");
+
+        var caret = sortAscending ? "&#9650;" : "&#9660;";
+        return new MarkupString($"<span class=\"sort-caret\">{caret}</span>");
+    }
+
+    private void ToggleDeviceSelection(string deviceId)
+    {
+        if (selectedDeviceIds.Contains(deviceId))
+            selectedDeviceIds.Remove(deviceId);
+        else
+            selectedDeviceIds.Add(deviceId);
+        StateHasChanged();
+    }
+
+    private void ToggleDisplaySelection(int displayId)
+    {
+        if (selectedDisplayIds.Contains(displayId))
+            selectedDisplayIds.Remove(displayId);
+        else
+            selectedDisplayIds.Add(displayId);
+        StateHasChanged();
+    }
+
+    private void OnTargetModeChanged(ChangeEventArgs e)
+    {
+        var mode = e.Value?.ToString() ?? "displays";
+        if (targetMode == mode) return;
+        targetMode = mode;
+        deviceSearchFilter = "";
+        showSelectedOnly = false;
+        sortColumn = mode == "devices" ? "DeviceId" : "DisplayName";
+        sortAscending = true;
+        StateHasChanged();
+    }
+
+    private void SelectAllFiltered()
+    {
+        if (targetMode == "devices")
+        {
+            foreach (var device in FilteredDevices)
+                selectedDeviceIds.Add(device.DeviceId);
+        }
+        else
+        {
+            foreach (var display in FilteredDisplays)
+                selectedDisplayIds.Add(display.DisplayId);
+        }
+        StateHasChanged();
+    }
+
+    private void UnselectAll()
+    {
+        if (targetMode == "devices")
+            selectedDeviceIds.Clear();
+        else
+            selectedDisplayIds.Clear();
+        StateHasChanged();
+    }
+
+    private void ToggleShowSelected()
+    {
+        showSelectedOnly = !showSelectedOnly;
+        StateHasChanged();
+    }
+
+    private void DetectResolutions()
+    {
+        List<(int Width, int Height, int Count)> resolutions;
+
+        if (targetMode == "displays")
+        {
+            resolutions = allDisplays
+                .Where(d => selectedDisplayIds.Contains(d.DisplayId) && d.DisplayWidth > 0 && d.DisplayHeight > 0)
+                .GroupBy(d => new { Width = (int)d.DisplayWidth, Height = (int)d.DisplayHeight })
+                .Select(g => (Width: g.Key.Width, Height: g.Key.Height, Count: g.Count()))
+                .ToList();
+        }
+        else
+        {
+            resolutions = allDevices
+                .Where(d => selectedDeviceIds.Contains(d.DeviceId) && d.DisplayWidth > 0 && d.DisplayHeight > 0)
+                .GroupBy(d => new { Width = (int)d.DisplayWidth, Height = (int)d.DisplayHeight })
+                .Select(g => (Width: g.Key.Width, Height: g.Key.Height, Count: g.Count()))
+                .ToList();
+        }
+
+        foreach (var res in resolutions)
+        {
+            if (!resolutionContents.Any(r => r.Width == res.Width && r.Height == res.Height))
+            {
+                resolutionContents.Add(new ResolutionContent
+                {
+                    Width = res.Width,
+                    Height = res.Height,
+                    DeviceCount = res.Count,
+                    Duration = 7
+                });
+            }
+            else
+            {
+                var existing = resolutionContents.First(r => r.Width == res.Width && r.Height == res.Height);
+                existing.DeviceCount = res.Count;
+            }
+        }
+        StateHasChanged();
+    }
+
+    private void RemoveResolution(ResolutionContent rc)
+    {
+        resolutionContents.Remove(rc);
+        StateHasChanged();
+    }
+
+    private void ClearContent(ResolutionContent rc)
+    {
+        rc.ContentPath = null;
+        rc.AssetId = null;
+        StateHasChanged();
+    }
+
+    private async Task OnContentUpload(InputFileChangeEventArgs e, ResolutionContent rc)
+    {
+        try
+        {
+            var file = e.File;
+            if (file == null) return;
+
+            if (file.Size > 500 * 1024 * 1024)
+            {
+                errorMessage = "File size must be less than 500MB.";
+                return;
+            }
+
+            var uploadPath = Path.Combine(MediaPaths.GetRoot(), "MediaAssets", "OverrideContent");
+            Directory.CreateDirectory(uploadPath);
+
+            var extension = Path.GetExtension(file.Name);
+            var uniqueFileName = $"{Guid.NewGuid()}{extension}";
+            var filePath = Path.Combine(uploadPath, uniqueFileName);
+
+            await using var stream = file.OpenReadStream(maxAllowedSize: 500 * 1024 * 1024);
+            await using var fileStream = new FileStream(filePath, FileMode.Create);
+            await stream.CopyToAsync(fileStream);
+
+            rc.ContentPath = $"/OverrideContent/{uniqueFileName}";
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error uploading file: {ex.Message}";
+        }
+    }
+
+    private void ShowAddResolutionModal()
+    {
+        newResolutionWidth = 1920;
+        newResolutionHeight = 1080;
+        showAddResolutionModal = true;
+    }
+
+    private void HideAddResolutionModal()
+    {
+        showAddResolutionModal = false;
+    }
+
+    private void AddCustomResolution()
+    {
+        if (newResolutionWidth <= 0 || newResolutionHeight <= 0)
+        {
+            errorMessage = "Please enter valid width and height values.";
+            return;
+        }
+
+        if (!resolutionContents.Any(r => r.Width == newResolutionWidth && r.Height == newResolutionHeight))
+        {
+            resolutionContents.Add(new ResolutionContent
+            {
+                Width = newResolutionWidth,
+                Height = newResolutionHeight,
+                DeviceCount = GetDeviceCountForResolution(newResolutionWidth, newResolutionHeight),
+                Duration = 7
+            });
+        }
+
+        HideAddResolutionModal();
+        StateHasChanged();
+    }
+
+    private void SelectAllDays() { sunday = monday = tuesday = wednesday = thursday = friday = saturday = true; }
+    private void SelectWeekdays() { sunday = saturday = false; monday = tuesday = wednesday = thursday = friday = true; }
+    private void SelectWeekends() { monday = tuesday = wednesday = thursday = friday = false; sunday = saturday = true; }
+    private void ClearDays() { sunday = monday = tuesday = wednesday = thursday = friday = saturday = false; }
+
+    private async Task Save()
+    {
+        if (string.IsNullOrWhiteSpace(overrideName))
+        {
+            errorMessage = "Override name is required.";
+            return;
+        }
+
+        isSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            TblOverride overrideEntity;
+
+            if (isNewOverride)
+            {
+                overrideEntity = new TblOverride
+                {
+                    OverrideName = overrideName,
+                    Description = description,
+                    IsScheduled = isScheduled,
+                    StartDate = startDate,
+                    EndDate = endDate,
+                    StartTime = !string.IsNullOrEmpty(startTimeStr) ? TimeOnly.Parse(startTimeStr) : null,
+                    EndTime = !string.IsNullOrEmpty(endTimeStr) ? TimeOnly.Parse(endTimeStr) : null,
+                    Sunday = sunday, Monday = monday, Tuesday = tuesday, Wednesday = wednesday,
+                    Thursday = thursday, Friday = friday, Saturday = saturday
+                };
+                overrideEntity = await overrideService.CreateOverrideAsync(overrideEntity, sessionState?.User?.UserPrincipalName);
+            }
+            else
+            {
+                var existing = await overrideService.GetOverrideByIdAsync(OverrideId!.Value);
+                if (existing == null) { errorMessage = "Override not found."; return; }
+
+                existing.OverrideName = overrideName;
+                existing.Description = description;
+                existing.IsScheduled = isScheduled;
+                existing.StartDate = startDate;
+                existing.EndDate = endDate;
+                existing.StartTime = !string.IsNullOrEmpty(startTimeStr) ? TimeOnly.Parse(startTimeStr) : null;
+                existing.EndTime = !string.IsNullOrEmpty(endTimeStr) ? TimeOnly.Parse(endTimeStr) : null;
+                existing.Sunday = sunday; existing.Monday = monday; existing.Tuesday = tuesday;
+                existing.Wednesday = wednesday; existing.Thursday = thursday;
+                existing.Friday = friday; existing.Saturday = saturday;
+
+                overrideEntity = await overrideService.UpdateOverrideAsync(existing, sessionState?.User?.UserPrincipalName);
+            }
+
+            await overrideService.SetDevicesForOverrideAsync(overrideEntity.OverrideId, selectedDeviceIds.ToList());
+            await overrideService.SetDisplaysForOverrideAsync(overrideEntity.OverrideId, selectedDisplayIds.ToList());
+
+            var existingContents = await overrideService.GetContentForOverrideAsync(overrideEntity.OverrideId);
+            foreach (var ec in existingContents.Where(c => c.DeviceId == null))
+                await overrideService.DeleteContentAsync(ec.OverrideContentId);
+
+            foreach (var rc in resolutionContents.Where(r => !string.IsNullOrEmpty(r.ContentPath)))
+            {
+                await overrideService.SetContentForResolutionAsync(
+                    overrideEntity.OverrideId, rc.Width, rc.Height, rc.ContentPath!, rc.AssetId, rc.Duration);
+            }
+
+            navMan.NavigateTo("/overrides");
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving override: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            StateHasChanged();
+        }
+    }
+
+    private void Cancel() { navMan.NavigateTo("/overrides"); }
+
+    private bool IsDeviceOnline(DateTime heartbeat) => (DateTime.UtcNow - heartbeat).TotalMinutes <= 2;
+
+    private string GetPreviewUrl(string? contentPath)
+    {
+        if (string.IsNullOrEmpty(contentPath)) return "";
+        if (contentPath.StartsWith("http://") || contentPath.StartsWith("https://")) return contentPath;
+        // ContentPath stored as relative (e.g. "/OverrideContent/guid.ext" or "/2062/guid.ext");
+        // files live in wwwroot/MediaAssets/, so prepend for browser preview
+        if (contentPath.StartsWith("/")) return "/MediaAssets" + contentPath;
+        return contentPath;
+    }
+
+    private class DeviceViewModel
+    {
+        public string DeviceId { get; set; } = null!;
+        public string? Description { get; set; }
+        public string? LocationName { get; set; }
+        public double DisplayWidth { get; set; }
+        public double DisplayHeight { get; set; }
+        public DateTime Heartbeat { get; set; }
+    }
+
+    private class DisplayViewModel
+    {
+        public int DisplayId { get; set; }
+        public string DisplayName { get; set; } = "";
+        public string? LocationName { get; set; }
+        public double DisplayWidth { get; set; }
+        public double DisplayHeight { get; set; }
+        public int DeviceCount { get; set; }
+    }
+
+    private class ResolutionContent
+    {
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public int DeviceCount { get; set; }
+        public string? ContentPath { get; set; }
+        public int? AssetId { get; set; }
+        public int Duration { get; set; } = 7;
+    }
+}

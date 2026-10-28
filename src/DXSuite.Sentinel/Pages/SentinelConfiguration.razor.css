@@ -1,0 +1,416 @@
+/* Sentinel Configuration Styles */
+
+.sentinel-db-warning {
+    text-align: center;
+    padding: 60px 20px;
+    color: #666;
+}
+
+.sentinel-db-warning h2 {
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.sentinel-db-warning code {
+    background: #f0f0f0;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+/* Inline Form */
+.sentinel-inline-form {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.sentinel-inline-form h4 {
+    margin: 0 0 16px 0;
+    font-family: "BAHNSCHRIFT";
+    font-size: 16px;
+    color: #333;
+}
+
+.form-row {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+}
+
+.form-group {
+    flex: 1;
+    min-width: 200px;
+    margin-bottom: 8px;
+}
+
+.form-group label {
+    display: block;
+    font-size: 13px;
+    font-weight: 600;
+    color: #555;
+    margin-bottom: 4px;
+    font-family: "BAHNSCHRIFT";
+}
+
+.form-group .form-control {
+    font-size: 14px;
+    margin-top: 0;
+}
+
+.form-group textarea.form-control {
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.form-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.form-message {
+    margin-top: 10px;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+.form-message.success {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.form-message.error {
+    background: #ffebee;
+    color: #c62828;
+}
+
+/* Config Grid */
+.sentinel-config-grid-header {
+    display: grid;
+    gap: 8px;
+    padding: 10px 16px;
+    background: #4D4D4D;
+    color: white;
+    font-family: "BAHNSCHRIFT";
+    font-size: 13px;
+    text-transform: uppercase;
+    border-radius: 4px 4px 0 0;
+}
+
+.sentinel-config-table {
+    border: 1px solid #e0e0e0;
+    border-top: none;
+    border-radius: 0 0 4px 4px;
+}
+
+.sentinel-config-row {
+    display: grid;
+    gap: 8px;
+    padding: 10px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    align-items: center;
+    font-size: 14px;
+}
+
+.sentinel-config-row:last-child {
+    border-bottom: none;
+}
+
+.sentinel-config-row:hover {
+    background: #f8f9fa;
+}
+
+/* Policy grid columns */
+.col-policy-name,
+.sentinel-config-grid-header .col-policy-name { grid-column: 1; }
+.col-policy-scope,
+.sentinel-config-grid-header .col-policy-scope { grid-column: 2; }
+.col-policy-active,
+.sentinel-config-grid-header .col-policy-active { grid-column: 3; }
+.col-policy-actions,
+.sentinel-config-grid-header .col-policy-actions { grid-column: 4; }
+
+/* Policy tab grid layout */
+.sentinel-config-grid-header:has(.col-policy-name),
+.sentinel-config-row:has(.col-policy-name) {
+    grid-template-columns: 2fr 1fr 80px 120px;
+}
+
+/* ITSM tab grid layout */
+.sentinel-config-grid-header:has(.col-itsm-type),
+.sentinel-config-row:has(.col-itsm-type) {
+    grid-template-columns: 1fr 1.5fr 1fr 80px 80px 120px;
+}
+
+/* Fallback: explicit grid for all config grids */
+.sentinel-config-grid-header,
+.sentinel-config-row {
+    grid-template-columns: 2fr 1fr 80px 120px;
+}
+
+/* Active Badge */
+.active-badge {
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-family: "BAHNSCHRIFT";
+}
+
+.badge-green { background: #e8f5e9; color: #2e7d32; }
+.badge-gray { background: #f5f5f5; color: #616161; }
+
+.action-link {
+    color: #0071BC;
+    text-decoration: none;
+    font-size: 13px;
+    font-family: "BAHNSCHRIFT";
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+    margin-right: 12px;
+}
+
+.action-link:hover {
+    text-decoration: underline;
+}
+
+.action-link.danger {
+    color: #c62828;
+}
+
+.no-devices {
+    text-align: center;
+    padding: 40px 20px;
+    color: #666;
+}
+
+.no-devices h4 {
+    margin-bottom: 8px;
+}
+
+/* LLM Provider Styles */
+.sentinel-llm-summary {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 20px;
+}
+
+.llm-info-row {
+    display: flex;
+    gap: 8px;
+    padding: 4px 0;
+    font-size: 14px;
+}
+
+.llm-label {
+    font-weight: 600;
+    color: #555;
+    font-family: "BAHNSCHRIFT";
+}
+
+.llm-value {
+    color: #333;
+}
+
+.sentinel-llm-providers {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+    gap: 16px;
+}
+
+.llm-provider-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px;
+}
+
+.provider-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.provider-header h4 {
+    margin: 0;
+    font-family: "BAHNSCHRIFT";
+    font-size: 16px;
+    text-transform: uppercase;
+}
+
+.provider-type-badge {
+    background: #e3f2fd;
+    color: #1565c0;
+    padding: 3px 8px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: "BAHNSCHRIFT";
+}
+
+.provider-details {
+    margin-bottom: 12px;
+}
+
+.provider-detail-row {
+    display: flex;
+    gap: 8px;
+    padding: 3px 0;
+    font-size: 13px;
+}
+
+.detail-label {
+    font-weight: 600;
+    color: #666;
+    min-width: 80px;
+}
+
+.detail-value {
+    color: #333;
+    word-break: break-all;
+}
+
+.provider-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding-top: 8px;
+    border-top: 1px solid #f0f0f0;
+}
+
+.provider-actions .blue-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+}
+
+.test-result {
+    font-size: 13px;
+    font-weight: 600;
+    font-family: "BAHNSCHRIFT";
+}
+
+.result-success { color: #2e7d32; }
+.result-failed { color: #c62828; }
+
+/* Connector Card Styles */
+.connector-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(420px, 1fr));
+    gap: 16px;
+}
+
+.connector-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px;
+}
+
+.connector-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+}
+
+.connector-card-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.connector-card-title h4 {
+    margin: 0;
+    font-family: "BAHNSCHRIFT";
+    font-size: 16px;
+}
+
+.connector-card-details {
+    margin-bottom: 12px;
+}
+
+.connector-sync-status {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 0;
+    border-top: 1px solid #f0f0f0;
+    font-size: 13px;
+    flex-wrap: wrap;
+}
+
+.sync-label {
+    font-weight: 600;
+    color: #666;
+    font-family: "BAHNSCHRIFT";
+}
+
+.sync-time {
+    color: #333;
+    font-family: monospace;
+}
+
+.sync-badge {
+    padding: 2px 6px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    font-family: "BAHNSCHRIFT";
+}
+
+.badge-red { background: #ffebee; color: #c62828; }
+
+.sync-message {
+    color: #888;
+    font-size: 12px;
+    flex-basis: 100%;
+    margin-top: 4px;
+}
+
+.connector-card-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding-top: 12px;
+    border-top: 1px solid #f0f0f0;
+    flex-wrap: wrap;
+}
+
+.connector-card-actions .blue-btn {
+    padding: 6px 14px;
+    font-size: 12px;
+}
+
+.connector-card-edit-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 8px;
+}
+
+/* Loading & Auth */
+.loading-overlay {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+}
+
+.unauthorized-wrapper {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+/* Tab styling inherited from app.css (.tab-navigation, .tab-button, .tab-panel, .panel-header, .panel-content) */
+/* Configuration container inherited from app.css (.configuration-container) */

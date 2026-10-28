@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Headless installer step that owns all database work: bootstrap, EF migrations, seed,
+    and writing appsettings.Production.json. The MSI invokes it as deferred custom actions
+    after the app files are laid down and the ASP.NET Core Hosting Bundle is present.
+
+    It references DXSuite.Director so the compiled-in EF migrations are applied via
+    DirectorDbContext.Database.Migrate() — no .NET SDK is needed on the target box.
+    Framework-dependent on purpose: it runs against the runtime the bundle installs, which
+    keeps it small and avoids shipping a second copy of the .NET runtime.
+
+    Keeping the migrate code here (not in DXSuite.Director or the web host) preserves the
+    contract that the runtime web app never calls Migrate().
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DXSuite.Host.DbTool</AssemblyName>
+    <RootNamespace>DXSuite.Host.Setup</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- InvariantGlobalization stays absent. It had no recorded justification, and SelfContained=false
+         means ICU comes from the shared runtime, so invariant mode here was a behaviour switch rather
+         than a payload saving. The constraint it protects outlives the property and matters more than
+         it: no migration computes a time zone identifier in C#. DbTool is the process that executes
+         every EF migration, run by the MSI as a deferred custom action, so a throw fails the install
+         and rolls it back on a production host, and its log lands in the SYSTEM temp folder rather
+         than the technician's. The same constraint holds on the hand-run SQL upgrade path, where
+         TimeZoneInfo does not exist at all. See DXME-170. -->
+  </PropertyGroup>
+
+  <!-- DXSuite.Director carries a FrameworkReference to Microsoft.AspNetCore.App. -->
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\src\DXSuite.Director\DXSuite.Director.csproj" />
+  </ItemGroup>
+
+  <!-- Shared contract + helpers, also linked into the WPF wizard. -->
+  <ItemGroup>
+    <Compile Include="..\shared\SetupConfig.cs" Link="Shared\SetupConfig.cs" />
+    <Compile Include="..\shared\ConnectionStringFactory.cs" Link="Shared\ConnectionStringFactory.cs" />
+    <Compile Include="..\shared\DirectorDbState.cs" Link="Shared\DirectorDbState.cs" />
+  </ItemGroup>
+
+</Project>

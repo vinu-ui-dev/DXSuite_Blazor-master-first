@@ -1,0 +1,153 @@
+@page "/director"
+@using DXSuite.Director.Entities
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@rendermode InteractiveServer
+@implements IDisposable
+
+<PageTitle>Director Dashboard</PageTitle>
+
+<section class="dx-page-header">
+    <div class="dx-page-header-flex">
+        <h2>LOCATIONS <DXSuite.Shared.Components.HelpLink Page="director/dashboard" Title="Dashboard help" /></h2>
+    </div>
+</section>
+
+<section class="dx-page-body">
+    <div class="container">
+        @if (filteredGroups?.Any() == true)
+        {
+            @foreach (TblLocationGroup group in filteredGroups)
+            {
+                if (filteredLocations?.Any() == true)
+                {
+                    <div class="dx-collapsible-group">
+                        <div class="dx-collapsible-header" @onclick="@(() => ToggleGroup(group.LocationGroupId))">
+                            <svg class="dx-collapsible-chevron @(IsGroupCollapsed(group.LocationGroupId) ? "collapsed" : "")" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                            </svg>
+                            <span class="dx-collapsible-title">@group.LocationGroupName</span>
+                        </div>
+                        @if (!IsGroupCollapsed(group.LocationGroupId))
+                        {
+                            <div class="row dx-collapsible-content">
+                                @foreach (TblLocation location in filteredLocations.Where(x => x.LocationGroupId == group.LocationGroupId))
+                                {
+                                    <div class="col-md-12 col-lg-6 col-xl-4">
+                                        <div @onclick="@(() => GoToLocationIndicator(location.LocationId))" style="cursor: pointer;">
+                                            <div class="dx-tile">
+                                                <img src="@location.LocationImagePath" class="img-fluid" alt="">
+                                                <p class="dx-tile-title">@location.LocationName</p>
+                                            </div>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        }
+    </div>
+</section>
+
+@code {
+
+    private IList<TblLocationGroup>? groups;
+    private IList<TblLocationGroup>? filteredGroups;
+    private IList<TblLocation>? locations;
+    private IList<TblLocation>? filteredLocations;
+
+    // Track which location groups are collapsed
+    private HashSet<int> collapsedGroups = new HashSet<int>();
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        sessionState.LocationAccessChanged += OnLocationAccessChanged;
+
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+        {
+            await sessionState.SessionLoaded.Task;
+        }
+
+        await LoadDataAsync();
+    }
+
+    private async Task LoadDataAsync()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        groups = await db.TblLocationGroups
+            .Include(x => x.TblLocations)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+
+        locations = await db.TblLocations
+            .Include(x => x.LocationGroup)
+            .OrderBy(x => x.SortOrder)
+            .ToListAsync();
+
+        ApplyLocationFilter();
+    }
+
+    private void OnLocationAccessChanged()
+    {
+        // Re-query as well as re-filter: a location the user was just granted may not
+        // be in the list loaded before the grant.
+        _ = InvokeAsync(async () =>
+        {
+            await LoadDataAsync();
+            StateHasChanged();
+        });
+    }
+
+    public void Dispose()
+    {
+        sessionState.LocationAccessChanged -= OnLocationAccessChanged;
+    }
+
+    private void ApplyLocationFilter()
+    {
+        if (sessionState.AssignedLocationIds.Count == 0)
+        {
+            filteredGroups = new List<TblLocationGroup>();
+            return;
+        }
+
+        if (locations != null && groups != null)
+        {
+            var locationIds = new HashSet<int>(sessionState.AssignedLocationIds);
+            filteredLocations = locations.Where(x => locationIds.Contains(x.LocationId)).ToList();
+
+            var locationGroupIds = filteredLocations.Select(x => x.LocationGroupId).Distinct().ToList();
+            filteredGroups = groups.Where(x => locationGroupIds.Contains(x.LocationGroupId)).ToList();
+        }
+    }
+
+    private void GoToLocationIndicator(int locationId)
+    {
+        navMan.NavigateTo(String.Format("/location/{0}", locationId));
+    }
+
+    private void ToggleGroup(int locationGroupId)
+    {
+        if (collapsedGroups.Contains(locationGroupId))
+        {
+            collapsedGroups.Remove(locationGroupId);
+        }
+        else
+        {
+            collapsedGroups.Add(locationGroupId);
+        }
+    }
+
+    private bool IsGroupCollapsed(int locationGroupId)
+    {
+        return collapsedGroups.Contains(locationGroupId);
+    }
+}

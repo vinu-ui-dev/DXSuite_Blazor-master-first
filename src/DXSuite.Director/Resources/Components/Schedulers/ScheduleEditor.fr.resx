@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_ScheduleEditor">
+    <value>&#xC9;diteur d'horaire</value>
+  </data>
+  <data name="Label_ConfigureDescription">
+    <value>Configurer le contenu de l'affichage et les options de programmation</value>
+  </data>
+  <data name="Header_AddMediaContent">
+    <value>Ajouter du contenu m&#xE9;dia</value>
+  </data>
+  <data name="Button_AddMedia">
+    <value>AJOUTER M&#xC9;DIA +</value>
+  </data>
+  <data name="Button_AddWeb">
+    <value>AJOUTER WEB +</value>
+  </data>
+  <data name="Button_AddStream">
+    <value>AJOUTER FLUX +</value>
+  </data>
+  <data name="Button_CreateMedia">
+    <value>CR&#xC9;ER M&#xC9;DIA +</value>
+  </data>
+  <data name="Header_AvailableAssets">
+    <value>&#xC9;l&#xE9;ments disponibles</value>
+  </data>
+  <data name="Label_Video">
+    <value>Vid&#xE9;o</value>
+  </data>
+  <data name="Label_Corporate">
+    <value>Corporatif</value>
+  </data>
+  <data name="Header_ScheduleContent">
+    <value>Contenu de l'horaire</value>
+  </data>
+  <data name="Button_FadeOn">
+    <value>FONDU ACTIV&#xC9;</value>
+  </data>
+  <data name="Button_FadeOff">
+    <value>FONDU D&#xC9;SACTIV&#xC9;</value>
+  </data>
+  <data name="Label_DragAssetsHere">
+    <value>Glissez des &#xE9;l&#xE9;ments ici pour les ajouter &#xE0; l'horaire</value>
+  </data>
+  <data name="Button_SaveDuration">
+    <value>Enregistrer la dur&#xE9;e</value>
+  </data>
+  <data name="Label_Duration">
+    <value>Dur&#xE9;e&#xA0;:</value>
+  </data>
+  <data name="Button_EditDuration">
+    <value>Modifier la dur&#xE9;e</value>
+  </data>
+  <data name="Header_ScheduleConfiguration">
+    <value>Configuration de l'horaire</value>
+  </data>
+  <data name="Label_DefaultContent">
+    <value>Contenu par d&#xE9;faut</value>
+  </data>
+  <data name="Label_DefaultContentDescription">
+    <value>Cochez pour mettre &#xE0; jour le contenu par d&#xE9;faut de cet affichage</value>
+  </data>
+  <data name="Header_SchedulePeriod">
+    <value>P&#xE9;riode de l'horaire</value>
+  </data>
+  <data name="Label_Start">
+    <value>D&#xE9;but</value>
+  </data>
+  <data name="Label_End">
+    <value>Fin</value>
+  </data>
+  <data name="Label_Date">
+    <value>Date</value>
+  </data>
+  <data name="Label_Time">
+    <value>Heure</value>
+  </data>
+  <data name="Label_NoStartLimit">
+    <value>Laisser vide pour aucune limite de d&#xE9;but</value>
+  </data>
+  <data name="Label_NoEndLimit">
+    <value>Laisser vide pour aucune limite de fin</value>
+  </data>
+  <data name="Label_AllDay">
+    <value>Laisser vide pour toute la journ&#xE9;e</value>
+  </data>
+  <data name="Header_ActiveDays">
+    <value>Jours actifs</value>
+  </data>
+  <data name="Label_Sunday">
+    <value>Dimanche</value>
+  </data>
+  <data name="Label_Monday">
+    <value>Lundi</value>
+  </data>
+  <data name="Label_Tuesday">
+    <value>Mardi</value>
+  </data>
+  <data name="Label_Wednesday">
+    <value>Mercredi</value>
+  </data>
+  <data name="Label_Thursday">
+    <value>Jeudi</value>
+  </data>
+  <data name="Label_Friday">
+    <value>Vendredi</value>
+  </data>
+  <data name="Label_Saturday">
+    <value>Samedi</value>
+  </data>
+  <data name="Label_DaysHint">
+    <value>Laissez tous les jours d&#xE9;coch&#xE9;s pour appliquer &#xE0; tous les jours de la semaine</value>
+  </data>
+  <data name="Header_ClockConfiguration">
+    <value>Configuration de l'horloge</value>
+  </data>
+  <data name="Label_EnableClock">
+    <value>Activer l'horloge pour cet horaire</value>
+  </data>
+  <data name="Label_ClockDescription">
+    <value>Afficher une horloge en superposition sur ce contenu programm&#xE9;</value>
+  </data>
+  <data name="Label_ClockPositionSize">
+    <value>Position et taille de l'horloge</value>
+  </data>
+  <data name="Button_ConfigurePosition">
+    <value>Configurer la position</value>
+  </data>
+  <data name="Label_Position">
+    <value>Position&#xA0;:</value>
+  </data>
+  <data name="Label_Size">
+    <value>Taille&#xA0;:</value>
+  </data>
+  <data name="Button_SaveScheduleEntry">
+    <value>ENREGISTRER L'ENTR&#xC9;E</value>
+  </data>
+  <data name="Label_AwaitingApproval">
+    <value>En attente d'approbation</value>
+  </data>
+  <data name="Label_Declined">
+    <value>Refus&#xE9;</value>
+  </data>
+</root>

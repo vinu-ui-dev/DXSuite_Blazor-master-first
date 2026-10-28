@@ -1,0 +1,302 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Attributes</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="BeginAdd">+ Add Attribute</button>
+        </div>
+    </div>
+
+    @if (attributes is null)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (attributes.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No attributes defined</h5>
+            <p class="dx-text-muted">Add an attribute to begin assigning values to catalog items.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: minmax(100px,1fr) 100px 72px 148px;">
+                    <div>Name</div>
+                    <div>Type</div>
+                    <div>Global</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var a in attributes)
+                {
+                    @if (a.IsSystem)
+                    {
+                        // System attributes are read-only — they drive the worksheet engine and cannot be modified
+                        <div class="dx-table-row" style="grid-template-columns: minmax(100px,1fr) 100px 72px 148px;">
+                            <div>@a.Name</div>
+                            <div><span class="dx-badge dx-badge-gray">@a.AttributeType</span></div>
+                            <div>@if (a.IsGlobal) { <span class="dx-badge dx-badge-blue">Global</span> }</div>
+                            <div>
+                                <span class="dx-badge dx-badge-gray" title="System attributes are required by the worksheet engine and cannot be edited or deleted.">System</span>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="dx-table-row" style="grid-template-columns: minmax(100px,1fr) 100px 72px 148px;">
+                            <div>@a.Name</div>
+                            <div><span class="dx-badge dx-badge-gray">@a.AttributeType</span></div>
+                            <div>@if (a.IsGlobal) { <span class="dx-badge dx-badge-blue">Global</span> }</div>
+                            <div style="display:flex; gap:4px; flex-wrap:nowrap; align-items:center;">
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => BeginEdit(a)">Edit</button>
+                                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteAsync(a)">Delete</button>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    @if (deleteError is not null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin:8px 20px;">@deleteError</div>
+    }
+</div>
+
+@if (formVisible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseForm">
+        <div class="dx-modal" style="min-width:480px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>@(editId == 0 ? "Add Attribute" : "Edit Attribute")</span>
+                <button class="dx-modal-close" @onclick="CloseForm">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name</label>
+                    <input class="dx-form-control" @bind="formName" placeholder="e.g. LAN Drops" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="at-check-label">
+                        <input type="checkbox" @bind="formIsGlobal" />
+                        Global — applies to all categories and items automatically
+                    </label>
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Type</label>
+                    @if (isSystemEdit)
+                    {
+                        <!-- System attributes cannot have their type changed -->
+                        <input class="dx-form-control" value="@formType" disabled />
+                        <small class="dx-text-muted">Type is locked for system attributes.</small>
+                    }
+                    else
+                    {
+                        <select class="dx-form-control" @bind="formType">
+                            <option value="@AttributeType.Text">Text</option>
+                            <option value="@AttributeType.Number">Number</option>
+                            <option value="@AttributeType.Dollars">Dollars</option>
+                            <option value="@AttributeType.List">List</option>
+                            <option value="@AttributeType.Multiselect">Multiselect</option>
+                        </select>
+                    }
+                </div>
+
+                @if (formType is AttributeType.List or AttributeType.Multiselect)
+                {
+                    <div class="ct-section-label">Options</div>
+                    <div class="ct-options-wrap">
+                        @for (int i = 0; i < formOptions.Count; i++)
+                        {
+                            var idx = i;
+                            <div class="ct-option-row">
+                                <input class="dx-form-control" value="@formOptions[idx].Value"
+                                       @onchange="e => formOptions[idx] = (formOptions[idx].Id, e.Value?.ToString() ?? string.Empty)" />
+                                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveOption(idx)">✕</button>
+                            </div>
+                        }
+                    </div>
+                    <div class="ct-add-option">
+                        <input class="dx-form-control" @bind="newOptionValue" placeholder="New option…" />
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="AddOption">Add</button>
+                    </div>
+                }
+
+                @if (showTypeChangeConfirm)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:12px">
+                        <div>
+                            <strong>Warning:</strong> This attribute already has values on catalog items.
+                            Changing the type will preserve the raw string values but may cause display issues.
+                        </div>
+                        <div style="margin-top:8px; display:flex; gap:8px;">
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="ConfirmTypeChange">Continue Anyway</button>
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelTypeChange">Cancel</button>
+                        </div>
+                    </div>
+                }
+                else if (formError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@formError</div>
+                }
+            </div>
+            @if (!showTypeChangeConfirm)
+            {
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-gray" @onclick="CloseForm">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveAsync">Save</button>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<TblDesignAttribute>? attributes;
+    private bool formVisible;
+    private int editId;
+    private string formName = "";
+    private AttributeType formType = AttributeType.Text;
+    private AttributeType originalType = AttributeType.Text;
+    private bool formIsGlobal;
+    private bool isSystemEdit;
+    private List<(int Id, string Value)> formOptions = [];
+    private string newOptionValue = "";
+    private bool showTypeChangeConfirm;
+    private string? formError;
+    private string? deleteError;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        attributes = await db.TblDesignAttributes
+            .Where(a => a.CustomerId == Tenant.CustomerCode)
+            .Include(a => a.Options)
+            .OrderBy(a => a.Name)
+            .ToListAsync();
+    }
+
+    private void BeginAdd()
+    {
+        editId = 0; formName = ""; formType = AttributeType.Text; originalType = AttributeType.Text;
+        formIsGlobal = false; isSystemEdit = false; formOptions = []; newOptionValue = "";
+        showTypeChangeConfirm = false; formError = null;
+        formVisible = true;
+    }
+
+    private void BeginEdit(TblDesignAttribute a)
+    {
+        editId = a.AttributeId; formName = a.Name; formType = a.AttributeType; originalType = a.AttributeType;
+        formIsGlobal = a.IsGlobal; isSystemEdit = a.IsSystem;
+        formOptions = a.Options.OrderBy(o => o.SortOrder).Select(o => (o.OptionId, o.OptionValue)).ToList();
+        newOptionValue = ""; showTypeChangeConfirm = false; formError = null;
+        formVisible = true;
+    }
+
+    private void CloseForm() { formVisible = false; showTypeChangeConfirm = false; formError = null; }
+
+    private void AddOption()
+    {
+        if (string.IsNullOrWhiteSpace(newOptionValue)) return;
+        formOptions.Add((0, newOptionValue.Trim()));
+        newOptionValue = "";
+    }
+
+    private void RemoveOption(int idx) => formOptions.RemoveAt(idx);
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(formName)) { formError = "Name is required."; return; }
+
+        if (editId != 0 && formType != originalType && !showTypeChangeConfirm)
+        {
+            await using var checkDb = await DbFactory.CreateDbContextAsync();
+            var hasValues = await checkDb.TblDesignCatalogItemAttributes
+                .AnyAsync(v => v.AttributeId == editId);
+            if (hasValues) { showTypeChangeConfirm = true; return; }
+        }
+
+        await CommitSaveAsync();
+    }
+
+    private void CancelTypeChange() { formType = originalType; showTypeChangeConfirm = false; }
+    private async Task ConfirmTypeChange() { showTypeChangeConfirm = false; await CommitSaveAsync(); }
+
+    private async Task CommitSaveAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        TblDesignAttribute entity;
+        if (editId == 0)
+        {
+            entity = new TblDesignAttribute { CustomerId = Tenant.CustomerCode, Name = formName.Trim(), AttributeType = formType, IsGlobal = formIsGlobal };
+            db.TblDesignAttributes.Add(entity);
+            await db.SaveChangesAsync();
+        }
+        else
+        {
+            entity = (await db.TblDesignAttributes.FindAsync(editId))!;
+            if (entity is null) { formError = "Record not found."; return; }
+            entity.Name = formName.Trim();
+            entity.AttributeType = formType;
+            entity.IsGlobal = formIsGlobal;
+            await db.SaveChangesAsync();
+        }
+
+        var existingOptions = await db.TblDesignAttributeOptions
+            .Where(o => o.AttributeId == entity.AttributeId)
+            .ToListAsync();
+
+        var formIds = formOptions.Where(o => o.Id != 0).Select(o => o.Id).ToHashSet();
+        foreach (var opt in existingOptions.Where(o => !formIds.Contains(o.OptionId)))
+            db.TblDesignAttributeOptions.Remove(opt);
+
+        for (int i = 0; i < formOptions.Count; i++)
+        {
+            var (id, value) = formOptions[i];
+            if (id == 0)
+            {
+                db.TblDesignAttributeOptions.Add(new TblDesignAttributeOption
+                    { AttributeId = entity.AttributeId, OptionValue = value.Trim(), SortOrder = (i + 1) * 10 });
+            }
+            else
+            {
+                var opt = existingOptions.First(o => o.OptionId == id);
+                opt.OptionValue = value.Trim();
+                opt.SortOrder = (i + 1) * 10;
+            }
+        }
+
+        await db.SaveChangesAsync();
+        CloseForm();
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(TblDesignAttribute a)
+    {
+        deleteError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var inCategory = await db.TblDesignCategoryAttributes.AnyAsync(ca => ca.AttributeId == a.AttributeId);
+        var inItems = await db.TblDesignCatalogItemAttributes.AnyAsync(v => v.AttributeId == a.AttributeId);
+        if (inCategory || inItems)
+        {
+            deleteError = $"Cannot delete '{a.Name}' — it is assigned to one or more categories or catalog items. Remove those assignments first.";
+            return;
+        }
+        var entity = await db.TblDesignAttributes.FindAsync(a.AttributeId);
+        if (entity is not null) { db.TblDesignAttributes.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadAsync();
+    }
+}
+
+<style>
+    .at-check-label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+    .at-check-label input[type="checkbox"] { accent-color: var(--dx-blue, #0071BC); width: 15px; height: 15px; }
+</style>

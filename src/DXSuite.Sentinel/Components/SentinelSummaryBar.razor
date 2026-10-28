@@ -1,0 +1,40 @@
+<div class="sentinel-summary-bar">
+    <div class="summary-card" style="border-top: 3px solid #0071BC;">
+        <div class="summary-count">@TotalDevices</div>
+        <div class="summary-label">Total Devices</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #39B54A;">
+        <div class="summary-count" style="color: #39B54A;">@OnlineCount</div>
+        <div class="summary-label">Online</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #FFA500;">
+        <div class="summary-count" style="color: #FFA500;">@WarningCount</div>
+        <div class="summary-label">Warning</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #FF0000;">
+        <div class="summary-count" style="color: #FF0000;">@CriticalCount</div>
+        <div class="summary-label">Critical</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #999;">
+        <div class="summary-count" style="color: #999;">@OfflineCount</div>
+        <div class="summary-label">Offline</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #0071BC;">
+        <div class="summary-count">@OpenTicketCount</div>
+        <div class="summary-label">Open Tickets</div>
+    </div>
+    <div class="summary-card" style="border-top: 3px solid #6f42c1;">
+        <div class="summary-count" style="color: #6f42c1;">@RecentRemediationCount</div>
+        <div class="summary-label">Remediations (24h)</div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int TotalDevices { get; set; }
+    [Parameter] public int OnlineCount { get; set; }
+    [Parameter] public int WarningCount { get; set; }
+    [Parameter] public int CriticalCount { get; set; }
+    [Parameter] public int OfflineCount { get; set; }
+    [Parameter] public int OpenTicketCount { get; set; }
+    [Parameter] public int RecentRemediationCount { get; set; }
+}

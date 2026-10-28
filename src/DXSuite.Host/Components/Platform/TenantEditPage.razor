@@ -1,0 +1,171 @@
+@page "/platform/tenants/{TenantId}/edit"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Registry
+@using DXSuite.Shared.Services
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantProvisioningService ProvisioningService
+@inject ReAuthConfirmationService ReAuth
+@inject NavigationManager Nav
+
+<ReAuthConfirmationModal />
+
+<div class="dx-platform-page">
+    @if (!ProvisioningService.IsAvailable)
+    {
+        <div class="dx-alert dx-alert-warning">
+            Tenant registry database is not configured. Editing is unavailable in this deployment.
+        </div>
+    }
+    else if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (tenant == null)
+    {
+        <p class="dx-text-muted">Tenant not found.</p>
+    }
+    else
+    {
+        <div class="dx-platform-header">
+            <h2>Edit Tenant — @tenant.DisplayName</h2>
+            <a href="/platform/tenants/@TenantId" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
+        </div>
+
+        <div class="dx-form" style="max-width:600px;">
+            <div class="dx-form-group">
+                <label>Display Name</label>
+                <input class="dx-form-control" @bind="tenant.DisplayName" />
+            </div>
+            <div class="dx-form-group">
+                <label>Subdomain</label>
+                <input class="dx-form-control" @bind="tenant.Subdomain" />
+            </div>
+            <div class="dx-form-group">
+                <label>Customer Code</label>
+                <input class="dx-form-control" @bind="tenant.CustomerCode" />
+            </div>
+            <div class="dx-form-group">
+                <label>Max Users</label>
+                <input class="dx-form-control" type="number" @bind="tenant.MaxUsers" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-checkbox-label">
+                    <input type="checkbox" @bind="tenant.IsEnabled" /> Enabled
+                </label>
+            </div>
+
+            <h5 style="margin-top:1rem;">Connection Strings</h5>
+            <div class="dx-form-group">
+                <label>Director</label>
+                <input class="dx-form-control" @bind="tenant.ConnectionString_Director" />
+            </div>
+            <div class="dx-form-group">
+                <label>Sentinel</label>
+                <input class="dx-form-control" @bind="tenant.ConnectionString_Sentinel" />
+            </div>
+            <div class="dx-form-group">
+                <label>CoreData</label>
+                <input class="dx-form-control" @bind="tenant.ConnectionString_CoreData" />
+            </div>
+            <div class="dx-form-group">
+                <label>Aviation</label>
+                <input class="dx-form-control" @bind="tenant.ConnectionString_Aviation" />
+            </div>
+            <div class="dx-form-group">
+                <label>Design</label>
+                <input class="dx-form-control" @bind="tenant.ConnectionString_Design" />
+            </div>
+
+            <h5 style="margin-top:1.5rem;">Authentication</h5>
+            <p style="font-size:0.82rem; color:#666; margin-bottom:0.5rem;">
+                JSON-serialized <code>TenantAuthConfig</code>. Leave blank to inherit the global
+                <code>Authentication:Providers</code> config. When set, these providers are registered
+                exclusively for this tenant — the global config is ignored.
+            </p>
+            <details style="margin-bottom:0.5rem;">
+                <summary style="font-size:0.82rem; color:#555; cursor:pointer;">Example: Microsoft Entra ID</summary>
+                <pre style="font-size:0.78rem; background:#f6f8fa; border:1px solid #e0e0e0; border-radius:4px; padding:8px; margin-top:4px; overflow-x:auto;">{
+  "Providers": {
+    "Microsoft": {
+      "Enabled": true,
+      "DisplayName": "Microsoft",
+      "Icon": "bi-microsoft",
+      "ClientId": "your-app-client-id",
+      "ClientSecret": "your-client-secret",
+      "TenantId": "your-azure-tenant-id"
+    }
+  }
+}</pre>
+            </details>
+            <div class="dx-form-group">
+                <label>Auth Config JSON</label>
+                <textarea class="dx-form-control" rows="10" style="font-family:monospace; font-size:0.82rem;"
+                          @bind="tenant.AuthConfigJson"></textarea>
+            </div>
+
+            @if (error != null)
+            {
+                <div class="dx-alert dx-alert-danger">@error</div>
+            }
+            @if (success)
+            {
+                <div class="dx-alert dx-alert-success">Tenant updated.</div>
+            }
+
+            <div style="margin-top:1rem;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="Save" disabled="@saving">
+                    @(saving ? "Saving…" : "Save Changes")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public string TenantId { get; set; } = "";
+
+    private TblTenant? tenant;
+    private bool loading = true;
+    private bool saving;
+    private bool success;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator || !ProvisioningService.IsAvailable)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        tenant = await ProvisioningService.GetTenantAsync(TenantId);
+        loading = false;
+    }
+
+    private async Task Save()
+    {
+        if (tenant == null || SessionState.PlatformUserId == null) return;
+        error = null;
+        success = false;
+
+        var token = await ReAuth.RequestConfirmationAsync();
+        if (token == null) return;
+
+        saving = true;
+        try
+        {
+            await ProvisioningService.UpdateTenantAsync(tenant, SessionState.PlatformUserId.Value, token.Value);
+            success = true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

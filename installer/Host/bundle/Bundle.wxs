@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DXSuite Host setup bundle (DXSuiteHost-Setup.exe).
+
+  One-file installer the technician runs. Chain order:
+    1. Setup wizard  — collects DB/auth/app config, writes the config JSON the MSI consumes.
+    2. Hosting Bundle — .NET 10 ASP.NET Core Hosting Bundle (required for IIS to host the app).
+    3. Host MSI       — lays files, creates the IIS site, writes appsettings, migrates the DB.
+
+  The wizard runs first so a cancel aborts before anything is installed. The bundle's Options
+  page chooses the install folder, which is passed to both the wizard and the MSI so they agree.
+
+  Build: see README.md (publish wizard, build MSI, supply the Hosting Bundle exe, build this).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:bal="http://wixtoolset.org/schemas/v4/wxs/bal">
+
+  <?define SetupConfigPath = "C:\ProgramData\DXSuite\dxsuite-setup.json" ?>
+
+  <Bundle Name="DXSuite Host Setup"
+          Manufacturer="Radiant Technology Group"
+          Version="26.3.0"
+          UpgradeCode="3B6F1A02-7C4E-4D19-9A5B-8E2C1F0D4A77">
+
+    <BootstrapperApplication>
+      <bal:WixStandardBootstrapperApplication LicenseFile="$(var.LicenseRtf)" Theme="rtfLicense" />
+    </BootstrapperApplication>
+
+    <!-- The install folder, editable on the Options page, shared with both packages. -->
+    <Variable Name="InstallFolder" Type="formatted" Value="[ProgramFiles64Folder]DXSuite" bal:Overridable="yes" />
+
+    <Chain>
+      <!-- 1. Setup wizard. Self-contained, so it runs regardless of installed runtime.
+           Permanent: it installs nothing to remove. A non-zero exit (e.g. user cancel)
+           fails the chain and rolls back before anything else runs. -->
+      <ExePackage Id="SetupWizard"
+                  SourceFile="$(var.WizardExe)"
+                  DisplayName="DXSuite setup wizard"
+                  Permanent="yes"
+                  Vital="yes"
+                  PerMachine="yes"
+                  DetectCondition="WizardNeverDetected"
+                  InstallArguments="--installdir &quot;[InstallFolder]&quot; --output &quot;$(SetupConfigPath)&quot;" />
+
+      <!-- 2. .NET 10 ASP.NET Core Hosting Bundle. The official installer is idempotent and
+           upgrades in place, so it runs every time rather than relying on registry detection
+           that varies by patch level. 3010 = success with reboot pending. -->
+      <ExePackage Id="AspNetCoreHostingBundle"
+                  SourceFile="$(var.HostingBundleExe)"
+                  DisplayName=".NET 10 ASP.NET Core Hosting Bundle"
+                  Permanent="yes"
+                  Vital="yes"
+                  PerMachine="yes"
+                  DetectCondition="HostingBundleNeverDetected"
+                  InstallArguments="/quiet /norestart /install">
+        <ExitCode Value="3010" Behavior="success" />
+      </ExePackage>
+
+      <!-- 3. The Host MSI, run silently. Install folder + IIS site identity flow in as
+           properties so the bundle and MSI agree on placement. -->
+      <MsiPackage Id="HostMsi"
+                  SourceFile="$(var.HostMsi)"
+                  Vital="yes">
+        <MsiProperty Name="INSTALLFOLDER" Value="[InstallFolder]" />
+        <MsiProperty Name="SITE_NAME" Value="DXSuite" />
+        <MsiProperty Name="SITE_PORT" Value="80" />
+        <MsiProperty Name="APP_POOL" Value="DXSuite" />
+      </MsiPackage>
+    </Chain>
+  </Bundle>
+</Wix>

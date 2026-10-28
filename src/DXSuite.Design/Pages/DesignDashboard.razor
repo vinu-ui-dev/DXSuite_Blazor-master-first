@@ -1,0 +1,255 @@
+@page "/design"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject NavigationManager Nav
+@inject ISessionState Session
+@using Microsoft.EntityFrameworkCore
+
+<PageTitle>Designs — DXSuite</PageTitle>
+
+@if (isLoading)
+{
+    <!-- Blank until the async permission check resolves, to avoid an Unauthorized flash -->
+}
+else if (!isAuthorized)
+{
+    <div class="unauthorized-wrapper">
+        <h1>Unauthorized</h1>
+        <p>You do not have permission to view this page.</p>
+        <a href="/">Return Home</a>
+    </div>
+}
+else
+{
+<div class="dx-page-header" style="display:flex; justify-content:space-between; align-items:center">
+    <h2>Designs</h2>
+    <div style="display:flex; gap:8px">
+        <a href="/design/ai-access" class="dx-btn dx-btn-outline-blue" title="Personal access tokens for AI assistants"><i class="bi bi-robot"></i> AI Access</a>
+        <button class="dx-btn dx-btn-blue" @onclick="OpenNew"><i class="bi bi-plus-lg"></i> New Design</button>
+    </div>
+</div>
+
+<div class="dz-filters">
+    <input class="dx-form-control dz-search" @bind="textFilter" @bind:event="oninput"
+           placeholder="Search by name, opportunity, customer…" />
+    <select class="dx-form-control dz-filter-select" @bind="salesRepFilter">
+        <option value="">All Sales Reps</option>
+        @foreach (var rep in salesReps)
+        {
+            <option value="@rep">@rep</option>
+        }
+    </select>
+    <select class="dx-form-control dz-filter-select" @bind="customerFilter">
+        <option value="">All Customers</option>
+        @foreach (var cust in customers)
+        {
+            <option value="@cust">@cust</option>
+        }
+    </select>
+</div>
+
+@if (_deleteError is not null)
+{
+    <div class="dx-alert dx-alert-danger" style="margin-bottom:12px">@_deleteError</div>
+}
+
+@if (rows is null)
+{
+    <div class="dx-spinner"></div>
+}
+else if (!FilteredRows.Any())
+{
+    <p class="dx-text-muted" style="font-style:italic; padding:24px 0">
+        @(rows.Count == 0 ? "No designs yet. Create one to get started." : "No designs match the current filters.")
+    </p>
+}
+else
+{
+    <div class="dx-table">
+        <div class="dx-table-header" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr 80px 100px;">
+            <div>Name</div>
+            <div>Opportunity</div>
+            <div>Customer</div>
+            <div>Status</div>
+            <div>Sales Rep</div>
+            <div>Created</div>
+            <div></div>
+        </div>
+        @foreach (var row in FilteredRows)
+        {
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr 1fr 1fr 80px 100px; cursor:pointer"
+                 @onclick="() => Navigate(row.DesignId)">
+                <div style="font-weight:500">@row.Name</div>
+                <div>@(row.TranId ?? "—")</div>
+                <div>@(row.Entity ?? "—")</div>
+                <div>@(row.EntityStatus ?? "—")</div>
+                <div>@(row.SalesRep ?? "—")</div>
+                <div class="dx-text-muted" style="font-size:.8rem">@row.CreateDate.ToString("MM/dd/yy")</div>
+                <div @onclick:stopPropagation style="display:flex;gap:4px;justify-content:flex-end">
+                    @if (_confirmDeleteId == row.DesignId)
+                    {
+                        <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => ConfirmDeleteAsync(row.DesignId)"
+                                disabled="@_deleting" title="Confirm delete">
+                            @(_deleting ? "…" : "Delete")
+                        </button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelDelete"
+                                disabled="@_deleting">
+                            Cancel
+                        </button>
+                    }
+                    else
+                    {
+                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RequestDelete(row.DesignId)"
+                                title="Delete design">
+                            <i class="bi bi-trash3"></i>
+                        </button>
+                    }
+                </div>
+            </div>
+        }
+    </div>
+}
+
+@if (showNewModal)
+{
+    <NewDesignModal OnClose="OnNewModalClose" />
+}
+}
+
+@code {
+    private List<DesignRow>? rows;
+    private string textFilter = "";
+    private string salesRepFilter = "";
+    private string customerFilter = "";
+    private List<string> salesReps = [];
+    private List<string> customers = [];
+    private bool showNewModal;
+
+    private int? _confirmDeleteId;
+    private bool _deleting;
+    private string? _deleteError;
+
+    private IEnumerable<DesignRow> FilteredRows => (rows ?? []).Where(r =>
+        (string.IsNullOrEmpty(textFilter) || r.MatchesText(textFilter)) &&
+        (string.IsNullOrEmpty(salesRepFilter) || r.SalesRep == salesRepFilter) &&
+        (string.IsNullOrEmpty(customerFilter) || r.Entity == customerFilter));
+
+    private bool isAuthorized;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await Session.HasPermissionAsync(PermissionKeys.PageDesign);
+        isLoading = false;
+        if (isAuthorized)
+            await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var designs = await db.TblDesigns
+            .Where(d => d.CustomerId == Tenant.CustomerCode)
+            .OrderByDescending(d => d.CreateDate)
+            .ToListAsync();
+
+        rows = designs.Select(d =>
+        {
+            NetsuiteOpportunity? opp = null;
+            if (!string.IsNullOrEmpty(d.NetsuiteOpportunityData))
+            {
+                try { opp = System.Text.Json.JsonSerializer.Deserialize<NetsuiteOpportunity>(d.NetsuiteOpportunityData); }
+                catch { /* malformed snapshot — display without it */ }
+            }
+            return new DesignRow(d.DesignId, d.Name, d.CreateDate, opp?.TranId, opp?.Entity, opp?.EntityStatus, opp?.SalesRep);
+        }).ToList();
+
+        salesReps = rows.Select(r => r.SalesRep).Where(s => !string.IsNullOrEmpty(s))
+            .Distinct().Order().Cast<string>().ToList();
+        customers = rows.Select(r => r.Entity).Where(e => !string.IsNullOrEmpty(e))
+            .Distinct().Order().Cast<string>().ToList();
+    }
+
+    private void OpenNew() => showNewModal = true;
+
+    private async Task OnNewModalClose(int? newDesignId)
+    {
+        showNewModal = false;
+        if (newDesignId.HasValue)
+            Nav.NavigateTo($"/design/{newDesignId.Value}");
+        else
+            await LoadAsync();
+    }
+
+    private void Navigate(int designId) => Nav.NavigateTo($"/design/{designId}");
+
+    private void RequestDelete(int designId)
+    {
+        _confirmDeleteId = designId;
+        _deleteError = null;
+    }
+
+    private void CancelDelete()
+    {
+        _confirmDeleteId = null;
+        _deleteError = null;
+    }
+
+    private async Task ConfirmDeleteAsync(int designId)
+    {
+        _deleting = true;
+        _deleteError = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var design = await db.TblDesigns
+                .FirstOrDefaultAsync(d => d.DesignId == designId && d.CustomerId == Tenant.CustomerCode);
+
+            if (design is not null)
+            {
+                // Cascade from tblDesign covers: worksheets → rooms, line items (+ attrs),
+                // labor rows, calculator rows, misc/travel rows, section/group descriptions,
+                // materials rows/configs, non-inventory rows, travel config;
+                // and requirements → comments.
+                db.TblDesigns.Remove(design);
+                await db.SaveChangesAsync();
+            }
+
+            _confirmDeleteId = null;
+            await LoadAsync();
+        }
+        catch (Exception ex)
+        {
+            _deleteError = $"Delete failed: {ex.Message}";
+        }
+        finally
+        {
+            _deleting = false;
+        }
+    }
+
+    private sealed record DesignRow(
+        int DesignId,
+        string Name,
+        DateTime CreateDate,
+        string? TranId,
+        string? Entity,
+        string? EntityStatus,
+        string? SalesRep)
+    {
+        public bool MatchesText(string term) =>
+            Name.Contains(term, StringComparison.OrdinalIgnoreCase)
+            || (TranId?.Contains(term, StringComparison.OrdinalIgnoreCase) == true)
+            || (Entity?.Contains(term, StringComparison.OrdinalIgnoreCase) == true)
+            || (EntityStatus?.Contains(term, StringComparison.OrdinalIgnoreCase) == true)
+            || (SalesRep?.Contains(term, StringComparison.OrdinalIgnoreCase) == true);
+    }
+}
+
+<style>
+    .dz-filters { display: flex; gap: 10px; margin: 16px 0; flex-wrap: wrap; }
+    .dz-search { flex: 1; min-width: 220px; }
+    .dz-filter-select { width: 180px; }
+</style>

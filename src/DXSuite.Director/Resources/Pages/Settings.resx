@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_Settings">
+    <value>Settings</value>
+  </data>
+  <data name="Tab_Users">
+    <value>Users</value>
+  </data>
+  <data name="Tab_Groups">
+    <value>Groups</value>
+  </data>
+  <data name="Tab_Airlines">
+    <value>Airlines</value>
+  </data>
+  <data name="Tab_Cities">
+    <value>Cities</value>
+  </data>
+  <data name="Tab_Wayfinding">
+    <value>Wayfinding</value>
+  </data>
+  <data name="Tab_PlayerUpdates">
+    <value>Player Updates</value>
+  </data>
+  <data name="Tab_ApiKeys">
+    <value>API Keys</value>
+  </data>
+  <data name="Tab_Branding">
+    <value>Branding</value>
+  </data>
+  <data name="Tab_SystemInfo">
+    <value>System Info</value>
+  </data>
+  <data name="Tab_Email">
+    <value>Email (SMTP)</value>
+  </data>
+  <data name="Tab_Notifications">
+    <value>Notifications</value>
+  </data>
+</root>

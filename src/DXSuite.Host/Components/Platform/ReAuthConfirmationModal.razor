@@ -1,0 +1,57 @@
+@inject ReAuthConfirmationService ReAuth
+@implements IDisposable
+
+@using DXSuite.Shared.Services
+
+@if (_visible)
+{
+    <div class="dx-modal-overlay" @onclick="Cancel">
+        <div class="dx-modal" @onclick:stopPropagation="true" style="max-width:420px;">
+            <div class="dx-modal-header">
+                <span>Confirm Privileged Action</span>
+            </div>
+            <div class="dx-modal-body">
+                <p>
+                    You are about to perform a privileged operation that cannot be easily reversed.
+                    Click <strong>Confirm</strong> to proceed, or <strong>Cancel</strong> to abort.
+                </p>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="Cancel">Cancel</button>
+                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="Confirm" style="margin-left:.5rem;">Confirm</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool _visible;
+
+    protected override void OnInitialized()
+    {
+        ReAuth.OnShowRequested += ShowAsync;
+    }
+
+    private async Task ShowAsync()
+    {
+        _visible = true;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void Confirm()
+    {
+        _visible = false;
+        ReAuth.Confirm();
+    }
+
+    private void Cancel()
+    {
+        _visible = false;
+        ReAuth.Cancel();
+    }
+
+    public void Dispose()
+    {
+        ReAuth.OnShowRequested -= ShowAsync;
+    }
+}

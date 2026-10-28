@@ -1,0 +1,388 @@
+@using System.Xml
+@inject IServiceScopeFactory scopeFactory
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject NavigationManager navMan
+@inject IJSRuntime JSRuntime
+@inject ILogger<ConcourseAssetPlaylist> Logger
+@rendermode InteractiveServer
+
+<style>
+    input[type="radio"]:checked {
+        accent-color: #0071BC;
+        background-color: #0071BC;
+        border-color: #0071BC;
+    }
+
+    input[type="radio"] {
+        accent-color: #0071BC;
+    }
+</style>
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="section-container" style="background-color:#f5f5f5; border-radius: 5px; padding: 20px">
+            <div class="section-header" style="background-color:unset; border:unset; display:flex; justify-content:space-between; align-items:center;">
+                <div class="section-title">
+                    <h3>@((!string.IsNullOrEmpty(PlaylistName)) ? PlaylistName : "Playlist")</h3>
+                </div>
+                <div style="display:flex; gap: 10px; align-items: center;">
+                    <div style="display: flex; align-items: center; gap: 10px; background-color: white; padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc;">
+                        <label style="font-weight: bold; color: #333; margin-right: 5px;">Type:</label>
+                        <label style="display: flex; align-items: center; gap: 4px; margin-right: 10px; cursor: pointer;">
+                            <input type="radio" name="contentFilter" value="All" @onchange="OnContentFilterChanged" checked="@(currentContentFilter == "All")" />
+                            All
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 4px; margin-right: 10px; cursor: pointer;">
+                            <input type="radio" name="contentFilter" value="Background" @onchange="OnContentFilterChanged" checked="@(currentContentFilter == "Background")" />
+                            Background
+                        </label>
+                        <label style="display: flex; align-items: center; gap: 4px; cursor: pointer;">
+                            <input type="radio" name="contentFilter" value="Message" @onchange="OnContentFilterChanged" checked="@(currentContentFilter == "Message")" />
+                            Message
+                        </label>
+                    </div>
+
+                    <div style="display: flex; align-items: center; gap: 10px; background-color: white; padding: 8px 12px; border-radius: 4px; border: 1px solid #ccc;">
+                        <label style="font-weight: bold; color: #333; margin-right: 5px;">Display:</label>
+                        <select @onchange="OnDisplayFilterChanged" style="border: 1px solid #ddd; border-radius: 3px; padding: 2px 6px;">
+                            <option value="All" selected="@(currentDisplayFilter == "All")">All</option>
+                            <option value="ConcourseAEast" selected="@(currentDisplayFilter == "ConcourseAEast")">Concourse A East</option>
+                            <option value="ConcourseAWest" selected="@(currentDisplayFilter == "ConcourseAWest")">Concourse A West</option>
+                            <option value="ConcourseBEast" selected="@(currentDisplayFilter == "ConcourseBEast")">Concourse B East</option>
+                            <option value="ConcourseBWest" selected="@(currentDisplayFilter == "ConcourseBWest")">Concourse B West</option>
+                        </select>
+                    </div>
+                    <button class="dx-btn dx-btn-blue" @onclick="@(() => OpenMediaUploader(null))">ADD MEDIA +</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="@(() => OpenMediaCreator())">CREATE MEDIA +</button>
+                </div>
+            </div>
+            <div class="asset-container" style="margin-top: 10px;">
+                <div class="d-flex" style="background-color:#CCC; border-radius: 5px;">
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: flex-start; padding: 15px;">
+                        @if (FilteredMediaFiles.Count() == 0)
+                        {
+                            <h5>@GetEmptyStateMessage()</h5>
+                        }
+                        else
+                        {
+                            @foreach (var mediaFile in FilteredMediaFiles)
+                            {
+                                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px;">
+                                    <div style="background-color: white; border-radius: 4px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; width: 150px; height: 240px; position: relative; display: flex; flex-direction: column;">
+
+                                        @if (mediaFile.IsExpired)
+                                        {
+                                            <div style="position: absolute; top: 5px; left: 5px; background-color: #dc3545; color: white; padding: 2px 6px; border-radius: 3px; font-size: 9px; font-weight: bold; z-index: 20;">
+                                                EXPIRED
+                                            </div>
+                                        }
+
+                                        <div style="position: absolute; top: 5px; right: 5px; display: flex; gap: 3px; z-index: 15;">
+                                            <button class="dx-btn dx-btn-blue" style="padding: 3px 6px; font-size: 9px; min-width: auto;" @onclick="@(() => OpenMediaUploader(mediaFile))" title="Edit">
+                                                Edit
+                                            </button>
+                                            <button class="dx-btn dx-btn-red" style="padding: 3px 6px; font-size: 9px; min-width: auto;" @onclick="@(() => assetDeleteModal.Open(0, Location.LocationId, mediaFile))" title="Delete">
+                                                Del
+                                            </button>
+                                        </div>
+
+                                        <div style="width: 120px; height: 90px; border-radius: 3px; overflow: hidden; margin: 0 auto 10px; position: relative;">
+                                            @if ((mediaFile.WebPath.ToUpper().Contains(".MP4")) || (mediaFile.WebPath.ToUpper().Contains(".AVI")))
+                                            {
+                                                <video src="@mediaFile.WebPath" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none; @(mediaFile.IsExpired ? "opacity: 0.6;" : "")" controlslist="nodownload noplaybackrate" />
+                                            }
+                                            else
+                                            {
+                                                <img src="@mediaFile.WebPath" style="width: 100%; height: 100%; object-fit: cover; pointer-events: none; @(mediaFile.IsExpired ? "opacity: 0.6;" : "")" />
+                                            }
+                                        </div>
+
+                                        <div style="color: #4D4D4D; margin-bottom: 8px; font-size: 11px; font-weight: bold; width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="@(System.IO.Path.GetFileName(mediaFile.DiskPath))">
+                                            @(System.IO.Path.GetFileName(mediaFile.DiskPath))
+                                        </div>
+
+                                        @{
+                                            var contentTypeField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "ContentType");
+                                            string contentType = contentTypeField?.Value ?? "Background";
+                                        }
+                                        <div style="margin-bottom: 8px;">
+                                            <span style="@(contentType == "Message" ? "background-color: #ff6b35; color: white;" : "background-color: #28a745; color: white;") padding: 2px 6px; border-radius: 3px; font-size: 10px; font-weight: bold;">
+                                                @contentType
+                                            </span>
+                                        </div>
+
+                                        @{
+                                            var startDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartDate");
+                                            var endDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndDate");
+                                            var startTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime")?.Value;
+                                            var endTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime")?.Value;
+
+                                            string startDate = (startDateField != null && DateTime.TryParse(startDateField.Value, out DateTime parsedStartDate))
+                                                ? parsedStartDate.ToString("MM/dd/yyyy")
+                                                : "";
+                                            string endDate = (endDateField != null && DateTime.TryParse(endDateField.Value, out DateTime parsedEndDate))
+                                                ? parsedEndDate.ToString("MM/dd/yyyy")
+                                                : "";
+                                            string startTime = DateTime.TryParse(startTimeMetadata, out DateTime parsedStartTime) ? parsedStartTime.ToString("h:mm tt") : "";
+                                            string endTime = DateTime.TryParse(endTimeMetadata, out DateTime parsedEndTime) ? parsedEndTime.ToString("h:mm tt") : "";
+
+                                            bool hasDate = !string.IsNullOrEmpty(startDate) || !string.IsNullOrEmpty(endDate);
+                                            bool hasTime = !string.IsNullOrEmpty(startTime) || !string.IsNullOrEmpty(endTime);
+                                        }
+                                        <div style="font-size: 9px; color: #666; margin-bottom: 10px; line-height: 1.2; flex-grow: 1; display: flex; flex-direction: column; justify-content: flex-end;">
+                                            @if (hasDate)
+                                            {
+                                                @if (!string.IsNullOrEmpty(startDate)) { <div>@startDate</div> }
+                                                @if (!string.IsNullOrEmpty(endDate)) { <div>@endDate</div> }
+                                            }
+                                            else
+                                            {
+                                                <div>Daily</div>
+                                            }
+                                            @if (hasTime)
+                                            {
+                                                <div style="margin-top: 2px;">@startTime @(endTime.Length > 0 ? "- " + endTime : "")</div>
+                                            }
+                                            else
+                                            {
+                                                <div style="margin-top: 2px;">All Day</div>
+                                            }
+                                        </div>
+                                    </div>
+
+                                    <div class="dx-btn dx-btn-blue" style="padding: 4px 12px; border-radius: 0 0 4px 4px; font-size: 10px; font-weight: bold; cursor: pointer; margin-top: -3px; min-width: auto;"
+                                         @onclick="() => OpenAssetInNewTab(mediaFile)"
+                                         title="Click to open @((mediaFile.WebPath.ToUpper().Contains(".MP4") || mediaFile.WebPath.ToUpper().Contains(".AVI")) ? "video" : "image") in new tab">
+                                        VIEW
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+}
+
+<ConcourseMediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="UpdateMediaFiles" />
+
+<AssetDeleteConfirmation @ref="assetDeleteModal" OnAssetDeletedMediaFile="DeleteMediaFile" />
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public string? PlaylistName { get; set; }
+    [Parameter] public double contentHeight { get; set; }
+    [Parameter] public double contentWidth { get; set; }
+
+    private ConcourseMediaAssetUploader? mediaUploaderModal { get; set; }
+    private AssetDeleteConfirmation? assetDeleteModal { get; set; }
+
+    private string? baseDirectory;
+    private string currentContentFilter = "All";
+    private string currentDisplayFilter = "All";
+
+    private List<MediaFile> MediaFiles = new List<MediaFile>();
+
+    public List<MediaFile> FilteredMediaFiles
+    {
+        get
+        {
+            var filteredFiles = MediaFiles.AsEnumerable();
+
+            if (currentContentFilter != "All")
+            {
+                filteredFiles = filteredFiles.Where(mf =>
+                {
+                    var contentTypeField = mf.Metadata.FirstOrDefault(x => x.Name == "ContentType");
+                    var contentType = contentTypeField?.Value ?? "Background";
+                    return contentType == currentContentFilter;
+                });
+            }
+
+            if (currentDisplayFilter != "All")
+            {
+                filteredFiles = filteredFiles.Where(mf =>
+                {
+                    var displaysField = mf.Metadata.FirstOrDefault(x => x.Name == "Displays");
+                    if (displaysField != null)
+                    {
+                        var displays = displaysField.Value.Split(' ').Select(d => d.Trim()).Where(d => !string.IsNullOrEmpty(d)).ToList();
+                        return displays.Contains(currentDisplayFilter);
+                    }
+                    return false;
+                });
+            }
+
+            return filteredFiles.ToList();
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateMediaFiles();
+    }
+
+    private async Task OnContentFilterChanged(ChangeEventArgs e)
+    {
+        if (e.Value != null)
+        {
+            currentContentFilter = e.Value.ToString() ?? "All";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task OnDisplayFilterChanged(ChangeEventArgs e)
+    {
+        if (e.Value != null)
+        {
+            currentDisplayFilter = e.Value.ToString() ?? "All";
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private string GetEmptyStateMessage()
+    {
+        if (currentContentFilter == "All" && currentDisplayFilter == "All")
+            return "Click ADD MEDIA + to begin assigning content.";
+
+        var filters = new List<string>();
+        if (currentContentFilter != "All") filters.Add(currentContentFilter);
+        if (currentDisplayFilter != "All") filters.Add(currentDisplayFilter);
+        return $"No {string.Join(" + ", filters)} content found. Try changing the filters or add new media.";
+    }
+
+    private async Task DeleteMediaFile(MediaFile mediaFileToDelete)
+    {
+        bool deleteSuccess = false;
+        if (mediaFileToDelete.DiskPath != null)
+        {
+            if (System.IO.File.Exists(mediaFileToDelete.DiskPath))
+            {
+                System.IO.File.Delete(mediaFileToDelete.DiskPath);
+                deleteSuccess = true;
+            }
+
+            // Only delete metadata when the image was also deleted — prevents orphaned images
+            // with no metadata that Moxie would play indefinitely with no schedule context.
+            if (deleteSuccess && System.IO.File.Exists(mediaFileToDelete.DiskPath + ".metadata"))
+                System.IO.File.Delete(mediaFileToDelete.DiskPath + ".metadata");
+        }
+        if (deleteSuccess)
+        {
+            MediaFiles.Remove(mediaFileToDelete);
+            StateHasChanged();
+        }
+    }
+
+    private async Task UpdateMediaFiles()
+    {
+        try
+        {
+            DateTime now = DateTime.Now;
+            baseDirectory = MediaPaths.GetRoot();
+
+            if (baseDirectory != null && Location != null)
+            {
+                string uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString());
+
+                List<MediaFile> tempMediaFiles = new List<MediaFile>();
+
+                foreach (string file in System.IO.Directory.GetFiles(uploadDirectory, "", SearchOption.AllDirectories)
+                    .Where(s => !s.EndsWith(".metadata") && !s.EndsWith(".db")))
+                {
+                    // Orphaned image — no metadata means Moxie has no schedule context and will
+                    // play it indefinitely. Safe to remove: all upload paths write metadata atomically.
+                    if (!System.IO.File.Exists(file + ".metadata"))
+                    {
+                        Logger.LogWarning("Removing orphaned media file with no metadata sidecar: {File}", file);
+                        System.IO.File.Delete(file);
+                        continue;
+                    }
+
+                    List<MetadataField> metadata = new List<MetadataField>();
+                    string metadataFilePath = file + ".metadata";
+
+                    if (System.IO.File.Exists(metadataFilePath))
+                    {
+                        XmlDocument doc = new XmlDocument();
+                        doc.Load(metadataFilePath);
+                        XmlNodeList nodes = doc.SelectNodes("usermetadata");
+
+                        foreach (XmlNode node in nodes)
+                        {
+                            foreach (XmlNode line in node)
+                            {
+                                metadata.Add(new MetadataField
+                                {
+                                    Name = line.Attributes["name"].Value,
+                                    DataType = line.Attributes["datatype"].Value,
+                                    Value = line.Attributes["value"].Value
+                                });
+                            }
+                        }
+                    }
+
+                    MetadataField? location = metadata.FirstOrDefault(x => x.Name == "Location");
+                    if (location != null && location.Value == Location.LocationId.ToString())
+                    {
+                        bool isExpired = false;
+                        DateTime? parsedEndDate = null;
+
+                        MetadataField? endDate = metadata.FirstOrDefault(x => x.Name == "EndDate");
+                        MetadataField? endTimeField = metadata.FirstOrDefault(x => x.Name == "EndTime");
+
+                        if (endDate != null && DateTime.TryParse(endDate.Value, out DateTime parsedDate))
+                        {
+                            parsedEndDate = (endTimeField != null && TimeSpan.TryParse(endTimeField.Value, out TimeSpan endTimeSpan))
+                                ? parsedDate.Date.Add(endTimeSpan)
+                                : parsedDate.Date.AddDays(1).AddSeconds(-1);
+
+                            if (parsedEndDate < now)
+                                isExpired = true;
+                        }
+
+                        tempMediaFiles.Add(new MediaFile
+                        {
+                            WebPath = $"/MediaAssets/{Location.LocationId}/{Path.GetFileName(file)}",
+                            DiskPath = file,
+                            Metadata = metadata,
+                            IsExpired = isExpired,
+                            EndDate = parsedEndDate,
+                        });
+                    }
+                }
+
+                MediaFiles = tempMediaFiles
+                    .OrderBy(x => x.IsExpired ? 0 : 1)
+                    .ThenBy(x => x.EndDate ?? DateTime.MaxValue)
+                    .ThenBy(x => System.IO.Path.GetFileName(x.DiskPath ?? ""))
+                    .ToList();
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating media files");
+        }
+    }
+
+    private async Task OpenMediaUploader(MediaFile? mediaFileToEdit)
+    {
+        if (mediaUploaderModal != null)
+            await mediaUploaderModal.Open(baseDirectory, Location!.LocationId, 0, mediaFileToEdit, false, true);
+    }
+
+    private async Task OpenMediaCreator()
+    {
+        navMan.NavigateTo($"/mediacreator?locationId={Location!.LocationId}&width=3328&height=512");
+    }
+
+    private async Task OpenAssetInNewTab(MediaFile mediaFile)
+    {
+        await JSRuntime.InvokeVoidAsync("open", mediaFile.WebPath, "_blank");
+    }
+}

@@ -1,0 +1,370 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@using System.Text.Json
+@inject IFloorPlanService floorPlanService
+@inject ISessionState sessionState
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navManager
+@inject ILogger<FloorPlan> _logger
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<div class="fp-container">
+    @if (location == null)
+    {
+        <div class="fp-loading">Loading floor plan...</div>
+    }
+    else
+    {
+        @switch (backgroundMode)
+        {
+            case "googlemap":
+                <GoogleMapView LocationId="LocationId"
+                               Elements="elements"
+                               ActiveIcons="activeIcons"
+                               Config="extendedData"
+                               OnElementClicked="OnDisplayClick"
+                               OnLocationNavigate="NavigateToLocation" />
+                break;
+
+            case "offlinemap":
+                <OfflineMapView LocationId="LocationId"
+                                Elements="elements"
+                                ActiveIcons="activeIcons"
+                                Config="extendedData"
+                                OnElementClicked="OnDisplayClick"
+                                OnLocationNavigate="NavigateToLocation" />
+                break;
+
+            case "3dmodel":
+                <ThreeDModelView LocationId="LocationId"
+                                 Elements="elements"
+                                 ActiveIcons="activeIcons"
+                                 Config="extendedData"
+                                 OnElementClicked="OnDisplayClick"
+                                 OnLocationNavigate="NavigateToLocation" />
+                break;
+
+            default:
+                @* Static image mode with pan/zoom *@
+                <div id="@_canvasId" class="fp-canvas" style="position:relative; width:100%;">
+                    <div class="fp-pan-zoom" style="position:relative; width:100%; transform-origin:0 0; @CanvasStyle @backgroundStyle">
+                        @foreach (var element in elements)
+                        {
+                            var activeIcon = activeIcons.GetValueOrDefault(element.FloorPlanElementId);
+                            var iconSrc = activeIcon ?? element.IconPath;
+                            var label = element.IconLabel;
+
+                            <div class="fp-element"
+                                 style="@ElementStyle(element)">
+
+                                @if (element.ChildDisplayId.HasValue)
+                                {
+                                    var displayName = label ?? element.ChildDisplay?.DisplayName ?? $"Display {element.ChildDisplayId}";
+                                    var modeBadge = element.ChildDisplay?.DisplayMode == (int)Types.DisplayMode.StatusSelector ? "Status Selector" : "Schedule";
+
+                                    @if (element.ShowLivePreview && element.ChildDisplay != null
+                                         && element.ChildDisplay.DisplayWidth > 0 && element.ChildDisplay.DisplayHeight > 0)
+                                    {
+                                        var scaleX = element.ElementWidth / element.ChildDisplay.DisplayWidth;
+                                        var scaleY = element.ElementHeight / element.ChildDisplay.DisplayHeight;
+                                        var previewScale = Math.Min(scaleX, scaleY);
+
+                                        <div class="fp-preview-element"
+                                             data-tooltip="@displayName — @modeBadge"
+                                             @onclick="@(() => OnDisplayClick(element))">
+                                            <div class="fp-preview-scaler"
+                                                 style="transform: scale(@previewScale.ToString("F6")); transform-origin: 0 0;
+                                                        width: @(element.ChildDisplay.DisplayWidth)px;
+                                                        height: @(element.ChildDisplay.DisplayHeight)px;">
+                                                <DXSuite.Director.Components.DisplayTypes.StandardDisplay
+                                                    Display="@element.ChildDisplay"
+                                                    ScaleFactor="1.0"
+                                                    PreviewMode="true" />
+                                            </div>
+                                        </div>
+                                    }
+                                    else
+                                    {
+                                        <div class="fp-display-element" data-tooltip="@displayName — @modeBadge" @onclick="@(() => OnDisplayClick(element))">
+                                            @if (!string.IsNullOrEmpty(iconSrc))
+                                            {
+                                                <img src="@iconSrc" class="fp-element-icon" alt="@label" />
+                                            }
+                                            else
+                                            {
+                                                <svg class="fp-element-icon" viewBox="0 0 24 24" fill="#0071BC">
+                                                    <path d="M21 3H3c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h7v2H8v2h8v-2h-2v-2h7c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 14H3V5h18v12z"/>
+                                                </svg>
+                                            }
+                                            <div class="fp-element-label">@displayName</div>
+                                        </div>
+                                    }
+                                }
+                                else if (element.ChildLocationId.HasValue)
+                                {
+                                    var locationName = label ?? element.ChildLocation?.LocationName ?? $"Location {element.ChildLocationId}";
+                                    <div class="fp-location-element" data-tooltip="@locationName — Location" @onclick="@(() => NavigateToLocation(element.ChildLocationId.Value))">
+                                        @if (!string.IsNullOrEmpty(iconSrc))
+                                        {
+                                            <img src="@iconSrc" class="fp-element-icon" alt="@label" />
+                                        }
+                                        else
+                                        {
+                                            <svg class="fp-element-icon" viewBox="0 0 24 24" fill="#0071BC">
+                                                <path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/>
+                                            </svg>
+                                        }
+                                        <div class="fp-element-label">@locationName</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    <div class="fp-zoom-controls">
+                        <button class="fp-zoom-btn" @onclick="ZoomIn" title="Zoom in">+</button>
+                        <button class="fp-zoom-btn" @onclick="ZoomOut" title="Zoom out">&minus;</button>
+                        <button class="fp-zoom-btn fp-zoom-reset" @onclick="ResetView" title="Reset view">&#8634;</button>
+                    </div>
+                </div>
+                break;
+        }
+    }
+</div>
+
+<DXSuite.Director.Components.Modals.FloorPlanDisplayModal @ref="displayModal" OnContentChanged="RefreshIcons" />
+
+@code {
+    [Parameter] public int LocationId { get; set; }
+
+    private TblLocation? location;
+    private List<TblFloorPlanElement> elements = new();
+    private Dictionary<int, string> activeIcons = new();
+    private string backgroundStyle = "";
+    private string backgroundMode = "image";
+    private LocationExtendedData? extendedData;
+    private DXSuite.Director.Components.Modals.FloorPlanDisplayModal displayModal = null!;
+
+    // Auto-refresh timer
+    private Timer? refreshTimer;
+    private string _canvasId = $"fp-canvas-{Guid.NewGuid():N}";
+    private bool _panZoomInitialized;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadFloorPlan();
+
+        refreshTimer?.Dispose();
+        refreshTimer = new Timer(async _ => await RefreshIcons(), null, TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (location != null && backgroundMode == "image" && !_panZoomInitialized)
+        {
+            _panZoomInitialized = true;
+            await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.init", _canvasId);
+        }
+    }
+
+    private async Task LoadFloorPlan()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        location = await db.TblLocations.AsNoTracking().FirstOrDefaultAsync(l => l.LocationId == LocationId);
+        if (location == null) return;
+
+        // Parse background mode from ExtendedData
+        extendedData = null;
+        backgroundMode = "image";
+        if (!string.IsNullOrEmpty(location.ExtendedData))
+        {
+            try
+            {
+                extendedData = JsonSerializer.Deserialize<LocationExtendedData>(location.ExtendedData, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                backgroundMode = extendedData?.BackgroundMode ?? "image";
+            }
+            catch { }
+        }
+
+        if (backgroundMode == "image" && !string.IsNullOrEmpty(location.BackgroundImagePath))
+        {
+            backgroundStyle = $"background-image: url('{location.BackgroundImagePath}'); background-size: cover; background-repeat: no-repeat;";
+        }
+        else
+        {
+            backgroundStyle = "";
+        }
+
+        elements = await floorPlanService.GetElementsForLocationAsync(LocationId);
+        activeIcons = await floorPlanService.GetActiveIconsAsync(LocationId, DateTime.Now);
+    }
+
+    private async Task RefreshIcons()
+    {
+        try
+        {
+            activeIcons = await floorPlanService.GetActiveIconsAsync(LocationId, DateTime.Now);
+            _ = InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to refresh floor plan icons");
+        }
+    }
+
+    private async Task OnDisplayClick(TblFloorPlanElement element)
+    {
+        await displayModal.Open(element);
+    }
+
+    private void NavigateToLocation(int locationId)
+    {
+        navManager.NavigateTo($"/Location/{locationId}");
+    }
+
+    private async Task ZoomIn() => await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.zoom", _canvasId, 1.2);
+    private async Task ZoomOut() => await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.zoom", _canvasId, 0.8);
+    private async Task ResetView() => await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.resetView", _canvasId);
+
+    private string CanvasStyle =>
+        location?.BackgroundImageWidth > 0 && location?.BackgroundImageHeight > 0
+            ? $"aspect-ratio: {location.BackgroundImageWidth} / {location.BackgroundImageHeight};"
+            : "min-height: 500px;";
+
+    private string ElementStyle(TblFloorPlanElement el)
+    {
+        if (location?.BackgroundImageWidth > 0 && location?.BackgroundImageHeight > 0)
+        {
+            var left = (double)el.PositionLeft / location.BackgroundImageWidth.Value * 100;
+            var top = (double)el.PositionTop / location.BackgroundImageHeight.Value * 100;
+            var w = (double)el.ElementWidth / location.BackgroundImageWidth.Value * 100;
+            var h = (double)el.ElementHeight / location.BackgroundImageHeight.Value * 100;
+            return $"position:absolute; top:{top:F4}%; left:{left:F4}%; width:{w:F4}%; height:{h:F4}%; z-index:{el.SortOrder};";
+        }
+        return $"position:absolute; top:{el.PositionTop}px; left:{el.PositionLeft}px; width:{el.ElementWidth}px; height:{el.ElementHeight}px; z-index:{el.SortOrder};";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        refreshTimer?.Dispose();
+        if (_panZoomInitialized)
+        {
+            try { await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.dispose", _canvasId); } catch { }
+        }
+    }
+}
+
+<style>
+    .fp-container { padding: 8px; }
+    .fp-loading { font-size: 13px; color: #888; padding: 24px; }
+    .fp-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .fp-title { margin: 0; font-family: "BAHNSCHRIFT"; font-weight: 600; }
+    .fp-canvas {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        background-color: #f5f5f5;
+        overflow: hidden;
+        min-height: 200px;
+    }
+    .fp-element {
+        border: 1px solid transparent;
+        border-radius: 6px;
+        overflow: hidden;
+        transition: border-color 0.15s;
+    }
+    .fp-display-element, .fp-location-element {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        background: rgba(255,255,255,0.85);
+        border-radius: 6px;
+        padding: 4px;
+    }
+    .fp-display-element:hover { background: rgba(227,242,253,0.9); }
+    .fp-location-element:hover { background: rgba(224,242,241,0.9); }
+    .fp-preview-element {
+        position: relative;
+        width: 100%;
+        height: 100%;
+        cursor: pointer;
+        overflow: hidden;
+        border-radius: 6px;
+        border: 2px solid transparent;
+        transition: border-color 0.2s, box-shadow 0.2s;
+    }
+    .fp-preview-element:hover {
+        border-color: #0071BC;
+        box-shadow: 0 0 8px rgba(0, 113, 188, 0.45);
+    }
+    .fp-preview-element:hover .fp-preview-scaler { filter: brightness(1.05); }
+    .fp-preview-scaler { pointer-events: none; transition: filter 0.2s; }
+    .fp-display-element[data-tooltip]:hover::after,
+    .fp-preview-element[data-tooltip]:hover::after,
+    .fp-location-element[data-tooltip]:hover::after {
+        content: attr(data-tooltip);
+        position: absolute;
+        bottom: 100%;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 4px 10px;
+        background: rgba(33,33,33,0.92);
+        color: #fff;
+        font-size: 11px;
+        font-family: "BAHNSCHRIFT";
+        white-space: nowrap;
+        border-radius: 4px;
+        pointer-events: none;
+        z-index: 100;
+        margin-bottom: 4px;
+    }
+    .fp-element-icon { max-width: 80%; max-height: 60%; object-fit: contain; }
+    .fp-element-label {
+        font-size: 11px;
+        font-family: "BAHNSCHRIFT";
+        font-weight: 600;
+        color: #333;
+        text-align: center;
+        margin-top: 2px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+        max-width: 100%;
+    }
+    .fp-zoom-controls {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        z-index: 200;
+    }
+    .fp-zoom-btn {
+        width: 32px;
+        height: 32px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: rgba(255,255,255,0.92);
+        font-size: 18px;
+        line-height: 1;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #333;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+    }
+    .fp-zoom-btn:hover { background: #e8e8e8; }
+    .fp-zoom-reset { font-size: 16px; }
+</style>

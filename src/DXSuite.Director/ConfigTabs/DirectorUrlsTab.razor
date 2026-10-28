@@ -1,0 +1,219 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject UrlHeartbeatService heartbeats
+@implements IDisposable
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Director URLs</h4>
+        <div class="dx-panel-controls">
+            <input @bind="search" @bind:event="oninput"
+                   class="dx-search-input"
+                   placeholder="Search URLs..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadAsync">
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    <div class="dx-text-muted" style="padding:6px 20px; font-size:0.85rem; flex-shrink:0;">
+        Player URLs carrying an <code>id=</code> parameter appear here automatically after their first poll.
+        Enable monitoring to be alerted when a URL stops polling; link a device so alerts name hardware.
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (Filtered().Any())
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table" style="min-width:max-content;">
+                <div class="dx-table-header" style="@GridStyle">
+                    <div style="text-align:center;">Status</div>
+                    <div>Monitor ID</div>
+                    <div>URL</div>
+                    <div>Location</div>
+                    <div>Linked Device</div>
+                    <div>Interval (s)</div>
+                    <div style="text-align:center;">Monitored</div>
+                    <div>Last Seen</div>
+                    <div>First Seen</div>
+                    <div></div>
+                </div>
+                @foreach (var row in Filtered())
+                {
+                    var status = StatusOf(row);
+                    <div class="dx-table-row" style="@GridStyle">
+                        <div style="text-align:center;" title="@status">
+                            <span class="dx-status-dot @StatusDotClass(status)"></span>
+                        </div>
+                        <div style="font-family:monospace;">@row.MonitorId</div>
+                        <div style="font-family:monospace; font-size:0.8rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@row.UrlKey">@row.UrlKey</div>
+                        <div>@(row.LocationId?.ToString() ?? "—")</div>
+                        <div>
+                            <select class="dx-form-control dx-form-control-sm" value="@(row.LinkedDeviceId ?? "")"
+                                    @onchange="e => SetDeviceAsync(row, e.Value?.ToString())">
+                                <option value="">— none —</option>
+                                @foreach (var d in devices)
+                                {
+                                    <option value="@d.DeviceId">@(string.IsNullOrEmpty(d.Description) ? d.DeviceId : $"{d.Description} ({d.DeviceId})")</option>
+                                }
+                            </select>
+                        </div>
+                        <div>
+                            <input type="number" class="dx-form-control dx-form-control-sm no-spinner" min="60" step="30"
+                                   value="@row.ExpectedIntervalSeconds"
+                                   @onchange="e => SetIntervalAsync(row, e.Value?.ToString())" />
+                        </div>
+                        <div style="text-align:center;">
+                            <input type="checkbox" class="dx-checkbox" checked="@row.IsMonitored"
+                                   @onchange="e => SetMonitoredAsync(row, e.Value is true)" />
+                        </div>
+                        <div title="@EffectiveLastSeen(row).ToLocalTime().ToString("g")">@Relative(EffectiveLastSeen(row))</div>
+                        <div>@row.FirstSeenUtc.ToLocalTime().ToString("g")</div>
+                        <div style="text-align:center;">
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" title="Forget this URL"
+                                    @onclick="() => ForgetAsync(row)">×</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="dx-text-muted" style="padding:8px 20px; font-size:0.85rem;">
+            Showing @Filtered().Count() of @rows.Count URLs
+        </div>
+    }
+    else
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No tagged URLs observed yet</h5>
+            <p class="dx-text-muted">
+                Append <code>&amp;id=YOUR-ID</code> to a player URL
+                (e.g. <code>/videowall/layer?locationId=...&amp;id=MOXIE-01-OUT2</code>)
+                and it will appear here once it polls.
+            </p>
+        </div>
+    }
+</div>
+
+@code {
+    private const string GridStyle =
+        "grid-template-columns: 60px 160px minmax(260px, 1fr) 80px 220px 100px 90px 110px 140px 60px;";
+
+    private List<TblDirectorUrl> rows = new();
+    private List<(string DeviceId, string? Description)> devices = new();
+    private string search = "";
+    private bool isLoading = true;
+    private System.Threading.Timer? refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadAsync();
+        // Periodic freshness refresh; UI mutations re-render via their own handlers.
+        refreshTimer = new System.Threading.Timer(
+            _ => _ = InvokeAsync(async () => { await LoadAsync(); StateHasChanged(); }),
+            null, TimeSpan.FromSeconds(15), TimeSpan.FromSeconds(15));
+    }
+
+    public void Dispose() => refreshTimer?.Dispose();
+
+    private async Task LoadAsync()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        rows = await db.TblDirectorUrls.AsNoTracking()
+            .OrderBy(u => u.MonitorId).ThenBy(u => u.UrlKey)
+            .ToListAsync();
+        devices = (await db.TblDevices.AsNoTracking()
+            .OrderBy(d => d.Description)
+            .Select(d => new { d.DeviceId, d.Description })
+            .ToListAsync())
+            .Select(d => (d.DeviceId, (string?)d.Description))
+            .ToList();
+        isLoading = false;
+    }
+
+    private IEnumerable<TblDirectorUrl> Filtered() =>
+        string.IsNullOrWhiteSpace(search)
+            ? rows
+            : rows.Where(r =>
+                r.MonitorId.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                r.UrlKey.Contains(search, StringComparison.OrdinalIgnoreCase) ||
+                (r.LinkedDeviceId?.Contains(search, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    // Live in-memory heartbeats are fresher than the debounced DB writes.
+    private DateTime EffectiveLastSeen(TblDirectorUrl row)
+    {
+        var live = heartbeats.Snapshot();
+        return live.TryGetValue(row.MonitorId, out var mem) && mem > row.LastSeenUtc
+            ? mem : row.LastSeenUtc;
+    }
+
+    private string StatusOf(TblDirectorUrl row)
+    {
+        if (!row.IsMonitored) return "unmonitored";
+        if (row.AlertState == "missing") return "missing";
+        return (DateTime.UtcNow - EffectiveLastSeen(row)).TotalSeconds > Math.Max(60, row.ExpectedIntervalSeconds)
+            ? "overdue" : "online";
+    }
+
+    private static string StatusDotClass(string status) => status switch
+    {
+        "online"  => "dx-status-dot-green",
+        "overdue" => "dx-status-dot-yellow",
+        "missing" => "dx-status-dot-red",
+        _         => "dx-status-dot-gray",
+    };
+
+    private static string Relative(DateTime utc)
+    {
+        var age = DateTime.UtcNow - utc;
+        if (age.TotalSeconds < 90) return $"{Math.Max(0, (int)age.TotalSeconds)}s ago";
+        if (age.TotalMinutes < 90) return $"{(int)age.TotalMinutes}m ago";
+        if (age.TotalHours < 36) return $"{(int)age.TotalHours}h ago";
+        return $"{(int)age.TotalDays}d ago";
+    }
+
+    private async Task MutateAsync(TblDirectorUrl row, Action<TblDirectorUrl> apply)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var tracked = await db.TblDirectorUrls.FirstOrDefaultAsync(u => u.DirectorUrlId == row.DirectorUrlId);
+        if (tracked == null) return;
+        apply(tracked);
+        tracked.LastEditDate = DateTime.UtcNow;
+        await db.SaveChangesAsync();
+        apply(row);
+        StateHasChanged();
+    }
+
+    private Task SetMonitoredAsync(TblDirectorUrl row, bool monitored) =>
+        MutateAsync(row, r => r.IsMonitored = monitored);
+
+    private Task SetDeviceAsync(TblDirectorUrl row, string? deviceId) =>
+        MutateAsync(row, r => r.LinkedDeviceId = string.IsNullOrEmpty(deviceId) ? null : deviceId);
+
+    private Task SetIntervalAsync(TblDirectorUrl row, string? value) =>
+        int.TryParse(value, out var seconds) && seconds >= 60
+            ? MutateAsync(row, r => r.ExpectedIntervalSeconds = seconds)
+            : Task.CompletedTask;
+
+    private async Task ForgetAsync(TblDirectorUrl row)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var tracked = await db.TblDirectorUrls.FirstOrDefaultAsync(u => u.DirectorUrlId == row.DirectorUrlId);
+        if (tracked != null)
+        {
+            db.TblDirectorUrls.Remove(tracked);
+            await db.SaveChangesAsync();
+        }
+        rows.Remove(row);
+        StateHasChanged();
+    }
+}

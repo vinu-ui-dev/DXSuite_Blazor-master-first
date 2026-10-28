@@ -1,0 +1,90 @@
+@page "/platform/audit"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject IPlatformAuditService? AuditService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Platform Audit Log</h2>
+    </div>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (entries.Count == 0)
+    {
+        <p class="dx-text-muted">No audit events found.</p>
+    }
+    else
+    {
+        <div style="margin-bottom:.75rem;">
+            <input class="dx-form-control" placeholder="Filter by tenant…"
+                   @bind="tenantFilter" @bind:event="oninput" style="max-width:200px;" />
+        </div>
+
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 130px 1.5fr 1fr 80px 2fr;">
+                <div>Time (UTC)</div>
+                <div>Event</div>
+                <div>Tenant</div>
+                <div>User</div>
+                <div>Reason</div>
+            </div>
+            @foreach (var a in Filtered)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 130px 1.5fr 1fr 80px 2fr;">
+                    <div style="white-space:nowrap;">@a.EventTime.ToString("yyyy-MM-dd HH:mm")</div>
+                    <div>@a.EventType</div>
+                    <div>@(a.TenantId ?? "—")</div>
+                    <div>@(a.PlatformUserId?.ToString("N")[..8] ?? "—")</div>
+                    <div class="dx-truncate" title="@a.Reason">@(a.Reason ?? "—")</div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (error != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@error</div>
+    }
+</div>
+
+@code {
+    private List<TblPlatformAuditLog> entries = new();
+    private bool loading = true;
+    private string? error;
+    private string tenantFilter = "";
+
+    private IEnumerable<TblPlatformAuditLog> Filtered =>
+        string.IsNullOrWhiteSpace(tenantFilter)
+            ? entries
+            : entries.Where(e => e.TenantId?.Contains(tenantFilter, StringComparison.OrdinalIgnoreCase) == true);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator && !SessionState.IsAuditor)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        try
+        {
+            if (AuditService != null)
+                entries = await AuditService.GetAuditLogAsync(take: 200);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

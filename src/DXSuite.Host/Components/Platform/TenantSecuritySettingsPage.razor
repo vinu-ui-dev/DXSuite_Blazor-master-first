@@ -1,0 +1,121 @@
+@page "/platform/tenant-admin/settings"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject IPlatformElevationService? ElevationService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Security Settings</h2>
+        <a href="/platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
+    </div>
+    <p class="dx-text-muted">Security controls for vendor access to <strong>@TenantContext.TenantId</strong>.</p>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (settings != null)
+    {
+        <div class="dx-form" style="max-width:520px;">
+            <div class="dx-form-group">
+                <label class="dx-checkbox-label">
+                    <input type="checkbox" @bind="settings.RequireTenantApprovalForElevation" />
+                    Require my approval before operators can access this tenant
+                </label>
+                <div class="dx-form-hint">
+                    When enabled, operators must request your explicit approval before their elevation becomes active.
+                </div>
+            </div>
+            <div class="dx-form-group">
+                <label>Maximum elevation duration (minutes) <span class="dx-text-muted">— blank = no cap</span></label>
+                <input class="dx-form-control" type="number" min="1"
+                       @bind="maxDurationStr" style="max-width:140px;" />
+            </div>
+
+            @if (error != null)
+            {
+                <div class="dx-alert dx-alert-danger">@error</div>
+            }
+            @if (success)
+            {
+                <div class="dx-alert dx-alert-success">Settings saved.</div>
+            }
+
+            <div style="margin-top:1rem;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="Save" disabled="@saving">
+                    @(saving ? "Saving…" : "Save Settings")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private TblTenantSettings? settings;
+    private bool loading = true;
+    private bool saving;
+    private bool success;
+    private string? error;
+    private string maxDurationStr = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsTenantAdmin)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        if (ElevationService != null)
+        {
+            // Pass PlatformUserId so the service enforces IsTenantAdmin at the service layer.
+            settings = await ElevationService.GetTenantSettingsAsync(TenantContext.TenantId, SessionState.PlatformUserId);
+            maxDurationStr = settings.ElevationMaxDurationMinutes?.ToString() ?? "";
+        }
+
+        loading = false;
+    }
+
+    private async Task Save()
+    {
+        if (settings == null || ElevationService == null || !SessionState.PlatformUserId.HasValue) return;
+        error = null; success = false;
+
+        if (!string.IsNullOrWhiteSpace(maxDurationStr))
+        {
+            if (!int.TryParse(maxDurationStr, out var maxMin) || maxMin < 1)
+            {
+                error = "Maximum duration must be a positive number of minutes.";
+                return;
+            }
+            settings.ElevationMaxDurationMinutes = maxMin;
+        }
+        else
+        {
+            settings.ElevationMaxDurationMinutes = null;
+        }
+
+        settings.TenantId = TenantContext.TenantId;
+
+        saving = true;
+        try
+        {
+            await ElevationService.UpdateTenantSettingsAsync(settings, SessionState.PlatformUserId.Value);
+            success = true;
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

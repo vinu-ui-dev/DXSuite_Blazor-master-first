@@ -1,0 +1,198 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Director.Models
+@inject IStatusSelectorService statusSelectorService
+@inject ILogger<StatusSelector> _logger
+
+<div class="ss-container">
+    @if (content == null)
+    {
+        <div class="ss-loading">Loading...</div>
+    }
+    else if (content.AssetLibraryLocationId == null)
+    {
+        <div class="ss-no-library text-muted small">No Asset Library linked to this display.</div>
+    }
+    else if (string.IsNullOrEmpty(content.MetadataKey))
+    {
+        @* Flat mode: one button per asset, plus a leading None button *@
+        <div class="ss-button-grid">
+            <button class="ss-btn ss-btn-none @(content.CurrentActiveAssetId == null ? "ss-btn-active" : "")"
+                    @onclick="ClearContent"
+                    disabled="@isSwitching">
+                <span class="ss-btn-label">None</span>
+            </button>
+            @foreach (var asset in content.Assets)
+            {
+                var isActive = content.CurrentActiveAssetId == asset.AssetId;
+                <button class="ss-btn @(isActive ? "ss-btn-active" : "")"
+                        @onclick="@(() => SelectAsset(asset.AssetId))"
+                        disabled="@isSwitching">
+                    <span class="ss-btn-label">@asset.AssetName</span>
+                </button>
+            }
+        </div>
+    }
+    else
+    {
+        @* Grouped mode: one button per metadata value, plus a leading None button *@
+        <div class="ss-button-grid">
+            <button class="ss-btn ss-btn-none @(content.CurrentActiveAssetId == null ? "ss-btn-active" : "")"
+                    @onclick="ClearContent"
+                    disabled="@isSwitching">
+                <span class="ss-btn-label">None</span>
+            </button>
+            @foreach (var group in content.GroupedAssets)
+            {
+                var firstAsset = group.Value.FirstOrDefault();
+                var isActive = firstAsset != null && content.CurrentActiveAssetId == firstAsset.AssetId;
+                <button class="ss-btn @(isActive ? "ss-btn-active" : "")"
+                        @onclick="@(() => SelectMetadataValue(group.Key))"
+                        disabled="@isSwitching">
+                    <span class="ss-btn-label">@group.Key</span>
+                    @if (group.Value.Count > 1)
+                    {
+                        <span class="ss-btn-count">@group.Value.Count items</span>
+                    }
+                </button>
+            }
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="ss-status @(statusIsError ? "ss-status-error" : "ss-status-ok")">@statusMessage</div>
+    }
+</div>
+
+@code {
+    [Parameter] public int DisplayId { get; set; }
+    [Parameter] public string EditUser { get; set; } = "system";
+    [Parameter] public EventCallback OnContentChanged { get; set; }
+    [Parameter] public int? ConstraintId { get; set; }
+    [Parameter] public string? MetadataKeyOverride { get; set; }
+    [Parameter] public ScheduleContext? ScheduleContext { get; set; }
+
+    private StatusSelectorContent? content;
+    private bool isSwitching;
+    private string? statusMessage;
+    private bool statusIsError;
+
+    private int? lastConstraintId;
+    private string? lastMetadataKeyOverride;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (lastConstraintId != ConstraintId || lastMetadataKeyOverride != MetadataKeyOverride)
+        {
+            lastConstraintId = ConstraintId;
+            lastMetadataKeyOverride = MetadataKeyOverride;
+            await LoadContent();
+        }
+        else if (content == null)
+        {
+            await LoadContent();
+        }
+    }
+
+    private async Task LoadContent()
+    {
+        try
+        {
+            content = await statusSelectorService.GetContentAsync(DisplayId, ConstraintId, MetadataKeyOverride);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to load StatusSelector content for display {DisplayId}", DisplayId);
+            statusMessage = "Failed to load content";
+            statusIsError = true;
+        }
+    }
+
+    private async Task SelectAsset(int assetId)
+    {
+        isSwitching = true;
+        statusMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await statusSelectorService.SetActiveContentAsync(DisplayId, assetId, null, EditUser, ScheduleContext, ConstraintId, MetadataKeyOverride);
+            await LoadContent();
+            await OnContentChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+            _logger.LogError(ex, "Failed to set StatusSelector asset for display {DisplayId}", DisplayId);
+        }
+
+        isSwitching = false;
+    }
+
+    private async Task SelectMetadataValue(string metadataValue)
+    {
+        isSwitching = true;
+        statusMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await statusSelectorService.SetActiveContentAsync(DisplayId, null, metadataValue, EditUser, ScheduleContext, ConstraintId, MetadataKeyOverride);
+            await LoadContent();
+            await OnContentChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+            _logger.LogError(ex, "Failed to set StatusSelector metadata for display {DisplayId}", DisplayId);
+        }
+
+        isSwitching = false;
+    }
+
+    private async Task ClearContent()
+    {
+        isSwitching = true;
+        statusMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await statusSelectorService.ClearActiveContentAsync(DisplayId, EditUser, ScheduleContext);
+            await LoadContent();
+            await OnContentChanged.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+            _logger.LogError(ex, "Failed to clear StatusSelector content for display {DisplayId}", DisplayId);
+        }
+
+        isSwitching = false;
+    }
+}
+
+<style>
+    .ss-container { padding: 8px; }
+    .ss-loading { font-size: 13px; color: #888; padding: 12px; }
+    .ss-no-library { padding: 12px; }
+    .ss-button-grid { display: flex; flex-wrap: wrap; gap: 8px; }
+    .ss-btn { display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 12px 20px; border: 2px solid #e0e0e0; border-radius: 8px; background: #fff; cursor: pointer; min-width: 100px; transition: all 0.15s ease; font-family: "BAHNSCHRIFT"; }
+    .ss-btn:hover:not(:disabled) { border-color: #0071BC; background: #f5faff; }
+    .ss-btn:disabled { opacity: 0.6; cursor: wait; }
+    .ss-btn-active { border-color: #0071BC; background: #e3f2fd; box-shadow: 0 0 0 1px #0071BC; }
+    .ss-btn-none { border-style: dashed; border-color: #ccc; }
+    .ss-btn-none .ss-btn-label { color: #999; }
+    .ss-btn-none:hover:not(:disabled) { border-color: #999; background: #fafafa; }
+    .ss-btn-none.ss-btn-active { border-color: #999; background: #f5f5f5; box-shadow: 0 0 0 1px #999; }
+    .ss-btn-none.ss-btn-active .ss-btn-label { color: #555; }
+    .ss-btn-label { font-size: 14px; font-weight: 600; color: #333; }
+    .ss-btn-count { font-size: 11px; color: #888; margin-top: 2px; }
+    .ss-status { margin-top: 8px; font-size: 12px; padding: 4px 8px; border-radius: 4px; }
+    .ss-status-ok { background: #e8f5e9; color: #2e7d32; }
+    .ss-status-error { background: #ffebee; color: #c62828; }
+</style>

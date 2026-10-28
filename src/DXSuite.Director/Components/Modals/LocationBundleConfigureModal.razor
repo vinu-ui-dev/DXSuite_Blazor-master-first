@@ -1,0 +1,317 @@
+@using System.Text.Json
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Models.LocationBundles
+@using DXSuite.Director.Services
+@using DXSuite.Director.Services.LocationBundles
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@inject IDirectorDBContext dbContext
+@inject ILocationBundleService BundleService
+@inject ISessionState sessionState
+@inject IOptions<LocationBundleOptions> BundleOptions
+@inject ILogger<LocationBundleConfigureModal> Logger
+
+@if (isOpen && location != null)
+{
+    <div class="modal-overlay">
+        <div class="modal-container" style="max-width:640px;" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h4>Configure "@location.LocationName"</h4>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Bundle</label>
+                    <select class="form-select" value="@selectedBundleKey" @onchange="OnBundleChanged">
+                        <option value="">(none)</option>
+                        @foreach (var bundle in bundles)
+                        {
+                            <option value="@bundle.Bundle.BundleKey">@bundle.Bundle.Name (v@(bundle.Bundle.CurrentVersion))</option>
+                        }
+                    </select>
+                </div>
+
+                @if (selectedBundle != null)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Version</label>
+                        <select class="form-select" @bind="pinnedVersion">
+                            <option value="">Track current (v@(selectedBundle.Bundle.CurrentVersion))</option>
+                            @foreach (var v in selectedBundle.Versions)
+                            {
+                                <option value="@v.Version">Pin to v@(v.Version)</option>
+                            }
+                        </select>
+                    </div>
+
+                    @if (manifest?.Capabilities is { Count: > 0 })
+                    {
+                        <div class="mb-3 text-muted" style="font-size:0.85em;">
+                            Declared capabilities: @string.Join(", ", manifest.Capabilities)
+                        </div>
+                    }
+
+                    <div class="mb-2 d-flex align-items-center" style="gap:12px;">
+                        <label class="form-label fw-bold" style="margin:0;">Settings</label>
+                        @if (HasSettingsSchema)
+                        {
+                            <button class="dx-btn dx-btn-outline-secondary dx-btn-sm" @onclick="() => useRawJson = !useRawJson">
+                                @(useRawJson ? "Use form" : "Edit raw JSON")
+                            </button>
+                        }
+                    </div>
+
+                    @if (HasSettingsSchema && !useRawJson)
+                    {
+                        @foreach (var field in manifest!.SettingsSchema!.Fields)
+                        {
+                            <div class="mb-2">
+                                <label class="form-label">@(field.Label ?? field.Key)</label>
+                                @switch (field.Type.ToLowerInvariant())
+                                {
+                                    case "boolean":
+                                        <div>
+                                            <input type="checkbox" class="dx-checkbox"
+                                                   checked="@(GetBuffer(field.Key) == "true")"
+                                                   @onchange="@(e => settingsBuffer[field.Key] = (bool)e.Value! ? "true" : "false")" />
+                                        </div>
+                                        break;
+                                    case "number":
+                                        <input type="number" class="dx-form-control"
+                                               value="@GetBuffer(field.Key)"
+                                               @onchange="@(e => settingsBuffer[field.Key] = e.Value?.ToString() ?? "")" />
+                                        break;
+                                    case "select":
+                                        <select class="form-select"
+                                                value="@GetBuffer(field.Key)"
+                                                @onchange="@(e => settingsBuffer[field.Key] = e.Value?.ToString() ?? "")">
+                                            <option value="">(default)</option>
+                                            @foreach (var option in field.Options ?? new List<string>())
+                                            {
+                                                <option value="@option">@option</option>
+                                            }
+                                        </select>
+                                        break;
+                                    case "json":
+                                        <textarea class="dx-form-control" rows="3"
+                                                  value="@GetBuffer(field.Key)"
+                                                  @onchange="@(e => settingsBuffer[field.Key] = e.Value?.ToString() ?? "")"></textarea>
+                                        break;
+                                    default:
+                                        <input type="text" class="dx-form-control"
+                                               value="@GetBuffer(field.Key)"
+                                               @onchange="@(e => settingsBuffer[field.Key] = e.Value?.ToString() ?? "")" />
+                                        break;
+                                }
+                            </div>
+                        }
+                    }
+                    else
+                    {
+                        <textarea class="dx-form-control" rows="6" @bind="rawSettingsJson"
+                                  placeholder="{ }"></textarea>
+                        <span class="dx-form-hint">Raw JSON settings object passed to the bundle.</span>
+                    }
+
+                    @if (BundleOptions.Value.AllowDevOverride && sessionState.RoleEnum == Roles.Role.Admin)
+                    {
+                        <hr />
+                        <div class="mb-2">
+                            <label class="form-label fw-bold">Dev override URL</label>
+                            <input type="text" class="dx-form-control" @bind="devOverrideUrl"
+                                   placeholder="http://localhost:5500" />
+                            <div class="alert alert-warning" style="margin-top:8px; font-size:0.85em;">
+                                While set, Admin users see this location served live from the URL above instead of
+                                the uploaded bundle. Other users still get the stored version. Clear before shipping.
+                            </div>
+                        </div>
+                    }
+                }
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger">@errorMessage</div>
+                }
+            </div>
+
+            <div class="modal-footer">
+                <button class="dx-btn dx-btn-outline-secondary" @onclick="Close">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public EventCallback OnSaved { get; set; }
+
+    private bool isOpen;
+    private bool isSaving;
+    private bool useRawJson;
+    private string? errorMessage;
+
+    private TblLocation? location;
+    private List<LocationBundleInfo> bundles = new();
+    private LocationBundleInfo? selectedBundle;
+    private LocationBundleManifest? manifest;
+
+    private string selectedBundleKey = "";
+    private string pinnedVersion = "";
+    private string? devOverrideUrl;
+    private string rawSettingsJson = "{}";
+    private readonly Dictionary<string, string> settingsBuffer = new();
+
+    private bool HasSettingsSchema => manifest?.SettingsSchema?.Fields is { Count: > 0 };
+
+    public async Task Open(int locationId)
+    {
+        errorMessage = null;
+        useRawJson = false;
+        settingsBuffer.Clear();
+        rawSettingsJson = "{}";
+        pinnedVersion = "";
+        devOverrideUrl = null;
+        selectedBundle = null;
+        manifest = null;
+
+        location = await dbContext.TblLocations.FirstOrDefaultAsync(l => l.LocationId == locationId);
+        if (location == null) return;
+
+        bundles = await BundleService.GetBundlesAsync();
+
+        var assignment = ExtendedDataHelper.Parse<LocationExtendedData>(location.ExtendedData)?.Bundle;
+        selectedBundleKey = assignment?.BundleKey ?? "";
+        pinnedVersion = assignment?.PinnedVersion ?? "";
+        devOverrideUrl = assignment?.DevOverrideUrl;
+
+        await LoadSelectedBundleAsync();
+
+        if (assignment?.Settings != null)
+        {
+            rawSettingsJson = JsonSerializer.Serialize(assignment.Settings, new JsonSerializerOptions { WriteIndented = true });
+            foreach (var (key, value) in assignment.Settings)
+                settingsBuffer[key] = value.ValueKind == JsonValueKind.String ? value.GetString() ?? "" : value.GetRawText();
+        }
+
+        isOpen = true;
+        StateHasChanged();
+    }
+
+    private async Task OnBundleChanged(ChangeEventArgs e)
+    {
+        selectedBundleKey = e.Value?.ToString() ?? "";
+        pinnedVersion = "";
+        await LoadSelectedBundleAsync();
+    }
+
+    private async Task LoadSelectedBundleAsync()
+    {
+        selectedBundle = bundles.FirstOrDefault(b => b.Bundle.BundleKey == selectedBundleKey);
+        manifest = selectedBundle != null
+            ? await BundleService.GetManifestAsync(selectedBundleKey)
+            : null;
+
+        // Pre-fill schema defaults for keys the location has no value for yet
+        if (manifest?.SettingsSchema?.Fields != null)
+        {
+            foreach (var field in manifest.SettingsSchema.Fields)
+            {
+                if (!settingsBuffer.ContainsKey(field.Key) && field.Default.HasValue)
+                {
+                    var d = field.Default.Value;
+                    settingsBuffer[field.Key] = d.ValueKind == JsonValueKind.String ? d.GetString() ?? "" : d.GetRawText();
+                }
+            }
+        }
+    }
+
+    private string GetBuffer(string key) => settingsBuffer.TryGetValue(key, out var value) ? value : "";
+
+    private async Task Save()
+    {
+        if (location == null) return;
+
+        Dictionary<string, JsonElement>? settings;
+        try
+        {
+            settings = BuildSettings();
+        }
+        catch (JsonException ex)
+        {
+            errorMessage = "Settings JSON is invalid: " + ex.Message;
+            return;
+        }
+
+        isSaving = true;
+        try
+        {
+            location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+            {
+                if (string.IsNullOrEmpty(selectedBundleKey))
+                {
+                    ed.Bundle = null;
+                    return;
+                }
+
+                ed.Bundle = new LocationBundleAssignment
+                {
+                    BundleKey = selectedBundleKey,
+                    PinnedVersion = string.IsNullOrEmpty(pinnedVersion) ? null : pinnedVersion,
+                    Settings = settings,
+                    DevOverrideUrl = string.IsNullOrWhiteSpace(devOverrideUrl) ? null : devOverrideUrl.Trim()
+                };
+            });
+
+            await dbContext.SaveChangesAsync();
+            isOpen = false;
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save bundle configuration for location {LocationId}", location.LocationId);
+            errorMessage = "Save failed: " + ex.Message;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private Dictionary<string, JsonElement>? BuildSettings()
+    {
+        if (string.IsNullOrEmpty(selectedBundleKey))
+            return null;
+
+        if (!HasSettingsSchema || useRawJson)
+        {
+            var trimmed = string.IsNullOrWhiteSpace(rawSettingsJson) ? "{}" : rawSettingsJson;
+            return JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(trimmed);
+        }
+
+        var result = new Dictionary<string, JsonElement>();
+        foreach (var field in manifest!.SettingsSchema!.Fields)
+        {
+            var raw = GetBuffer(field.Key);
+            if (string.IsNullOrEmpty(raw))
+                continue;
+
+            result[field.Key] = field.Type.ToLowerInvariant() switch
+            {
+                "number" => JsonSerializer.SerializeToElement(double.Parse(raw)),
+                "boolean" => JsonSerializer.SerializeToElement(raw == "true"),
+                "json" => JsonSerializer.Deserialize<JsonElement>(raw),
+                _ => JsonSerializer.SerializeToElement(raw)
+            };
+        }
+        return result;
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+    }
+}

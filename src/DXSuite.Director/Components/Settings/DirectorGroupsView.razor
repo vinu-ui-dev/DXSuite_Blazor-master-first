@@ -1,0 +1,13 @@
+@* Director-specific wrapper for the Groups settings tab.
+   Renders the shared GroupsListView and injects Director group settings
+   as additional group content. *@
+
+<DXSuite.Shared.Components.Settings.GroupsListView>
+    <AdditionalGroupContent>
+        @* Context: userGroupId is the selected group's ID, passed via the RenderFragment<int> slot *@
+        <DXSuite.Director.Components.Settings.GroupVideoWallAssignmentEditor UserGroupId="@context" />
+        @* Video Wall Defaults editor hidden pending rework — untested and slated for
+           changes before production. Restore the line below to re-enable. *@
+        @* <DXSuite.Director.Components.Settings.GroupLocationDefaultsEditor UserGroupId="@context" /> *@
+    </AdditionalGroupContent>
+</DXSuite.Shared.Components.Settings.GroupsListView>

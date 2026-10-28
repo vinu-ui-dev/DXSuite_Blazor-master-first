@@ -1,0 +1,777 @@
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@using DXSuite.Shared.Services
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Module
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject IUserGroupService userGroupService
+@inject ISessionState sessionState
+@inject IUserPreferenceService userPreferenceService
+@inject IReadOnlyList<IBlazorModule> allModules
+@inject ITenantContext tenantContext
+@inject ILogger<UsersListView> Logger
+@inject IStringLocalizer<UsersListView> L
+@inject IStringLocalizer<SharedResources> LS
+@inject Microsoft.Extensions.Options.IOptions<DXSuite.Shared.Models.AuthenticationConfig> authConfigOptions
+
+<div class="su-layout @(selectedUser != null ? "su-has-selection" : "")">
+    <!-- Left Panel: User List -->
+    <div class="su-list-panel">
+        <div class="su-list-header">
+            <input type="text" class="dx-form-control su-search-input" placeholder="@L["Placeholder_StartTyping"]"
+                   @oninput="OnSearchInput" value="@searchTerm" />
+            @if (authConfigOptions.Value.LocalAccounts.Enabled)
+            {
+                <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:6px; width:100%;" @onclick="() => showCreateLocal = true">
+                    + Create Local Account
+                </button>
+            }
+        </div>
+
+        <div class="su-user-list">
+            @if (filteredUsers != null)
+            {
+                @foreach (var user in filteredUsers)
+                {
+                    <div class="su-user-item @(selectedUser?.UserId == user.UserId ? "su-selected" : "") @(user.IsDisabled ? "su-disabled" : "")"
+                         @onclick="@(() => SelectUser(user))">
+                        <div class="su-user-name">
+                            @(user.FriendlyName ?? user.UserPrincipalName ?? "—")
+                            @if (user.IsDisabled)
+                            {
+                                <span class="su-disabled-badge">DISABLED</span>
+                            }
+                        </div>
+                        <span class="su-role-badge">@(user.Role?.RoleName ?? "No Role")</span>
+                    </div>
+                }
+
+                @if (!filteredUsers.Any())
+                {
+                    <div class="su-empty-list">No users found.</div>
+                }
+            }
+        </div>
+    </div>
+
+    <!-- Right Panel: Detail/Edit Form -->
+    <div class="su-detail-panel">
+        @if (selectedUser != null)
+        {
+            @* Phones show either the list or the detail; this returns to the list *@
+            <button class="dx-btn dx-btn-gray dx-btn-sm su-back-btn" @onclick="() => selectedUser = null">
+                &#8592; Back to users
+            </button>
+            <div class="su-detail-header">
+                <h5 class="su-detail-name">@(selectedUser.FriendlyName ?? "—")</h5>
+                <span class="su-detail-upn">@selectedUser.UserPrincipalName</span>
+            </div>
+
+            <!-- Role -->
+            <div class="su-section">
+                <label>@L["Label_CurrentRole"]</label>
+                <div class="su-inline-group">
+                    <select class="dx-form-control" @bind="selectedRoleId">
+                        @foreach (var role in allRoles)
+                        {
+                            <option value="@role.RoleId">@role.RoleName</option>
+                        }
+                    </select>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveRole">@LS["Button_Save"]</button>
+                </div>
+            </div>
+
+            <!-- Group Assignments -->
+            <div class="su-section">
+                <label>@L["Label_SearchGroups"]</label>
+                <div class="su-inline-group">
+                    <select class="dx-form-control" @bind="selectedGroupId">
+                        <option value="0">Select a group...</option>
+                        @foreach (var group in allGroups.Where(g => g.GroupType != "ad-sync"))
+                        {
+                            <option value="@group.UserGroupId">@group.GroupName (@group.GroupType)</option>
+                        }
+                    </select>
+                    <button class="dx-btn dx-btn-blue" @onclick="AddGroup" disabled="@(selectedGroupId == 0)">ADD</button>
+                </div>
+
+                @if (assignedGroups.Any())
+                {
+                    <ul class="su-assignment-list">
+                        @foreach (var group in assignedGroups)
+                        {
+                            <li class="su-assignment-item">
+                                <span>
+                                    @group.GroupName
+                                    <span class="su-group-type">(@group.GroupType)</span>
+                                </span>
+                                @if (group.GroupType != "ad-sync")
+                                {
+                                    <button class="dx-btn dx-btn-red su-remove-btn" @onclick="@(() => RemoveGroup(group))">@LS["Button_Remove"]</button>
+                                }
+                            </li>
+                        }
+                    </ul>
+                }
+            </div>
+
+            <!-- User Metadata -->
+            <div class="su-section">
+                <DXSuite.Shared.Components.Settings.UserMetadataEditor UserId="@selectedUser.UserId" />
+            </div>
+
+            <!-- Landing Page -->
+            <div class="su-section">
+                <label>Landing Page</label>
+                <div class="su-inline-group">
+                    <select class="dx-form-control" @bind="selectedLandingPage">
+                        <option value="">DXSuite Overview (default)</option>
+                        @foreach (var opt in landingPageOptions)
+                        {
+                            <option value="@opt.Href">
+                                @(string.IsNullOrEmpty(opt.Group) ? opt.Label : $"{opt.Group} – {opt.Label}")
+                            </option>
+                        }
+                        @foreach (var group in moduleLandingOptions.GroupBy(o => o.Group))
+                        {
+                            <optgroup label="@group.Key">
+                                @foreach (var opt in group)
+                                {
+                                    <option value="@opt.Href">@opt.Label</option>
+                                }
+                            </optgroup>
+                        }
+                    </select>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveLandingPage">@LS["Button_Save"]</button>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.85em; margin-top:4px;">
+                    The user still needs access to a location for it to open. Without access they
+                    land on an Unauthorized page every time they sign in.
+                </div>
+            </div>
+
+            <!-- Kiosk Mode -->
+            <div class="su-section">
+                <label>Kiosk Mode</label>
+                <div class="su-inline-group">
+                    <label style="display:flex; align-items:center; gap:8px; font-weight:normal;">
+                        <input type="checkbox" @bind="selectedKioskMode" />
+                        Hide DXSuite navigation for this account
+                    </label>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveKioskMode">@LS["Button_Save"]</button>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.85em; margin-top:4px;">
+                    For dedicated panel or display accounts. The account keeps its normal
+                    permissions and can still reach any page by URL; only the navigation is hidden.
+                    A single visit can override this with ?chrome=none or ?chrome=full.
+                </div>
+            </div>
+
+            <!-- Account Actions -->
+            @if (!IsSelf(selectedUser))
+            {
+                <div class="su-section su-account-actions">
+                    <label>Account Actions</label>
+                    <div class="d-flex gap-2 align-items-center">
+                        @if (selectedUser.IsDisabled)
+                        {
+                            <button class="dx-btn dx-btn-green" style="padding: 6px 16px;" @onclick="ToggleDisabled">
+                                Enable Account
+                            </button>
+                        }
+                        else
+                        {
+                            <button class="dx-btn dx-btn-gray" style="padding: 6px 16px;" @onclick="ToggleDisabled">
+                                Disable Account
+                            </button>
+                        }
+                        @if (!showDeleteConfirm)
+                        {
+                            <button class="dx-btn dx-btn-red" style="padding: 6px 16px;" @onclick="() => showDeleteConfirm = true">
+                                Delete User
+                            </button>
+                        }
+                        else
+                        {
+                            <span class="su-delete-confirm">
+                                <span style="font-size: 13px; color: #dc3545; font-weight: 600;">Delete permanently?</span>
+                                <button class="dx-btn dx-btn-red" style="padding: 4px 12px; font-size: 12px;" @onclick="DeleteUser">YES</button>
+                                <button class="dx-btn dx-btn-gray" style="padding: 4px 12px; font-size: 12px;" @onclick="() => showDeleteConfirm = false">NO</button>
+                            </span>
+                        }
+
+                        @if (hasLocalAccount)
+                        {
+                            <button class="dx-btn dx-btn-gray" style="padding: 6px 16px;" @onclick="() => showResetPassword = !showResetPassword">
+                                Reset Password
+                            </button>
+                        }
+                    </div>
+
+                    @if (showResetPassword)
+                    {
+                        <div style="margin-top:10px; padding:12px; background:#f8f9fa; border-radius:4px; max-width:360px;">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.85rem;">New Password</label>
+                                <input type="password" class="dx-form-control" @bind="resetPassword" />
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" style="font-size:0.85rem;">Confirm Password</label>
+                                <input type="password" class="dx-form-control" @bind="resetConfirm" />
+                            </div>
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="ResetPassword">Save Password</button>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <div class="alert @(statusIsError ? "alert-danger" : "alert-success") mt-2" style="padding: 8px;">@statusMessage</div>
+            }
+        }
+        else
+        {
+            <div class="su-no-selection">
+                <p>Select a user from the list to view details.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@if (showCreateLocal)
+{
+    <div class="dx-modal-overlay" @onclick="() => showCreateLocal = false">
+        <div class="dx-modal" style="min-width:min(420px, 92vw);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <span>Create Local Account</span>
+                <button class="dx-modal-close" @onclick="() => showCreateLocal = false">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (!string.IsNullOrEmpty(createLocalError))
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:12px;">@createLocalError</div>
+                }
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Email</label>
+                    <input type="email" class="dx-form-control" @bind="createLocalEmail" placeholder="user@example.com" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Password</label>
+                    <input type="password" class="dx-form-control" @bind="createLocalPassword" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Confirm Password</label>
+                    <input type="password" class="dx-form-control" @bind="createLocalConfirm" />
+                </div>
+                @if (authConfigOptions.Value.LocalAccounts.RequireEmailConfirmation)
+                {
+                    <div class="dx-form-group" style="flex-direction:row; align-items:center; gap:8px;">
+                        <input type="checkbox" class="dx-checkbox" @bind="createLocalSkipConfirmation" />
+                        <label class="dx-form-label" style="margin:0;">Skip email confirmation</label>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => showCreateLocal = false">Cancel</button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CreateLocalAccount" disabled="@createLocalSaving">
+                    @(createLocalSaving ? "Creating..." : "Create")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<TblUser> allUsers = new();
+    private List<TblUser> filteredUsers = new();
+    private List<TblUserRole> allRoles = new();
+    private List<TblUserGroup> allGroups = new();
+    private List<TblUserGroup> assignedGroups = new();
+
+    private TblUser? selectedUser;
+    private string searchTerm = "";
+    private int selectedRoleId;
+    private int selectedGroupId;
+    private string selectedLandingPage = "";
+    private bool selectedKioskMode;
+    private List<NavItem> landingPageOptions = [];
+    private List<LandingPageOption> moduleLandingOptions = [];
+
+    private string? statusMessage;
+    private bool statusIsError;
+    private bool showDeleteConfirm;
+
+    // Reset password state
+    private bool hasLocalAccount;
+    private bool showResetPassword;
+    private string resetPassword = "";
+    private string resetConfirm = "";
+
+    // Create local account modal state
+    private bool showCreateLocal;
+    private string createLocalEmail = "";
+    private string createLocalPassword = "";
+    private string createLocalConfirm = "";
+    private bool createLocalSkipConfirmation = true;
+    private string? createLocalError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var __scope = scopeFactory.CreateScope();
+        var directorDb = __scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+
+        allUsers = await directorDb.TblUsers
+            .Include(u => u.Role)
+            .OrderBy(u => u.FriendlyName)
+            .AsNoTracking()
+            .ToListAsync();
+
+        filteredUsers = allUsers;
+
+        allRoles = await directorDb.TblUserRoles
+            .OrderBy(r => r.RoleName)
+            .AsNoTracking()
+            .ToListAsync();
+
+        try
+        {
+            allGroups = await userGroupService.GetAllGroupsAsync() ?? new();
+        }
+        catch { allGroups = new(); }
+
+        var features = tenantContext.Features;
+        landingPageOptions = allModules
+            .Where(m => m.IsAvailableForTenant(tenantContext))
+            .SelectMany(m => m.GetNavItems())
+            .Where(n => n.Feature == null ||
+                        typeof(TenantFeatureFlags).GetProperty(n.Feature)?.GetValue(features) is true)
+            .OrderBy(n => n.Order)
+            .ToList();
+
+        // Modules contribute their own destinations (Director offers every location). One scope
+        // for the whole sweep so a module doing a database read gets a live DbContext.
+        moduleLandingOptions = [];
+        using var landingScope = scopeFactory.CreateScope();
+        foreach (var module in allModules.Where(m => m.IsAvailableForTenant(tenantContext)))
+        {
+            try
+            {
+                moduleLandingOptions.AddRange(
+                    await module.GetLandingPageOptionsAsync(landingScope.ServiceProvider));
+            }
+            catch (Exception ex)
+            {
+                // One module failing to enumerate must not empty the whole picker.
+                Logger.LogWarning(ex, "Could not load landing page options from {Module}", module.Name);
+            }
+        }
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            filteredUsers = allUsers;
+        }
+        else
+        {
+            filteredUsers = allUsers
+                .Where(u => (u.FriendlyName ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                         || (u.UserPrincipalName ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+    }
+
+    private async Task SelectUser(TblUser user)
+    {
+        selectedUser = user;
+        selectedRoleId = user.RoleId;
+        selectedGroupId = 0;
+        statusMessage = null;
+        showDeleteConfirm = false;
+        showResetPassword = false;
+        resetPassword = "";
+        resetConfirm = "";
+
+        selectedLandingPage = await userPreferenceService.GetDefaultLandingPageAsync(user.UserId) ?? "";
+        selectedKioskMode = await userPreferenceService.GetKioskModeAsync(user.UserId);
+
+        // Check if user has a local account
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+        hasLocalAccount = await db.TblLocalAccounts.AnyAsync(a => a.UserId == user.UserId);
+
+        await LoadUserGroups();
+    }
+
+    private async Task SaveRole()
+    {
+        if (selectedUser == null) return;
+
+        using var __scope = scopeFactory.CreateScope();
+        var directorDb = __scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+
+        try
+        {
+            var userToUpdate = await directorDb.TblUsers.FirstOrDefaultAsync(u => u.UserId == selectedUser.UserId);
+            if (userToUpdate != null)
+            {
+                userToUpdate.RoleId = selectedRoleId;
+                await directorDb.SaveChangesAsync();
+
+                var updatedUser = await directorDb.TblUsers
+                    .Include(u => u.Role)
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(u => u.UserId == selectedUser.UserId);
+
+                if (updatedUser != null)
+                {
+                    var idx = allUsers.FindIndex(u => u.UserId == selectedUser.UserId);
+                    if (idx >= 0) allUsers[idx] = updatedUser;
+                    selectedUser = updatedUser;
+                    filteredUsers = FilterUsers();
+                }
+
+                statusMessage = "Role saved.";
+                statusIsError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving role");
+            statusMessage = "Error saving role.";
+            statusIsError = true;
+        }
+    }
+
+    private async Task LoadUserGroups()
+    {
+        if (selectedUser == null) { assignedGroups = new(); return; }
+
+        try
+        {
+            assignedGroups = await userGroupService.GetGroupsForUserAsync(selectedUser.UserId) ?? new();
+        }
+        catch { assignedGroups = new(); }
+    }
+
+    private async Task AddGroup()
+    {
+        if (selectedUser == null || selectedGroupId == 0) return;
+
+        try
+        {
+            await userGroupService.AddMemberAsync(selectedGroupId, selectedUser.UserId);
+            statusMessage = null;
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+
+        await LoadUserGroups();
+        selectedGroupId = 0;
+    }
+
+    private async Task RemoveGroup(TblUserGroup group)
+    {
+        if (selectedUser == null) return;
+
+        try
+        {
+            await userGroupService.RemoveMemberAsync(group.UserGroupId, selectedUser.UserId);
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Error: {ex.Message}";
+            statusIsError = true;
+        }
+
+        await LoadUserGroups();
+    }
+
+    private bool IsSelf(TblUser user) => sessionState.User?.UserId == user.UserId;
+
+    private async Task ToggleDisabled()
+    {
+        if (selectedUser == null || IsSelf(selectedUser)) return;
+
+        using var __scope = scopeFactory.CreateScope();
+        var directorDb = __scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+
+        try
+        {
+            var userToUpdate = await directorDb.TblUsers.FirstOrDefaultAsync(u => u.UserId == selectedUser.UserId);
+            if (userToUpdate != null)
+            {
+                userToUpdate.IsDisabled = !userToUpdate.IsDisabled;
+                await directorDb.SaveChangesAsync();
+
+                var updatedUser = await directorDb.TblUsers
+                    .Include(u => u.Role)
+                    .AsNoTracking()
+                    .FirstOrDefaultAsync(u => u.UserId == selectedUser.UserId);
+
+                if (updatedUser != null)
+                {
+                    var idx = allUsers.FindIndex(u => u.UserId == selectedUser.UserId);
+                    if (idx >= 0) allUsers[idx] = updatedUser;
+                    selectedUser = updatedUser;
+                    filteredUsers = FilterUsers();
+                }
+
+                statusMessage = userToUpdate.IsDisabled ? "User disabled." : "User enabled.";
+                statusIsError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling user disabled state");
+            statusMessage = "Error updating user.";
+            statusIsError = true;
+        }
+    }
+
+    private async Task DeleteUser()
+    {
+        if (selectedUser == null || IsSelf(selectedUser)) return;
+
+        using var __scope = scopeFactory.CreateScope();
+        var directorDb = __scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+
+        try
+        {
+            var userToDelete = await directorDb.TblUsers.FirstOrDefaultAsync(u => u.UserId == selectedUser.UserId);
+            if (userToDelete != null)
+            {
+                directorDb.TblUsers.Remove(userToDelete);
+                await directorDb.SaveChangesAsync();
+
+                allUsers.RemoveAll(u => u.UserId == selectedUser.UserId);
+                filteredUsers = FilterUsers();
+                selectedUser = null;
+                showDeleteConfirm = false;
+                statusMessage = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting user");
+            statusMessage = "Error deleting user. They may have related records that prevent deletion.";
+            statusIsError = true;
+            showDeleteConfirm = false;
+        }
+    }
+
+    private async Task ResetPassword()
+    {
+        if (selectedUser == null) return;
+
+        if (string.IsNullOrWhiteSpace(resetPassword))
+        {
+            statusMessage = "Password is required.";
+            statusIsError = true;
+            return;
+        }
+        if (resetPassword != resetConfirm)
+        {
+            statusMessage = "Passwords do not match.";
+            statusIsError = true;
+            return;
+        }
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var localAccountService = scope.ServiceProvider.GetRequiredService<ILocalAccountService>();
+            await localAccountService.ResetPasswordAsync(selectedUser.UserId, resetPassword);
+
+            statusMessage = "Password reset successfully.";
+            statusIsError = false;
+            showResetPassword = false;
+            resetPassword = "";
+            resetConfirm = "";
+        }
+        catch (Exception ex)
+        {
+            statusMessage = ex.Message;
+            statusIsError = true;
+        }
+    }
+
+    private bool createLocalSaving;
+
+    private async Task CreateLocalAccount()
+    {
+        if (createLocalSaving) return;
+        createLocalError = null;
+
+        if (string.IsNullOrWhiteSpace(createLocalEmail))
+        {
+            createLocalError = "Email is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(createLocalPassword))
+        {
+            createLocalError = "Password is required.";
+            return;
+        }
+        if (createLocalPassword != createLocalConfirm)
+        {
+            createLocalError = "Passwords do not match.";
+            return;
+        }
+
+        createLocalSaving = true;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var localAccountService = scope.ServiceProvider.GetRequiredService<ILocalAccountService>();
+
+            // Admin creating account: always create confirmed (skip confirmation makes most sense for admin flow)
+            var user = await localAccountService.CreateAccountAsync(createLocalEmail, createLocalPassword);
+            if (authConfigOptions.Value.LocalAccounts.RequireEmailConfirmation)
+            {
+                // Admin-created accounts: confirm immediately unless admin explicitly wants to require user confirmation
+                if (createLocalSkipConfirmation)
+                    await localAccountService.SetEmailConfirmedAsync(user.UserId, true);
+            }
+
+            showCreateLocal = false;
+            createLocalEmail = "";
+            createLocalPassword = "";
+            createLocalConfirm = "";
+            createLocalError = null;
+
+            // Reload users
+            using var reloadScope = scopeFactory.CreateScope();
+            var db = reloadScope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+            allUsers = await db.TblUsers.Include(u => u.Role).OrderBy(u => u.FriendlyName).AsNoTracking().ToListAsync();
+            filteredUsers = FilterUsers();
+
+            statusMessage = "Local account created.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            createLocalError = ex.Message;
+        }
+        finally
+        {
+            createLocalSaving = false;
+        }
+    }
+
+    private async Task SaveKioskMode()
+    {
+        if (selectedUser == null) return;
+
+        try
+        {
+            await userPreferenceService.SaveKioskModeAsync(selectedUser.UserId, selectedKioskMode);
+            statusMessage = selectedKioskMode
+                ? "Kiosk mode enabled. It applies the next time that account signs in."
+                : "Kiosk mode disabled. It applies the next time that account signs in.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving kiosk mode");
+            statusMessage = "Error saving kiosk mode.";
+            statusIsError = true;
+        }
+    }
+
+    private async Task SaveLandingPage()
+    {
+        if (selectedUser == null) return;
+
+        try
+        {
+            await userPreferenceService.SaveDefaultLandingPageAsync(
+                selectedUser.UserId,
+                string.IsNullOrEmpty(selectedLandingPage) ? null : selectedLandingPage);
+            statusMessage = "Landing page saved.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving landing page");
+            statusMessage = "Error saving landing page.";
+            statusIsError = true;
+        }
+    }
+
+    private List<TblUser> FilterUsers()
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+            return allUsers;
+
+        return allUsers
+            .Where(u => (u.FriendlyName ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase)
+                     || (u.UserPrincipalName ?? "").Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+    }
+}
+
+<style>
+    .su-layout { display: flex; gap: 0; min-height: 600px; border: 1px solid #e0e0e0; border-radius: 6px; overflow: hidden; }
+    .su-list-panel { width: 38%; min-width: 280px; border-right: 1px solid #e0e0e0; display: flex; flex-direction: column; background: #fafafa; }
+    .su-list-header { padding: 12px; border-bottom: 1px solid #e0e0e0; background: #f0f0f0; }
+    .su-search-input { font-size: 14px; }
+    .su-user-list { flex: 1; overflow-y: auto; max-height: 580px; }
+    .su-user-item { padding: 10px 14px; cursor: pointer; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; transition: background-color 0.15s; }
+    .su-user-item:hover { background-color: #e8f0fe; }
+    .su-user-item.su-selected { background-color: #d4e4fc; border-left: 3px solid #0071BC; }
+    .su-user-name { font-weight: 500; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; margin-right: 8px; }
+    .su-role-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; background: #e3f2fd; color: #1565c0; font-weight: 600; white-space: nowrap; }
+    .su-detail-panel { flex: 1; padding: 20px; overflow-y: auto; max-height: 620px; }
+    .su-detail-header { margin-bottom: 20px; padding-bottom: 12px; border-bottom: 1px solid #e0e0e0; }
+    .su-detail-name { margin: 0; font-family: "BAHNSCHRIFT", sans-serif; }
+    .su-detail-upn { color: #888; font-size: 13px; }
+    .su-section { margin-bottom: 16px; }
+    .su-section > label { font-weight: 600; font-size: 13px; margin-bottom: 4px; display: block; }
+    .su-inline-group { display: flex; gap: 8px; align-items: center; }
+    .su-inline-group .dx-form-control { flex: 1; }
+    .su-checkbox-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-weight: normal !important; }
+    .su-checkbox-label input { accent-color: #0071BC; }
+    .su-assignment-list { list-style: none; padding: 0; margin: 8px 0 0 0; max-height: 150px; overflow-y: auto; }
+    .su-assignment-item { display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: #e9ecef; border-radius: 4px; margin-bottom: 4px; font-size: 13px; }
+    .su-remove-btn { height: 28px; padding: 2px 10px; font-size: 11px; }
+    .su-group-type { color: #888; font-size: 11px; margin-left: 4px; }
+    .su-no-selection { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 15px; }
+    .su-empty-list { padding: 30px; text-align: center; color: #999; }
+    .su-user-item.su-disabled { opacity: 0.6; }
+    .su-disabled-badge { font-size: 10px; padding: 1px 6px; border-radius: 3px; background: #dc3545; color: white; font-weight: 600; margin-left: 6px; vertical-align: middle; }
+    .su-account-actions { margin-top: 8px; padding-top: 12px; border-top: 1px solid #e0e0e0; }
+    .su-delete-confirm { display: flex; align-items: center; gap: 6px; }
+    .su-back-btn { display: none; }
+
+    /* Phones show one column: the list until a user is picked, then the detail with a back button */
+    @@media (max-width: 768px) {
+        .su-layout { min-height: 0; }
+
+        .su-list-panel {
+            width: 100%;
+            min-width: 0;
+            border-right: none;
+        }
+
+        .su-detail-panel { display: none; }
+
+        .su-layout.su-has-selection .su-list-panel { display: none; }
+
+        .su-layout.su-has-selection .su-detail-panel {
+            display: block;
+            max-height: none;
+        }
+
+        .su-back-btn { display: inline-flex; margin-bottom: 12px; }
+    }
+</style>

@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_Playlist">
+    <value>Liste de lecture</value>
+  </data>
+  <data name="Button_AddMedia">
+    <value>AJOUTER M&#xC9;DIA +</value>
+  </data>
+  <data name="Button_CreateMedia">
+    <value>CR&#xC9;ER M&#xC9;DIA +</value>
+  </data>
+  <data name="Label_EmptyPlaylist">
+    <value>Cliquez sur AJOUTER M&#xC9;DIA + pour commencer &#xE0; assigner du contenu.</value>
+  </data>
+  <data name="Label_ContentExpired">
+    <value>CONTENU EXPIR&#xC9;</value>
+  </data>
+  <data name="Column_Start">
+    <value>D&#xC9;BUT</value>
+  </data>
+  <data name="Column_End">
+    <value>FIN</value>
+  </data>
+  <data name="Label_Date">
+    <value>DATE</value>
+  </data>
+  <data name="Label_Time">
+    <value>HEURE</value>
+  </data>
+  <data name="Label_Now">
+    <value>Maintenant</value>
+  </data>
+  <data name="Label_Never">
+    <value>Jamais</value>
+  </data>
+  <data name="Label_AllDay">
+    <value>Toute la journ&#xE9;e</value>
+  </data>
+</root>

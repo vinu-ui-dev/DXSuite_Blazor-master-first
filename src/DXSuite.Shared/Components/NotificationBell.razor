@@ -1,0 +1,208 @@
+@inject ISessionState sessionState
+@inject IServiceScopeFactory scopeFactory
+@inject DXSuite.Shared.Services.NotificationBroadcastService broadcastService
+@inject NavigationManager Navigation
+@implements IDisposable
+
+<div class="nb-container" @onclick:stopPropagation="true">
+    <button class="nb-bell-btn" @onclick="ToggleDropdown" title="Notifications">
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+            <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+        </svg>
+        @if (unreadCount > 0)
+        {
+            <span class="nb-badge">@(unreadCount > 99 ? "99+" : unreadCount.ToString())</span>
+        }
+    </button>
+
+    @if (showDropdown)
+    {
+        <div class="nb-dropdown">
+            <div class="nb-dropdown-header">
+                <span>Notifications</span>
+                @if (unreadCount > 0)
+                {
+                    <button class="nb-mark-all" @onclick="MarkAllRead">Mark all read</button>
+                }
+            </div>
+            <div class="nb-dropdown-body">
+                @if (notifications.Count == 0)
+                {
+                    <div class="nb-empty">No notifications</div>
+                }
+                else
+                {
+                    @foreach (var n in notifications)
+                    {
+                        <div class="nb-item @(!n.IsRead ? "nb-unread" : "")" @onclick="() => HandleNotificationClick(n)">
+                            <div class="nb-item-icon">
+                                @switch (n.NotificationType)
+                                {
+                                    case "approval-approved":
+                                        <span style="color: #2e7d32;">&#10003;</span>
+                                        break;
+                                    case "approval-declined":
+                                        <span style="color: #c62828;">&#10007;</span>
+                                        break;
+                                    case "approval-pending":
+                                        <span style="color: #e65100;">&#9679;</span>
+                                        break;
+                                    default:
+                                        <span style="color: #1565c0;">&#9679;</span>
+                                        break;
+                                }
+                            </div>
+                            <div class="nb-item-content">
+                                <div class="nb-item-title">@n.Title</div>
+                                @if (!string.IsNullOrEmpty(n.Message))
+                                {
+                                    <div class="nb-item-message">@(n.Message.Length > 80 ? n.Message[..80] + "..." : n.Message)</div>
+                                }
+                                <div class="nb-item-time">@FormatRelativeTime(n.CreatedDate)</div>
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@if (showDropdown)
+{
+    <div class="nb-overlay" @onclick="CloseDropdown"></div>
+}
+
+@code {
+    private int unreadCount;
+    private bool showDropdown;
+    private List<NotificationDto> notifications = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        broadcastService.OnNotificationsChanged += OnBroadcast;
+
+        await sessionState.SessionLoaded.Task;
+        if (sessionState.User != null)
+        {
+            unreadCount = await RunScoped(svc => svc.GetUnreadCountAsync(sessionState.User.UserId));
+        }
+    }
+
+    private void OnBroadcast(int userId)
+    {
+        if (sessionState.User?.UserId == userId)
+        {
+            _ = InvokeAsync(async () =>
+            {
+                unreadCount = await RunScoped(svc => svc.GetUnreadCountAsync(userId));
+                if (showDropdown)
+                    notifications = await RunScoped(svc => svc.GetRecentNotificationsAsync(userId));
+                StateHasChanged();
+            });
+        }
+    }
+
+    private async Task ToggleDropdown()
+    {
+        showDropdown = !showDropdown;
+        if (showDropdown && sessionState.User != null)
+            notifications = await RunScoped(svc => svc.GetRecentNotificationsAsync(sessionState.User.UserId));
+    }
+
+    private void CloseDropdown() => showDropdown = false;
+
+    private async Task HandleNotificationClick(NotificationDto notification)
+    {
+        if (sessionState.User != null && !notification.IsRead)
+        {
+            await RunScoped(svc => svc.MarkAsReadAsync(notification.NotificationId, sessionState.User.UserId));
+            notification.IsRead = true;
+            unreadCount = Math.Max(0, unreadCount - 1);
+        }
+
+        if (!string.IsNullOrEmpty(notification.ReferenceUrl))
+        {
+            showDropdown = false;
+            Navigation.NavigateTo(notification.ReferenceUrl);
+        }
+    }
+
+    private async Task MarkAllRead()
+    {
+        if (sessionState.User != null)
+        {
+            await RunScoped(svc => svc.MarkAllAsReadAsync(sessionState.User.UserId));
+            unreadCount = 0;
+            foreach (var n in notifications)
+                n.IsRead = true;
+        }
+    }
+
+    private async Task<T> RunScoped<T>(Func<INotificationService, Task<T>> action)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var svc = scope.ServiceProvider.GetService<INotificationService>();
+        if (svc == null) return default!;
+        return await action(svc);
+    }
+
+    private async Task RunScoped(Func<INotificationService, Task> action)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var svc = scope.ServiceProvider.GetService<INotificationService>();
+        if (svc != null) await action(svc);
+    }
+
+    private static string FormatRelativeTime(DateTime utcDate)
+    {
+        var diff = DateTime.UtcNow - utcDate;
+        if (diff.TotalMinutes < 1) return "just now";
+        if (diff.TotalMinutes < 60) return $"{(int)diff.TotalMinutes}m ago";
+        if (diff.TotalHours < 24) return $"{(int)diff.TotalHours}h ago";
+        if (diff.TotalDays < 7) return $"{(int)diff.TotalDays}d ago";
+        return utcDate.ToString("MMM d");
+    }
+
+    public void Dispose()
+    {
+        broadcastService.OnNotificationsChanged -= OnBroadcast;
+    }
+}
+
+<style>
+    .nb-container { position: relative; display: inline-block; }
+    .nb-bell-btn { background: none; border: none; color: #555; cursor: pointer; padding: 6px; border-radius: 4px; position: relative; display: flex; align-items: center; transition: color 0.2s ease, background-color 0.2s ease; }
+    .nb-bell-btn:hover { color: #0071BC; background-color: #e8e8e8; }
+    .nb-badge { position: absolute; top: 2px; right: 2px; background: #c62828; color: white; border-radius: 10px; font-size: 10px; font-weight: 700; min-width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; padding: 0 4px; }
+    .nb-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; z-index: 5000; }
+    .nb-dropdown { position: absolute; right: 0; top: 100%; width: min(360px, calc(100vw - 16px)); max-height: 480px; background: white; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.15); z-index: 5001; overflow: hidden; }
+
+    /* The bell sits left of the avatar, so a bell-anchored panel would run past the
+       left viewport edge on phones; pin it under the navbar across the full width. */
+    @@media (max-width: 768px) {
+        .nb-dropdown {
+            position: fixed;
+            top: 3.5rem;
+            left: 8px;
+            right: 8px;
+            width: auto;
+        }
+    }
+    .nb-dropdown-header { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px; border-bottom: 1px solid #e0e0e0; font-weight: 600; font-size: 14px; color: #333; }
+    .nb-mark-all { background: none; border: none; color: #0071BC; font-size: 12px; cursor: pointer; }
+    .nb-mark-all:hover { text-decoration: underline; }
+    .nb-dropdown-body { max-height: 400px; overflow-y: auto; }
+    .nb-empty { padding: 30px 16px; text-align: center; color: #999; font-size: 13px; }
+    .nb-item { display: flex; gap: 10px; padding: 10px 16px; cursor: pointer; border-bottom: 1px solid #f5f5f5; }
+    .nb-item:hover { background: #f8f8f8; }
+    .nb-unread { background: #f0f7ff; }
+    .nb-unread:hover { background: #e3eef9; }
+    .nb-item-icon { flex-shrink: 0; width: 24px; font-size: 14px; text-align: center; padding-top: 2px; }
+    .nb-item-content { flex: 1; min-width: 0; }
+    .nb-item-title { font-size: 13px; font-weight: 600; color: #333; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .nb-item-message { font-size: 12px; color: #666; margin-top: 2px; line-height: 1.3; }
+    .nb-item-time { font-size: 11px; color: #999; margin-top: 3px; }
+</style>

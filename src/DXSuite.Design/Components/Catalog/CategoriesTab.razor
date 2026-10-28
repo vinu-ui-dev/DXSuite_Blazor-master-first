@@ -1,0 +1,335 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Categories</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="OpenManageGroups">Manage Groups</button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="BeginAdd">+ Add Category</button>
+        </div>
+    </div>
+
+    @if (categories is null)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (categories.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No categories defined</h5>
+            <p class="dx-text-muted">Add a category to get started.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: minmax(160px,1fr) 140px 90px 90px 140px;">
+                    <div>Name</div>
+                    <div>Group</div>
+                    <div>Labor Types</div>
+                    <div>Attributes</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var c in categories)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: minmax(160px,1fr) 140px 90px 90px 140px;">
+                        <div>@c.Name</div>
+                        <div>@(c.CategoryGroup?.Name is { Length: > 0 } g ? g : "—")</div>
+                        <div>@c.LaborAssignments.Count</div>
+                        <div>@c.CategoryAttributes.Count</div>
+                        <div style="display:flex; gap:4px; flex-wrap:nowrap; overflow:hidden;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenEdit(c.CategoryId)">Edit</button>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteAsync(c)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (deleteError is not null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin:8px 20px;">@deleteError</div>
+    }
+</div>
+
+@* ── Add Category modal ───────────────────────────────────────────────── *@
+@if (addFormVisible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseAdd">
+        <div class="dx-modal" style="min-width:460px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>Add Category</span>
+                <button class="dx-modal-close" @onclick="CloseAdd">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name</label>
+                    <input class="dx-form-control" @bind="addName" placeholder="e.g. Display" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Category Group</label>
+                    <select class="dx-form-control" value="@addGroupSelection" @onchange="OnAddGroupChange">
+                        <option value="">— None —</option>
+                        @foreach (var grp in categoryGroups)
+                        {
+                            <option value="@grp.CategoryGroupId">@grp.Name</option>
+                        }
+                        <option value="__new__">＋ Create new…</option>
+                    </select>
+                    @if (addGroupSelection == "__new__")
+                    {
+                        <input class="dx-form-control" style="margin-top:6px"
+                               @bind="addNewGroupName" placeholder="New group name…" />
+                    }
+                </div>
+                @if (addError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@addError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseAdd">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAddAsync">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* ── Manage Groups modal ──────────────────────────────────────────────── *@
+@if (manageGroupsVisible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseManageGroups">
+        <div class="dx-modal" style="min-width:440px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>Manage Category Groups</span>
+                <button class="dx-modal-close" @onclick="CloseManageGroups">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (groupUsages is null)
+                {
+                    <div style="position:relative; min-height:80px;">
+                        <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+                    </div>
+                }
+                else if (groupUsages.Count == 0)
+                {
+                    <p class="dx-text-muted" style="text-align:center; padding:20px 0;">No category groups defined yet.</p>
+                }
+                else
+                {
+                    <div class="dx-table">
+                        <div class="dx-table-header" style="grid-template-columns: 1fr 90px 100px;">
+                            <div>Name</div>
+                            <div>Categories</div>
+                            <div>Actions</div>
+                        </div>
+                        @foreach (var (grp, count) in groupUsages)
+                        {
+                            <div class="dx-table-row" style="grid-template-columns: 1fr 90px 100px;">
+                                <div>@grp.Name</div>
+                                <div>@count</div>
+                                <div>
+                                    <button class="dx-btn dx-btn-red dx-btn-sm"
+                                            @onclick="() => DeleteGroupAsync(grp)">Delete</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                @if (groupManageError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:8px">@groupManageError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseManageGroups">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (editingCategoryId.HasValue)
+{
+    <EditCategoryModal CategoryId="editingCategoryId.Value" OnClose="OnEditClose" />
+}
+
+@code {
+    private List<TblDesignCategory>? categories;
+    private List<TblDesignCategoryGroup> categoryGroups = [];
+
+    // Add modal
+    private bool addFormVisible;
+    private string addName = "";
+    private string addGroupSelection = "";
+    private string addNewGroupName = "";
+    private string? addError;
+
+    // Edit
+    private int? editingCategoryId;
+
+    // Delete
+    private string? deleteError;
+
+    // Manage Groups modal
+    private bool manageGroupsVisible;
+    private List<(TblDesignCategoryGroup Group, int Count)>? groupUsages;
+    private string? groupManageError;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        categories = await db.TblDesignCategories
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .Include(c => c.LaborAssignments)
+            .Include(c => c.CategoryAttributes)
+            .Include(c => c.CategoryGroup)
+            .OrderBy(c => c.CategoryGroup != null ? c.CategoryGroup.Name : "zzz")
+            .ThenBy(c => c.Name)
+            .ToListAsync();
+
+        categoryGroups = await db.TblDesignCategoryGroups
+            .Where(g => g.CustomerId == Tenant.CustomerCode)
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+    }
+
+    // ── Add modal ────────────────────────────────────────────────────────────
+
+    private void BeginAdd() { addName = ""; addGroupSelection = ""; addNewGroupName = ""; addError = null; addFormVisible = true; }
+    private void CloseAdd() { addFormVisible = false; addError = null; }
+
+    private void OnAddGroupChange(ChangeEventArgs e)
+    {
+        addGroupSelection = e.Value?.ToString() ?? "";
+        if (addGroupSelection != "__new__") addNewGroupName = "";
+    }
+
+    private async Task SaveAddAsync()
+    {
+        if (string.IsNullOrWhiteSpace(addName)) { addError = "Name is required."; return; }
+        if (addGroupSelection == "__new__" && string.IsNullOrWhiteSpace(addNewGroupName))
+        {
+            addError = "Enter a name for the new group."; return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        int? groupId = await ResolveGroupIdAsync(db, addGroupSelection, addNewGroupName);
+
+        db.TblDesignCategories.Add(new TblDesignCategory
+        {
+            CustomerId = Tenant.CustomerCode,
+            Name = addName.Trim(),
+            CategoryGroupId = groupId,
+            SortOrder = 0,
+        });
+        await db.SaveChangesAsync();
+        CloseAdd();
+        await LoadAsync();
+    }
+
+    // ── Edit ─────────────────────────────────────────────────────────────────
+
+    private void OpenEdit(int categoryId) => editingCategoryId = categoryId;
+
+    private async Task OnEditClose()
+    {
+        editingCategoryId = null;
+        await LoadAsync();
+    }
+
+    // ── Delete category ───────────────────────────────────────────────────────
+
+    private async Task DeleteAsync(TblDesignCategory c)
+    {
+        deleteError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var hasItems = await db.TblDesignCatalogItems.AnyAsync(i => i.CategoryId == c.CategoryId);
+        if (hasItems)
+        {
+            deleteError = $"Cannot delete '{c.Name}' — it has catalog items assigned. Reassign or remove those items first.";
+            return;
+        }
+        var entity = await db.TblDesignCategories.FindAsync(c.CategoryId);
+        if (entity is not null) { db.TblDesignCategories.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadAsync();
+    }
+
+    // ── Manage Groups ─────────────────────────────────────────────────────────
+
+    private async Task OpenManageGroups()
+    {
+        groupManageError = null;
+        groupUsages = null;
+        manageGroupsVisible = true;
+        await LoadGroupUsagesAsync();
+    }
+
+    private void CloseManageGroups() { manageGroupsVisible = false; groupManageError = null; }
+
+    private async Task LoadGroupUsagesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var groups = await db.TblDesignCategoryGroups
+            .Where(g => g.CustomerId == Tenant.CustomerCode)
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+
+        var usages = new List<(TblDesignCategoryGroup, int)>();
+        foreach (var grp in groups)
+        {
+            var count = await db.TblDesignCategories
+                .CountAsync(c => c.CategoryGroupId == grp.CategoryGroupId);
+            usages.Add((grp, count));
+        }
+        groupUsages = usages;
+        StateHasChanged();
+    }
+
+    private async Task DeleteGroupAsync(TblDesignCategoryGroup grp)
+    {
+        groupManageError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var count = await db.TblDesignCategories.CountAsync(c => c.CategoryGroupId == grp.CategoryGroupId);
+        if (count > 0)
+        {
+            groupManageError = $"Cannot delete '{grp.Name}' — it is assigned to {count} {(count == 1 ? "category" : "categories")}. Remove those assignments first.";
+            return;
+        }
+        var entity = await db.TblDesignCategoryGroups.FindAsync(grp.CategoryGroupId);
+        if (entity is not null) { db.TblDesignCategoryGroups.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadGroupUsagesAsync();
+        await LoadAsync();
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Resolves or creates the category group entity, returning its ID.
+    /// Returns null when selection is empty.
+    /// </summary>
+    private async Task<int?> ResolveGroupIdAsync(DesignDbContext db, string selection, string newName)
+    {
+        if (selection == "__new__" && !string.IsNullOrWhiteSpace(newName))
+        {
+            // Reuse if an identical name already exists for this tenant.
+            var existing = await db.TblDesignCategoryGroups
+                .FirstOrDefaultAsync(g => g.CustomerId == Tenant.CustomerCode && g.Name == newName.Trim());
+            if (existing is not null) return existing.CategoryGroupId;
+
+            var grp = new TblDesignCategoryGroup { CustomerId = Tenant.CustomerCode, Name = newName.Trim() };
+            db.TblDesignCategoryGroups.Add(grp);
+            await db.SaveChangesAsync();
+            return grp.CategoryGroupId;
+        }
+        if (int.TryParse(selection, out var id) && id > 0) return id;
+        return null;
+    }
+}

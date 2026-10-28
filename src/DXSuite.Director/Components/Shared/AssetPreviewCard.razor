@@ -1,0 +1,108 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using static DXSuite.Director.Models.Types
+@inject IJSRuntime JSRuntime
+@inject WebPreviewService WebPreviewService
+
+@* Single source of truth for asset preview tiles across schedule surfaces. Fills its parent
+   (size the wrapper, not this component). Media renders the normalized Thumbnails/{name}.png
+   (checkerboard baked in for transparency) with contain-fit so unusual aspect ratios stay
+   legible; images fall back to the raw asset, videos to an icon tile, when no thumbnail exists. *@
+
+@if (Asset == null)
+{
+    <div style="width: 100%; height: 100%; background-color: #F8D7DA; display: flex; align-items: center; justify-content: center; color: #721C24;">
+        <span style="font-size: @(Small ? "8px" : "10px"); font-weight: bold;">Missing</span>
+    </div>
+}
+else if (Asset.AssetTypeId == (int)AssetType.Web)
+{
+    <div style="width: 100%; height: 100%; position: relative; @(ClickStyle)"
+         @onclick="OpenInNewTab" title="@(Clickable ? "Click to open URL in new tab" : null)">
+        <img style="width: 100%; height: 100%; object-fit: contain; background-color: #F1F3F5;"
+             src="@WebPreviewService.GetVersionedThumbnailWebPath(Asset.AssetId)"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <div style="width: 100%; height: 100%; background-color: #E6F3FF; display: none; flex-direction: column; align-items: center; justify-content: center; position: absolute; top: 0; left: 0;">
+            <div style="font-size: @(Small ? "14px" : "20px"); color: #0071BC; font-weight: bold; font-family: monospace;">WWW</div>
+            @if (!Small)
+            {
+                <div style="font-size: 9px; color: #4D4D4D; margin-top: 4px; padding: 0 5px; word-break: break-all; overflow: hidden; max-height: 36px;">
+                    @(GetDisplayUrl(Asset.AssetPath))
+                </div>
+            }
+        </div>
+    </div>
+}
+else if (Asset.AssetTypeId == (int)AssetType.Stream)
+{
+    <div style="width: 100%; height: 100%; background-color: #FFF0E6; display: flex; flex-direction: column; align-items: center; justify-content: center; @(ClickStyle)"
+         @onclick="OpenInNewTab" title="@(Clickable ? "Click to open stream URL in new tab" : null)">
+        <div style="font-size: @(Small ? "12px" : "16px"); color: #FF6B00; font-weight: bold;">&#9654; LIVE</div>
+        @if (!Small)
+        {
+            <div style="font-size: 9px; color: #4D4D4D; margin-top: 4px; padding: 0 5px; word-break: break-all; overflow: hidden; max-height: 36px;">
+                @(GetDisplayUrl(Asset.AssetPath))
+            </div>
+        }
+    </div>
+}
+else if (Asset.AssetTypeId == (int)AssetType.Video)
+{
+    <div style="width: 100%; height: 100%; position: relative; @(ClickStyle)"
+         @onclick="OpenInNewTab" title="@(Clickable ? "Click to open video in new tab" : null)">
+        <img style="width: 100%; height: 100%; object-fit: contain; background-color: #F1F3F5;"
+             src="@GetThumbnailWebPath(Asset.AssetPath)"
+             onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';" />
+        <div style="width: 100%; height: 100%; background-color: #1a202c; display: none; flex-direction: column; align-items: center; justify-content: center; color: #a0aec0; position: absolute; top: 0; left: 0;">
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width: @(Small ? "20px" : "32px"); height: @(Small ? "20px" : "32px"); opacity: 0.7;">
+                <path d="M8 5v14l11-7z"/>
+            </svg>
+            <span style="font-size: @(Small ? "8px" : "9px"); margin-top: 4px; opacity: 0.8;">Video</span>
+        </div>
+    </div>
+}
+else
+{
+    <img style="width: 100%; height: 100%; object-fit: contain; background-color: #F1F3F5; @(ClickStyle)"
+         src="@GetThumbnailWebPath(Asset.AssetPath)"
+         onerror="this.onerror=null; this.src='@Asset.AssetPath';"
+         @onclick="OpenInNewTab" title="@(Clickable ? "Click to open full image in new tab" : null)" />
+}
+
+@code {
+    [Parameter] public TblAsset? Asset { get; set; }
+    [Parameter] public bool Clickable { get; set; }
+    [Parameter] public bool Small { get; set; }
+
+    private string ClickStyle => Clickable ? "cursor: pointer;" : "";
+
+    private async Task OpenInNewTab()
+    {
+        if (Clickable && Asset != null)
+            await JSRuntime.InvokeVoidAsync("open", Asset.AssetPath, "_blank");
+    }
+
+    /// <summary>
+    /// Derives the normalized thumbnail web path by convention: /dir/file.ext -> /dir/Thumbnails/file.png.
+    /// </summary>
+    public static string GetThumbnailWebPath(string assetPath)
+    {
+        if (string.IsNullOrEmpty(assetPath)) return "";
+        var directory = Path.GetDirectoryName(assetPath)?.Replace("\\", "/") ?? "";
+        var fileName = Path.GetFileNameWithoutExtension(assetPath);
+        return $"{directory}/Thumbnails/{fileName}.png";
+    }
+
+    public static string GetDisplayUrl(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            return uri.Host + (uri.PathAndQuery.Length > 1 ? uri.PathAndQuery : "");
+        }
+        catch
+        {
+            return url;
+        }
+    }
+}

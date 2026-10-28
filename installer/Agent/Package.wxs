@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DXSuite Sentinel Agent installer.
+  Installs the agent to Program Files and registers it as an auto-start Windows
+  Service. After install, configure broker / tenant / gateway id via the agent's
+  local page at http://localhost:5099, then restart the service.
+
+  Unattended/bulk enrollment: pass ENROLLTOKEN and ENROLLURL to have each machine
+  self-register on first run, e.g.:
+    msiexec /i DXSuiteSentinelAgent-Setup.msi /qn ENROLLTOKEN=token ENROLLURL=https://acme.dxsuite.app
+  These flow into the service command line as the Gateway:EnrollmentToken and
+  Gateway:EnrollUrl configuration settings.
+
+  Build: see installer/Agent/README.md (publish the agent, then build this project).
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:ui="http://wixtoolset.org/schemas/v4/wxs/ui">
+
+  <Package Name="DXSuite Sentinel Agent"
+           Manufacturer="Radiant Technology Group"
+           Version="26.3.0"
+           UpgradeCode="7E2D9C14-3A6B-4F58-9C0D-1B2A3C4D5E6F"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- Bulk-enrollment bootstrap (optional). Public + Secure so they pass through silent installs. -->
+    <Property Id="ENROLLTOKEN" Secure="yes" />
+    <Property Id="ENROLLURL" Secure="yes" />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DXSuite Sentinel Agent" />
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="DXSuite Sentinel Agent" Level="1">
+      <ComponentGroupRef Id="AgentFiles" />
+      <ComponentRef Id="GatewayService" />
+    </Feature>
+
+    <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
+    <WixVariable Id="WixUILicenseRtf" Value="License.rtf" />
+  </Package>
+
+  <Fragment>
+    <!-- Everything in the publish output except the main exe (which carries the service). -->
+    <ComponentGroup Id="AgentFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.PublishDir)**">
+        <Exclude Files="$(var.PublishDir)DXSuite.SentinelAgent.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <!-- Main executable + Windows Service registration. -->
+    <Component Id="GatewayService" Directory="INSTALLFOLDER">
+      <File Id="GatewayExe" Source="$(var.PublishDir)DXSuite.SentinelAgent.exe" KeyPath="yes" />
+      <ServiceInstall Id="SvcInstall"
+                      Name="DXSuiteSentinelAgent"
+                      DisplayName="DXSuite Sentinel Agent"
+                      Description="Endpoint monitoring agent for DXSuite Sentinel (MQTT control plane)."
+                      Type="ownProcess"
+                      Start="auto"
+                      ErrorControl="normal"
+                      Account="LocalSystem"
+                      Arguments="--Gateway:EnrollmentToken=[ENROLLTOKEN] --Gateway:EnrollUrl=[ENROLLURL]"
+                      Vital="yes" />
+      <ServiceControl Id="SvcControl"
+                      Name="DXSuiteSentinelAgent"
+                      Start="install"
+                      Stop="both"
+                      Remove="uninstall"
+                      Wait="yes" />
+    </Component>
+  </Fragment>
+</Wix>

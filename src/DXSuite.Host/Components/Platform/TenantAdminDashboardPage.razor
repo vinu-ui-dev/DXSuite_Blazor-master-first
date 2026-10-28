@@ -1,0 +1,73 @@
+@page "/platform/tenant-admin"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject IPlatformElevationService? ElevationService
+@inject IPlatformAuditService? AuditService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Tenant Admin Dashboard</h2>
+    </div>
+    <p class="dx-text-muted">Tenant: <strong>@TenantContext.TenantId</strong></p>
+
+    @if (!SessionState.IsTenantAdmin)
+    {
+        <div class="dx-alert dx-alert-warning">
+            You are not a tenant admin for this tenant. Contact a platform operator to be granted admin rights.
+        </div>
+    }
+    else
+    {
+        <div class="dx-card-grid">
+            <a href="/platform/tenant-admin/elevations" class="dx-card dx-card-action">
+                <div class="dx-card-icon"><i class="bi bi-shield-lock"></i></div>
+                <div class="dx-card-body">
+                    <div class="dx-card-title">Elevation Queue</div>
+                    <div class="dx-card-sub">
+                        @pendingCount pending request@(pendingCount == 1 ? "" : "s")
+                    </div>
+                </div>
+            </a>
+            <a href="/platform/tenant-admin/settings" class="dx-card dx-card-action">
+                <div class="dx-card-icon"><i class="bi bi-gear"></i></div>
+                <div class="dx-card-body">
+                    <div class="dx-card-title">Security Settings</div>
+                    <div class="dx-card-sub">Elevation approvals, duration caps</div>
+                </div>
+            </a>
+            <a href="/platform/tenant-admin/access-log" class="dx-card dx-card-action">
+                <div class="dx-card-icon"><i class="bi bi-journal-text"></i></div>
+                <div class="dx-card-body">
+                    <div class="dx-card-title">Vendor Access Log</div>
+                    <div class="dx-card-sub">View all operator access to your tenant</div>
+                </div>
+            </a>
+        </div>
+    }
+</div>
+
+@code {
+    private int pendingCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsTenantAdmin)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        if (ElevationService != null && SessionState.PlatformUserId.HasValue)
+        {
+            var pending = await ElevationService.GetPendingElevationsForTenantAsync(
+                TenantContext.TenantId, SessionState.PlatformUserId.Value);
+            pendingCount = pending.Count;
+        }
+    }
+}

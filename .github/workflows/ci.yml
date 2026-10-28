@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [ master, dev ]
+  push:
+    branches: [ master, dev ]
+
+jobs:
+  build-and-check:
+    runs-on: windows-latest   # Windows: the solution uses System.Drawing and SkiaSharp
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore DXSuite.sln
+
+      - name: Build
+        run: dotnet build DXSuite.sln --no-restore -c Release
+
+      - name: Test
+        run: dotnet test DXSuite.sln --no-build -c Release --filter "Category!=Volume"
+
+      - name: Install EF tools
+        run: dotnet tool install --global dotnet-ef
+
+      # Fails the build if an entity/model change has no matching migration.
+      # Enforces the rule in db/schema-migration-strategy.md. Add the Sentinel
+      # context once its baseline migration lands on master.
+      - name: Check for un-migrated model changes
+        run: |
+          dotnet ef migrations has-pending-model-changes --project src/DXSuite.Director --context DirectorDbContext
+          dotnet ef migrations has-pending-model-changes --project src/DXSuite.Design   --context DesignDbContext
+          dotnet ef migrations has-pending-model-changes --project src/DXSuite.Shared   --context PlatformDbContext
+          dotnet ef migrations has-pending-model-changes --project src/DXSuite.Shared   --context TenantRegistryDbContext

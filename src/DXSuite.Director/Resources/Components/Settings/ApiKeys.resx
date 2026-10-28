@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_ApiKeyManagement">
+    <value>API Key Management</value>
+  </data>
+  <data name="Label_ApiKeyDescription">
+    <value>Manage API keys for external integrations and device authentication.</value>
+  </data>
+  <data name="Header_CreateNewApiKey">
+    <value>Create New API Key</value>
+  </data>
+  <data name="Label_KeyName">
+    <value>Key Name</value>
+  </data>
+  <data name="Placeholder_KeyName">
+    <value>e.g., Production Signage Key</value>
+  </data>
+  <data name="Label_Permissions">
+    <value>Permissions</value>
+  </data>
+  <data name="Label_ReadWrite">
+    <value>Read &amp; Write</value>
+  </data>
+  <data name="Label_ReadOnly">
+    <value>Read Only</value>
+  </data>
+  <data name="Button_GenerateKey">
+    <value>Generate Key</value>
+  </data>
+  <data name="Label_NewKeyCreated">
+    <value>New Key Created!</value>
+  </data>
+  <data name="Label_CopyKeyWarning">
+    <value>Copy this key now — it will not be shown again.</value>
+  </data>
+  <data name="Button_Copy">
+    <value>Copy</value>
+  </data>
+  <data name="Header_ExistingApiKeys">
+    <value>Existing API Keys</value>
+  </data>
+  <data name="Column_Name">
+    <value>Name</value>
+  </data>
+  <data name="Column_Key">
+    <value>Key</value>
+  </data>
+  <data name="Column_LastUsed">
+    <value>Last Used</value>
+  </data>
+  <data name="Column_Calls">
+    <value>Calls</value>
+  </data>
+  <data name="Label_Inactive">
+    <value>Inactive</value>
+  </data>
+  <data name="Label_Never">
+    <value>Never</value>
+  </data>
+  <data name="Button_Revoke">
+    <value>Revoke</value>
+  </data>
+  <data name="Button_Activate">
+    <value>Activate</value>
+  </data>
+  <data name="Label_NoApiKeys">
+    <value>No API keys have been created yet.</value>
+  </data>
+</root>

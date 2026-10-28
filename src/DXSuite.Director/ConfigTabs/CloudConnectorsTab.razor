@@ -1,0 +1,1211 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.Pixera
+@using DXSuite.Shared.Services
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Connectors.Services.Connectors
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IDirectorDBContext directorDb
+@inject ICloudPlatformConnectorRegistry connectorRegistry
+@inject IServiceScopeFactory scopeFactory
+@inject ConnectorConfigProtector configProtector
+@inject ILogger<CloudConnectorsTab> Logger
+@inject ITenantContext TenantContext
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+    <div class="dx-panel-header" style="flex-shrink:0;">
+        <h4>Cloud Connectors</h4>
+        <button class="dx-btn dx-btn-blue" @onclick="StartAddConnector">+ ADD CONNECTOR</button>
+    </div>
+
+    <div style="padding:20px; flex:1; min-height:0; overflow-y:auto;">
+
+    @if (showConnectorForm)
+    {
+        <div class="cc-inline-form">
+            <h5>@(editingConnector?.ConnectorId > 0 ? "Edit Connector" : "New Connector")</h5>
+            <div class="cc-form-row">
+                <div class="dx-form-group">
+                    <label>Platform</label>
+                    <select class="dx-form-control"
+                            value="@editingConnectorPlatformId"
+                            @onchange="@(e => OnPlatformChanged((string)e.Value!))">
+                        @foreach (var platformId in registeredPlatforms)
+                        {
+                            var connector = connectorRegistry.GetConnector(platformId);
+                            <option value="@platformId">@(connector?.DisplayName ?? platformId)</option>
+                        }
+                    </select>
+                </div>
+                <div class="dx-form-group">
+                    <label>Display Name</label>
+                    <input class="dx-form-control" @bind="editingConnector!.DisplayName" />
+                </div>
+            </div>
+            <div class="cc-form-row">
+                <div class="dx-form-group">
+                    <label>Base URL</label>
+                    <input class="dx-form-control" @bind="editingConnectorBaseUrl" placeholder="@GetBaseUrlPlaceholder()" />
+                </div>
+                <div class="dx-form-group">
+                    <label>API Key</label>
+                    <input type="password" class="dx-form-control" @bind="editingConnectorApiKey" />
+                </div>
+            </div>
+            @{
+                var editPlatform = connectorRegistry.GetConnector(editingConnectorPlatformId);
+                var editCaps = editPlatform?.GetCapabilities();
+                var hasImportable = editCaps?.ImportableResources.Count > 0;
+            }
+            <div class="cc-form-row">
+                @if (editingContentMode != "content-only")
+                {
+                    <div class="dx-form-group">
+                        <label>Gateway Mode</label>
+                        <select class="dx-form-control" @bind="editingGatewayMode">
+                            <option value="none">None (Cloud Only)</option>
+                            <option value="builtin">Built-in (Direct Probes)</option>
+                            <option value="remote">Remote (Gateway Agents)</option>
+                        </select>
+                        <small class="dx-text-muted">
+                            @(editingGatewayMode switch
+                            {
+                                "none" => "Device status mirrors cloud health. No network probes.",
+                                "builtin" => "Director probes devices directly on the local network.",
+                                "remote" => "Per-device gateway assignment in Device Management.",
+                                _ => ""
+                            })
+                        </small>
+                    </div>
+                }
+                @if (hasImportable)
+                {
+                    <div class="dx-form-group">
+                        <label>Content Mode</label>
+                        <select class="dx-form-control" @bind="editingContentMode">
+                            <option value="monitoring-only">Monitoring Only</option>
+                            <option value="content-only">Content Only</option>
+                            <option value="content-and-monitoring">Content + Monitoring</option>
+                        </select>
+                        <small class="dx-text-muted">
+                            @(editingContentMode switch
+                            {
+                                "content-only" => "Syncs devices/folders to Director only. No Sentinel monitoring.",
+                                "content-and-monitoring" => "Full sync: Director content + Sentinel monitoring.",
+                                _ => "Sentinel monitoring only. No Director content sync."
+                            })
+                        </small>
+                    </div>
+                }
+            </div>
+            @if (hasImportable && editingContentMode != "monitoring-only")
+            {
+                <div class="cc-form-row">
+                    <div class="dx-form-group">
+                        <label>Import Resources</label>
+                        <div class="cc-import-checks">
+                            @foreach (var res in editCaps!.ImportableResources)
+                            {
+                                var resId = res.Id;
+                                <label class="cc-import-check">
+                                    <input type="checkbox" class="dx-checkbox"
+                                           checked="@editingEnabledImports.Contains(resId)"
+                                           @onchange="@(e => ToggleImport(resId, (bool)e.Value!))" />
+                                    @res.DisplayName
+                                </label>
+                            }
+                        </div>
+                    </div>
+                </div>
+            }
+            <div class="cc-form-row">
+                <div class="dx-form-group">
+                    <label>Credential Expiration <span style="font-weight:normal; color:#999;">(optional)</span></label>
+                    <input type="date" class="dx-form-control" @bind="editingCredentialExpiresAt" />
+                </div>
+            </div>
+            <div class="cc-form-actions">
+                <button class="dx-btn dx-btn-blue" @onclick="SaveConnector">SAVE</button>
+                <button class="dx-btn dx-btn-gray" @onclick="CancelConnectorForm">CANCEL</button>
+            </div>
+            @if (!string.IsNullOrEmpty(connectorMessage))
+            {
+                <div class="@(connectorMessageIsError ? "dx-alert dx-alert-danger" : "dx-alert dx-alert-success")" style="margin-top:12px;">
+                    @connectorMessage
+                </div>
+            }
+        </div>
+    }
+
+    @if (cloudConnectors != null && cloudConnectors.Any())
+    {
+        <div class="cc-connector-cards">
+            @foreach (var conn in cloudConnectors)
+            {
+                var linkedCount = connectorDeviceCounts.GetValueOrDefault(conn.ConnectorId, 0);
+                var platformConnector = connectorRegistry.GetConnector(conn.PlatformId);
+                <div class="cc-connector-card @(showConnectorForm && editingConnector?.ConnectorId == conn.ConnectorId && conn.ConnectorId > 0 ? "cc-connector-card--editing" : "")">
+                    <div class="cc-connector-card-header">
+                        <div class="cc-connector-card-title">
+                            <strong>@conn.DisplayName</strong>
+                            <span class="dx-badge dx-badge-blue">@(platformConnector?.DisplayName ?? conn.PlatformId)</span>
+                        </div>
+                        <span class="dx-badge @(conn.IsEnabled ? "dx-badge-green" : "dx-badge-gray")">
+                            @(conn.IsEnabled ? "Enabled" : "Disabled")
+                        </span>
+                    </div>
+
+                    <div class="cc-connector-card-details">
+                        @{
+                            var config = DeserializeConfig(conn.ConfigJson);
+                        }
+                        <div class="cc-detail-row">
+                            <span class="cc-detail-label">Base URL:</span>
+                            <span class="cc-detail-value">@(config?.BaseUrl ?? "—")</span>
+                        </div>
+                        <div class="cc-detail-row">
+                            <span class="cc-detail-label">API Key:</span>
+                            <span class="cc-detail-value">@(!string.IsNullOrEmpty(config?.ApiKey) ? "••••••••" : "Not set")</span>
+                        </div>
+                        @if (conn.CredentialExpiresAt.HasValue)
+                        {
+                            <div class="cc-detail-row">
+                                <span class="cc-detail-label">Credential Expires:</span>
+                                <span class="cc-detail-value">
+                                    @conn.CredentialExpiresAt.Value.ToString("MMM dd, yyyy")
+                                    @if (conn.CredentialExpiresAt.Value < DateTime.UtcNow)
+                                    {
+                                        <span class="dx-badge dx-badge-red" style="margin-left:6px;">expired</span>
+                                    }
+                                    else if (conn.CredentialExpiresAt.Value < DateTime.UtcNow.AddDays(14))
+                                    {
+                                        <span class="dx-badge dx-badge-orange" style="margin-left:6px;">expiring soon</span>
+                                    }
+                                </span>
+                            </div>
+                        }
+                        <div class="cc-detail-row">
+                            <span class="cc-detail-label">Linked Devices:</span>
+                            <span class="cc-detail-value">@linkedCount</span>
+                        </div>
+                        @if (conn.ContentMode != "content-only")
+                        {
+                            <div class="cc-detail-row">
+                                <span class="cc-detail-label">Gateway:</span>
+                                <span class="cc-detail-value">
+                                    @switch (conn.GatewayMode)
+                                    {
+                                        case "builtin":
+                                            <span class="dx-badge dx-badge-green">Built-in</span>
+                                            break;
+                                        case "remote":
+                                            <span class="dx-badge dx-badge-orange">Remote</span>
+                                            break;
+                                        default:
+                                            <span class="dx-badge dx-badge-blue">Cloud Only</span>
+                                            break;
+                                    }
+                                </span>
+                            </div>
+                        }
+                        <div class="cc-detail-row">
+                            <span class="cc-detail-label">Content:</span>
+                            <span class="cc-detail-value">
+                                @switch (conn.ContentMode)
+                                {
+                                    case "content-only":
+                                        <span class="dx-badge dx-badge-blue">Content Only</span>
+                                        break;
+                                    case "content-and-monitoring":
+                                        <span class="dx-badge dx-badge-green">Content + Monitoring</span>
+                                        break;
+                                    default:
+                                        <span class="dx-badge dx-badge-gray">Monitoring Only</span>
+                                        break;
+                                }
+                            </span>
+                        </div>
+                    </div>
+
+                    @if (conn.LastSyncAt.HasValue)
+                    {
+                        <div class="cc-sync-status">
+                            <span class="cc-sync-label">Last Sync:</span>
+                            <span class="cc-sync-time">@conn.LastSyncAt.Value.ToString("MMM dd, HH:mm")</span>
+                            @if (!string.IsNullOrEmpty(conn.LastSyncStatus))
+                            {
+                                <span class="dx-badge @(conn.LastSyncStatus == "success" ? "dx-badge-green" : "dx-badge-red")">
+                                    @conn.LastSyncStatus
+                                </span>
+                            }
+                            @if (!string.IsNullOrEmpty(conn.LastSyncMessage))
+                            {
+                                <span class="cc-sync-message">@conn.LastSyncMessage</span>
+                            }
+                        </div>
+                    }
+
+                    <div class="cc-connector-card-actions">
+                        <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                @onclick="@(() => TestCloudConnection(conn))"
+                                disabled="@(testingConnectorId == conn.ConnectorId)">
+                            @(testingConnectorId == conn.ConnectorId ? "TESTING..." : "TEST CONNECTION")
+                        </button>
+                        <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                @onclick="@(() => SyncConnectorInventory(conn))"
+                                disabled="@(syncingConnectorId == conn.ConnectorId)">
+                            @(syncingConnectorId == conn.ConnectorId ? "SYNCING..." : "SYNC INVENTORY")
+                        </button>
+                        @if (connectorTestResults.ContainsKey(conn.ConnectorId))
+                        {
+                            <span class="dx-badge @(connectorTestResults[conn.ConnectorId] ? "dx-badge-green" : "dx-badge-red")">
+                                @(connectorTestResults[conn.ConnectorId] ? "Connected" : "Failed")
+                            </span>
+                        }
+                        <div class="cc-edit-actions">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => EditConnector(conn))">Edit</button>
+                            @if (conn.IsEnabled)
+                            {
+                                <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="@(() => ShowActionModal(conn, false))">Disable</button>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => EnableConnector(conn))">Enable</button>
+                            }
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="@(() => ShowActionModal(conn, true))">Delete</button>
+                        </div>
+                    </div>
+
+                    @if (syncResults.ContainsKey(conn.ConnectorId))
+                    {
+                        <div class="@(syncResults[conn.ConnectorId].isError ? "dx-alert dx-alert-danger" : "dx-alert dx-alert-success")" style="margin-top:8px;">
+                            @syncResults[conn.ConnectorId].message
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+    else if (cloudConnectors != null)
+    {
+        <div style="text-align:center; padding:40px; color:#999;">
+            <p style="font-size:1.1rem; margin-bottom:8px;">No cloud connectors configured</p>
+            <p>Add a connector to sync devices from a cloud CMS platform like Omnivex Ink.</p>
+        </div>
+    }
+
+    </div>
+</div>
+
+@* Disable/Delete confirmation modal *@
+@if (showActionModal && pendingConnector != null)
+{
+    <div class="dx-modal-overlay" @onclick="CancelActionModal">
+        <div class="dx-modal" style="width:480px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>@(isDeleteAction ? "Delete" : "Disable") Connector: @pendingConnector.DisplayName</h4>
+                <button class="dx-modal-close" @onclick="CancelActionModal">×</button>
+            </div>
+            <div class="dx-modal-body">
+                <p>This connector has the following associated resources:</p>
+                <ul style="margin:8px 0 16px 20px;">
+                    @if (pendingDirectorDeviceCount > 0)
+                    {
+                        <li><strong>@pendingDirectorDeviceCount</strong> device(s) in Device Management</li>
+                    }
+                    @if (pendingDirectorFolderCount > 0)
+                    {
+                        <li><strong>@pendingDirectorFolderCount</strong> folder channel(s) in Content Channels</li>
+                    }
+                    @if (pendingDirectorDeviceCount == 0 && pendingDirectorFolderCount == 0)
+                    {
+                        <li>No associated resources found.</li>
+                    }
+                </ul>
+                @if (pendingDirectorDeviceCount > 0 || pendingDirectorFolderCount > 0)
+                {
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:16px;">
+                        <input type="checkbox" class="dx-checkbox" @bind="deleteAssociatedDevices" />
+                        Remove all associated devices and Content Channel folders
+                    </label>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-red" @onclick="ConfirmAction" disabled="@processingAction">
+                    @(processingAction ? "PROCESSING..." : (isDeleteAction ? "DELETE" : "DISABLE"))
+                </button>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelActionModal" disabled="@processingAction">CANCEL</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<TblCloudPlatformConnector>? cloudConnectors;
+    private TblCloudPlatformConnector? editingConnector;
+    private string editingConnectorPlatformId = "";
+    private string editingConnectorBaseUrl = "";
+    private string editingConnectorApiKey = "";
+    private string editingGatewayMode = "none";
+    private string editingContentMode = "monitoring-only";
+    private HashSet<string> editingEnabledImports = new(StringComparer.OrdinalIgnoreCase);
+    private DateTime? editingCredentialExpiresAt;
+    private bool showConnectorForm = false;
+    private string? connectorMessage;
+    private bool connectorMessageIsError = false;
+    private int? testingConnectorId;
+    private int? syncingConnectorId;
+    private Dictionary<int, bool> connectorTestResults = new();
+    private Dictionary<int, (string message, bool isError)> syncResults = new();
+    private Dictionary<int, int> connectorDeviceCounts = new();
+    private IReadOnlyCollection<string> registeredPlatforms = Array.Empty<string>();
+
+    // Disable/Delete modal state
+    private bool showActionModal;
+    private TblCloudPlatformConnector? pendingConnector;
+    private bool isDeleteAction;
+    private bool deleteAssociatedDevices;
+    private bool processingAction;
+    private int pendingDirectorDeviceCount;
+    private int pendingDirectorFolderCount;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            registeredPlatforms = connectorRegistry.GetRegisteredPlatforms();
+            editingConnectorPlatformId = registeredPlatforms.FirstOrDefault() ?? "";
+
+            cloudConnectors = await directorDb.TblCloudPlatformConnectors
+                .AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading cloud connectors");
+        }
+    }
+
+    private void StartAddConnector()
+    {
+        var firstPlatform = registeredPlatforms.FirstOrDefault() ?? "";
+        editingConnectorPlatformId = firstPlatform;
+
+        var platform = connectorRegistry.GetConnector(editingConnectorPlatformId);
+        var caps = platform?.GetCapabilities();
+        var hasContent = caps?.ImportableResources.Count > 0;
+
+        editingContentMode = hasContent ? "content-only" : "monitoring-only";
+        editingConnector = new TblCloudPlatformConnector
+        {
+            IsEnabled = true,
+            CreateDate = DateTime.UtcNow,
+            ConfigJson = "{}",
+            DisplayName = platform?.DisplayName ?? editingConnectorPlatformId
+        };
+        editingConnectorBaseUrl = "";
+        editingConnectorApiKey = "";
+        editingGatewayMode = "none";
+        editingCredentialExpiresAt = null;
+
+        // Default: all importable resources enabled
+        editingEnabledImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (caps?.ImportableResources != null)
+            foreach (var res in caps.ImportableResources)
+                editingEnabledImports.Add(res.Id);
+
+        showConnectorForm = true;
+        connectorMessage = null;
+    }
+
+    private void OnPlatformChanged(string newPlatformId)
+    {
+        editingConnectorPlatformId = newPlatformId;
+
+        if (editingConnector == null) return;
+
+        // Update display name to the new platform's default — only if it still matches
+        // the previous platform's default (i.e. the user hasn't manually edited it yet)
+        var newPlatform = connectorRegistry.GetConnector(newPlatformId);
+        if (newPlatform != null)
+            editingConnector.DisplayName = newPlatform.DisplayName;
+
+        // Reset content mode defaults for the new platform
+        var caps = newPlatform?.GetCapabilities();
+        var hasContent = caps?.ImportableResources.Count > 0;
+        editingContentMode = hasContent ? "content-only" : "monitoring-only";
+
+        editingEnabledImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (caps?.ImportableResources != null)
+            foreach (var res in caps.ImportableResources)
+                editingEnabledImports.Add(res.Id);
+    }
+
+    private string GetBaseUrlPlaceholder() => editingConnectorPlatformId switch
+    {
+        "pixera" => "http://192.168.x.x:1400",
+        _        => "https://example.omnivex.ink/"
+    };
+
+    private void EditConnector(TblCloudPlatformConnector conn)
+    {
+        var config = DeserializeConfig(conn.ConfigJson);
+        editingConnector = new TblCloudPlatformConnector
+        {
+            ConnectorId = conn.ConnectorId,
+            PlatformId = conn.PlatformId,
+            DisplayName = conn.DisplayName,
+            IsEnabled = conn.IsEnabled,
+            ConfigJson = conn.ConfigJson,
+            CreateDate = conn.CreateDate
+        };
+        editingConnectorPlatformId = conn.PlatformId;
+        editingConnectorBaseUrl = config?.BaseUrl ?? "";
+        editingConnectorApiKey = config?.ApiKey ?? "";
+        editingGatewayMode = conn.GatewayMode ?? "none";
+        editingContentMode = conn.ContentMode ?? "monitoring-only";
+        editingCredentialExpiresAt = conn.CredentialExpiresAt;
+
+        // Parse existing enabled imports
+        editingEnabledImports = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(conn.EnabledImports))
+        {
+            try
+            {
+                var list = JsonSerializer.Deserialize<List<string>>(conn.EnabledImports);
+                if (list != null)
+                    foreach (var item in list)
+                        editingEnabledImports.Add(item);
+            }
+            catch { }
+        }
+        else
+        {
+            // null = all enabled — populate with all available resources
+            var platform = connectorRegistry.GetConnector(conn.PlatformId);
+            var caps = platform?.GetCapabilities();
+            if (caps?.ImportableResources != null)
+                foreach (var res in caps.ImportableResources)
+                    editingEnabledImports.Add(res.Id);
+        }
+
+        showConnectorForm = true;
+        connectorMessage = null;
+    }
+
+    private void ToggleImport(string resourceId, bool isChecked)
+    {
+        if (isChecked)
+            editingEnabledImports.Add(resourceId);
+        else
+            editingEnabledImports.Remove(resourceId);
+    }
+
+    private async Task SaveConnector()
+    {
+        if (editingConnector == null) return;
+
+        try
+        {
+            var configJson = configProtector.Encrypt(new PlatformConnectionConfig
+            {
+                BaseUrl = editingConnectorBaseUrl,
+                ApiKey = editingConnectorApiKey
+            });
+
+            var platform = connectorRegistry.GetConnector(editingConnectorPlatformId);
+            var caps = platform?.GetCapabilities();
+            var hasContent = caps?.ImportableResources.Count > 0;
+
+            // Content mode: use user selection if platform supports it, else monitoring-only
+            var effectiveContentMode = hasContent ? editingContentMode : "monitoring-only";
+
+            // Serialize enabled imports (null means all enabled)
+            string? enabledImportsJson = null;
+            if (hasContent && effectiveContentMode != "monitoring-only" && caps!.ImportableResources.Count > 0)
+            {
+                var allEnabled = editingEnabledImports.Count >= caps.ImportableResources.Count;
+                enabledImportsJson = allEnabled ? null : JsonSerializer.Serialize(editingEnabledImports.ToList());
+            }
+
+            if (editingConnector.ConnectorId > 0)
+            {
+                var existing = await directorDb.TblCloudPlatformConnectors.FindAsync(editingConnector.ConnectorId);
+                if (existing != null)
+                {
+                    existing.PlatformId = editingConnectorPlatformId;
+                    existing.DisplayName = editingConnector.DisplayName;
+                    existing.IsEnabled = editingConnector.IsEnabled;
+                    existing.ConfigJson = configJson;
+                    existing.GatewayMode = editingGatewayMode;
+                    existing.ContentMode = effectiveContentMode;
+                    existing.EnabledImports = enabledImportsJson;
+                    existing.CredentialExpiresAt = editingCredentialExpiresAt;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                editingConnector.PlatformId = editingConnectorPlatformId;
+                editingConnector.CustomerId = TenantContext.CustomerCode;
+                editingConnector.ConfigJson = configJson;
+                editingConnector.GatewayMode = editingGatewayMode;
+                editingConnector.ContentMode = effectiveContentMode;
+                editingConnector.EnabledImports = enabledImportsJson;
+                editingConnector.CredentialExpiresAt = editingCredentialExpiresAt;
+                directorDb.TblCloudPlatformConnectors.Add(editingConnector);
+            }
+
+            await directorDb.SaveChangesAsync();
+            showConnectorForm = false;
+            connectorMessage = "Connector saved successfully.";
+            connectorMessageIsError = false;
+
+            cloudConnectors = await directorDb.TblCloudPlatformConnectors
+                .AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            connectorMessage = $"Error saving connector: {ex.Message}";
+            connectorMessageIsError = true;
+        }
+    }
+
+    private async Task EnableConnector(TblCloudPlatformConnector conn)
+    {
+        try
+        {
+            var existing = await directorDb.TblCloudPlatformConnectors.FindAsync(conn.ConnectorId);
+            if (existing != null)
+            {
+                existing.IsEnabled = true;
+                existing.LastEditDate = DateTime.UtcNow;
+                await directorDb.SaveChangesAsync();
+            }
+
+            cloudConnectors = await directorDb.TblCloudPlatformConnectors
+                .AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            connectorMessage = $"Error enabling connector: {ex.Message}";
+            connectorMessageIsError = true;
+        }
+    }
+
+    private async Task ShowActionModal(TblCloudPlatformConnector conn, bool isDelete)
+    {
+        pendingConnector = conn;
+        isDeleteAction = isDelete;
+        deleteAssociatedDevices = false;
+        processingAction = false;
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var scopedDb = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            var devicePrefix = $"cloud-{conn.ConnectorId}-";
+
+            pendingDirectorDeviceCount = await scopedDb.TblDevices
+                .CountAsync(d => d.DeviceId.StartsWith(devicePrefix));
+            // Count all folder channels for this connector, regardless of source type
+            pendingDirectorFolderCount = await scopedDb.TblContentChannels
+                .CountAsync(c => c.ConnectorId == conn.ConnectorId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error counting resources for connector {ConnectorId}", conn.ConnectorId);
+            pendingDirectorDeviceCount = 0;
+            pendingDirectorFolderCount = 0;
+        }
+
+        showActionModal = true;
+    }
+
+    private void CancelActionModal()
+    {
+        showActionModal = false;
+        pendingConnector = null;
+    }
+
+    private async Task ConfirmAction()
+    {
+        if (pendingConnector == null) return;
+        processingAction = true;
+        StateHasChanged();
+
+        try
+        {
+            if (deleteAssociatedDevices)
+            {
+                using var scope = scopeFactory.CreateScope();
+                var scopedDb = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+                var devicePrefix = $"cloud-{pendingConnector.ConnectorId}-";
+
+                // Remove physical cloud devices from TblDevices
+                var directorDevices = await scopedDb.TblDevices
+                    .Where(d => d.DeviceId.StartsWith(devicePrefix))
+                    .ToListAsync();
+                foreach (var d in directorDevices)
+                    scopedDb.TblDevices.Remove(d);
+
+                // Remove all folder channels for this connector from TblContentChannels
+                var folderChannels = await scopedDb.TblContentChannels
+                    .Where(c => c.ConnectorId == pendingConnector.ConnectorId)
+                    .ToListAsync();
+                foreach (var c in folderChannels)
+                    scopedDb.TblContentChannels.Remove(c);
+
+                await scopedDb.SaveChangesAsync();
+            }
+
+            var existing = await directorDb.TblCloudPlatformConnectors.FindAsync(pendingConnector.ConnectorId);
+            if (existing != null)
+            {
+                if (isDeleteAction)
+                    directorDb.TblCloudPlatformConnectors.Remove(existing);
+                else
+                {
+                    existing.IsEnabled = false;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+                await directorDb.SaveChangesAsync();
+            }
+
+            cloudConnectors = await directorDb.TblCloudPlatformConnectors
+                .AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            connectorMessage = $"Error: {ex.Message}";
+            connectorMessageIsError = true;
+        }
+
+        showActionModal = false;
+        pendingConnector = null;
+        processingAction = false;
+    }
+
+    private void CancelConnectorForm()
+    {
+        showConnectorForm = false;
+        editingConnector = null;
+        connectorMessage = null;
+    }
+
+    private async Task TestCloudConnection(TblCloudPlatformConnector conn)
+    {
+        testingConnectorId = conn.ConnectorId;
+        connectorTestResults.Remove(conn.ConnectorId);
+        StateHasChanged();
+
+        try
+        {
+            var platform = connectorRegistry.GetConnector(conn.PlatformId);
+            if (platform == null)
+            {
+                connectorTestResults[conn.ConnectorId] = false;
+                return;
+            }
+
+            var config = DeserializeConfig(conn.ConfigJson) ?? new PlatformConnectionConfig();
+            var result = await platform.TestConnectionAsync(config);
+            connectorTestResults[conn.ConnectorId] = result;
+        }
+        catch
+        {
+            connectorTestResults[conn.ConnectorId] = false;
+        }
+
+        testingConnectorId = null;
+    }
+
+    private async Task SyncConnectorInventory(TblCloudPlatformConnector conn)
+    {
+        syncingConnectorId = conn.ConnectorId;
+        syncResults.Remove(conn.ConnectorId);
+        StateHasChanged();
+
+        try
+        {
+            var platform = connectorRegistry.GetConnector(conn.PlatformId);
+            if (platform == null)
+            {
+                syncResults[conn.ConnectorId] = ($"No connector implementation found for platform '{conn.PlatformId}'", true);
+                syncingConnectorId = null;
+                return;
+            }
+
+            var config = DeserializeConfig(conn.ConfigJson) ?? new PlatformConnectionConfig();
+            var devices = await platform.SyncDeviceInventoryAsync(config);
+            var enabledImports = ParseEnabledImports(conn.EnabledImports);
+
+            // Content sync runs before persisting status so a network failure is
+            // reflected in LastSyncStatus rather than being masked by an early "success" write.
+            int directorSynced = 0;
+            int foldersSynced = 0;
+            int layersSynced  = 0;
+            int timelinesSynced = 0;
+            if (conn.HasContentSync)
+            {
+                if (enabledImports == null || enabledImports.Contains("devices"))
+                    directorSynced = await SyncDevicesToDirectorAsync(conn, devices);
+                if (enabledImports == null || enabledImports.Contains("folders"))
+                    foldersSynced = await SyncFoldersToDirectorAsync(conn, platform, config);
+                if ((enabledImports == null || enabledImports.Contains("layers")) && platform is PixeraConnector pixeraConnector)
+                    layersSynced = await SyncLayersToDirectorAsync(conn, pixeraConnector, config);
+                if ((enabledImports == null || enabledImports.Contains("timelines")) && platform is PixeraConnector pixeraTimelineConnector)
+                    timelinesSynced = await SyncTimelinesToDirectorAsync(conn, pixeraTimelineConnector, config);
+            }
+
+            // All operations succeeded — persist success status now
+            var msg = $"Fetched {devices.Count} devices";
+            if (directorSynced > 0) msg += $", {directorSynced} synced to Director";
+            if (conn.HasContentSync) msg += $", {foldersSynced} folders synced";
+            if (layersSynced > 0) msg += $", {layersSynced} layers synced";
+            if (timelinesSynced > 0) msg += $", {timelinesSynced} timelines synced";
+
+            var connectorEntity = await directorDb.TblCloudPlatformConnectors.FindAsync(conn.ConnectorId);
+            if (connectorEntity != null)
+            {
+                connectorEntity.LastSyncAt     = DateTime.UtcNow;
+                connectorEntity.LastSyncStatus  = "success";
+                connectorEntity.LastSyncMessage = msg;
+            }
+            await directorDb.SaveChangesAsync();
+
+            syncResults[conn.ConnectorId] = (msg, false);
+
+            cloudConnectors = await directorDb.TblCloudPlatformConnectors
+                .AsNoTracking()
+                .OrderBy(c => c.DisplayName)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            try
+            {
+                var connectorEntity = await directorDb.TblCloudPlatformConnectors.FindAsync(conn.ConnectorId);
+                if (connectorEntity != null)
+                {
+                    connectorEntity.LastSyncAt = DateTime.UtcNow;
+                    connectorEntity.LastSyncStatus = "failed";
+                    connectorEntity.LastSyncMessage = ex.Message;
+                    await directorDb.SaveChangesAsync();
+                }
+            }
+            catch { }
+
+            syncResults[conn.ConnectorId] = ($"Sync failed: {ex.Message}", true);
+        }
+
+        syncingConnectorId = null;
+    }
+
+    /// <summary>
+    /// Deposits cloud-managed devices into Director's tblDevice for metadata/playlist assignment.
+    /// </summary>
+    private async Task<int> SyncDevicesToDirectorAsync(TblCloudPlatformConnector conn, IList<PlatformDevice> platformDevices)
+    {
+        try
+        {
+            using var directorScope = scopeFactory.CreateScope();
+            var scopedDb = directorScope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            var deviceIdPrefix = $"cloud-{conn.ConnectorId}-";
+            var existingDirectorDevices = await scopedDb.TblDevices
+                .Where(d => d.DeviceId.StartsWith(deviceIdPrefix))
+                .ToListAsync();
+            var directorLookup = existingDirectorDevices.ToDictionary(d => d.DeviceId, StringComparer.OrdinalIgnoreCase);
+
+            foreach (var device in platformDevices)
+            {
+                var directorDeviceId = $"cloud-{conn.ConnectorId}-{device.PlatformDeviceId}";
+                var extJson = JsonSerializer.Serialize(new
+                {
+                    sourceType = "cloud-connector",
+                    connectorId = conn.ConnectorId,
+                    platformId = conn.PlatformId
+                });
+
+                if (directorLookup.TryGetValue(directorDeviceId, out var existing))
+                {
+                    existing.Description = device.DeviceName;
+                    existing.Ipaddress = device.IpAddress ?? "";
+                    existing.Macaddress = device.MacAddress ?? "";
+                    existing.Manufacturer = device.Manufacturer ?? "";
+                    existing.Model = device.DeviceModel ?? "";
+                    existing.SerialNumber = device.SerialNumber ?? "";
+                    existing.ExtendedData = extJson;
+                }
+                else
+                {
+                    scopedDb.TblDevices.Add(DeviceProvisioning.Seed(new TblDevice
+                    {
+                        DeviceId = directorDeviceId,
+                        Description = device.DeviceName,
+                        CustomerId = conn.CustomerId.Length > 3 ? conn.CustomerId[..3] : conn.CustomerId,
+                        Ipaddress = device.IpAddress ?? "",
+                        Macaddress = device.MacAddress ?? "",
+                        Manufacturer = device.Manufacturer ?? "",
+                        Model = device.DeviceModel ?? "",
+                        SerialNumber = device.SerialNumber ?? "",
+                        Osversion = "",
+                        Heartbeat = DateTime.UtcNow,
+                        CreateDate = DateTime.UtcNow,
+                        ExtendedData = extJson
+                    }));
+                }
+            }
+
+            await scopedDb.SaveChangesAsync();
+            return platformDevices.Count;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Director device sync failed for connector {ConnectorId}", conn.ConnectorId);
+            return 0;
+        }
+    }
+
+    /// <summary>
+    /// Syncs platform folder inventory into TblContentChannels as content delivery targets.
+    /// Folders are not physical hardware and are not stored in TblDevices.
+    /// </summary>
+    private async Task<int> SyncFoldersToDirectorAsync(TblCloudPlatformConnector conn, ICloudPlatformConnector platform, PlatformConnectionConfig config)
+    {
+        // Intentionally no try/catch — network or API failures must propagate to SyncConnectorInventory
+        // so the connector card correctly shows "failed" rather than masking errors as success.
+        var folders = await platform.SyncFolderInventoryAsync(config);
+        if (folders.Count == 0) return 0;
+        {
+
+            // Source type is platform-specific; defaults to "{platformId}-folder" for future connectors
+            var sourceType = conn.PlatformId switch
+            {
+                "omnivex-ink" => "ink-folder",
+                "pixera"      => "pixera-folder",
+                _             => $"{conn.PlatformId}-folder"
+            };
+
+            using var directorScope = scopeFactory.CreateScope();
+            var scopedDb = directorScope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            var existingChannels = await scopedDb.TblContentChannels
+                .Where(c => c.SourceType == sourceType && c.ConnectorId == conn.ConnectorId)
+                .ToListAsync();
+            var existingByExternalId = existingChannels
+                .ToDictionary(c => c.ExternalId ?? "", StringComparer.OrdinalIgnoreCase);
+            var liveFolderIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var folder in folders)
+            {
+                liveFolderIds.Add(folder.FolderId);
+
+                if (existingByExternalId.TryGetValue(folder.FolderId, out var existing))
+                {
+                    // Keep name in sync with the platform
+                    existing.Name        = folder.FolderName;
+                    existing.ExternalName = folder.FolderName;
+                }
+                else
+                {
+                    scopedDb.TblContentChannels.Add(new TblContentChannel
+                    {
+                        Name         = folder.FolderName,
+                        SourceType   = sourceType,
+                        ConnectorId  = conn.ConnectorId,
+                        ExternalId   = folder.FolderId,
+                        ExternalName = folder.FolderName,
+                        CreateDate   = DateTime.UtcNow,
+                    });
+                }
+            }
+
+            // Remove channels for folders that no longer exist on the platform
+            var stale = existingChannels
+                .Where(c => !liveFolderIds.Contains(c.ExternalId ?? ""))
+                .ToList();
+            foreach (var s in stale)
+                scopedDb.TblContentChannels.Remove(s);
+
+            if (liveFolderIds.Count > 0 || stale.Count > 0)
+                await scopedDb.SaveChangesAsync();
+
+            return folders.Count;
+        }
+    }
+
+    /// <summary>
+    /// Syncs Pixera composition layer inventory into TblContentChannels as hidden "pixera-layer" rows.
+    /// These rows are not shown in the Content Channels UI but serve as the source for the
+    /// layer dropdown in the channel Settings modal.
+    /// </summary>
+    private async Task<int> SyncLayersToDirectorAsync(
+        TblCloudPlatformConnector conn, PixeraConnector pixeraConnector, PlatformConnectionConfig config)
+    {
+        var layers = await pixeraConnector.SyncLayerInventoryAsync(config);
+        if (layers.Count == 0) return 0;
+
+        using var directorScope = scopeFactory.CreateScope();
+        var scopedDb = directorScope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var existingLayers = await scopedDb.TblContentChannels
+            .Where(c => c.SourceType == "pixera-layer" && c.ConnectorId == conn.ConnectorId)
+            .ToListAsync();
+        var existingByExternalId = existingLayers
+            .ToDictionary(c => c.ExternalId ?? "", StringComparer.OrdinalIgnoreCase);
+        var liveLayerIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var layer in layers)
+        {
+            liveLayerIds.Add(layer.FolderId);
+
+            if (existingByExternalId.TryGetValue(layer.FolderId, out var existing))
+            {
+                existing.Name        = layer.FolderName;
+                existing.ExternalName = layer.FolderName;
+            }
+            else
+            {
+                scopedDb.TblContentChannels.Add(new TblContentChannel
+                {
+                    Name         = layer.FolderName,
+                    SourceType   = "pixera-layer",
+                    ConnectorId  = conn.ConnectorId,
+                    ExternalId   = layer.FolderId,
+                    ExternalName = layer.FolderName,
+                    CreateDate   = DateTime.UtcNow,
+                });
+            }
+        }
+
+        // Remove layer rows for layers that no longer exist on the Pixera server
+        var stale = existingLayers.Where(c => !liveLayerIds.Contains(c.ExternalId ?? "")).ToList();
+        foreach (var s in stale)
+            scopedDb.TblContentChannels.Remove(s);
+
+        if (liveLayerIds.Count > 0 || stale.Count > 0)
+            await scopedDb.SaveChangesAsync();
+
+        return layers.Count;
+    }
+
+    /// <summary>
+    /// Syncs Pixera timeline inventory into TblContentChannels as "pixera-timeline" rows.
+    /// Unlike layer rows these ARE shown in the Content Channels UI: users cannot assign
+    /// content to them, but their Settings modal controls the timeline watchdog
+    /// (Director re-issues Play when an enabled timeline is found not playing).
+    /// </summary>
+    private async Task<int> SyncTimelinesToDirectorAsync(
+        TblCloudPlatformConnector conn, PixeraConnector pixeraConnector, PlatformConnectionConfig config)
+    {
+        var timelines = await pixeraConnector.SyncTimelineInventoryAsync(config);
+        if (timelines.Count == 0) return 0;
+
+        using var directorScope = scopeFactory.CreateScope();
+        var scopedDb = directorScope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var existingTimelines = await scopedDb.TblContentChannels
+            .Where(c => c.SourceType == "pixera-timeline" && c.ConnectorId == conn.ConnectorId)
+            .ToListAsync();
+        var existingByExternalId = existingTimelines
+            .ToDictionary(c => c.ExternalId ?? "", StringComparer.OrdinalIgnoreCase);
+        var liveTimelineNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var timelineName in timelines)
+        {
+            liveTimelineNames.Add(timelineName);
+
+            if (existingByExternalId.TryGetValue(timelineName, out var existing))
+            {
+                existing.Name         = timelineName;
+                existing.ExternalName = timelineName;
+            }
+            else
+            {
+                scopedDb.TblContentChannels.Add(new TblContentChannel
+                {
+                    Name         = timelineName,
+                    SourceType   = "pixera-timeline",
+                    ConnectorId  = conn.ConnectorId,
+                    ExternalId   = timelineName,
+                    ExternalName = timelineName,
+                    CreateDate   = DateTime.UtcNow,
+                });
+            }
+        }
+
+        // Remove timeline rows for timelines that no longer exist on the Pixera server
+        var staleTimelines = existingTimelines
+            .Where(c => !liveTimelineNames.Contains(c.ExternalId ?? "")).ToList();
+        foreach (var s in staleTimelines)
+            scopedDb.TblContentChannels.Remove(s);
+
+        if (liveTimelineNames.Count > 0 || staleTimelines.Count > 0)
+            await scopedDb.SaveChangesAsync();
+
+        return timelines.Count;
+    }
+
+    private static HashSet<string>? ParseEnabledImports(string? enabledImportsJson)
+    {
+        if (string.IsNullOrEmpty(enabledImportsJson)) return null;
+        try
+        {
+            var list = JsonSerializer.Deserialize<List<string>>(enabledImportsJson);
+            return list != null ? new HashSet<string>(list, StringComparer.OrdinalIgnoreCase) : null;
+        }
+        catch { return null; }
+    }
+
+    private PlatformConnectionConfig? DeserializeConfig(string? configJson)
+        => configProtector.Decrypt(configJson);
+}
+
+<style>
+    .cc-inline-form {
+        background: var(--dx-bg-alt);
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .cc-inline-form h5 {
+        margin: 0 0 16px 0;
+        font-size: 0.95rem;
+        font-weight: 600;
+    }
+
+    .cc-form-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .cc-form-row .dx-form-group {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .cc-form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 16px;
+    }
+
+    .cc-import-checks {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 8px 0;
+    }
+
+    .cc-import-check {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9rem;
+        cursor: pointer;
+    }
+
+    .cc-connector-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+        gap: 16px;
+    }
+
+    .cc-connector-card {
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 16px;
+        background: #fff;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .cc-connector-card--editing {
+        border: 2px solid var(--dx-blue);
+        box-shadow: 0 0 0 3px rgba(0, 113, 188, 0.12);
+    }
+
+    .cc-connector-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .cc-connector-card-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .cc-connector-card-title strong {
+        font-family: "BAHNSCHRIFT", sans-serif;
+        font-size: 16px;
+        text-transform: uppercase;
+    }
+
+    .cc-connector-card-details {
+        margin-bottom: 12px;
+        font-size: 0.875rem;
+    }
+
+    .cc-detail-row {
+        display: flex;
+        gap: 8px;
+        padding: 3px 0;
+        font-size: 13px;
+    }
+
+    .cc-detail-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 90px;
+    }
+
+    .cc-sync-status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 0.8rem;
+        color: var(--dx-text-muted);
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .cc-sync-message {
+        color: var(--dx-text-muted);
+        font-style: italic;
+    }
+
+    .cc-connector-card-actions {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+        padding-top: 8px;
+        border-top: 1px solid #f0f0f0;
+        margin-top: auto;
+    }
+
+    .cc-edit-actions {
+        display: flex;
+        gap: 6px;
+        margin-left: auto;
+    }
+</style>

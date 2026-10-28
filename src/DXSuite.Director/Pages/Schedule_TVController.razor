@@ -1,0 +1,1118 @@
+@page "/schedule-tv/{DisplayId:int}"
+@inject IConfiguration config;
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Components
+@using DXSuite.Director.Components.Schedulers
+@using Newtonsoft.Json
+@using System.Text
+@using System.Globalization
+@using DXSuite.Shared.Authorization
+@inject IServiceScopeFactory scopeFactory;
+@inject NavigationManager navMan;
+@inject IJSRuntime JSRuntime
+@inject DisplayScaleService ScaleService;
+@inject JsonSerializerSettings JsonSettings
+@inject ISessionState sessionState;
+@inject ILogger<Schedule_TVController> Logger
+@inject IMetadataCacheService metadataCache
+@inject IWebHostEnvironment webHostEnvironment
+@inject ITenantMediaPathResolver MediaPaths
+@inject IScheduleEventService scheduleEvents
+
+<PageTitle>Manage Schedule</PageTitle>
+
+<div class="dx-page-header">
+    <h2>MANAGE SCHEDULE <DXSuite.Shared.Components.HelpLink Page="director/scheduling" Title="Scheduling help" /></h2>
+</div>
+
+@if(display != null){
+    <section class="display-body" style="margin-top: 20px;">
+        <div class="container">
+            <div class="row">
+                <div class="col-md-3 col-lg-5 col-xl-5 mb-3 mb-md-0">
+                    <h4>@display.DisplayName</h4>
+                    @if(isRenamingDisplay)
+                    {
+                        <input type="text" class="dx-form-control" @bind="newDisplayName" placeholder="Enter display name" />
+                        <div style="margin-top:10px;">
+                            <button @onclick="@(()=>SubmitNewDisplayName(newDisplayName))" class="dx-btn dx-btn-blue">Save</button>
+                            <button @onclick="@(CancelRenameDisplay)" class="dx-btn dx-btn-blue">Cancel</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <button class="dx-btn dx-btn-blue" @onclick="@(RenameDisplay)">Edit Name</button>
+                    }
+
+                </div>
+                <div class="col-md-9 col-lg-7 col-xl-7">
+                    <!-- Status card: banner spans full width, preview scrolls for wide displays -->
+                    <div style="border-radius: 6px; overflow: hidden; box-shadow: var(--dx-shadow-sm);">
+
+                        <!-- Full-width colored status banner -->
+                        <div style="background-color: @GetStatusColor(); color: white; padding: 10px 16px; text-align: center;">
+                            <div style="font-size: 10px; font-weight: 600; opacity: 0.8; text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 2px;">Current Status</div>
+                            <div style="font-size: 14px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.05em;">@GetDisplayStatusText()</div>
+                        </div>
+
+                        <!-- Display preview — overflow-x allows wide video walls to scroll -->
+                        <div style="background-color: #f5f5f5; padding: 16px; overflow-x: auto; display: flex; justify-content: center;">
+                            <DXSuite.Director.Components.DisplayTypes.StandardDisplay @ref="schedulePreview"
+                                                                                     Display="display"
+                                                                                     ScaleFactor="scaleFactorHalf"
+                                                                                     OnSchedulePage="true"
+                                                                                     PreviewMode="true">
+                            </DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Schedule Management Header -->
+            <div style="background-color: #CCCCCC; border-radius: 4px; padding: 20px; margin-bottom: 20px; margin-top: 20px;">
+                <div style="display: flex; justify-content: flex-start; align-items: center; flex-wrap: wrap; gap: 10px;">
+                    <button class="dx-btn dx-btn-blue" @onclick="() => CreateNewSchedule()" style="font-size: 16px; padding: 10px 20px;">
+                        @(isCreatingScheduleEvent ? "CANCEL SCHEDULE ENTRY" : "NEW SCHEDULE ENTRY")
+                    </button>
+                </div>
+
+                @if (newScheduleEvent != null && isCreatingScheduleEvent && assetList != null)
+                {
+                    <ScheduleEditor_TVController @ref="tvScheduleEditor" Display="display"
+                                                 AssetList="assetList"
+                                                 ContentList="contentList"
+                                                 ScheduleEvent="newScheduleEvent"
+                                                 InitialClockData="currentEditAssignment"
+                                                 HoverAssetId="hoverAssetId"
+                                                 OpenTvSourceUploader="OpenTvSourceUploader"
+                                                 OnAssetEdit="OpenTvSourceEditor"
+                                                 OnAssetDelete="(assetId, locationId) => assetDeleteModal.Open(assetId, locationId)"
+                                                 OnSaveScheduleEntry="SaveScheduleEntry" />
+                }
+
+            </div>
+
+            <div class="row" style="margin-top: 20px;">
+
+                @{
+                    TblScheduleEvent? defaultContent = display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent == true);
+                }
+                @if (defaultContent != null)
+                {
+                    <div class="asset-container">
+                        <div class="d-flex">
+                            <h3>Default Content</h3>
+                        </div>
+                        <div class="d-flex">
+                            @{
+                                ContentAssignment? eventContentAssignment = JsonConvert.DeserializeObject<ContentAssignment>(defaultContent.ContentAssignment);
+                            }
+                            @if (eventContentAssignment != null && assetList != null && eventContentAssignment.Content.Any())
+                            {
+                                <div style="background-color: #F2F2F2; border-radius: 4px; padding: 20px; width: 100%;">
+                                    <!-- Horizontal layout for all displays -->
+                                    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                                        @foreach (ContentItem asset in eventContentAssignment.Content)
+                                        {
+                                            asset.Asset = assetList.FirstOrDefault(x => x.AssetId == asset.AssetId);
+                                            @if (asset?.Asset != null)
+                                            {
+                                                <div style="background-color: white; border-radius: 4px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; min-width: 150px;">
+                                                    <div style="width: 120px; height: 90px; border-radius: 3px; overflow: hidden; margin: 0 auto 10px;">
+                                                        <AssetPreviewCard Asset="asset.Asset" Clickable="true" />
+                                                    </div>
+                                                    <div style="color: #4D4D4D; margin-bottom: 5px; font-size: 10px;">Duration: <strong>@asset.Duration</strong></div>
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                </div>
+                            }
+                            else
+                            {
+                                <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px; background-color: #F2F2F2; border-radius: 4px; width: 100%;">No default content assigned</div>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (hasScheduleEvents)
+                {
+                    <div style="margin-bottom: 30px;">
+                        <h3 style="color: #333333; margin-bottom: 25px; font-weight: bold; text-align: center;">Current Schedule Entries</h3>
+
+                        <div style="display: flex; flex-direction: column; gap: 20px;">
+                            @foreach(TblScheduleEvent eventItem in display.TblScheduleEvents.Where(x => x.DefaultContent == false && x.ScheduleEventTypeId == 1))
+                            {
+                                <!-- Schedule Entry Card -->
+                                <div style="background-color: #ffffff; border-radius: 4px; border: 1px solid #CCC; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; @(newScheduleEvent == eventItem ? "border-color: #0071BC; box-shadow: 0 4px 8px rgba(0,113,188,0.3);" : "")">
+
+                                    <!-- Card Header -->
+                                    <div style="background-color: #CCCCCC; padding: 20px; border-bottom: 1px solid #B3B3B3;">
+                                        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                                            <div>
+                                                <h4 style="margin: 0; font-weight: bold; color: #333333;">Schedule Entry</h4>
+                                                <small style="color: #4D4D4D;">@GetContentSummary(eventItem)</small>
+                                            </div>
+                                            <div style="display: flex; gap: 10px;">
+                                                @if (newScheduleEvent == eventItem)
+                                                {
+                                                    <button class="dx-btn dx-btn-gray" style="padding: 8px 16px;" @onclick="() => newScheduleEvent = null">Cancel</button>
+                                                }
+                                                else
+                                                {
+                                                    <button class="dx-btn dx-btn-blue" style="padding: 8px 16px;" @onclick="() => EditScheduleEntry(eventItem)">Edit</button>
+                                                }
+                                                <button class="dx-btn dx-btn-red" style="padding: 8px 16px;" @onclick="() => scheduleDeleteModal.Open(eventItem.ScheduleEventId)">Delete</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Card Body -->
+                                    <div style="padding: 20px;">
+                                        <div class="schedule-entry-grid">
+
+                                            <!-- Content Preview -->
+                                            <div>
+                                                <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Content</h6>
+                                                @{
+                                                    ContentAssignment? eventContentAssignment = JsonConvert.DeserializeObject<ContentAssignment>(eventItem.ContentAssignment);
+                                                }
+                                                @if (eventContentAssignment != null && assetList != null && eventContentAssignment.Content.Any())
+                                                {
+                                                    <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px; cursor: pointer; transition: all 0.2s;"
+                                                         @onclick="() => OpenContentModal(eventContentAssignment, eventItem)"
+                                                         onmouseover="this.style.backgroundColor='#E6F3FF'; this.style.borderLeft='4px solid #0071BC';"
+                                                         onmouseout="this.style.backgroundColor='#F2F2F2'; this.style.borderLeft='none';"
+                                                         title="Click to view all content items">
+                                                        <!-- Horizontal layout for all displays -->
+                                                        <div style="display: flex; gap: 8px; overflow-x: auto; padding-bottom: 8px;">
+                                                            @foreach (ContentItem asset in eventContentAssignment.Content.Take(4))
+                                                            {
+                                                                asset.Asset = assetList.FirstOrDefault(x => x.AssetId == asset.AssetId);
+                                                                @if (asset?.Asset != null)
+                                                                {
+                                                                    <div style="min-width: 80px; text-align: center;">
+                                                                        <div style="width: 80px; height: 60px; border-radius: 3px; overflow: hidden; margin: 0 auto 5px;">
+                                                                            <AssetPreviewCard Asset="asset.Asset" Small="true" />
+                                                                        </div>
+                                                                        <div style="font-size: 10px; color: #4D4D4D;">@asset.Duration</div>
+                                                                    </div>
+                                                                }
+                                                            }
+                                                            @if (eventContentAssignment.Content.Count > 4)
+                                                            {
+                                                                <div style="min-width: 40px; display: flex; align-items: center; justify-content: center; color: #4D4D4D; font-size: 12px;">
+                                                                    +@(eventContentAssignment.Content.Count - 4)
+                                                                </div>
+                                                            }
+                                                        </div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">No content assigned</div>
+                                                }
+                                            </div>
+
+                                            <!-- Date Range -->
+                                            <div>
+                                                <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Date Range</h6>
+                                                @if(eventItem.StartDate is not null || eventItem.EndDate is not null)
+                                                {
+                                                    <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                        <div style="margin-bottom: 8px;">
+                                                            <small style="color: #4D4D4D; font-weight: bold;">Start:</small>
+                                                            <div style="color: #333333;">@((eventItem.StartDate != null) ? eventItem.StartDate.Value.ToString("MMM d, yyyy") : "No limit")</div>
+                                                        </div>
+                                                        <div>
+                                                            <small style="color: #4D4D4D; font-weight: bold;">End:</small>
+                                                            <div style="color: #333333;">@((eventItem.EndDate != null) ? eventItem.EndDate.Value.ToString("MMM d, yyyy") : "No limit")</div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">Always active</div>
+                                                }
+                                            </div>
+
+                                            <!-- Time Range -->
+                                            <div>
+                                                <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Time Range</h6>
+                                                @if (eventItem.StartTime is not null || eventItem.EndTime is not null)
+                                                {
+                                                    <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                        <div style="margin-bottom: 8px;">
+                                                            <small style="color: #4D4D4D; font-weight: bold;">Start:</small>
+                                                            <div style="color: #333333; font-weight: bold;">@((eventItem.StartTime != null) ? eventItem.StartTime.Value.ToString("h:mm tt") : "Start of day")</div>
+                                                        </div>
+                                                        <div>
+                                                            <small style="color: #4D4D4D; font-weight: bold;">End:</small>
+                                                            <div style="color: #333333; font-weight: bold;">@((eventItem.EndTime != null) ? eventItem.EndTime.Value.ToString("h:mm tt") : "End of day")</div>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">All day</div>
+                                                }
+                                            </div>
+
+                                            <!-- Active Days -->
+                                            <div>
+                                                <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Active Days</h6>
+                                                @if (HasAnyDaySelected(eventItem))
+                                                {
+                                                    <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                        <div style="color: #333333; font-weight: bold; text-align: center;">@GetDayString(eventItem)</div>
+                                                    </div>
+                                                }
+                                                else
+                                                {
+                                                    <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">Active everyday</div>
+                                                }
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Expanded Edit Section -->
+                                    @if (newScheduleEvent == eventItem)
+                                    {
+                                        <div class="schedule-edit-wrap" style="border-top: 1px solid #CCC; background-color: #F2F2F2;">
+                                            @if (newScheduleEvent != null && assetList != null)
+                                            {
+                                                <ScheduleEditor_TVController @ref="tvEditScheduleEditor" Display="display"
+                                                                             AssetList="assetList"
+                                                                             ContentList="contentList"
+                                                                             ScheduleEvent="newScheduleEvent"
+                                                                             InitialClockData="currentEditAssignment"
+                                                                             HoverAssetId="hoverAssetId"
+                                                                             SaveButtonText="Save"
+                                                                             SaveButtonStyle=""
+                                                                             OpenTvSourceUploader="OpenTvSourceUploader"
+                                                                             OnAssetEdit="OpenTvSourceEditor"
+                                                                             OnAssetDelete="(assetId, locationId) => assetDeleteModal.Open(assetId, locationId)"
+                                                                             OnSaveScheduleEntry="SaveScheduleEntry" />
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+            </div>
+        </div>
+    </section>
+}
+
+<AssetDeleteConfirmation @ref="assetDeleteModal" OnAssetDeleted="ReloadAssetList">
+
+</AssetDeleteConfirmation>
+
+<ScheduleEntryDeleteConfirmation @ref="scheduleDeleteModal" OnScheduleEntryDeleted="OnScheduleEntryDeleted">
+
+</ScheduleEntryDeleteConfirmation>
+
+<TvSourceUploader @ref="tvSourceUploaderModal" OnSubmit="ReloadAssetList" />
+
+<!-- Content Preview Modal -->
+@if (showContentModal && selectedContentAssignment != null)
+{
+    <div class="dx-modal-overlay" @onclick="CloseContentModal">
+        <div class="dx-modal scp-modal" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5>Schedule Content Preview</h5>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="CloseContentModal"></button>
+            </div>
+            <div class="dx-modal-body">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                    @foreach (ContentItem asset in selectedContentAssignment.Content)
+                    {
+                        asset.Asset = assetList?.FirstOrDefault(x => x.AssetId == asset.AssetId);
+                        @if (asset?.Asset != null)
+                        {
+                            <div class="dx-card scp-item-row">
+                                <!-- Asset Thumbnail -->
+                                <div class="scp-thumb">
+                                    <AssetPreviewCard Asset="asset.Asset" Clickable="true" />
+                                </div>
+
+                                <!-- Asset Details -->
+                                <div class="scp-details">
+                                    <div class="scp-detail-grid">
+                                        <div class="scp-detail-cell">
+                                            <span class="scp-label">Type</span>
+                                            <span class="scp-value">@(GetAssetTypeName(asset.Asset.AssetTypeId))</span>
+                                        </div>
+                                        <div class="scp-detail-cell">
+                                            <span class="scp-label">Duration</span>
+                                            <span class="scp-value">@asset.Duration s</span>
+                                        </div>
+                                        <div class="scp-detail-cell">
+                                            <span class="scp-label">@(asset.Asset.AssetTypeId == (int)Types.AssetType.Web ? "URL" : "File")</span>
+                                            <span class="scp-value">@(asset.Asset.AssetTypeId == (int)Types.AssetType.Web ? GetDisplayUrl(asset.Asset.AssetPath) : System.IO.Path.GetFileName(asset.Asset.AssetPath))</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="dx-card dx-card-accent-red scp-item-row">
+                                <div class="scp-thumb scp-thumb-placeholder scp-thumb-missing">
+                                    <span class="scp-thumb-label-sm">Missing</span>
+                                </div>
+                                <div class="scp-details">
+                                    <div class="scp-missing-title">Missing Asset (ID: @asset.AssetId)</div>
+                                    <div class="scp-detail-grid" style="margin-top:6px;">
+                                        <div class="scp-detail-cell">
+                                            <span class="scp-label">Duration</span>
+                                            <span class="scp-value">@asset.Duration s</span>
+                                        </div>
+                                    </div>
+                                    <div class="scp-missing-hint">This asset may have been deleted or moved.</div>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+
+                @if (selectedContentAssignment.Content.Count == 0)
+                {
+                    <div class="dx-alert dx-alert-info" style="margin-top:0;">
+                        No content items assigned to this schedule.
+                    </div>
+                }
+                else
+                {
+                    <div class="scp-summary">
+                        @selectedContentAssignment.Content.Count content item@(selectedContentAssignment.Content.Count != 1 ? "s" : "") in this schedule entry
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button type="button" class="dx-btn dx-btn-gray" @onclick="CloseContentModal">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public int DisplayId { get; set; }
+
+    public TblDisplay? display { get; set; }
+
+    public IList<TblAsset>? assetList { get; set; }
+
+    public double scaleFactorHalf;
+
+    public bool isCreatingScheduleEvent = false;
+    public bool isRenamingDisplay = false;
+    private string newDisplayName = "";
+
+    private TvSourceUploader? tvSourceUploaderModal { get; set; }
+
+    // Component references for accessing clock data
+    private ScheduleEditor_TVController? tvScheduleEditor { get; set; }
+    private ScheduleEditor_TVController? tvEditScheduleEditor { get; set; }
+
+    private void OpenTvSourceUploader()
+    {
+        if (display != null)
+        {
+            tvSourceUploaderModal?.Open(display.LocationId, display.ConstraintId);
+        }
+    }
+
+    private void OpenTvSourceEditor(TblAsset asset)
+    {
+        tvSourceUploaderModal?.OpenForEdit(asset, display?.ConstraintId);
+    }
+    private AssetDeleteConfirmation? assetDeleteModal { get; set; }
+    private ScheduleEntryDeleteConfirmation? scheduleDeleteModal { get; set; }
+
+    private ContentAssignment? currentEditAssignment = null;
+
+    private DXSuite.Director.Components.DisplayTypes.StandardDisplay? schedulePreview;
+
+    List<ContentItem> contentList = new List<ContentItem>();
+
+    private TblScheduleEvent? newScheduleEvent;
+
+    private int? hoverAssetId = null;
+
+
+    private bool hasScheduleEvents = false;
+
+    // Content modal properties
+    private bool showContentModal = false;
+    private ContentAssignment? selectedContentAssignment;
+    private TblScheduleEvent? selectedScheduleEvent;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            display = await dbContext.TblDisplays
+                .Include(s => s.TblScheduleEvents)
+                .Include(d => d.Endpoint)
+                .Include(d => d.Location)
+                    .ThenInclude(l => l.LocationType)
+                .FirstOrDefaultAsync(x => x.DisplayId == DisplayId);
+            if(display != null)
+            {
+                // Non-TV displays belong on the tabbed schedule page
+                if (display.Location?.LocationType?.ComponentTypeName?.EndsWith(".TVController") != true)
+                {
+                    navMan.NavigateTo($"/schedule/{DisplayId}", replace: true);
+                    return;
+                }
+
+                assetList = await dbContext.TblAssets
+                    .Where(x => x.LocationId == display.LocationId
+                             && x.ConstraintId == display.ConstraintId
+                             && x.IsDeleted == false
+                             // Mask files are supporting artifacts — hide them from the schedule asset picker
+                             && (!display.UseVideoMask || !x.AssetPath.EndsWith("_mask.png")))
+                    .ToListAsync();
+
+                scaleFactorHalf = ScaleService.GetScaleFactor(display.DisplayWidth, display.DisplayHeight, "half");
+
+                ShowScheduleEvents();
+            }
+        }
+    }
+
+    private void ShowScheduleEvents()
+    {
+        if (display.TblScheduleEvents.Where(x => x.DefaultContent == false).Count() > 0)
+        {
+            hasScheduleEvents = true;
+        }
+        else
+        {
+            hasScheduleEvents = false;
+        }
+    }
+
+    private string GetStatusColor() => GetDisplayStatusText() switch
+    {
+        "Showing override content"  => "var(--dx-orange)",
+        "Showing scheduled content" => "var(--dx-green)",
+        "Showing default content"   => "var(--dx-blue)",
+        _                           => "var(--dx-gray)"
+    };
+
+    private string GetDisplayStatusText()
+    {
+        if (display == null) return "";
+        if (display.DisplayMode == 1) return "Showing override content";
+
+        var now = DateTime.Now;
+
+        foreach (var evt in display.TblScheduleEvents.Where(x => !x.DefaultContent))
+        {
+            // Date bounds are inclusive and compared by calendar date so the start and end days
+            // both count (matches the runtime evaluation in DisplayItem.GetActiveEvent).
+            if (evt.StartDate != null && now.Date < evt.StartDate.Value.Date) continue;
+            if (evt.EndDate != null && now.Date > evt.EndDate.Value.Date) continue;
+
+            // The time of day is deliberately not evaluated here. This runs in Blazor Server, so
+            // DateTime.Now is the Director host's clock, not the author's and not the display's,
+            // and a badge that is right only when a display happens to sit in the host's zone is
+            // worse than no badge: it is silently wrong in exactly the multi-zone case that matters.
+            // Date range and day of week stay, because they are unambiguous.
+
+            bool noDays = !evt.Sunday && !evt.Monday && !evt.Tuesday && !evt.Wednesday
+                          && !evt.Thursday && !evt.Friday && !evt.Saturday;
+            if (!noDays)
+            {
+                bool dayMatch = now.DayOfWeek switch
+                {
+                    DayOfWeek.Sunday    => evt.Sunday,
+                    DayOfWeek.Monday    => evt.Monday,
+                    DayOfWeek.Tuesday   => evt.Tuesday,
+                    DayOfWeek.Wednesday => evt.Wednesday,
+                    DayOfWeek.Thursday  => evt.Thursday,
+                    DayOfWeek.Friday    => evt.Friday,
+                    DayOfWeek.Saturday  => evt.Saturday,
+                    _                   => false
+                };
+                if (!dayMatch) continue;
+            }
+
+            return "Showing scheduled content";
+        }
+
+        var defaultEvent = display.TblScheduleEvents.FirstOrDefault(x => x.DefaultContent);
+        if (defaultEvent != null)
+        {
+            try
+            {
+                var ca = JsonConvert.DeserializeObject<ContentAssignment>(defaultEvent.ContentAssignment);
+                if (ca?.Content?.Any() == true) return "Showing default content";
+            }
+            catch { }
+        }
+
+        return "No content assigned";
+    }
+
+    private void CreateNewSchedule()
+    {
+        isCreatingScheduleEvent = !isCreatingScheduleEvent;
+
+
+        if(display != null && isCreatingScheduleEvent){
+            contentList = new List<ContentItem>();
+            currentEditAssignment = null;
+            newScheduleEvent = new TblScheduleEvent()
+            {
+                DisplayId = display.DisplayId,
+                ScheduleEventTypeId = 1
+            };
+        }
+        else
+        {
+            contentList = null;
+            newScheduleEvent = null;
+            currentEditAssignment = null;
+        }
+    }
+
+    private void RenameDisplay()
+    {
+        isRenamingDisplay = true;
+    }
+
+    private async Task SubmitNewDisplayName(string newDisplayName)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        if (display != null)
+        {
+            var existingDisplay = await dataContext.TblDisplays.FindAsync(DisplayId);
+
+            if (existingDisplay != null)
+            {
+                display.DisplayName = newDisplayName;
+                existingDisplay.DisplayName = newDisplayName;
+                await dataContext.SaveChangesAsync();
+            }
+            else
+            {
+                Logger.LogWarning("Display not found in the database");
+            }
+        }
+
+        isRenamingDisplay = false;
+        StateHasChanged();
+    }
+
+
+    private void CancelRenameDisplay()
+    {
+        isRenamingDisplay = false;
+    }
+
+    private async Task ReloadAssetList()
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            assetList = await dbContext.TblAssets.Where(x => x.LocationId == display.LocationId && x.ConstraintId == display.ConstraintId && x.IsDeleted == false).ToListAsync();
+        }
+        StateHasChanged();
+    }
+
+    private void EditScheduleEntry(TblScheduleEvent editEvent)
+    {
+        isCreatingScheduleEvent = false;
+        newScheduleEvent = editEvent;
+        ContentAssignment? editAssignment = JsonConvert.DeserializeObject<ContentAssignment?>(editEvent.ContentAssignment);
+        if(editAssignment != null){
+            contentList = editAssignment.Content;
+            currentEditAssignment = editAssignment;
+        }
+    }
+
+    private async Task OnScheduleEntryDeleted(int scheduleEventId)
+    {
+        await DeleteScheduleEntry(scheduleEventId);
+        StateHasChanged();
+    }
+
+    private async Task DeleteScheduleEntry(int scheduleEventId)
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            if (await scheduleEvents.DeleteEventAsync(scheduleEventId)) {
+                // LocationType must be re-included so the TVController route guard stays accurate after delete.
+                display = await dataContext.TblDisplays
+                    .Include(s => s.TblScheduleEvents)
+                    .Include(d => d.Endpoint)
+                    .Include(d => d.Location)
+                        .ThenInclude(l => l.LocationType)
+                    .FirstOrDefaultAsync(x => x.DisplayId == DisplayId);
+                if (schedulePreview != null)
+                {
+                    await schedulePreview.RefreshSchedule(display);
+                }
+            }
+
+        }
+        ShowScheduleEvents();
+    }
+
+    private async Task SaveScheduleEntry()
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            if(display != null && newScheduleEvent != null && contentList.Count > 0){
+
+                ContentAssignment contentAssignment = new ContentAssignment(contentList);
+
+                if (display.UseClock)
+                {
+                    try
+                    {
+                        ContentAssignment? clockData = newScheduleEvent.ScheduleEventId == 0
+                            ? tvScheduleEditor?.GetContentAssignmentWithClock()
+                            : tvEditScheduleEditor?.GetContentAssignmentWithClock();
+
+                        if (clockData != null)
+                        {
+                            contentAssignment.UseClock = clockData.UseClock;
+                            contentAssignment.ClockX = clockData.ClockX;
+                            contentAssignment.ClockY = clockData.ClockY;
+                            contentAssignment.ClockWidth = clockData.ClockWidth;
+                            contentAssignment.ClockHeight = clockData.ClockHeight;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.LogError(ex, "Error retrieving clock data");
+                    }
+                }
+
+                await scheduleEvents.SaveEventAsync(newScheduleEvent, JsonConvert.SerializeObject(contentAssignment, JsonSettings));
+
+                // Update .metadata files for all assets in this schedule event
+                await UpdateScheduleMetadataFilesAsync(dataContext, contentAssignment);
+
+                newScheduleEvent = null;
+                contentList = new List<ContentItem>();
+                // LocationType must be re-included so the TVController route guard stays accurate after save.
+                display = await dataContext.TblDisplays
+                    .Include(s => s.TblScheduleEvents)
+                    .Include(d => d.Endpoint)
+                    .Include(d => d.Location)
+                        .ThenInclude(l => l.LocationType)
+                    .FirstOrDefaultAsync(x => x.DisplayId == DisplayId);
+                if (schedulePreview != null)
+                {
+                    await schedulePreview.RefreshSchedule(display);
+                }
+                isCreatingScheduleEvent = false;
+                ShowScheduleEvents();
+            }
+        }
+    }
+
+    /// <summary>
+    /// Writes/updates .metadata sidecar files for all assets in a schedule content assignment.
+    /// For assets that appear in multiple schedule events, builds a JSON Schedule array.
+    /// </summary>
+    private async Task UpdateScheduleMetadataFilesAsync(IDirectorDBContext dataContext, ContentAssignment contentAssignment)
+    {
+        try
+        {
+            if (display == null) return;
+
+            var assetIds = contentAssignment.Content.Select(c => c.AssetId).Distinct().ToList();
+            if (assetIds.Count == 0) return;
+
+            var assets = await dataContext.TblAssets
+                .Where(a => assetIds.Contains(a.AssetId) && !a.IsDeleted)
+                .ToListAsync();
+
+            // Load all schedule events for this display to build composite Schedule arrays
+            var allEvents = await dataContext.TblScheduleEvents
+                .Where(e => e.DisplayId == display.DisplayId)
+                .ToListAsync();
+
+            var wwwroot = MediaPaths.GetRoot();
+
+            foreach (var asset in assets)
+            {
+                var diskPath = Path.Combine(wwwroot, asset.AssetPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+                if (!System.IO.File.Exists(diskPath)) continue;
+
+                var metadataPath = diskPath + ".metadata";
+
+                // Find all events that reference this asset
+                var eventsForAsset = allEvents
+                    .Where(e => !string.IsNullOrEmpty(e.ContentAssignment))
+                    .Where(e =>
+                    {
+                        try
+                        {
+                            var ca = JsonConvert.DeserializeObject<ContentAssignment>(e.ContentAssignment, JsonSettings);
+                            return ca?.Content?.Any(c => c.AssetId == asset.AssetId) == true;
+                        }
+                        catch { return false; }
+                    })
+                    .ToList();
+
+                // Build Schedule array from all events
+                var scheduleEntries = eventsForAsset.Select(e => new
+                {
+                    startDate = e.StartDate?.ToString("yyyy-MM-dd") ?? "",
+                    endDate = e.EndDate?.ToString("yyyy-MM-dd") ?? "",
+                    startTime = e.StartTime?.ToString("HH:mm:ss") ?? "",
+                    endTime = e.EndTime?.ToString("HH:mm:ss") ?? "",
+                    days = ConvertDayBoolsToArray(e)
+                }).ToList();
+
+                var scheduleJson = System.Text.Json.JsonSerializer.Serialize(scheduleEntries);
+
+                // Write metadata XML
+                WriteScheduleMetadataFile(metadataPath, asset.LocationId.ToString(), Path.GetFileName(diskPath), scheduleJson);
+
+                metadataCache.Invalidate(diskPath);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating schedule metadata files");
+        }
+    }
+
+    private static List<string> ConvertDayBoolsToArray(TblScheduleEvent evt)
+    {
+        var days = new List<string>();
+        if (evt.Monday) days.Add("Mo");
+        if (evt.Tuesday) days.Add("Tu");
+        if (evt.Wednesday) days.Add("We");
+        if (evt.Thursday) days.Add("Th");
+        if (evt.Friday) days.Add("Fr");
+        if (evt.Saturday) days.Add("Sa");
+        if (evt.Sunday) days.Add("Su");
+        return days;
+    }
+
+    private void WriteScheduleMetadataFile(string metadataPath, string locationId, string fileName, string scheduleJson)
+    {
+        try
+        {
+            System.Xml.XmlDocument doc;
+            System.Xml.XmlNode root;
+
+            if (System.IO.File.Exists(metadataPath))
+            {
+                doc = new System.Xml.XmlDocument();
+                doc.Load(metadataPath);
+                root = doc.SelectSingleNode("usermetadata") ?? doc.DocumentElement!;
+            }
+            else
+            {
+                doc = new System.Xml.XmlDocument();
+                var decl = doc.CreateXmlDeclaration("1.0", "utf-8", null);
+                doc.AppendChild(decl);
+                root = doc.CreateElement("usermetadata");
+                doc.AppendChild(root);
+            }
+
+            SetMetadataField(doc, root, "Location", "ovx_String", locationId);
+            SetMetadataField(doc, root, "FileName", "ovx_String", fileName);
+            SetMetadataField(doc, root, "Schedule", "ovx_Json", scheduleJson);
+
+            doc.Save(metadataPath);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error writing schedule metadata file {Path}", metadataPath);
+        }
+    }
+
+    private static void SetMetadataField(System.Xml.XmlDocument doc, System.Xml.XmlNode root, string name, string datatype, string value)
+    {
+        var existing = root.SelectSingleNode($"field[@name='{name}']");
+        if (existing != null)
+        {
+            existing.Attributes!["value"]!.Value = value;
+        }
+        else
+        {
+            var el = doc.CreateElement("field");
+            el.SetAttribute("name", name);
+            el.SetAttribute("datatype", datatype);
+            el.SetAttribute("value", value);
+            root.AppendChild(el);
+        }
+    }
+
+    private string GetDayString(TblScheduleEvent scheduleEvent){
+        StringBuilder result = new StringBuilder();
+        int totalDays = 0;
+        if(scheduleEvent.Sunday){
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Sunday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Monday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Monday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Tuesday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Tuesday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Wednesday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Wednesday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Thursday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Thursday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Friday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Friday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Saturday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Saturday) + ", ");
+            totalDays++;
+        }
+        if (totalDays == 7)
+            return "Daily";
+        else
+            return result.ToString().Trim().TrimEnd(',');
+    }
+
+    private bool HasAnyDaySelected(TblScheduleEvent scheduleEvent)
+    {
+        return scheduleEvent.Sunday || scheduleEvent.Monday || scheduleEvent.Tuesday ||
+               scheduleEvent.Wednesday || scheduleEvent.Thursday || scheduleEvent.Friday || scheduleEvent.Saturday;
+    }
+
+    private string GetContentSummary(TblScheduleEvent eventItem)
+    {
+        try
+        {
+            ContentAssignment? eventContentAssignment = JsonConvert.DeserializeObject<ContentAssignment>(eventItem.ContentAssignment);
+            if (eventContentAssignment != null && eventContentAssignment.Content.Any())
+            {
+                var count = eventContentAssignment.Content.Count;
+                return $"{count} content item{(count != 1 ? "s" : "")} assigned";
+            }
+            return "No content assigned";
+        }
+        catch
+        {
+            return "Content assignment error";
+        }
+    }
+
+    private void OpenContentModal(ContentAssignment contentAssignment, TblScheduleEvent scheduleEvent)
+    {
+        selectedContentAssignment = contentAssignment;
+        selectedScheduleEvent = scheduleEvent;
+        showContentModal = true;
+    }
+
+    private void CloseContentModal()
+    {
+        showContentModal = false;
+        selectedContentAssignment = null;
+        selectedScheduleEvent = null;
+    }
+
+    private string GetDisplayUrl(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            return uri.Host + (uri.PathAndQuery.Length > 1 ? uri.PathAndQuery : "");
+        }
+        catch
+        {
+            return url;
+        }
+    }
+
+    private string GetAssetTypeName(int assetTypeId)
+    {
+        return assetTypeId switch
+        {
+            (int)Types.AssetType.Image => "Image",
+            (int)Types.AssetType.Video => "Video",
+            (int)Types.AssetType.Web => "Web",
+            (int)Types.AssetType.Stream => "Stream",
+            _ => "Unknown"
+        };
+    }
+}
+
+<style>
+    /* Wrapper around the embedded editor when expanding an entry for edit */
+    .schedule-edit-wrap {
+        padding: 25px;
+    }
+
+    @@media (max-width: 768px) {
+        .schedule-edit-wrap {
+            padding: 10px;
+        }
+    }
+
+    /* Schedule entry card body: Content / Date Range / Time Range / Active Days */
+    .schedule-entry-grid {
+        display: grid;
+        grid-template-columns: 2fr 1fr 1fr 1fr;
+        gap: 25px;
+        align-items: start;
+    }
+
+    @@media (max-width: 900px) {
+        .schedule-entry-grid {
+            grid-template-columns: 1fr 1fr;
+        }
+    }
+
+    @@media (max-width: 560px) {
+        .schedule-entry-grid {
+            grid-template-columns: 1fr;
+            gap: 15px;
+        }
+    }
+
+    /* Schedule Content Preview modal */
+    .scp-modal {
+        width: 760px;
+        max-width: 92vw;
+    }
+
+    /* Content item row */
+    .scp-item-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 16px;
+    }
+
+    /* Thumbnail container */
+    .scp-thumb {
+        width: 120px;
+        height: 80px;
+        flex-shrink: 0;
+        border-radius: var(--dx-border-radius);
+        overflow: hidden;
+        border: 1px solid var(--dx-border-color);
+        background: var(--dx-bg-alt);
+    }
+
+    /* Placeholder thumbnails (missing) */
+    .scp-thumb-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        cursor: pointer;
+    }
+
+    .scp-thumb-missing { background: color-mix(in srgb, var(--dx-red) 10%, white); color: var(--dx-text-muted); cursor: default; }
+
+    .scp-thumb-label-sm {
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+    }
+
+    /* Details section */
+    .scp-details {
+        flex: 1;
+        min-width: 0;
+    }
+
+    .scp-detail-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 10px;
+    }
+
+    @@media (max-width: 500px) {
+        .scp-detail-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+
+    .scp-detail-cell {
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .scp-label {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.4px;
+        color: var(--dx-text-muted);
+        font-weight: 600;
+    }
+
+    .scp-value {
+        font-size: 13px;
+        color: var(--dx-text-primary);
+        font-weight: 600;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Missing asset */
+    .scp-missing-title {
+        font-size: 13px;
+        font-weight: 700;
+        color: var(--dx-red);
+        margin-bottom: 4px;
+    }
+
+    .scp-missing-hint {
+        font-size: 12px;
+        color: var(--dx-text-muted);
+        font-style: italic;
+        margin-top: 6px;
+    }
+
+    /* Summary bar */
+    .scp-summary {
+        margin-top: 14px;
+        padding: 10px 14px;
+        background: color-mix(in srgb, var(--dx-blue) 8%, white);
+        border: 1px solid color-mix(in srgb, var(--dx-blue) 20%, white);
+        border-radius: var(--dx-border-radius);
+        font-size: 13px;
+        font-weight: 600;
+        color: var(--dx-blue);
+    }
+</style>

@@ -1,0 +1,9 @@
+@page "/Sentinel/Configuration"
+@inject NavigationManager Navigation
+
+@code {
+    protected override void OnInitialized()
+    {
+        Navigation.NavigateTo("/Configuration", replace: true);
+    }
+}

@@ -1,0 +1,144 @@
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+
+<div class="modal @modalClass" tabindex="-1" role="dialog" style="display:@modalDisplay;">
+    <div class="modal-dialog modal-dialog-centered modal-lg" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title aam-title">@(actionType == "approve" ? "Approve Content" : "Decline Content")</h5>
+                <button type="button" class="btn-close" @onclick="Close"></button>
+            </div>
+            <div class="modal-body">
+                @if (assetName != null)
+                {
+                    <div class="aam-asset-name">@assetName</div>
+                }
+
+                @if (comments.Count > 0)
+                {
+                    <h6 class="appr-section-label">Discussion</h6>
+                    <div class="appr-comment-thread" style="margin-bottom: 12px;">
+                        @foreach (var comment in comments)
+                        {
+                            <div class="appr-comment-item">
+                                <span class="appr-comment-user">@comment.UserName</span>
+                                <span class="appr-comment-type-badge appr-ctb-@comment.CommentType">@comment.CommentType</span>
+                                <span class="appr-comment-timestamp">@comment.CreatedDate.ToString("MMM d, h:mm tt")</span>
+                                <div class="appr-comment-body">@comment.CommentText</div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <h6 class="appr-section-label" style="margin-top: 16px;">
+                    @(actionType == "approve" ? "Add a comment (optional)" : "Reason for declining (recommended)")
+                </h6>
+                <textarea class="dx-form-control" rows="3" maxlength="2000"
+                          placeholder="@(actionType == "approve" ? "Optional comment..." : "Explain why this content is being declined...")"
+                          @bind="commentText"></textarea>
+                <small class="form-text text-muted">@(commentText?.Length ?? 0) / 2000</small>
+            </div>
+            <div class="modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                @if (actionType == "approve")
+                {
+                    <button class="dx-btn dx-btn-green" @onclick="Confirm" disabled="@isProcessing">
+                        @(isProcessing ? "Approving..." : "Confirm Approve")
+                    </button>
+                }
+                else
+                {
+                    <button class="dx-btn dx-btn-red" @onclick="Confirm" disabled="@isProcessing">
+                        @(isProcessing ? "Declining..." : "Confirm Decline")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showBackdrop)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    [Parameter] public EventCallback<ApprovalActionModalResult> OnConfirm { get; set; }
+
+    private string modalDisplay = "none;";
+    private string modalClass = "";
+    private bool showBackdrop = false;
+    private bool isProcessing = false;
+
+    private string actionType = "approve";
+    private string? assetName;
+    private string? commentText;
+    private int queueEntryId;
+    private int userId;
+    private int groupId;
+    private int assetApprovalId;
+    private int? approvalRequestId;
+    private List<ApprovalCommentDto> comments = new();
+
+    public async Task Open(string action, string? assetName, int queueEntryId, int userId, int groupId,
+        int assetApprovalId, int? approvalRequestId, List<ApprovalCommentDto> comments)
+    {
+        this.actionType = action;
+        this.assetName = assetName;
+        this.queueEntryId = queueEntryId;
+        this.userId = userId;
+        this.groupId = groupId;
+        this.assetApprovalId = assetApprovalId;
+        this.approvalRequestId = approvalRequestId;
+        this.comments = comments;
+        this.commentText = null;
+        this.isProcessing = false;
+
+        modalDisplay = "block;";
+        modalClass = "show";
+        showBackdrop = true;
+        StateHasChanged();
+        await Task.CompletedTask;
+    }
+
+    public void Close()
+    {
+        modalDisplay = "none;";
+        modalClass = "";
+        showBackdrop = false;
+        StateHasChanged();
+    }
+
+    private async Task Confirm()
+    {
+        isProcessing = true;
+        StateHasChanged();
+
+        await OnConfirm.InvokeAsync(new ApprovalActionModalResult
+        {
+            QueueEntryId = queueEntryId,
+            UserId = userId,
+            GroupId = groupId,
+            AssetApprovalId = assetApprovalId,
+            ApprovalRequestId = approvalRequestId,
+            Notes = commentText,
+            ActionType = actionType
+        });
+
+        isProcessing = false;
+        Close();
+    }
+}
+
+<style>
+    .aam-title { font-family: var(--dx-font-family); }
+    .aam-asset-name {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 12px;
+        color: var(--dx-text-primary);
+        /* Filenames have no break points; without this a long name sets the
+           modal's intrinsic width and pushes it past narrow viewports */
+        overflow-wrap: anywhere;
+    }
+</style>

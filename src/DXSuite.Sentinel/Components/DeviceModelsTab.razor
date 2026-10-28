@@ -1,0 +1,1236 @@
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@inject ISentinelDBContext sentinelDb
+@inject ISessionState sessionState
+@inject ILogger<DeviceModelsTab> Logger
+
+<div class="tab-panel">
+    <div class="panel-header">
+        <h3>Device Models <DXSuite.Shared.Components.HelpLink Page="devices/device-models" Title="Device models help" /></h3>
+        <div class="device-controls">
+            <button class="dx-btn dx-btn-blue" @onclick="StartAddDeviceModel">ADD MODEL</button>
+        </div>
+    </div>
+    <div class="panel-content" style="padding: 16px;">
+
+        @if (!string.IsNullOrEmpty(dmMessage))
+        {
+            <div class="form-message @(dmMessageIsError ? "error" : "success")">@dmMessage</div>
+        }
+
+        @if (showDeviceModelForm)
+        {
+            <div class="dm-inline-form">
+                <h4>@(editingModel?.DescriptorId > 0 ? "Edit Device Model" : "New Device Model")</h4>
+
+                @* Section 1: Scope & Source *@
+                <div class="dm-form-section">
+                    <div class="dm-form-section-title">Scope &amp; Source</div>
+                    <div class="dm-form-row">
+                        <div class="dm-form-group">
+                            <label>Scope</label>
+                            <div class="dm-radio-group">
+                                <label class="dm-radio-label">
+                                    <input type="radio" name="dm-scope" value="make"
+                                           checked="@(editingModel?.Scope == "make")"
+                                           @onchange="@(() => OnScopeChanged("make"))" />
+                                    Make
+                                    <span class="dm-radio-hint">All models from this manufacturer</span>
+                                </label>
+                                <label class="dm-radio-label">
+                                    <input type="radio" name="dm-scope" value="make-model"
+                                           checked="@(editingModel?.Scope == "make-model")"
+                                           @onchange="@(() => OnScopeChanged("make-model"))" />
+                                    Make + Model
+                                    <span class="dm-radio-hint">A specific model</span>
+                                </label>
+                            </div>
+                        </div>
+                        @if (editingModel?.DescriptorId == 0)
+                        {
+                            <div class="dm-form-group">
+                                <label>Create from</label>
+                                <select class="dx-form-control" @bind="dmCreateSource">
+                                    <option value="scratch">From scratch</option>
+                                    <option value="discovered">From discovered devices</option>
+                                </select>
+                                @if (dmCreateSource == "discovered")
+                                {
+                                    <select class="dx-form-control" style="margin-top: 6px;" @onchange="OnDiscoveredSelected">
+                                        <option value="">— Select —</option>
+                                        @if (editingModel?.Scope == "make")
+                                        {
+                                            @foreach (var make in discoveredMakes)
+                                            {
+                                                <option value="@make">@make</option>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            @foreach (var mm in discoveredMakeModels)
+                                            {
+                                                <option value="@mm">@mm</option>
+                                            }
+                                        }
+                                    </select>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @* Section 2: Basic Info *@
+                <div class="dm-form-section">
+                    <div class="dm-form-section-title">Basic Info</div>
+                    <div class="dm-form-row">
+                        <div class="dm-form-group">
+                            <label>Manufacturer</label>
+                            <input class="dx-form-control" @bind="editingModel!.Manufacturer"
+                                   @bind:event="oninput" @bind:after="UpdateDisplayName" />
+                        </div>
+                        @if (editingModel?.Scope == "make-model")
+                        {
+                            <div class="dm-form-group">
+                                <label>Model</label>
+                                <input class="dx-form-control" @bind="editingModel!.Model"
+                                       @bind:event="oninput" @bind:after="UpdateDisplayName" />
+                            </div>
+                        }
+                        <div class="dm-form-group">
+                            <label>Display Name</label>
+                            <input class="dx-form-control" @bind="editingModel!.DisplayName" />
+                        </div>
+                        <div class="dm-form-group">
+                            <label>Category</label>
+                            <select class="dx-form-control" @bind="editingModel!.Category">
+                                <option value="display">Display</option>
+                                <option value="media-player">Media Player</option>
+                                <option value="video-wall">Video Wall</option>
+                                <option value="audio">Audio</option>
+                                <option value="controller">Controller</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                @* Section 3: Communication *@
+                <div class="dm-form-section">
+                    <div class="dm-form-section-title">Communication</div>
+                    <div class="dm-form-row">
+                        <div class="dm-form-group">
+                            <label>Protocol</label>
+                            <select class="dx-form-control" @bind="editingModel!.Protocol">
+                                <option value="tcp">TCP</option>
+                                <option value="tcp-rs232">TCP RS-232 (LG)</option>
+                                <option value="mdc">MDC (Samsung)</option>
+                                <option value="brightsign-dws">BrightSign DWS</option>
+                                <option value="udp">UDP</option>
+                                <option value="http">HTTP</option>
+                                <option value="https">HTTPS</option>
+                                <option value="http-heartbeat">HTTP Heartbeat</option>
+                                <option value="cec">CEC</option>
+                                <option value="rs232">RS-232</option>
+                                <option value="ssh">SSH</option>
+                                <option value="snmp">SNMP</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                        <div class="dm-form-group">
+                            <label>Default Port</label>
+                            <input type="number" class="dx-form-control" @bind="editingModel!.DefaultPort" />
+                        </div>
+                        <div class="dm-form-group">
+                            <label>Connection Type</label>
+                            <select class="dx-form-control" @bind="editingModel!.ConnectionType">
+                                <option value="on-demand">On-demand</option>
+                                <option value="persistent">Persistent</option>
+                            </select>
+                        </div>
+                        <div class="dm-form-group">
+                            <label>Authentication</label>
+                            <select class="dx-form-control" @bind="editingModel!.AuthType">
+                                <option value="none">None</option>
+                                <option value="basic">Basic</option>
+                                <option value="bearer">Bearer</option>
+                                <option value="api-key">API Key</option>
+                                <option value="custom">Custom</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                @* Section 4: Commands *@
+                <div class="dm-form-section">
+                    <div class="dm-form-section-title">Commands</div>
+                    <div class="dm-commands-table-wrapper">
+                        <table class="dm-commands-table">
+                            <thead>
+                                <tr>
+                                    <th>Abstract ID</th>
+                                    <th>Display Name</th>
+                                    <th>Category</th>
+                                    <th>Risk</th>
+                                    <th>Command String</th>
+                                    <th>Timeout</th>
+                                    <th>Approval</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (editingModel?.Commands != null)
+                                {
+                                    @for (int i = 0; i < editingModel.Commands.Count; i++)
+                                    {
+                                        var idx = i;
+                                        var cmd = editingModel.Commands[idx];
+                                        <tr>
+                                            <td>
+                                                <select class="dx-form-control form-control-sm" @bind="cmd.Id"
+                                                        @bind:after="() => OnCommandIdChanged(cmd)">
+                                                    <option value="">— Select —</option>
+                                                    <option value="reboot">reboot</option>
+                                                    <option value="power-on">power-on</option>
+                                                    <option value="power-off">power-off</option>
+                                                    <option value="power-cycle">power-cycle</option>
+                                                    <option value="input-switch">input-switch</option>
+                                                    <option value="volume-set">volume-set</option>
+                                                    <option value="volume-mute">volume-mute</option>
+                                                    <option value="display-on">display-on</option>
+                                                    <option value="display-off">display-off</option>
+                                                    <option value="brightness-set">brightness-set</option>
+                                                    <option value="factory-reset">factory-reset</option>
+                                                    <option value="firmware-update">firmware-update</option>
+                                                    <option value="screenshot">screenshot</option>
+                                                    <option value="app-restart">app-restart</option>
+                                                    <option value="clear-cache">clear-cache</option>
+                                                    <option value="custom">custom</option>
+                                                </select>
+                                            </td>
+                                            <td><input class="dx-form-control form-control-sm" @bind="cmd.Name" /></td>
+                                            <td>
+                                                <select class="dx-form-control form-control-sm" @bind="cmd.Category">
+                                                    <option value="power">Power</option>
+                                                    <option value="display">Display</option>
+                                                    <option value="audio">Audio</option>
+                                                    <option value="system">System</option>
+                                                    <option value="content">Content</option>
+                                                    <option value="diagnostics">Diagnostics</option>
+                                                </select>
+                                            </td>
+                                            <td>
+                                                <select class="dx-form-control form-control-sm" @bind="cmd.RiskLevel">
+                                                    <option value="low">Low</option>
+                                                    <option value="medium">Medium</option>
+                                                    <option value="high">High</option>
+                                                    <option value="critical">Critical</option>
+                                                </select>
+                                            </td>
+                                            <td><input class="dx-form-control form-control-sm" @bind="cmd.Command" placeholder="e.g. \x08\x22\x00..." /></td>
+                                            <td><input type="number" class="dx-form-control form-control-sm" style="width:80px" @bind="cmd.TimeoutMs" /></td>
+                                            <td style="text-align:center"><input type="checkbox" @bind="cmd.RequiresApproval" /></td>
+                                            <td><button class="dm-remove-btn" @onclick="() => RemoveCommand(idx)">×</button></td>
+                                        </tr>
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <button class="dx-btn dx-btn-gray" style="margin-top: 8px;" @onclick="AddCommand">+ Add Command</button>
+                </div>
+
+                @* Form Actions *@
+                <div class="dm-form-actions">
+                    @if (!string.IsNullOrEmpty(dmFormError))
+                    {
+                        <span class="dm-form-error">@dmFormError</span>
+                    }
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveDeviceModel" disabled="@dmIsSaving">
+                        @(dmIsSaving ? "Saving..." : "SAVE")
+                    </button>
+                    <button class="dx-btn dx-btn-gray" @onclick="CancelDeviceModelForm">CANCEL</button>
+                </div>
+            </div>
+        }
+
+        @if (showDeviceModelAssignment)
+        {
+            <div class="dm-inline-form" style="margin-top: 12px;">
+                <h4>Assign Devices: @assigningModel?.DisplayName</h4>
+                <p class="dm-assign-hint">
+                    @if (assigningModel?.Scope == "make")
+                    {
+                        <span>Showing devices with manufacturer "@assigningModel.Manufacturer".</span>
+                    }
+                    else
+                    {
+                        <span>Showing devices matching "@assigningModel?.Manufacturer @assigningModel?.Model".</span>
+                    }
+                </p>
+
+                @if (assignableDevices != null && assignableDevices.Any())
+                {
+                    <table class="dm-commands-table">
+                        <thead>
+                            <tr>
+                                <th style="width:40px"><input type="checkbox" @onchange="ToggleAllAssignments" /></th>
+                                <th>Device</th>
+                                <th>IP Address</th>
+                                <th>Current Model</th>
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var ad in assignableDevices)
+                            {
+                                <tr>
+                                    <td><input type="checkbox" @bind="ad.Selected" /></td>
+                                    <td>@ad.DisplayName</td>
+                                    <td>@ad.IpAddress</td>
+                                    <td>
+                                        @if (ad.CurrentDescriptorName != null)
+                                        {
+                                            <span class="dm-current-model">@ad.CurrentDescriptorName</span>
+                                        }
+                                        else
+                                        {
+                                            <em style="color: #999;">None</em>
+                                        }
+                                    </td>
+                                    <td>
+                                        @if (ad.HasMakeModelOverride)
+                                        {
+                                            <span class="dm-scope-badge dm-scope-makemodel" title="Has Make/Model assignment">Make/Model</span>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+
+                    <div class="dm-form-actions" style="margin-top: 10px;">
+                        <button class="dx-btn dx-btn-blue" @onclick="ApplyAssignments">ASSIGN SELECTED</button>
+                        <button class="dx-btn dx-btn-gray" @onclick="CloseAssignmentPanel">CLOSE</button>
+                    </div>
+                }
+                else
+                {
+                    <p style="color: #666; margin: 12px 0;">No matching devices found.</p>
+                    <button class="dx-btn dx-btn-gray" @onclick="CloseAssignmentPanel">CLOSE</button>
+                }
+            </div>
+        }
+
+        @* Device Models Grid *@
+        @if (!showDeviceModelForm)
+        {
+            @if (deviceModels == null)
+            {
+                <div style="text-align:center; padding: 40px;">
+                    <div class="dx-spinner" role="status" style="width: 2rem; height: 2rem;">
+                        <span class="visually-hidden">Loading...</span>
+                    </div>
+                </div>
+            }
+            else if (!deviceModels.Any())
+            {
+                <div style="text-align:center; padding: 40px; color: #666;">
+                    <h4>No device models</h4>
+                    <p>Create a device model to enable monitoring and control for a make or model.</p>
+                </div>
+            }
+            else
+            {
+                <div class="dm-grid-header">
+                    <div class="dm-col-scope">Scope</div>
+                    <div class="dm-col-name">Name</div>
+                    <div class="dm-col-mfr">Manufacturer</div>
+                    <div class="dm-col-cat">Category</div>
+                    <div class="dm-col-proto">Protocol</div>
+                    <div class="dm-col-cmds">Commands</div>
+                    <div class="dm-col-devices">Devices</div>
+                    <div class="dm-col-actions">Actions</div>
+                </div>
+                @foreach (var dm in deviceModels)
+                {
+                    <div class="dm-grid-row">
+                        <div class="dm-col-scope">
+                            <span class="dm-scope-badge @(dm.Scope == "make" ? "dm-scope-make" : "dm-scope-makemodel")">
+                                @(dm.Scope == "make" ? "Make" : "Make/Model")
+                            </span>
+                        </div>
+                        <div class="dm-col-name">@dm.DisplayName</div>
+                        <div class="dm-col-mfr">@dm.Manufacturer</div>
+                        <div class="dm-col-cat">@dm.Category</div>
+                        <div class="dm-col-proto">@dm.Protocol</div>
+                        <div class="dm-col-cmds">@dm.CommandCount</div>
+                        <div class="dm-col-devices">@dm.AssignedDeviceCount</div>
+                        <div class="dm-col-actions">
+                            <button class="dm-action-link" @onclick="() => StartEditDeviceModel(dm)">Edit</button>
+                            <button class="dm-action-link" @onclick="() => StartAssignDevices(dm)">Assign</button>
+                            <button class="dm-action-link dm-action-danger" @onclick="() => DeleteDeviceModel(dm)">Delete</button>
+                        </div>
+                    </div>
+                }
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private List<DeviceModelRow>? deviceModels;
+    private bool showDeviceModelForm = false;
+    private DeviceModelFormData? editingModel;
+    private string dmCreateSource = "scratch";
+    private bool dmIsSaving = false;
+    private string? dmFormError;
+    private string? dmMessage;
+    private bool dmMessageIsError = false;
+
+    private List<string> discoveredMakes = new();
+    private List<string> discoveredMakeModels = new();
+
+    private bool showDeviceModelAssignment = false;
+    private DeviceModelRow? assigningModel;
+    private List<AssignableDevice>? assignableDevices;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDeviceModels();
+    }
+
+    private async Task LoadDeviceModels()
+    {
+        try
+        {
+            var descriptors = await sentinelDb.DeviceDescriptors
+                .AsNoTracking()
+                .Include(d => d.DeviceDescriptorVersions)
+                .Include(d => d.DeviceInstances)
+                .Where(d => d.DeviceDescriptorVersions.Any())
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+
+            deviceModels = descriptors.Select(d =>
+            {
+                var activeVersion = d.DeviceDescriptorVersions
+                    .FirstOrDefault(v => v.IsActive) ?? d.DeviceDescriptorVersions.First();
+
+                DeviceDescriptorSchema? schema = null;
+                try { schema = JsonSerializer.Deserialize<DeviceDescriptorSchema>(activeVersion.DescriptorJson ?? "{}"); }
+                catch { }
+
+                var hasModel = !string.IsNullOrEmpty(d.DeviceType) && d.DeviceType.Contains('-') &&
+                               d.DeviceType != d.Manufacturer?.ToLower().Replace(" ", "-");
+
+                return new DeviceModelRow
+                {
+                    DescriptorId = d.DescriptorId,
+                    DisplayName = d.DisplayName ?? d.DeviceType,
+                    Manufacturer = d.Manufacturer ?? "",
+                    Category = d.Category ?? "",
+                    Scope = hasModel ? "make-model" : "make",
+                    Protocol = schema?.Communication?.Protocol ?? "",
+                    CommandCount = schema?.Commands?.Count ?? 0,
+                    AssignedDeviceCount = d.DeviceInstances?.Count(di => di.DescriptorVersionId != null) ?? 0,
+                    ActiveVersionId = activeVersion.VersionId,
+                    Model = hasModel ? ExtractModelFromDeviceType(d.DeviceType, d.Manufacturer) : ""
+                };
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading device models");
+            deviceModels = new();
+        }
+    }
+
+    private static string ExtractModelFromDeviceType(string deviceType, string? manufacturer)
+    {
+        if (string.IsNullOrEmpty(manufacturer)) return deviceType;
+        var prefix = manufacturer.ToLower().Replace(" ", "-") + "-";
+        return deviceType.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)
+            ? deviceType[prefix.Length..].Replace("-", " ").Trim()
+            : deviceType;
+    }
+
+    private async Task LoadDiscoveredDevices()
+    {
+        try
+        {
+            var instances = await sentinelDb.DeviceInstances
+                .AsNoTracking()
+                .Where(d => d.LastStateJson != null)
+                .Select(d => d.LastStateJson)
+                .ToListAsync();
+
+            var makes = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var makeModels = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var json in instances)
+            {
+                var state = ParseSentinelState(json);
+                var mfr = GetMonitorReadingValue(state, "device-manufacturer");
+                var model = GetMonitorReadingValue(state, "device-model");
+                if (!string.IsNullOrEmpty(mfr))
+                {
+                    makes.Add(mfr);
+                    if (!string.IsNullOrEmpty(model))
+                        makeModels.Add($"{mfr} | {model}");
+                }
+            }
+
+            discoveredMakes = makes.OrderBy(m => m).ToList();
+            discoveredMakeModels = makeModels.OrderBy(m => m).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading discovered devices");
+        }
+    }
+
+    // ── Form Operations ──
+
+    private async Task StartAddDeviceModel()
+    {
+        editingModel = new DeviceModelFormData();
+        dmCreateSource = "scratch";
+        dmFormError = null;
+        dmMessage = null;
+        showDeviceModelForm = true;
+        showDeviceModelAssignment = false;
+        await LoadDiscoveredDevices();
+    }
+
+    private async Task StartEditDeviceModel(DeviceModelRow row)
+    {
+        try
+        {
+            var version = await sentinelDb.DeviceDescriptorVersions
+                .FirstOrDefaultAsync(v => v.VersionId == row.ActiveVersionId);
+            if (version == null) return;
+
+            var descriptor = await sentinelDb.DeviceDescriptors
+                .FirstOrDefaultAsync(d => d.DescriptorId == row.DescriptorId);
+            if (descriptor == null) return;
+
+            DeviceDescriptorSchema? schema = null;
+            try { schema = JsonSerializer.Deserialize<DeviceDescriptorSchema>(version.DescriptorJson ?? "{}"); }
+            catch { }
+
+            editingModel = new DeviceModelFormData
+            {
+                DescriptorId = descriptor.DescriptorId,
+                Scope = row.Scope,
+                Manufacturer = descriptor.Manufacturer ?? "",
+                Model = row.Model ?? "",
+                DisplayName = descriptor.DisplayName ?? descriptor.DeviceType,
+                Category = descriptor.Category ?? "display",
+                Protocol = schema?.Communication?.Protocol ?? "tcp",
+                DefaultPort = schema?.Communication?.DefaultPort,
+                ConnectionType = schema?.Communication?.ConnectionType ?? "on-demand",
+                AuthType = schema?.Communication?.Authentication?.Type ?? "none",
+                AuthRequired = schema?.Communication?.Authentication?.Required ?? false,
+                Commands = schema?.Commands?.Select(c => new CommandFormRow
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    Category = c.Category,
+                    RiskLevel = c.RiskLevel,
+                    ProtocolOverride = c.Protocol,
+                    Command = c.Command,
+                    TimeoutMs = c.TimeoutMs,
+                    RequiresApproval = c.RequiresApproval
+                }).ToList() ?? new()
+            };
+
+            dmFormError = null;
+            dmMessage = null;
+            showDeviceModelForm = true;
+            showDeviceModelAssignment = false;
+            await LoadDiscoveredDevices();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading device model for edit");
+        }
+    }
+
+    private void CancelDeviceModelForm()
+    {
+        showDeviceModelForm = false;
+        editingModel = null;
+        dmFormError = null;
+    }
+
+    private void OnScopeChanged(string scope)
+    {
+        if (editingModel == null) return;
+        editingModel.Scope = scope;
+        UpdateDisplayName();
+    }
+
+    private void UpdateDisplayName()
+    {
+        if (editingModel == null) return;
+        editingModel.DisplayName = editingModel.Scope == "make"
+            ? editingModel.Manufacturer
+            : $"{editingModel.Manufacturer} {editingModel.Model}".Trim();
+    }
+
+    private void OnDiscoveredSelected(ChangeEventArgs e)
+    {
+        if (editingModel == null) return;
+        var val = e.Value?.ToString();
+        if (string.IsNullOrEmpty(val)) return;
+
+        if (editingModel.Scope == "make")
+        {
+            editingModel.Manufacturer = val;
+            editingModel.Model = "";
+        }
+        else
+        {
+            var parts = val.Split(" | ", 2);
+            editingModel.Manufacturer = parts[0];
+            editingModel.Model = parts.Length > 1 ? parts[1] : "";
+        }
+        UpdateDisplayName();
+    }
+
+    private void OnCommandIdChanged(CommandFormRow cmd)
+    {
+        if (string.IsNullOrEmpty(cmd.Name) || cmd.Name == cmd.Id)
+        {
+            cmd.Name = cmd.Id switch
+            {
+                "reboot" => "Reboot",
+                "power-on" => "Power On",
+                "power-off" => "Power Off",
+                "power-cycle" => "Power Cycle",
+                "input-switch" => "Input Switch",
+                "volume-set" => "Volume Set",
+                "volume-mute" => "Volume Mute",
+                "display-on" => "Display On",
+                "display-off" => "Display Off",
+                "brightness-set" => "Brightness Set",
+                "factory-reset" => "Factory Reset",
+                "firmware-update" => "Firmware Update",
+                "screenshot" => "Screenshot",
+                "app-restart" => "App Restart",
+                "clear-cache" => "Clear Cache",
+                _ => cmd.Id
+            };
+        }
+
+        // Auto-set category based on command ID
+        cmd.Category = cmd.Id switch
+        {
+            "reboot" or "power-on" or "power-off" or "power-cycle" => "power",
+            "display-on" or "display-off" or "brightness-set" or "input-switch" => "display",
+            "volume-set" or "volume-mute" => "audio",
+            "factory-reset" or "firmware-update" or "app-restart" or "clear-cache" => "system",
+            "screenshot" => "diagnostics",
+            _ => cmd.Category
+        };
+
+        // Auto-set risk level
+        cmd.RiskLevel = cmd.Id switch
+        {
+            "factory-reset" => "critical",
+            "firmware-update" => "high",
+            "reboot" or "power-cycle" => "medium",
+            _ => "low"
+        };
+
+        cmd.RequiresApproval = cmd.RiskLevel is "high" or "critical";
+    }
+
+    private void AddCommand()
+    {
+        editingModel?.Commands.Add(new CommandFormRow());
+    }
+
+    private void RemoveCommand(int index)
+    {
+        if (editingModel?.Commands != null && index >= 0 && index < editingModel.Commands.Count)
+            editingModel.Commands.RemoveAt(index);
+    }
+
+    // ── Save ──
+
+    private async Task SaveDeviceModel()
+    {
+        if (editingModel == null) return;
+        dmFormError = null;
+
+        if (string.IsNullOrWhiteSpace(editingModel.Manufacturer))
+        {
+            dmFormError = "Manufacturer is required.";
+            return;
+        }
+        if (editingModel.Scope == "make-model" && string.IsNullOrWhiteSpace(editingModel.Model))
+        {
+            dmFormError = "Model is required for Make/Model scope.";
+            return;
+        }
+
+        dmIsSaving = true;
+        try
+        {
+            var deviceType = editingModel.Scope == "make"
+                ? Slugify(editingModel.Manufacturer)
+                : Slugify($"{editingModel.Manufacturer}-{editingModel.Model}");
+
+            var schema = new DeviceDescriptorSchema
+            {
+                DescriptorVersion = "1.0",
+                DeviceType = deviceType,
+                DisplayName = editingModel.DisplayName,
+                Manufacturer = editingModel.Manufacturer,
+                Category = editingModel.Category,
+                Communication = new CommunicationConfig
+                {
+                    Protocol = editingModel.Protocol,
+                    DefaultPort = editingModel.DefaultPort,
+                    ConnectionType = editingModel.ConnectionType,
+                    Authentication = new DXSuite.Sentinel.Services.AuthenticationConfig
+                    {
+                        Type = editingModel.AuthType,
+                        Required = editingModel.AuthRequired
+                    }
+                },
+                Commands = editingModel.Commands.Where(c => !string.IsNullOrEmpty(c.Id)).Select(c => new CommandDefinition
+                {
+                    Id = c.Id,
+                    Name = c.Name,
+                    Category = c.Category,
+                    RiskLevel = c.RiskLevel,
+                    RequiresApproval = c.RequiresApproval,
+                    Protocol = c.ProtocolOverride,
+                    Command = c.Command,
+                    TimeoutMs = c.TimeoutMs
+                }).ToList(),
+                MonitorPoints = new(),
+                HealthRules = new()
+            };
+
+            var json = JsonSerializer.Serialize(schema);
+
+            if (editingModel.DescriptorId > 0)
+            {
+                // Update existing
+                var descriptor = await sentinelDb.DeviceDescriptors.FindAsync(editingModel.DescriptorId);
+                if (descriptor == null) { dmFormError = "Device Model not found."; return; }
+
+                descriptor.DeviceType = deviceType;
+                descriptor.DisplayName = editingModel.DisplayName;
+                descriptor.Manufacturer = editingModel.Manufacturer;
+                descriptor.Category = editingModel.Category;
+                descriptor.LastEditDate = DateTime.UtcNow;
+                descriptor.LastEditUser = sessionState?.User?.UserId.ToString();
+
+                var version = await sentinelDb.DeviceDescriptorVersions
+                    .FirstOrDefaultAsync(v => v.DescriptorId == descriptor.DescriptorId && v.IsActive);
+                if (version != null)
+                {
+                    version.DescriptorJson = json;
+                }
+            }
+            else
+            {
+                // Create new
+                var descriptor = new DeviceDescriptor
+                {
+                    DeviceType = deviceType,
+                    DisplayName = editingModel.DisplayName,
+                    Manufacturer = editingModel.Manufacturer,
+                    Category = editingModel.Category,
+                    CurrentVersion = "1.0",
+                    IsActive = true,
+                    CreateDate = DateTime.UtcNow
+                };
+                sentinelDb.DeviceDescriptors.Add(descriptor);
+                await sentinelDb.SaveChangesAsync();
+
+                var version = new DeviceDescriptorVersion
+                {
+                    DescriptorId = descriptor.DescriptorId,
+                    Version = "1.0",
+                    DescriptorJson = json,
+                    IsActive = true,
+                    PublishedAt = DateTime.UtcNow,
+                    CreateDate = DateTime.UtcNow,
+                    CreatedBy = sessionState?.User?.UserId.ToString() ?? "system"
+                };
+                sentinelDb.DeviceDescriptorVersions.Add(version);
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            showDeviceModelForm = false;
+            editingModel = null;
+            await LoadDeviceModels();
+            ShowMessage("Device Model saved successfully.", false);
+        }
+        catch (Exception ex)
+        {
+            dmFormError = $"Error saving: {ex.Message}";
+            Logger.LogError(ex, "Error saving device model");
+        }
+        finally
+        {
+            dmIsSaving = false;
+        }
+    }
+
+    private static string Slugify(string input) =>
+        Regex.Replace(input.ToLower().Trim(), @"[^a-z0-9]+", "-").Trim('-');
+
+    // ── Delete ──
+
+    private async Task DeleteDeviceModel(DeviceModelRow row)
+    {
+        try
+        {
+            var descriptor = await sentinelDb.DeviceDescriptors
+                .Include(d => d.DeviceDescriptorVersions)
+                .FirstOrDefaultAsync(d => d.DescriptorId == row.DescriptorId);
+            if (descriptor == null) return;
+
+            // Remove versions first
+            foreach (var v in descriptor.DeviceDescriptorVersions.ToList())
+                sentinelDb.DeviceDescriptorVersions.Remove(v);
+
+            // Clear DescriptorVersionId on assigned devices
+            var assignedDevices = await sentinelDb.DeviceInstances
+                .Where(d => d.DescriptorId == descriptor.DescriptorId && d.DescriptorVersionId != null)
+                .ToListAsync();
+            foreach (var d in assignedDevices)
+                d.DescriptorVersionId = null;
+
+            sentinelDb.DeviceDescriptors.Remove(descriptor);
+            await sentinelDb.SaveChangesAsync();
+
+            await LoadDeviceModels();
+            ShowMessage("Device Model deleted.", false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting device model");
+            ShowMessage($"Error deleting device model: {ex.Message}", true);
+        }
+    }
+
+    // ── Assignment ──
+
+    private async Task StartAssignDevices(DeviceModelRow row)
+    {
+        assigningModel = row;
+        showDeviceModelAssignment = true;
+        showDeviceModelForm = false;
+
+        try
+        {
+            var allInstances = await sentinelDb.DeviceInstances
+                .AsNoTracking()
+                .Include(d => d.DeviceDescriptor)
+                .Where(d => d.LastStateJson != null)
+                .ToListAsync();
+
+            assignableDevices = new();
+
+            foreach (var inst in allInstances)
+            {
+                var state = ParseSentinelState(inst.LastStateJson);
+                var mfr = GetMonitorReadingValue(state, "device-manufacturer");
+                var model = GetMonitorReadingValue(state, "device-model");
+
+                bool matches;
+                if (row.Scope == "make")
+                {
+                    matches = string.Equals(mfr, row.Manufacturer, StringComparison.OrdinalIgnoreCase);
+                }
+                else
+                {
+                    matches = string.Equals(mfr, row.Manufacturer, StringComparison.OrdinalIgnoreCase) &&
+                              !string.IsNullOrEmpty(model) &&
+                              model.Contains(row.Model ?? "", StringComparison.OrdinalIgnoreCase);
+                }
+
+                if (!matches) continue;
+
+                var alreadyAssigned = inst.DescriptorVersionId == row.ActiveVersionId;
+                var hasMakeModelOverride = inst.DescriptorVersionId != null &&
+                                           inst.DescriptorId != row.DescriptorId &&
+                                           row.Scope == "make";
+
+                assignableDevices.Add(new AssignableDevice
+                {
+                    DeviceInstanceId = inst.DeviceInstanceId,
+                    DisplayName = inst.DisplayName,
+                    IpAddress = inst.IpAddress,
+                    CurrentDescriptorName = inst.DeviceDescriptor?.DisplayName,
+                    Selected = alreadyAssigned,
+                    HasMakeModelOverride = hasMakeModelOverride
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading assignable devices");
+            assignableDevices = new();
+        }
+    }
+
+    private void ToggleAllAssignments(ChangeEventArgs e)
+    {
+        if (assignableDevices == null) return;
+        var selected = (bool)(e.Value ?? false);
+        foreach (var d in assignableDevices.Where(d => !d.HasMakeModelOverride))
+            d.Selected = selected;
+    }
+
+    private async Task ApplyAssignments()
+    {
+        if (assigningModel == null || assignableDevices == null) return;
+
+        try
+        {
+            var selectedIds = assignableDevices.Where(d => d.Selected).Select(d => d.DeviceInstanceId).ToHashSet();
+            var allMatchingIds = assignableDevices.Select(d => d.DeviceInstanceId).ToHashSet();
+
+            var instances = await sentinelDb.DeviceInstances
+                .Where(d => allMatchingIds.Contains(d.DeviceInstanceId))
+                .ToListAsync();
+
+            foreach (var inst in instances)
+            {
+                if (selectedIds.Contains(inst.DeviceInstanceId))
+                {
+                    inst.DescriptorId = assigningModel.DescriptorId;
+                    inst.DescriptorVersionId = assigningModel.ActiveVersionId;
+                }
+                else if (inst.DescriptorId == assigningModel.DescriptorId)
+                {
+                    // Unassign only if currently assigned to this model
+                    inst.DescriptorVersionId = null;
+                }
+                inst.LastEditDate = DateTime.UtcNow;
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            showDeviceModelAssignment = false;
+            assigningModel = null;
+            assignableDevices = null;
+            await LoadDeviceModels();
+            ShowMessage("Device assignments updated.", false);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error applying assignments");
+            ShowMessage($"Error applying assignments: {ex.Message}", true);
+        }
+    }
+
+    private void CloseAssignmentPanel()
+    {
+        showDeviceModelAssignment = false;
+        assigningModel = null;
+        assignableDevices = null;
+    }
+
+    // ── Helpers ──
+
+    private void ShowMessage(string message, bool isError)
+    {
+        dmMessage = message;
+        dmMessageIsError = isError;
+    }
+
+    private DeviceState? ParseSentinelState(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonSerializer.Deserialize<DeviceState>(json); }
+        catch { return null; }
+    }
+
+    private string? GetMonitorReadingValue(DeviceState? state, string monitorPointId)
+    {
+        if (state?.MonitorReadings == null) return null;
+        if (!state.MonitorReadings.TryGetValue(monitorPointId, out var reading)) return null;
+        var val = reading.Value?.ToString();
+        return string.IsNullOrEmpty(val) ? null : val;
+    }
+
+    // ── Supporting Classes ──
+
+    private class DeviceModelRow
+    {
+        public int DescriptorId { get; set; }
+        public string DisplayName { get; set; } = "";
+        public string Manufacturer { get; set; } = "";
+        public string Category { get; set; } = "";
+        public string Scope { get; set; } = "make-model";
+        public string Protocol { get; set; } = "";
+        public int CommandCount { get; set; }
+        public int AssignedDeviceCount { get; set; }
+        public int ActiveVersionId { get; set; }
+        public string? Model { get; set; }
+    }
+
+    private class DeviceModelFormData
+    {
+        public int DescriptorId { get; set; }
+        public string Scope { get; set; } = "make-model";
+        public string Manufacturer { get; set; } = "";
+        public string Model { get; set; } = "";
+        public string DisplayName { get; set; } = "";
+        public string Category { get; set; } = "display";
+        public string Protocol { get; set; } = "tcp";
+        public int? DefaultPort { get; set; }
+        public string ConnectionType { get; set; } = "on-demand";
+        public string AuthType { get; set; } = "none";
+        public bool AuthRequired { get; set; }
+        public List<CommandFormRow> Commands { get; set; } = new();
+    }
+
+    private class CommandFormRow
+    {
+        public string Id { get; set; } = "";
+        public string Name { get; set; } = "";
+        public string Category { get; set; } = "system";
+        public string RiskLevel { get; set; } = "low";
+        public string? ProtocolOverride { get; set; }
+        public string Command { get; set; } = "";
+        public int? TimeoutMs { get; set; }
+        public bool RequiresApproval { get; set; }
+    }
+
+    private class AssignableDevice
+    {
+        public int DeviceInstanceId { get; set; }
+        public string DisplayName { get; set; } = "";
+        public string? IpAddress { get; set; }
+        public string? CurrentDescriptorName { get; set; }
+        public bool Selected { get; set; }
+        public bool HasMakeModelOverride { get; set; }
+    }
+}
+
+<style>
+    .panel-header {
+        background-color: #CCCCCC;
+        color: #333333;
+        padding: 16px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .panel-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #333333;
+    }
+
+    .panel-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+    }
+
+    .form-message {
+        margin-bottom: 12px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .form-message.success { background: #e8f5e9; color: #2e7d32; }
+    .form-message.error { background: #ffebee; color: #c62828; }
+
+    .dm-grid-header, .dm-grid-row {
+        display: grid;
+        grid-template-columns: 100px 1fr 140px 110px 90px 80px 70px 160px;
+        gap: 0;
+        align-items: center;
+        padding: 10px 16px;
+    }
+    .dm-grid-header {
+        background: #f5f5f5;
+        font-weight: 600;
+        font-size: 0.85rem;
+        color: #555;
+        border-bottom: 2px solid #e0e0e0;
+        text-transform: uppercase;
+    }
+    .dm-grid-row {
+        border-bottom: 1px solid #eee;
+        font-size: 0.9rem;
+    }
+    .dm-grid-row:hover { background: #fafafa; }
+
+    /* Phones: rows collapse to scope + name + actions */
+    @@media (max-width: 768px) {
+        .dm-grid-header { display: none; }
+
+        .dm-grid-row {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 10px;
+        }
+
+        .dm-col-name { font-weight: 600; }
+
+        .dm-col-mfr, .dm-col-cat, .dm-col-proto, .dm-col-cmds, .dm-col-devices { display: none; }
+
+        .dm-col-actions {
+            flex-basis: 100%;
+            margin-top: 6px;
+        }
+    }
+
+    .dm-scope-badge {
+        display: inline-block;
+        padding: 2px 10px;
+        border-radius: 10px;
+        font-size: 0.78rem;
+        font-weight: 600;
+    }
+    .dm-scope-make { background: #e3f2fd; color: #1565c0; }
+    .dm-scope-makemodel { background: #e8f5e9; color: #2e7d32; }
+
+    .dm-action-link {
+        background: none;
+        border: none;
+        color: #0071BC;
+        cursor: pointer;
+        font-size: 0.85rem;
+        padding: 2px 6px;
+    }
+    .dm-action-link:hover { text-decoration: underline; }
+    .dm-action-danger { color: #c62828; }
+
+    .dm-inline-form {
+        background: #fafafa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 20px;
+        margin-bottom: 16px;
+    }
+    .dm-inline-form h4 {
+        margin: 0 0 16px 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+        color: #333;
+    }
+    .dm-form-section {
+        margin-bottom: 18px;
+    }
+    .dm-form-section-title {
+        font-weight: 600;
+        font-size: 0.9rem;
+        color: #555;
+        border-bottom: 1px solid #e0e0e0;
+        padding-bottom: 6px;
+        margin-bottom: 12px;
+    }
+    .dm-form-row {
+        display: flex;
+        gap: 16px;
+        flex-wrap: wrap;
+    }
+    .dm-form-group {
+        flex: 1;
+        min-width: 180px;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+    .dm-form-group label {
+        font-size: 0.82rem;
+        font-weight: 600;
+        color: #555;
+    }
+    .dm-radio-group {
+        display: flex;
+        gap: 20px;
+    }
+    .dm-radio-label {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.9rem;
+        cursor: pointer;
+    }
+    .dm-radio-hint {
+        font-size: 0.78rem;
+        color: #888;
+    }
+
+    .dm-commands-table-wrapper {
+        overflow-x: auto;
+    }
+    .dm-commands-table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 0.85rem;
+    }
+    .dm-commands-table th {
+        background: #f0f0f0;
+        padding: 8px;
+        text-align: left;
+        font-weight: 600;
+        font-size: 0.8rem;
+        color: #555;
+        border-bottom: 2px solid #ddd;
+    }
+    .dm-commands-table td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #eee;
+        vertical-align: middle;
+    }
+    .dm-commands-table .form-control-sm {
+        height: 30px;
+        font-size: 0.82rem;
+        padding: 2px 6px;
+    }
+    .dm-remove-btn {
+        background: none;
+        border: 1px solid #ddd;
+        border-radius: 4px;
+        color: #c62828;
+        cursor: pointer;
+        font-size: 1rem;
+        padding: 2px 8px;
+        line-height: 1;
+    }
+    .dm-remove-btn:hover { background: #ffebee; }
+
+    .dm-form-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        margin-top: 16px;
+    }
+    .dm-form-error {
+        color: #c62828;
+        font-size: 0.85rem;
+        margin-right: auto;
+    }
+    .dm-assign-hint {
+        font-size: 0.85rem;
+        color: #666;
+        margin: 0 0 12px 0;
+    }
+    .dm-current-model {
+        font-size: 0.82rem;
+        color: #555;
+    }
+</style>

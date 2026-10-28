@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_SearchUsers">
+    <value>Rechercher des utilisateurs</value>
+  </data>
+  <data name="Placeholder_StartTyping">
+    <value>Commencez à taper...</value>
+  </data>
+  <data name="Label_CurrentRole">
+    <value>Rôle actuel</value>
+  </data>
+  <data name="Label_SelectNewRole">
+    <value>Sélectionner un nouveau rôle</value>
+  </data>
+  <data name="Label_EnablePulse">
+    <value>Activer l'accès Pulse</value>
+  </data>
+  <data name="Label_CopyLocations">
+    <value>Copier les emplacements d'un autre utilisateur</value>
+  </data>
+  <data name="Placeholder_SelectCopyFrom">
+    <value>Sélectionner l'utilisateur source...</value>
+  </data>
+  <data name="Label_SearchLocations">
+    <value>Rechercher des emplacements</value>
+  </data>
+  <data name="Label_AssignedLocations">
+    <value>Emplacements assignés</value>
+  </data>
+  <data name="Label_SearchGroups">
+    <value>Rechercher des groupes</value>
+  </data>
+  <data name="Label_AssignedGroups">
+    <value>Groupes assignés</value>
+  </data>
+  <data name="Label_Airline">
+    <value>Compagnie aérienne</value>
+  </data>
+  <data name="Message_ErrorSavingLocation">
+    <value>Une erreur est survenue lors de l'enregistrement de l'emplacement.</value>
+  </data>
+  <data name="Message_BothUserAndLocationRequired">
+    <value>Un utilisateur et un emplacement doivent être sélectionnés.</value>
+  </data>
+  <data name="Message_ErrorRemovingLocation">
+    <value>Une erreur est survenue lors de la suppression de l'emplacement.</value>
+  </data>
+  <data name="Message_BothUsersRequired">
+    <value>Les deux utilisateurs doivent être sélectionnés.</value>
+  </data>
+  <data name="Message_ErrorCopyingLocations">
+    <value>Une erreur est survenue lors de la copie des emplacements.</value>
+  </data>
+</root>

@@ -1,0 +1,73 @@
+@inject ISessionState sessionState
+@inject DXSuite.Shared.Services.IUserPreferenceService userPreferenceService
+@inject NavigationManager Navigation
+@inject IJSRuntime JSRuntime
+
+<div class="language-switcher">
+    <select class="language-select" value="@currentLanguage" @onchange="OnLanguageChanged">
+        @foreach (var lang in supportedLanguages)
+        {
+            <option value="@lang.Code">@lang.DisplayName</option>
+        }
+    </select>
+</div>
+
+@code {
+    private string currentLanguage = "en";
+
+    private readonly List<(string Code, string DisplayName)> supportedLanguages = new()
+    {
+        ("en", "English"),
+        ("fr", "Français")
+    };
+
+    protected override void OnInitialized()
+    {
+        currentLanguage = sessionState.PreferredLanguage ?? "en";
+    }
+
+    private async Task OnLanguageChanged(ChangeEventArgs e)
+    {
+        var newLanguage = e.Value?.ToString() ?? "en";
+        if (newLanguage == currentLanguage) return;
+
+        currentLanguage = newLanguage;
+
+        if (sessionState.User != null)
+        {
+            await userPreferenceService.SavePreferredLanguageAsync(sessionState.User.UserId, newLanguage);
+            sessionState.PreferredLanguage = newLanguage;
+        }
+
+        await JSRuntime.InvokeVoidAsync("eval",
+            $"document.cookie='.AspNetCore.Culture=c={newLanguage}|uic={newLanguage};path=/;max-age=31536000'");
+
+        var uri = Navigation.Uri;
+        Navigation.NavigateTo(uri, forceLoad: true);
+    }
+}
+
+<style>
+    .language-switcher {
+        display: inline-flex;
+        align-items: center;
+        margin-left: 12px;
+    }
+    .language-select {
+        background: transparent;
+        color: inherit;
+        border: 1px solid rgba(0,0,0,0.2);
+        border-radius: 4px;
+        padding: 2px 6px;
+        font-size: 13px;
+        cursor: pointer;
+        outline: none;
+    }
+    .language-select:hover {
+        border-color: rgba(0,0,0,0.4);
+    }
+    .language-select option {
+        background: #fff;
+        color: #333;
+    }
+</style>

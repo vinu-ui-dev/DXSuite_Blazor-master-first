@@ -1,0 +1,378 @@
+@using DXSuite.Sentinel.Services.Pulse
+@using DXSuite.Shared.Multitenancy
+@inject PulseIssueLevelService levels
+@inject PulseGateway pulse
+@inject PulseReportingSettingsResolver settingsResolver
+@inject ITenantContext tenant
+@inject ISessionState sessionState
+@inject ILogger<PulseReportingTab> Logger
+
+<div class="dx-card dx-card-fill">
+    <div class="dx-panel-header">
+        <h4>Pulse Reporting</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(!IsDirty || isSaving)" @onclick="Discard">
+                Discard
+            </button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(!IsDirty || isSaving)" @onclick="SaveAsync">
+                Save
+            </button>
+        </div>
+    </div>
+
+    <div class="dx-panel-hint">
+        Choose the ErrorLevel each issue type is written to Pulse at, and the Pulse monitor item it is filed under.
+        A monitor point with no row of its own follows its severity default.
+    </div>
+
+    @if (configError is not null)
+    {
+        <div class="dx-alert dx-alert-danger dx-panel-alert"><i class="bi bi-x-octagon"></i><span>@configError</span></div>
+    }
+    else if (!reportingOn)
+    {
+        <div class="dx-alert dx-alert-info dx-panel-alert"><i class="bi bi-info-circle"></i><span>Pulse reporting is off. Changes apply once it is switched on.</span></div>
+    }
+    @if (itemsProblem is not null)
+    {
+        <div class="dx-alert dx-alert-warning dx-panel-alert"><i class="bi bi-exclamation-triangle"></i><span>@itemsProblem</span></div>
+    }
+    @if (message is not null)
+    {
+        <div class="dx-alert @(messageIsError ? "dx-alert-danger" : "dx-alert-success") dx-panel-alert">
+            <i class="bi @(messageIsError ? "bi-x-octagon" : "bi-check-circle")"></i><span>@message</span>
+        </div>
+    }
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table dx-collapse" style="border:none;">
+                <div class="dx-table-header dx-collapse-header" style="@GridStyle">
+                    <div>Issue type</div>
+                    <div>Severity</div>
+                    <div>Level</div>
+                    <div>Monitor item</div>
+                    <div></div>
+                </div>
+                @foreach (var group in PulseIssueCatalogue.Entries.GroupBy(e => e.Group))
+                {
+                    <div class="dx-table-group">@group.Key</div>
+                    @foreach (var entry in group)
+                    {
+                        var key = entry.Key;
+                        var choice = drafts[key];
+                        var inherited = PulseIssueLevelService.Resolve(key, OverridesExcept(key));
+                        var effective = PulseIssueLevelService.Resolve(key, OverridesExcept(null));
+                        <div class="dx-table-row dx-collapse-row" style="@GridStyle">
+                            <div class="dx-col-primary">@(entry.Group == PulseIssueCatalogue.GroupDefaults ? "Severity default" : entry.Label)</div>
+                            <div class="dx-text-muted">@SeverityLabel(key)</div>
+                            <div class="dx-col-break">
+                                <label class="dx-col-label">Level</label>
+                                <select class="dx-form-control dx-form-control-sm" aria-label="Level" value="@choice.Level" disabled="@isSaving"
+                                        @onchange="e => SetLevel(key, e.Value?.ToString())">
+                                    <option value="@PulseIssueLevelChoice.Inherit">Default (@LevelText(inherited.ErrorLevel))</option>
+                                    @for (byte level = PulseIssueLevelService.MinLevel; level <= PulseIssueLevelService.MaxLevel; level++)
+                                    {
+                                        <option value="@level">@LevelText(level)</option>
+                                    }
+                                    <option value="@PulseIssueLevelChoice.DoNotReportValue">Do not report</option>
+                                </select>
+                            </div>
+                            <div class="dx-col-break">
+                                <label class="dx-col-label">Monitor item</label>
+                                @if (ItemsEditable)
+                                {
+                                    <select class="dx-form-control dx-form-control-sm" aria-label="Monitor item" value="@choice.Item" disabled="@isSaving"
+                                            @onchange="e => SetItem(key, e.Value?.ToString())">
+                                        <option value="@PulseIssueLevelChoice.Inherit">Default (@ItemText(inherited.MonitorItemId))</option>
+                                        @if (choice.MonitorItemId is { } own && !selectableItems.Any(i => i.MonitorItemId == own))
+                                        {
+                                            <option value="@own">@ItemText(own)</option>
+                                        }
+                                        @foreach (var item in selectableItems)
+                                        {
+                                            <option value="@item.MonitorItemId">@ItemText(item.MonitorItemId)</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <select class="dx-form-control dx-form-control-sm" aria-label="Monitor item" disabled title="@(itemsProblem ?? "Loading Pulse monitor items")">
+                                        <option>@(choice.MonitorItemId is { } own ? ItemText(own) : $"Default ({ItemText(inherited.MonitorItemId)})")</option>
+                                    </select>
+                                }
+                                @foreach (var warning in ItemWarnings(effective))
+                                {
+                                    <div class="dx-form-hint dx-text-orange">
+                                        <i class="bi bi-exclamation-triangle"></i> @warning
+                                    </div>
+                                }
+                            </div>
+                            <div class="dx-col-actions dx-cell-actions">
+                                @if (choice != SavedChoice(key))
+                                {
+                                    <span class="dx-badge dx-badge-orange">Unsaved</span>
+                                }
+                                else if (saved.ContainsKey(key))
+                                {
+                                    <span class="dx-badge dx-badge-blue">Overridden</span>
+                                }
+                                @if (saved.ContainsKey(key))
+                                {
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isSaving"
+                                            title="Delete this override and return to the default"
+                                            @onclick="() => ResetAsync(entry)">Reset</button>
+                                }
+                            </div>
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+        <div class="dx-panel-footer">
+            @saved.Count of @PulseIssueCatalogue.Entries.Count issue types overridden
+        </div>
+    }
+</div>
+
+@code {
+    private const string GridStyle =
+        "grid-template-columns: minmax(120px, 1fr) 75px minmax(195px, 1fr) minmax(160px, 1.2fr) 130px;";
+
+    private readonly Dictionary<PulseIssueKey, SentinelPulseIssueLevel> saved = new();
+    private readonly Dictionary<PulseIssueKey, PulseIssueLevelChoice> drafts = new();
+
+    // All of Pulse's items, for validation; the select offers only those with an ItemTypeID.
+    private List<PulseMonitorItem>? pulseItems;
+    private List<PulseMonitorItem> selectableItems = new();
+
+    private bool reportingOn;
+    private string? configError;
+    private string? itemsProblem;
+    private string? message;
+    private bool messageIsError;
+    private bool isLoading = true;
+    private bool isSaving;
+
+    private bool ItemsEditable => pulseItems is not null;
+
+    private bool IsDirty => drafts.Any(d => d.Value != SavedChoice(d.Key));
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadReportingStatus();
+        await LoadOverridesAsync();
+        isLoading = false;
+        StateHasChanged();
+        await LoadItemsAsync();
+    }
+
+    private void ReadReportingStatus()
+    {
+        try
+        {
+            reportingOn = settingsResolver.Resolve(tenant.Subdomain).Settings.Enabled;
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The resolver only throws for a tenant that is switched on but cannot write.
+            reportingOn = true;
+            configError = ex.Message;
+        }
+    }
+
+    private async Task LoadOverridesAsync()
+    {
+        var overrides = await levels.LoadAsync();
+        saved.Clear();
+        drafts.Clear();
+        foreach (var entry in PulseIssueCatalogue.Entries)
+        {
+            if (overrides.Find(entry.Key) is { } row)
+                saved[entry.Key] = row;
+            drafts[entry.Key] = SavedChoice(entry.Key);
+        }
+    }
+
+    private async Task LoadItemsAsync()
+    {
+        var result = await pulse.ReadMonitorItemsAsync();
+        ApplyItems(result);
+    }
+
+    private void ApplyItems(PulseResult<IReadOnlyList<PulseMonitorItem>> result)
+    {
+        if (result.IsSuccess)
+        {
+            pulseItems = result.Value!.ToList();
+            selectableItems = pulseItems.Where(i => i.ItemTypeId is not null).ToList();
+            itemsProblem = null;
+            return;
+        }
+
+        Logger.LogWarning("Pulse Reporting tab could not read monitor items: {Outcome} {Error}", result.Outcome, result.Error);
+        pulseItems = null;
+        itemsProblem = result.Outcome == PulseOutcome.NotConfigured
+            ? "No Pulse connection is configured for this tenant, so monitor items cannot be changed. Level edits still save."
+            : "Pulse could not be reached, so monitor items cannot be changed. Level edits still save.";
+    }
+
+    private PulseIssueLevelChoice SavedChoice(PulseIssueKey key) =>
+        PulseIssueLevelChoice.FromRow(saved.GetValueOrDefault(key));
+
+    // The drafts as override rows, leaving one key out to show what it inherits.
+    private PulseIssueOverrides OverridesExcept(PulseIssueKey? excluded) =>
+        new(drafts.Where(d => d.Key != excluded)
+                  .Select(d => d.Value.ToRow(d.Key))
+                  .OfType<SentinelPulseIssueLevel>());
+
+    private void SetLevel(PulseIssueKey key, string? value)
+    {
+        drafts[key] = drafts[key] with { Level = value ?? PulseIssueLevelChoice.Inherit };
+        message = null;
+    }
+
+    private void SetItem(PulseIssueKey key, string? value)
+    {
+        drafts[key] = drafts[key] with { Item = value ?? PulseIssueLevelChoice.Inherit };
+        message = null;
+    }
+
+    private void Discard()
+    {
+        foreach (var entry in PulseIssueCatalogue.Entries)
+            drafts[entry.Key] = SavedChoice(entry.Key);
+        message = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        var dirty = PulseIssueCatalogue.Entries
+            .Where(e => drafts[e.Key] != SavedChoice(e.Key))
+            .ToDictionary(e => e.Key, e => drafts[e.Key]);
+        if (dirty.Count == 0) return;
+
+        isSaving = true;
+        message = null;
+        try
+        {
+            if (dirty.Values.Any(c => c.MonitorItemId is not null) || dirty.Any(d => d.Value.Item != SavedChoice(d.Key).Item))
+            {
+                var items = await pulse.ReadMonitorItemsAsync();
+                ApplyItems(items);
+                if (pulseItems is null)
+                {
+                    // Unchanged items were already accepted by Pulse, so only a changed one needs Pulse to confirm it.
+                    if (dirty.Any(d => d.Value.Item != SavedChoice(d.Key).Item))
+                    {
+                        ShowError("Pulse could not be reached to check the monitor items. Nothing was saved.");
+                        return;
+                    }
+                }
+                else
+                {
+                    var missing = PulseMonitorItems.MissingItems(dirty, pulseItems.Select(i => i.MonitorItemId).ToHashSet());
+                    if (missing.Count > 0)
+                    {
+                        ShowError("Nothing was saved. These rows name a monitor item Pulse does not have: "
+                                  + string.Join("; ", missing.Select(RowName)) + ".");
+                        return;
+                    }
+                }
+            }
+
+            foreach (var (key, choice) in dirty)
+                await levels.SaveAsync(key, choice.ErrorLevel, choice.DoNotReport, choice.MonitorItemId, sessionState.UserName);
+
+            await LoadOverridesAsync();
+            message = dirty.Count == 1 ? "Saved 1 issue type." : $"Saved {dirty.Count} issue types.";
+            messageIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Saving Pulse issue level overrides failed");
+            ShowError($"Saving failed: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ResetAsync(PulseCatalogueEntry entry)
+    {
+        isSaving = true;
+        message = null;
+        try
+        {
+            await levels.ResetAsync(entry.Key);
+            saved.Remove(entry.Key);
+            drafts[entry.Key] = PulseIssueLevelChoice.Default;
+            message = $"{RowName(entry.Key)} is back to its default.";
+            messageIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Resetting Pulse issue level {Key} failed", entry.Key);
+            ShowError($"Reset failed: {ex.Message}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private void ShowError(string text)
+    {
+        message = text;
+        messageIsError = true;
+    }
+
+    private IEnumerable<string> ItemWarnings(PulseIssueResolution effective)
+    {
+        if (!effective.IsReported) yield break;
+        var item = effective.MonitorItemId;
+        if (pulseItems is not null && pulseItems.All(i => i.MonitorItemId != item))
+            yield return $"Item {item} is not in Pulse. The publisher files these readings under {ItemText(PulseIssueCatalogue.DefaultMonitorItemId)}.";
+        if (PulseMonitorItems.AgentItemIds.Contains(item))
+            yield return $"Pulse agents also write item {item}. A live agent's newer reading will mask Sentinel's.";
+    }
+
+    private static string LevelText(byte? level) =>
+        level is { } l ? $"{PulseMonitorItems.LevelName(l)}, {l}" : "Do not report";
+
+    private string ItemText(int itemId)
+    {
+        var item = pulseItems?.FirstOrDefault(i => i.MonitorItemId == itemId);
+        var text = item is null && pulseItems is not null ? $"{itemId} (not in Pulse)"
+            : string.IsNullOrWhiteSpace(item?.Description) ? itemId.ToString()
+            : $"{itemId} {item.Description}";
+        return PulseMonitorItems.AgentItemIds.Contains(itemId) ? $"{text} (agent item)" : text;
+    }
+
+    private static string SeverityLabel(PulseIssueKey key) => key.Severity switch
+    {
+        PulseIssueKey.Warning => "Warning",
+        PulseIssueKey.Critical => "Critical",
+        _ => "",
+    };
+
+    private static string RowName(PulseIssueKey key)
+    {
+        var entry = PulseIssueCatalogue.Find(key)!;
+        return key.Kind switch
+        {
+            PulseIssueKind.MonitorPoint => $"{entry.Group}: {entry.Label} ({SeverityLabel(key)})",
+            PulseIssueKind.SeverityDefault => entry.Label,
+            _ when entry.Label == entry.Group => entry.Label,
+            _ => $"{entry.Group}: {entry.Label}",
+        };
+    }
+}

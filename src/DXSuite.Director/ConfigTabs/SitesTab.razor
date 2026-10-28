@@ -1,0 +1,227 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Multitenancy
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ITenantContext TenantContext
+@rendermode InteractiveServer
+
+@*
+    Where a device physically is. Optional everywhere: an airport has no use for it, and a service
+    network with ninety devices is unnavigable without it.
+
+    A site deliberately carries no time zone. That lives on the device, and nothing here derives one
+    from an address.
+*@
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Sites</h4>
+        <div class="dx-panel-controls">
+            <input @bind="searchFilter" @bind:event="oninput" class="dx-search-input" placeholder="Search sites..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="StartCreate">Add Site</button>
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadSites">Refresh</button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            @if (editing != null)
+            {
+                <div class="dx-card" style="padding:12px; margin-bottom:12px;">
+                    <h5 style="margin-top:0;">@(editing.SiteId == 0 ? "New site" : editing.SiteName)</h5>
+                    <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px;">
+                        <div>
+                            <label class="dx-form-label">Name</label>
+                            <input class="dx-form-control" @bind="editing.SiteName" maxlength="100" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">Address</label>
+                            <input class="dx-form-control" @bind="editing.Address1" maxlength="255" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">Address 2</label>
+                            <input class="dx-form-control" @bind="editing.Address2" maxlength="255" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">City</label>
+                            <input class="dx-form-control" @bind="editing.City" maxlength="100" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">State or province</label>
+                            <input class="dx-form-control" @bind="editing.StateProvince" maxlength="100" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">Postal code</label>
+                            <input class="dx-form-control" @bind="editing.PostalCode" maxlength="20" />
+                        </div>
+                        <div>
+                            <label class="dx-form-label">Country</label>
+                            <input class="dx-form-control" @bind="editing.Country" maxlength="100" />
+                        </div>
+                    </div>
+                    @if (!string.IsNullOrEmpty(error))
+                    {
+                        <div style="color:#b00020; font-size:0.85rem; margin-top:8px;">@error</div>
+                    }
+                    <div style="margin-top:10px; display:flex; gap:8px;">
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="Save">Save</button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => { editing = null; error = null; }">Cancel</button>
+                    </div>
+                </div>
+            }
+
+            @if (Filtered.Count == 0)
+            {
+                <div style="padding:16px; opacity:0.6;">No sites yet. A site records where a device physically is, and assigning one is optional.</div>
+            }
+            else
+            {
+                <div class="dx-table dx-sticky-first" style="min-width:max-content;">
+                    <div class="dx-table-header" style="@GridStyle">
+                        <div>Name</div>
+                        <div>City</div>
+                        <div>State</div>
+                        <div>Country</div>
+                        <div style="text-align:center;">Devices</div>
+                        <div></div>
+                    </div>
+                    @foreach (var site in Filtered)
+                    {
+                        <div class="dx-table-row" style="@GridStyle">
+                            <div class="dx-truncate" style="font-weight:600;">@site.SiteName</div>
+                            <div class="dx-truncate">@site.City</div>
+                            <div class="dx-truncate">@site.StateProvince</div>
+                            <div class="dx-truncate">@site.Country</div>
+                            <div style="text-align:center;">@deviceCounts.GetValueOrDefault(site.SiteId)</div>
+                            <div style="display:flex; gap:6px; justify-content:flex-end;">
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => StartEdit(site)">Edit</button>
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => Delete(site)">Delete</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private const string GridStyle = "grid-template-columns: 2fr 1.2fr 0.8fr 1fr 90px 160px;";
+
+    private List<TblSite> sites = new();
+    private Dictionary<int, int> deviceCounts = new();
+    private TblSite? editing;
+    private string searchFilter = "";
+    private string? error;
+    private bool isLoading = true;
+
+    private List<TblSite> Filtered => string.IsNullOrWhiteSpace(searchFilter)
+        ? sites
+        : sites.Where(s =>
+            (s.SiteName?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (s.City?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+            || (s.StateProvince?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false)).ToList();
+
+    protected override async Task OnInitializedAsync() => await LoadSites();
+
+    private async Task LoadSites()
+    {
+        isLoading = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            sites = await db.TblSites.AsNoTracking().OrderBy(s => s.SiteName).ToListAsync();
+            deviceCounts = await db.TblDevices
+                .Where(d => d.SiteId != null)
+                .GroupBy(d => d.SiteId!.Value)
+                .Select(g => new { SiteId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.SiteId, x => x.Count);
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void StartCreate()
+    {
+        error = null;
+        editing = new TblSite { CustomerId = TenantContext.CustomerCode, SiteName = "" };
+    }
+
+    private void StartEdit(TblSite site)
+    {
+        error = null;
+        editing = new TblSite
+        {
+            SiteId = site.SiteId,
+            CustomerId = site.CustomerId,
+            SiteName = site.SiteName,
+            Address1 = site.Address1,
+            Address2 = site.Address2,
+            City = site.City,
+            StateProvince = site.StateProvince,
+            PostalCode = site.PostalCode,
+            Country = site.Country
+        };
+    }
+
+    private async Task Save()
+    {
+        if (editing == null) return;
+
+        if (string.IsNullOrWhiteSpace(editing.SiteName))
+        {
+            error = "A site needs a name.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (editing.SiteId == 0)
+        {
+            db.TblSites.Add(editing);
+        }
+        else
+        {
+            var existing = await db.TblSites.FirstOrDefaultAsync(s => s.SiteId == editing.SiteId);
+            if (existing == null)
+            {
+                error = "That site no longer exists.";
+                return;
+            }
+
+            existing.SiteName = editing.SiteName;
+            existing.Address1 = editing.Address1;
+            existing.Address2 = editing.Address2;
+            existing.City = editing.City;
+            existing.StateProvince = editing.StateProvince;
+            existing.PostalCode = editing.PostalCode;
+            existing.Country = editing.Country;
+        }
+
+        await db.SaveChangesAsync();
+        editing = null;
+        error = null;
+        await LoadSites();
+    }
+
+    // Deleting a site never deletes players: the device keeps running and simply has no site.
+    private async Task Delete(TblSite site)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existing = await db.TblSites.FirstOrDefaultAsync(s => s.SiteId == site.SiteId);
+        if (existing != null)
+        {
+            db.TblSites.Remove(existing);
+            await db.SaveChangesAsync();
+        }
+
+        await LoadSites();
+    }
+}

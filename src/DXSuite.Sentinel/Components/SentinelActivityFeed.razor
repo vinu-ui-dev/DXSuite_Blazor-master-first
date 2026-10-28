@@ -1,0 +1,44 @@
+@using DXSuite.Sentinel.Entities
+
+<div class="sentinel-activity-feed">
+    <h3>Recent Activity</h3>
+    @if (RecentLogs == null || !RecentLogs.Any())
+    {
+        <p class="no-activity">No recent remediation activity.</p>
+    }
+    else
+    {
+        <div class="activity-list">
+            @foreach (var log in RecentLogs)
+            {
+                <div class="activity-item">
+                    <div class="activity-row">
+                        <div class="activity-timestamp">@log.CreateDate.ToString("MMM dd, HH:mm:ss")</div>
+                        <div class="activity-device">@(log.DeviceInstance?.DisplayName ?? $"Device #{log.DeviceInstanceId}")</div>
+                        <div class="activity-action">@(string.IsNullOrWhiteSpace(log.ActionTaken) ? "—" : log.ActionTaken)</div>
+                        <div class="activity-result @GetResultClass(log.Result)">@log.Result</div>
+                        <div class="activity-tier">Tier @log.Tier</div>
+                    </div>
+                    @if (!string.IsNullOrWhiteSpace(log.ResultDetails))
+                    {
+                        <div class="activity-detail">@log.ResultDetails</div>
+                    }
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public List<RemediationLog>? RecentLogs { get; set; }
+
+    private string GetResultClass(string result)
+    {
+        return result.ToLower() switch
+        {
+            "success" => "result-success",
+            "failed" or "failure" => "result-failed",
+            _ => "result-pending"
+        };
+    }
+}

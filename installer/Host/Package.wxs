@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  DXSuite Host (Blazor Server) on-premises installer.
+
+  Lays the published app into INSTALLFOLDER, creates an IIS application pool (No Managed
+  Code, integrated pipeline) and website bound to [SITE_PORT], then runs the bundled DB tool
+  to write appsettings.Production.json and bring the Director database to the current schema
+  via EF Core migrations.
+
+  This MSI is normally driven by the Burn bundle (bundle/Bundle.wxs), which installs the
+  .NET 10 ASP.NET Core Hosting Bundle, runs the setup wizard (which writes the config JSON
+  consumed here), then installs this package. Build: see README.md.
+-->
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs"
+     xmlns:iis="http://wixtoolset.org/schemas/v4/wxs/iis"
+     xmlns:util="http://wixtoolset.org/schemas/v4/wxs/util">
+
+  <?define SetupConfigPath = "C:\ProgramData\DXSuite\dxsuite-setup.json" ?>
+
+  <Package Name="DXSuite Host"
+           Manufacturer="Radiant Technology Group"
+           Version="26.3.0"
+           UpgradeCode="C7A2E4B1-9F3D-4E6A-8B12-2D4F6A8C0E11"
+           Scope="perMachine"
+           Compressed="yes">
+
+    <MajorUpgrade AllowSameVersionUpgrades="yes"
+                  DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+    <MediaTemplate EmbedCab="yes" />
+
+    <!-- IIS site identity. Overridable on the msiexec command line or by the bundle. -->
+    <Property Id="SITE_NAME" Value="DXSuite" />
+    <Property Id="SITE_PORT" Value="80" />
+    <Property Id="APP_POOL" Value="DXSuite" />
+
+    <!-- IIS must be present for the website/app-pool actions to succeed. -->
+    <Launch Condition="Installed OR (IISMAJORVERSION)"
+            Message="Internet Information Services (IIS) is required but was not detected. Install the IIS role and the ASP.NET Core Hosting Bundle, then run setup again." />
+
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="DXSuite">
+        <Directory Id="SetupDir" Name="setup" />
+        <Directory Id="DbScriptsDir" Name="db" />
+      </Directory>
+    </StandardDirectory>
+
+    <Feature Id="Main" Title="DXSuite Host" Level="1">
+      <ComponentGroupRef Id="HostFiles" />
+      <ComponentGroupRef Id="DbToolFiles" />
+      <ComponentRef Id="DbToolExeComponent" />
+      <ComponentRef Id="SeedScriptComponent" />
+      <ComponentRef Id="WebSiteComponent" />
+    </Feature>
+
+    <!-- After the app files are laid down, write appsettings and migrate the Director DB.
+         Runs elevated (deferred, no-impersonate). Static command line: the DB tool reads the
+         install folder + seed path from the config JSON, so no property substitution is
+         needed here. Only on fresh install / upgrade, never on uninstall. -->
+    <CustomAction Id="RunDbInstall"
+                  FileRef="DbToolExe"
+                  ExeCommand="install --config &quot;$(SetupConfigPath)&quot;"
+                  Execute="deferred"
+                  Impersonate="no"
+                  Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="RunDbInstall" After="InstallFiles" Condition="NOT Installed" />
+    </InstallExecuteSequence>
+  </Package>
+
+  <!-- App files: everything from the Host publish output. -->
+  <Fragment>
+    <ComponentGroup Id="HostFiles" Directory="INSTALLFOLDER">
+      <Files Include="$(var.HostPublishDir)**" />
+    </ComponentGroup>
+  </Fragment>
+
+  <!-- DB tool: harvested into setup\, with the main exe broken out so it can be referenced
+       by the custom action with a stable File id. -->
+  <Fragment>
+    <ComponentGroup Id="DbToolFiles" Directory="SetupDir">
+      <Files Include="$(var.DbToolPublishDir)**">
+        <Exclude Files="$(var.DbToolPublishDir)DXSuite.Host.DbTool.exe" />
+      </Files>
+    </ComponentGroup>
+
+    <Component Id="DbToolExeComponent" Directory="SetupDir">
+      <File Id="DbToolExe" Source="$(var.DbToolPublishDir)DXSuite.Host.DbTool.exe" KeyPath="yes" />
+    </Component>
+  </Fragment>
+
+  <!-- Seed script, located next to the app so the DB tool can find it at db\director-seed.sql. -->
+  <Fragment>
+    <Component Id="SeedScriptComponent" Directory="DbScriptsDir">
+      <File Id="DirectorSeedSql" Source="$(var.SeedScript)" Name="director-seed.sql" KeyPath="yes" />
+    </Component>
+  </Fragment>
+
+  <!-- IIS application pool + website pointed at the install folder. -->
+  <Fragment>
+    <Component Id="WebSiteComponent" Directory="INSTALLFOLDER">
+      <RegistryValue Root="HKLM" Key="Software\Radiant\DXSuite\Host" Name="WebSite"
+                     Type="integer" Value="1" KeyPath="yes" />
+
+      <!-- ASP.NET Core is hosted by the native ASP.NET Core Module, so the managed runtime
+           version is irrelevant; the default (v4.0) works. To run the pool as "No Managed
+           Code", set managedRuntimeVersion to empty post-install (appcmd / IIS Manager). -->
+      <iis:WebAppPool Id="DXSuiteAppPool" Name="[APP_POOL]"
+                      ManagedPipelineMode="integrated"
+                      Identity="applicationPoolIdentity" />
+
+      <iis:WebSite Id="DXSuiteWebSite" Description="[SITE_NAME]"
+                   Directory="INSTALLFOLDER"
+                   AutoStart="yes" StartOnInstall="yes" ConfigureIfExists="yes">
+        <iis:WebAddress Id="DXSuiteWebAddress" Port="[SITE_PORT]" />
+        <iis:WebApplication Id="DXSuiteWebApp" Name="[SITE_NAME]" WebAppPool="DXSuiteAppPool" />
+      </iis:WebSite>
+    </Component>
+  </Fragment>
+</Wix>

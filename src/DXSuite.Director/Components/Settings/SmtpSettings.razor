@@ -1,0 +1,199 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@inject IDirectorDBContext db
+@inject IEmailService emailService
+@inject ISessionState sessionState
+@inject IStringLocalizer<SmtpSettings> L
+@inject IStringLocalizer<SharedResources> LS
+@inject SmtpCredentialProtector _smtpProtector
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">@L["Header_EmailSmtp"]</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">@L["Label_SmtpDescription"]</p>
+
+    @if (!string.IsNullOrEmpty(saveMessage))
+    {
+        <div class="dx-alert @(saveMessageIsError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:500px; margin-bottom:16px;">
+            @saveMessage
+        </div>
+    }
+
+    <div style="max-width:500px;">
+        <div class="dx-form-group">
+            <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" class="dx-checkbox" @bind="smtpEnabled" />
+                @L["Label_EnableSmtp"]
+            </label>
+        </div>
+
+        @if (smtpEnabled)
+        {
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_SmtpHost"]</label>
+                <input type="text" class="dx-form-control" placeholder="@L["Placeholder_SmtpHost"]" @bind="smtpHost" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_Port"]</label>
+                <input type="number" class="dx-form-control" @bind="smtpPort" style="width:120px;" />
+            </div>
+            <div class="dx-form-group">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="smtpUseSsl" />
+                    @L["Label_UseSslTls"]
+                </label>
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_Username"]</label>
+                <input type="text" class="dx-form-control" placeholder="@L["Placeholder_Optional"]" @bind="smtpUsername" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_Password"]</label>
+                <input type="password" class="dx-form-control" placeholder="@L["Placeholder_Optional"]" @bind="smtpPassword" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_FromAddress"]</label>
+                <input type="email" class="dx-form-control" placeholder="@L["Placeholder_FromAddress"]" @bind="smtpFromAddress" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">@L["Label_FromName"]</label>
+                <input type="text" class="dx-form-control" placeholder="@L["Placeholder_FromName"]" @bind="smtpFromName" />
+            </div>
+
+            <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving" style="margin-bottom:20px;">
+                @(isSaving ? L["Label_Saving"] : LS["Button_Save"])
+            </button>
+
+            <div class="dx-form-group" style="margin-bottom:0;">
+                <label class="dx-form-label" style="font-size:0.8rem;">Test Email</label>
+                <div style="display:flex; gap:8px; align-items:center;">
+                    <input type="email" class="dx-form-control" placeholder="@L["Placeholder_TestRecipient"]" @bind="testEmailAddress"
+                           style="max-width:300px;" />
+                    <button class="dx-btn dx-btn-gray" @onclick="SendTestEmail"
+                            disabled="@(isSending || string.IsNullOrWhiteSpace(testEmailAddress))">
+                        @(isSending ? L["Label_Sending"] : L["Button_SendTestEmail"])
+                    </button>
+                </div>
+            </div>
+        }
+        else
+        {
+            <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">
+                @(isSaving ? L["Label_Saving"] : LS["Button_Save"])
+            </button>
+        }
+    </div>
+</div>
+
+@code {
+    private bool smtpEnabled;
+    private string smtpHost = "";
+    private int smtpPort = 587;
+    private bool smtpUseSsl = true;
+    private string smtpUsername = "";
+    private string smtpPassword = "";
+    private string smtpFromAddress = "";
+    private string smtpFromName = "Director";
+    private string? testEmailAddress;
+
+    private bool isSaving;
+    private bool isSending;
+    private string? saveMessage;
+    private bool saveMessageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = await db.TblSystemSettings
+            .AsNoTracking()
+            .Where(s => s.SettingKey.StartsWith("smtp:"))
+            .ToDictionaryAsync(s => s.SettingKey, s => s.SettingValue ?? "");
+
+        smtpEnabled = settings.GetValueOrDefault("smtp:enabled", "false").Equals("true", StringComparison.OrdinalIgnoreCase);
+        smtpHost = settings.GetValueOrDefault("smtp:host", "");
+        int.TryParse(settings.GetValueOrDefault("smtp:port", "587"), out smtpPort);
+        smtpUseSsl = settings.GetValueOrDefault("smtp:use-ssl", "true").Equals("true", StringComparison.OrdinalIgnoreCase);
+        smtpUsername = settings.GetValueOrDefault("smtp:username", "");
+        smtpPassword = _smtpProtector.Decrypt(settings.GetValueOrDefault("smtp:password", "")) ?? "";
+        smtpFromAddress = settings.GetValueOrDefault("smtp:from-address", "");
+        smtpFromName = settings.GetValueOrDefault("smtp:from-name", "DXSuite");
+
+        testEmailAddress = sessionState.User?.UserPrincipalName;
+    }
+
+    private async Task Save()
+    {
+        isSaving = true;
+        saveMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await UpsertSetting("smtp:enabled", smtpEnabled ? "true" : "false");
+            await UpsertSetting("smtp:host", smtpHost);
+            await UpsertSetting("smtp:port", smtpPort.ToString());
+            await UpsertSetting("smtp:use-ssl", smtpUseSsl ? "true" : "false");
+            await UpsertSetting("smtp:username", smtpUsername);
+            await UpsertSetting("smtp:password", _smtpProtector.Encrypt(smtpPassword) ?? "");
+            await UpsertSetting("smtp:from-address", smtpFromAddress);
+            await UpsertSetting("smtp:from-name", smtpFromName);
+
+            await db.SaveChangesAsync();
+
+            saveMessage = L["Label_SmtpSaved"];
+            saveMessageIsError = false;
+        }
+        catch (Exception ex)
+        {
+            saveMessage = $"Error: {ex.Message}";
+            saveMessageIsError = true;
+        }
+
+        isSaving = false;
+    }
+
+    private async Task UpsertSetting(string key, string value)
+    {
+        var existing = await db.TblSystemSettings.FindAsync(key);
+        if (existing != null)
+        {
+            existing.SettingValue = value;
+            existing.LastEditDate = DateTime.UtcNow;
+            existing.LastEditUser = "system";
+        }
+        else
+        {
+            db.TblSystemSettings.Add(new TblSystemSetting
+            {
+                SettingKey = key,
+                SettingValue = value,
+                LastEditDate = DateTime.UtcNow,
+                LastEditUser = "system"
+            });
+        }
+    }
+
+    private async Task SendTestEmail()
+    {
+        if (string.IsNullOrWhiteSpace(testEmailAddress)) return;
+
+        isSending = true;
+        saveMessage = null;
+        StateHasChanged();
+
+        try
+        {
+            await Save();
+            await emailService.SendAsync(testEmailAddress, "DXSuite — Test Email",
+                "<h2>SMTP Configuration Test</h2><p>This is a test email from DXSuite. If you see this, your SMTP configuration is working correctly.</p>");
+            saveMessage = $"Test email sent to {testEmailAddress}";
+            saveMessageIsError = false;
+        }
+        catch (Exception ex)
+        {
+            saveMessage = $"Send failed: {ex.Message}";
+            saveMessageIsError = true;
+        }
+
+        isSending = false;
+    }
+}

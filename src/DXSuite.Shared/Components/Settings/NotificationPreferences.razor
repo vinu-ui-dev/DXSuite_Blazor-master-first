@@ -1,0 +1,181 @@
+@inject ISessionState sessionState
+@inject IServiceScopeFactory scopeFactory
+@inject ILogger<NotificationPreferences> Logger
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">Notification Preferences</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">
+        Control which notification categories send email alerts. In-app notifications are always delivered.
+    </p>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:80px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else
+    {
+        @if (!smtpConfigured)
+        {
+            <div class="dx-alert dx-alert-warning" style="max-width:600px; margin-bottom:16px;">
+                <i class="bi bi-exclamation-triangle" style="margin-right:6px;"></i>
+                Email notifications require SMTP to be configured. Toggle preferences below to apply when SMTP is set up.
+            </div>
+        }
+
+        <div class="dx-settings-list">
+            <div class="dx-settings-list-header" style="grid-template-columns: 140px 1fr 60px;">
+                <div>Category</div>
+                <div>Description</div>
+                <div style="text-align:right;">Email</div>
+            </div>
+            @foreach (var cat in visibleCategories)
+            {
+                <div class="dx-settings-list-row" style="grid-template-columns: 140px 1fr 60px;">
+                    <div class="dx-settings-list-label">@cat.DisplayName</div>
+                    <div class="dx-settings-list-desc">@cat.Description</div>
+                    <div style="text-align:right;">
+                        <input type="checkbox" class="dx-checkbox"
+                               checked="@IsEmailEnabled(cat.Key)"
+                               @onchange="e => ToggleEmail(cat.Key, (bool)(e.Value ?? false))" />
+                    </div>
+                </div>
+            }
+        </div>
+
+        @if (!string.IsNullOrEmpty(statusMessage))
+        {
+            <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:640px; margin-top:8px;">
+                @statusMessage
+            </div>
+        }
+
+        <button class="dx-btn dx-btn-blue" style="margin-top:8px;" @onclick="SavePreferences" disabled="@saving">
+            @(saving ? "Saving..." : "Save")
+        </button>
+    }
+</div>
+
+@code {
+    private record NotificationCategory(string Key, string DisplayName, string Description, bool AdminOnly);
+
+    private static readonly NotificationCategory[] AllCategories =
+    [
+        new("approvals", "Approvals", "Content approval workflow notifications", false),
+        new("new-user", "New User Registrations", "Alerts when new users register and need role assignment", true),
+        new("schedule-expiring", "Schedule Expiring", "Warnings when scheduled content is about to expire", true),
+        new("api-key-expiring", "API Key Expiring", "Alerts when API keys are approaching expiration", true),
+        new("credential-expiring", "Credential Expiring", "Alerts when cloud connector credentials expire", true),
+        new("credential-auth-failure", "Credential Auth Failure", "Alerts when cloud connector authentication fails", true),
+    ];
+
+    private List<NotificationCategory> visibleCategories = new();
+    private Dictionary<string, bool> emailPreferences = new();
+    private string? statusMessage;
+    private bool statusIsError;
+    private bool isLoading = true;
+    private bool saving;
+    private bool smtpConfigured;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+            await sessionState.SessionLoaded.Task;
+
+        var isAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+        visibleCategories = AllCategories.Where(c => !c.AdminOnly || isAdmin).ToList();
+
+        // Check SMTP configuration
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var emailService = scope.ServiceProvider.GetService<IEmailService>();
+            smtpConfigured = emailService != null && await emailService.IsConfiguredAsync();
+        }
+        catch { smtpConfigured = false; }
+
+        await LoadPreferences();
+        isLoading = false;
+    }
+
+    private async Task LoadPreferences()
+    {
+        if (sessionState.User == null) return;
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DXSuite.Shared.Entities.Identity.IIdentityDbContext>();
+
+            var prefs = await db.TblUserNotificationPreferences
+                .Where(p => p.UserId == sessionState.User.UserId)
+                .ToListAsync();
+
+            emailPreferences = prefs.ToDictionary(p => p.Category, p => p.EmailEnabled);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load notification preferences");
+        }
+    }
+
+    private bool IsEmailEnabled(string category) =>
+        emailPreferences.TryGetValue(category, out var enabled) && enabled;
+
+    private void ToggleEmail(string category, bool enabled) =>
+        emailPreferences[category] = enabled;
+
+    private async Task SavePreferences()
+    {
+        if (sessionState.User == null) return;
+
+        saving = true;
+        statusMessage = null;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DXSuite.Shared.Entities.Identity.IIdentityDbContext>();
+
+            var existing = await db.TblUserNotificationPreferences
+                .Where(p => p.UserId == sessionState.User.UserId)
+                .ToListAsync();
+
+            foreach (var cat in visibleCategories)
+            {
+                var pref = existing.FirstOrDefault(p => p.Category == cat.Key);
+                var enabled = emailPreferences.GetValueOrDefault(cat.Key, false);
+
+                if (pref != null)
+                {
+                    pref.EmailEnabled = enabled;
+                    pref.LastEditDate = DateTime.UtcNow;
+                }
+                else
+                {
+                    db.TblUserNotificationPreferences.Add(new DXSuite.Shared.Entities.Identity.TblUserNotificationPreference
+                    {
+                        UserId = sessionState.User.UserId,
+                        Category = cat.Key,
+                        EmailEnabled = enabled,
+                        LastEditDate = DateTime.UtcNow,
+                    });
+                }
+            }
+
+            await db.SaveChangesAsync();
+            statusMessage = "Preferences saved.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save notification preferences");
+            statusMessage = "Failed to save preferences.";
+            statusIsError = true;
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

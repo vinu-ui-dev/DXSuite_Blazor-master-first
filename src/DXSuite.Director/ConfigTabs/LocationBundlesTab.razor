@@ -1,0 +1,364 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.LocationBundles
+@using DXSuite.Shared.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@inject ILocationBundleService BundleService
+@inject ILocationBundleImporter BundleImporter
+@inject ISessionState SessionState
+@inject ILogger<LocationBundlesTab> Logger
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden;">
+        <button class="dx-tab-btn @(activeSubTab == "bundles" ? "active" : "")"
+                @onclick="@(() => { activeSubTab = "bundles"; _ = LoadBundles(); })">Bundles</button>
+        <button class="dx-tab-btn @(activeSubTab == "upload" ? "active" : "")"
+                @onclick="@(() => activeSubTab = "upload")">Upload</button>
+        <button class="dx-tab-btn @(activeSubTab == "history" ? "active" : "")"
+                @onclick="@(() => { activeSubTab = "history"; _ = LoadHistory(); })">History</button>
+    </div>
+
+    @if (activeSubTab == "bundles")
+    {
+    <div class="dx-panel-header">
+        <h4>Location Bundles</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        <p class="dx-text-muted" style="margin-top:0;">
+            Uploaded bundles render at locations with the Custom or Custom Display type. Locations track the
+            current version unless pinned; setting an older version current rolls every tracking location back.
+        </p>
+
+        @if (isLoading)
+        {
+            <div class="dx-spinner"></div>
+        }
+        else if (bundles.Count == 0)
+        {
+            <p class="dx-text-muted">No bundles uploaded yet.</p>
+        }
+        else
+        {
+            @foreach (var info in bundles)
+            {
+                <div style="border:1px solid var(--dx-border-color); border-radius:var(--dx-border-radius); padding:12px 16px; margin-bottom:12px;">
+                    <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                        <strong>@info.Bundle.Name</strong>
+                        <code style="font-size:0.8em;">@info.Bundle.BundleKey</code>
+                        <span class="dx-text-muted">current: v@(info.Bundle.CurrentVersion)</span>
+                        <span class="dx-text-muted">
+                            @(info.ReferencedBy.Count == 0 ? "not assigned" : $"assigned to {info.ReferencedBy.Count} location(s)")
+                        </span>
+                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" style="margin-left:auto;"
+                                @onclick="() => ConfirmDeleteBundle(info)">Delete</button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(info.Bundle.Description))
+                    {
+                        <div class="dx-text-muted" style="margin-top:4px;">@info.Bundle.Description</div>
+                    }
+
+                    @if (info.ReferencedBy.Count > 0)
+                    {
+                        <div class="dx-text-muted" style="margin-top:6px; font-size:0.85em;">
+                            Locations: @string.Join(", ", info.ReferencedBy.Select(r => r.LocationName))
+                        </div>
+                    }
+
+                    <table class="lem-constraint-table" style="margin-top:10px;">
+                        <thead>
+                            <tr><th>Version</th><th>Uploaded</th><th>By</th><th>Files</th><th>Size</th><th></th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var v in info.Versions)
+                            {
+                                <tr>
+                                    <td>
+                                        @v.Version
+                                        @if (v.Version == info.Bundle.CurrentVersion)
+                                        {
+                                            <span class="dx-badge" style="margin-left:6px;">current</span>
+                                        }
+                                    </td>
+                                    <td>@v.UploadDate.ToString("yyyy-MM-dd HH:mm")</td>
+                                    <td>@v.UploadedBy</td>
+                                    <td>@v.FileCount</td>
+                                    <td>@FormatBytes(v.TotalSizeBytes)</td>
+                                    <td style="white-space:nowrap; text-align:right;">
+                                        @if (v.Version != info.Bundle.CurrentVersion)
+                                        {
+                                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                                    @onclick="() => SetCurrent(info.Bundle.BundleKey, v.Version)">Set Current</button>
+                                            <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                    @onclick="() => DeleteVersion(info.Bundle.BundleKey, v.Version)">Delete</button>
+                                        }
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+            }
+        }
+
+        @if (deleteTarget != null)
+        {
+            <div class="dx-modal-overlay">
+                <div class="dx-modal" style="max-width:480px;">
+                    <div class="dx-modal-header"><h5>Delete bundle "@deleteTarget.Bundle.Name"?</h5></div>
+                    <div class="dx-modal-body">
+                        @if (deleteTarget.ReferencedBy.Count > 0)
+                        {
+                            <p>This bundle is still assigned to the following locations and cannot be deleted:</p>
+                            <ul>
+                                @foreach (var r in deleteTarget.ReferencedBy)
+                                {
+                                    <li>@r.LocationName</li>
+                                }
+                            </ul>
+                        }
+                        else
+                        {
+                            <p>All @deleteTarget.Versions.Count version(s) and their stored files will be removed. This cannot be undone.</p>
+                        }
+                    </div>
+                    <div class="dx-modal-footer">
+                        <button class="dx-btn dx-btn-outline-secondary" @onclick="() => deleteTarget = null">Cancel</button>
+                        @if (deleteTarget.ReferencedBy.Count == 0)
+                        {
+                            <button class="dx-btn dx-btn-red" @onclick="DeleteBundleConfirmed">Delete</button>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        @if (!string.IsNullOrEmpty(operationError))
+        {
+            <div class="alert alert-danger" style="margin-top:12px;">@operationError</div>
+        }
+    </div>
+    }
+    else if (activeSubTab == "upload")
+    {
+    <div class="dx-panel-header">
+        <h4>Upload Bundle</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        <p class="dx-text-muted" style="margin-top:0;">
+            Upload a location bundle zip (manifest.json + HTML/JS/CSS). A new bundle key installs a new bundle;
+            an existing key with a new version updates it and makes the new version current. Versions are
+            immutable — re-uploading requires a version bump.
+        </p>
+
+        <InputFile OnChange="OnBundleSelected" accept=".zip" />
+
+        @if (isImporting)
+        {
+            <div class="dx-spinner" style="margin-top:12px;"></div>
+        }
+
+        @if (importResult != null)
+        {
+            @if (importResult.Success)
+            {
+                <div class="alert alert-success" style="margin-top:12px;">
+                    @(importResult.Action == "install" ? "Installed" : "Updated") <strong>@importResult.Name</strong>
+                    (@importResult.BundleKey) version @importResult.Version.
+                </div>
+            }
+            else
+            {
+                <div class="alert alert-danger" style="margin-top:12px;">
+                    <strong>Import failed:</strong>
+                    <ul style="margin:6px 0 0;">
+                        @foreach (var error in importResult.Errors)
+                        {
+                            <li>@error</li>
+                        }
+                    </ul>
+                </div>
+            }
+
+            @foreach (var warning in importResult.Warnings)
+            {
+                <div class="alert alert-warning" style="margin-top:8px;">@warning</div>
+            }
+        }
+
+        @if (!string.IsNullOrEmpty(importError))
+        {
+            <div class="alert alert-danger" style="margin-top:12px;">@importError</div>
+        }
+    </div>
+    }
+    else if (activeSubTab == "history")
+    {
+    <div class="dx-panel-header">
+        <h4>History</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        @if (isLoading)
+        {
+            <div class="dx-spinner"></div>
+        }
+        else if (history.Count == 0)
+        {
+            <p class="dx-text-muted">No bundle operations recorded.</p>
+        }
+        else
+        {
+            <table class="lem-constraint-table">
+                <thead>
+                    <tr><th>When</th><th>Bundle</th><th>Version</th><th>Action</th><th>Status</th><th>User</th><th>Details</th></tr>
+                </thead>
+                <tbody>
+                    @foreach (var h in history)
+                    {
+                        <tr>
+                            <td style="white-space:nowrap;">@h.StartedAt.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td><code>@h.BundleKey</code></td>
+                            <td>@h.Version</td>
+                            <td>@h.Action</td>
+                            <td>
+                                <span class="@(h.Status == "Success" ? "dx-text-success" : "dx-text-danger")">@h.Status</span>
+                            </td>
+                            <td>@h.InitiatedByUser</td>
+                            <td class="dx-text-muted">@h.Message</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+    </div>
+    }
+</div>
+
+@code {
+    private const long MaxUploadBytes = 200L * 1024 * 1024;
+
+    private string activeSubTab = "bundles";
+    private bool isLoading;
+    private bool isImporting;
+
+    private List<LocationBundleInfo> bundles = new();
+    private List<TblLocationBundleHistory> history = new();
+    private LocationBundleInfo? deleteTarget;
+
+    private LocationBundleImportResult? importResult;
+    private string? importError;
+    private string? operationError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadBundles();
+    }
+
+    private async Task LoadBundles()
+    {
+        isLoading = true;
+        operationError = null;
+        try
+        {
+            bundles = await BundleService.GetBundlesAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load location bundles");
+            operationError = "Failed to load bundles: " + ex.Message;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadHistory()
+    {
+        isLoading = true;
+        try
+        {
+            history = await BundleService.GetHistoryAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load location bundle history");
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnBundleSelected(InputFileChangeEventArgs e)
+    {
+        importResult = null;
+        importError = null;
+
+        var file = e.File;
+        if (file == null) return;
+
+        isImporting = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxUploadBytes);
+            importResult = await BundleImporter.ImportAsync(stream, SessionState.UserName);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Location bundle upload failed");
+            importError = "Upload failed: " + ex.Message;
+        }
+        finally
+        {
+            isImporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SetCurrent(string bundleKey, string version)
+    {
+        operationError = null;
+        var result = await BundleService.SetCurrentVersionAsync(bundleKey, version, SessionState.UserName);
+        if (!result.Success)
+            operationError = result.Error;
+        await LoadBundles();
+    }
+
+    private void ConfirmDeleteBundle(LocationBundleInfo info)
+    {
+        operationError = null;
+        deleteTarget = info;
+    }
+
+    private async Task DeleteBundleConfirmed()
+    {
+        if (deleteTarget == null) return;
+
+        var result = await BundleService.DeleteBundleAsync(deleteTarget.Bundle.BundleKey, SessionState.UserName);
+        deleteTarget = null;
+        if (!result.Success)
+            operationError = result.Error;
+        await LoadBundles();
+    }
+
+    private async Task DeleteVersion(string bundleKey, string version)
+    {
+        operationError = null;
+        var result = await BundleService.DeleteVersionAsync(bundleKey, version, SessionState.UserName);
+        if (!result.Success)
+            operationError = result.Error;
+        await LoadBundles();
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1024 * 1024 => $"{bytes / (1024.0 * 1024.0):0.#} MB",
+        >= 1024 => $"{bytes / 1024.0:0.#} KB",
+        _ => $"{bytes} B"
+    };
+}

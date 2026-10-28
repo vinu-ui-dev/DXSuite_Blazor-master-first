@@ -1,0 +1,1312 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using DXSuite.Connectors.Services.Connectors
+@using Microsoft.EntityFrameworkCore
+@inject IDirectorDBContext dbContext
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ILogger<LocationEditModal> Logger
+@inject IPublicationInvalidator publicationInvalidator
+
+<div class="lem-overlay">
+    <div class="lem-modal" @onclick:stopPropagation="true">
+        <div class="lem-header">
+            <h4>Edit Location</h4>
+            <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+        </div>
+
+        <div class="lem-body">
+            @if (!isOverrideContentLocation)
+            {
+            <div class="lem-field">
+                <label class="lem-label">Location Name</label>
+                <input type="text" class="form-control" @bind="locationName" />
+            </div>
+
+            <hr />
+            }
+
+            <h5 class="lem-section-title">Content Source</h5>
+            <p class="lem-hint">Controls the URL returned by the Signage API for external players.</p>
+
+            <div class="lem-field">
+                <label class="lem-label">Mode</label>
+                <select class="form-select" @bind="contentSourceMode">
+                    <option value="disabled">Disabled</option>
+                    <option value="ink">Ink (always use Ink CDN URL)</option>
+                    <option value="local">Local (always use Director URL)</option>
+                    <option value="failover">Failover (Ink when online, Director when offline)</option>
+                </select>
+            </div>
+
+            @if (contentSourceMode != "disabled")
+            {
+                <div class="lem-field">
+                    <label class="lem-label">Ink Connector</label>
+                    @if (inkConnectors == null)
+                    {
+                        <span class="text-muted">Loading...</span>
+                    }
+                    else if (inkConnectors.Count == 0)
+                    {
+                        <span class="text-warning">No enabled Ink connectors found</span>
+                    }
+                    else
+                    {
+                        <select class="form-select" @bind="selectedConnectorId">
+                            <option value="0">-- Select connector --</option>
+                            @foreach (var conn in inkConnectors)
+                            {
+                                <option value="@conn.ConnectorId">@conn.DisplayName</option>
+                            }
+                        </select>
+                    }
+                </div>
+            }
+
+            @if (!isOverrideContentLocation)
+            {
+            <hr />
+
+            <h5 class="lem-section-title">Content Tools</h5>
+            <p class="lem-hint">Controls which content creation tools are available to users at this location. Displays with their own Content Tools settings take precedence.</p>
+
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Media Upload</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="enableMediaUpload">
+                        <option value="">Default (On)</option>
+                        <option value="true">On</option>
+                        <option value="false">Off</option>
+                    </select>
+                </label>
+            </div>
+            @* Web links are content, not a display feature, so an Asset Library offers them too
+               even though it has no displays of its own. Stream stays display-only. *@
+            @if (Location.LocationType?.LinkedToDisplay == true || LocationTypeConstants.IsAssetLibrary(Location.LocationType))
+            {
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Web Content</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="enableWebContent">
+                        <option value="">Default (Off)</option>
+                        <option value="true">On</option>
+                        <option value="false">Off</option>
+                    </select>
+                </label>
+            </div>
+            }
+            @if (Location.LocationType?.LinkedToDisplay == true)
+            {
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Stream</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="enableStream">
+                        <option value="">Default (Off)</option>
+                        <option value="true">On</option>
+                        <option value="false">Off</option>
+                    </select>
+                </label>
+            </div>
+            }
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Create Media</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="enableCreateMedia">
+                        <option value="">Default (Off)</option>
+                        <option value="true">On</option>
+                        <option value="false">Off</option>
+                    </select>
+                </label>
+            </div>
+            @* Template Creator is not production-ready; restore this toggle when it ships
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Template Creator</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="enableTemplateCreator">
+                        <option value="">Default (Off)</option>
+                        <option value="true">On</option>
+                        <option value="false">Off</option>
+                    </select>
+                </label>
+            </div>
+            *@
+            @if (Location.LocationType?.LinkedToDisplay == true)
+            {
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px;">
+                    <span style="min-width: 140px;">Schedule Slot Mode</span>
+                    <select class="form-select form-select-sm" style="width: auto;" @bind="singleAssetMode">
+                        <option value="">Default (Multiple)</option>
+                        <option value="true">Single asset per slot</option>
+                        <option value="false">Multiple assets per slot</option>
+                    </select>
+                </label>
+                <p class="lem-hint">Single asset: dragging a second asset into a schedule slot replaces the first. Displays with their own slot mode take precedence.</p>
+            </div>
+            }
+            @if (Location.LocationType?.LocationTypeName == "VideoWall")
+            {
+            <div class="lem-field">
+                <label class="lem-label">Wall transitions</label>
+                <select class="form-select" @bind="wallTransitionMode">
+                    <option value="standard">Standard (refresh on change)</option>
+                    <option value="synchronized">Synchronized (all outputs cut together)</option>
+                </select>
+                <p class="lem-hint">Synchronized holds content changes until an exact activation moment so every output flips at once. It briefly works with old and new content at the same time, so keep walls that decode heavy background video in the browser on Standard.</p>
+            </div>
+            }
+            @if (Location.LocationType?.LocationTypeName == "Playlist")
+            {
+            <div class="lem-field lem-field-split">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="showShuffleButton" />
+                    <span>Show Shuffle button to users</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+                    <label class="dx-toggle">
+                        <input type="checkbox" checked="@shuffleEnabled" @onchange="@(() => shuffleEnabled = !shuffleEnabled)" />
+                        <span class="dx-toggle-slider"></span>
+                    </label>
+                    <span>Shuffle @(shuffleEnabled ? "On" : "Off")</span>
+                </label>
+            </div>
+            <div class="lem-field lem-field-split">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="showFadeButton" />
+                    <span>Show Fade button to users</span>
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+                    <label class="dx-toggle">
+                        <input type="checkbox" checked="@fadeEnabled" @onchange="@(() => fadeEnabled = !fadeEnabled)" />
+                        <span class="dx-toggle-slider"></span>
+                    </label>
+                    <span>Fade @(fadeEnabled ? "On" : "Off")</span>
+                </label>
+            </div>
+            <div class="lem-field">
+                <label class="lem-label">Image duration (seconds)</label>
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <input type="number" class="form-control form-control-sm" style="width:100px;"
+                           @bind="imageDurationSeconds" placeholder="7" min="1" />
+                    <span class="text-muted small">How long each image displays. Leave blank to use the default (7s).</span>
+                </div>
+            </div>
+            }
+
+            <div class="lem-field">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="showRepublishButton" />
+                    <span>Show Republish Content button (Engage players only)</span>
+                </label>
+            </div>
+
+            <div class="lem-field">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="showLiveView" />
+                    <span>Show live player view (Engage players that report playback)</span>
+                </label>
+            </div>
+
+            @if (Location.LocationType?.LinkedToDisplay == false && Location.LocationType?.LocationTypeName != "Override Content")
+            {
+            <hr />
+            <h5 class="lem-section-title">Video Encoding</h5>
+            <p class="lem-hint">Controls whether uploaded videos are checked against encoding thresholds and offered for re-encoding.</p>
+
+            <div class="lem-field">
+                <label class="lem-label">Mode</label>
+                <select class="form-select" @bind="playlistEncodingMode">
+                    <option value="off">Off — no encoding check (default)</option>
+                    <option value="manual">Manual — apply profiles below to all uploads</option>
+                    <option value="lcd">Lowest Common Denominator — use least capable connected device</option>
+                    <option value="best-effort">Best Effort Per Device — encode per device type (future)</option>
+                </select>
+            </div>
+
+            @if (playlistEncodingMode is "lcd" or "best-effort")
+            {
+                <div class="lem-field">
+                    <label class="lem-label">Fallback bitrate</label>
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <input type="number" class="form-control form-control-sm" style="width:120px;"
+                               @bind="encodingFallbackBitrateKbps" placeholder="No fallback" min="100" />
+                        <span class="text-muted small">Kbps — used when no device info is available</span>
+                    </div>
+                </div>
+            }
+
+            @if (playlistEncodingMode == "manual")
+            {
+                <div class="lem-field" style="flex-direction:column; align-items:stretch;">
+                    <EncodingProfileEditor Profiles="locationEncProfiles" ProfilesChanged="@(p => locationEncProfiles = p)" />
+                </div>
+            }
+            } @* end LinkedToDisplay == false *@
+            } @* end !isOverrideContentLocation *@
+
+            @if (assetLibraryConstraint != null)
+            {
+            <hr />
+
+            <h5 class="lem-section-title">Asset Library Resolution</h5>
+            <p class="lem-hint">Resolution constraint for assets uploaded to this library.</p>
+
+            <div style="display:flex; gap:8px; align-items:end; margin-bottom:12px;">
+                <div>
+                    <label class="lem-label">Width</label>
+                    <input type="number" class="form-control form-control-sm" style="width:90px" @bind="alResWidth" min="1" />
+                </div>
+                <div>
+                    <label class="lem-label">Height</label>
+                    <input type="number" class="form-control form-control-sm" style="width:90px" @bind="alResHeight" min="1" />
+                </div>
+                <div>
+                    <label class="lem-label">Mode</label>
+                    <select class="form-select form-select-sm" style="width:130px" @bind="alResMode">
+                        <option value="aspect-ratio">Aspect Ratio</option>
+                        <option value="exact">Exact Match</option>
+                    </select>
+                </div>
+            </div>
+
+            <div class="lem-field">
+                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                    <input type="checkbox" @bind="useVideoMask" />
+                    <span>Video Mask</span>
+                </label>
+                <p class="lem-hint" style="margin-top:4px;">
+                    Generate a grayscale alpha mask alongside each uploaded image. Used with Pixera to float content over video layers.
+                </p>
+            </div>
+            }
+
+            @if (Location.LocationType?.LinkedToDisplay == true)
+            {
+            <hr />
+
+            <h5 class="lem-section-title">Display Constraints</h5>
+            <p class="lem-hint">Create named content groups with resolution requirements. Assign to displays to control which assets appear in each display's schedule.</p>
+
+            @if (locationConstraints != null && locationConstraints.Count > 0)
+            {
+                <table class="lem-constraint-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Resolution</th>
+                            <th>Mode</th>
+                            <th>Tools</th>
+                            <th></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var c in locationConstraints)
+                        {
+                            @if (editingConstraintId == c.ConstraintId)
+                            {
+                                <tr>
+                                    <td><input type="text" class="form-control form-control-sm" @bind="editConstraintName" maxlength="50" /></td>
+                                    <td style="display:flex; gap:4px; align-items:center;">
+                                        <input type="number" class="form-control form-control-sm" style="width:70px" @bind="editConstraintWidth" min="1" />
+                                        <span>&times;</span>
+                                        <input type="number" class="form-control form-control-sm" style="width:70px" @bind="editConstraintHeight" min="1" />
+                                    </td>
+                                    <td>
+                                        <select class="form-select form-select-sm" @bind="editConstraintMode">
+                                            <option value="aspect-ratio">Aspect Ratio</option>
+                                            <option value="exact">Exact Match</option>
+                                        </select>
+                                    </td>
+                                    <td colspan="2" style="white-space:nowrap">
+                                        <button class="dx-btn dx-btn-sm dx-btn-blue" @onclick="SaveEditConstraint">Save</button>
+                                        <button class="dx-btn dx-btn-sm dx-btn-outline-secondary" @onclick="CancelEditConstraint">Cancel</button>
+                                    </td>
+                                </tr>
+                                <tr>
+                                    <td colspan="5">
+                                        <div class="lem-ct-overrides">
+                                            <span class="lem-ct-title">Content Tool Overrides</span>
+                                            <div class="lem-ct-grid">
+                                                <label>Media Upload</label>
+                                                <select class="form-select form-select-sm" @bind="ctMediaUpload">
+                                                    <option value="">Inherit from location</option>
+                                                    <option value="true">Enabled</option>
+                                                    <option value="false">Disabled</option>
+                                                </select>
+                                                <label>Web Content</label>
+                                                <select class="form-select form-select-sm" @bind="ctWebContent">
+                                                    <option value="">Inherit from location</option>
+                                                    <option value="true">Enabled</option>
+                                                    <option value="false">Disabled</option>
+                                                </select>
+                                                <label>Stream</label>
+                                                <select class="form-select form-select-sm" @bind="ctStream">
+                                                    <option value="">Inherit from location</option>
+                                                    <option value="true">Enabled</option>
+                                                    <option value="false">Disabled</option>
+                                                </select>
+                                                <label>Create Media</label>
+                                                <select class="form-select form-select-sm" @bind="ctCreateMedia">
+                                                    <option value="">Inherit from location</option>
+                                                    <option value="true">Enabled</option>
+                                                    <option value="false">Disabled</option>
+                                                </select>
+                                                <label>Template Creator</label>
+                                                <select class="form-select form-select-sm" @bind="ctTemplateCreator">
+                                                    <option value="">Inherit from location</option>
+                                                    <option value="true">Enabled</option>
+                                                    <option value="false">Disabled</option>
+                                                </select>
+                                            </div>
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                            else
+                            {
+                                <tr>
+                                    <td>@c.ConstraintName</td>
+                                    <td>@(c.ResolutionWidth)&times;@(c.ResolutionHeight)</td>
+                                    <td>@(c.ResolutionMode == "exact" ? "Exact Match" : "Aspect Ratio")</td>
+                                    <td>@{ var co = ExtendedDataHelper.Parse<ConstraintExtendedData>(c.ExtendedData); }
+                                        @if (co != null && HasAnyOverride(co))
+                                        {
+                                            <span class="lem-ct-badge" title="@GetOverrideSummary(co)">@CountOverrides(co) override(s)</span>
+                                        }
+                                    </td>
+                                    <td style="white-space:nowrap">
+                                        <button class="dx-btn dx-btn-sm dx-btn-outline-secondary" @onclick="() => BeginEditConstraint(c)">Edit</button>
+                                        <button class="dx-btn dx-btn-sm dx-btn-outline-danger" @onclick="() => DeleteConstraint(c)">Delete</button>
+                                    </td>
+                                </tr>
+                            }
+                        }
+                    </tbody>
+                </table>
+            }
+            else
+            {
+                <p class="text-muted" style="font-size:13px">No constraints defined for this location.</p>
+            }
+
+            @if (isAddingConstraint)
+            {
+                <div class="lem-constraint-add">
+                    <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:end;">
+                        <div>
+                            <label class="lem-label">Name</label>
+                            <input type="text" class="form-control form-control-sm" @bind="newConstraintName" maxlength="50" style="width:140px" />
+                        </div>
+                        <div>
+                            <label class="lem-label">Width</label>
+                            <input type="number" class="form-control form-control-sm" @bind="newConstraintWidth" min="1" style="width:70px" />
+                        </div>
+                        <div>
+                            <label class="lem-label">Height</label>
+                            <input type="number" class="form-control form-control-sm" @bind="newConstraintHeight" min="1" style="width:70px" />
+                        </div>
+                        <div>
+                            <label class="lem-label">Mode</label>
+                            <select class="form-select form-select-sm" @bind="newConstraintMode" style="width:130px">
+                                <option value="aspect-ratio">Aspect Ratio</option>
+                                <option value="exact">Exact Match</option>
+                            </select>
+                        </div>
+                        <div style="display:flex; gap:4px;">
+                            <button class="dx-btn dx-btn-sm dx-btn-blue" @onclick="SaveNewConstraint">Add</button>
+                            <button class="dx-btn dx-btn-sm dx-btn-outline-secondary" @onclick="() => isAddingConstraint = false">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="lem-ct-overrides" style="margin-top:8px;">
+                        <span class="lem-ct-title">Content Tool Overrides</span>
+                        <div class="lem-ct-grid">
+                            <label>Media Upload</label>
+                            <select class="form-select form-select-sm" @bind="newCtMediaUpload">
+                                <option value="">Inherit from location</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <label>Web Content</label>
+                            <select class="form-select form-select-sm" @bind="newCtWebContent">
+                                <option value="">Inherit from location</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <label>Stream</label>
+                            <select class="form-select form-select-sm" @bind="newCtStream">
+                                <option value="">Inherit from location</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <label>Create Media</label>
+                            <select class="form-select form-select-sm" @bind="newCtCreateMedia">
+                                <option value="">Inherit from location</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                            <label>Template Creator</label>
+                            <select class="form-select form-select-sm" @bind="newCtTemplateCreator">
+                                <option value="">Inherit from location</option>
+                                <option value="true">Enabled</option>
+                                <option value="false">Disabled</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+            }
+            else
+            {
+                <button class="dx-btn dx-btn-sm dx-btn-outline-secondary mt-1" @onclick="() => isAddingConstraint = true">+ Add Constraint</button>
+            }
+
+            @if (globalConstraints != null && globalConstraints.Count > 0)
+            {
+                <hr />
+                <h5 class="lem-section-title">Available Asset Libraries</h5>
+                <p class="lem-hint">Global asset pools. Assign a display to an Asset Library constraint to give it access to that library's content.</p>
+                <table class="lem-constraint-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Resolution</th>
+                            <th>Assets</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var g in globalConstraints)
+                        {
+                            <tr>
+                                <td>@g.ConstraintName</td>
+                                <td>@(g.ResolutionWidth)&times;@(g.ResolutionHeight)</td>
+                                <td>@g.TblAssets.Count(a => !a.IsDeleted)</td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+            } @* end LinkedToDisplay *@
+
+            @* Bundle-hosted locations need displays too — a control-surface bundle has nothing to
+               drive without them — but they are not LinkedToDisplay, which is about the location
+               owning a single display of its own. *@
+            @if (Location.LocationType?.LinkedToDisplay == true || IsBundleHost)
+            {
+                <hr />
+                <div class="lem-section-title">Displays</div>
+
+                @if (locationDisplays.Count > 0)
+                {
+                    <table class="lem-constraint-table">
+                        <thead><tr><th>Name</th><th>Resolution</th></tr></thead>
+                        <tbody>
+                            @foreach (var d in locationDisplays)
+                            {
+                                <tr>
+                                    <td>@d.DisplayName</td>
+                                    <td>@(d.DisplayWidth)x@(d.DisplayHeight)</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+
+                @if (isAddingDisplay)
+                {
+                    <div class="mt-2 p-2 border rounded">
+                        <div class="row g-2 mb-2">
+                            <div class="col-md-6">
+                                <label class="form-label small">Display Name</label>
+                                <input type="text" class="form-control form-control-sm" @bind="newDisplayName" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small">Width</label>
+                                <input type="number" class="form-control form-control-sm" @bind="newDisplayWidth" />
+                            </div>
+                            <div class="col-md-3">
+                                <label class="form-label small">Height</label>
+                                <input type="number" class="form-control form-control-sm" @bind="newDisplayHeight" />
+                            </div>
+                        </div>
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddNewDisplay">Add</button>
+                        <button class="dx-btn dx-btn-outline-secondary dx-btn-sm" @onclick="() => isAddingDisplay = false">Cancel</button>
+                    </div>
+                }
+                else
+                {
+                    <button class="dx-btn dx-btn-sm dx-btn-outline-secondary mt-1" @onclick="() => isAddingDisplay = true">+ Add Display</button>
+                }
+            }
+
+            @if (!string.IsNullOrEmpty(saveError))
+            {
+                <div class="alert alert-danger mt-2">@saveError</div>
+            }
+        </div>
+
+        <div class="lem-footer">
+            <div>
+                @if (!isOverrideContentLocation)
+                {
+                    @if (!showDeleteConfirm)
+                    {
+                        <button class="dx-btn dx-btn-red" @onclick="() => showDeleteConfirm = true">Delete Location</button>
+                    }
+                    else
+                    {
+                        <span class="text-danger small fw-bold">Delete this location and everything under it — its displays, schedules, and (for a video wall) its airline clusters?</span>
+                        <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="ExecuteDeleteLocation" disabled="@isDeleting">
+                            @(isDeleting ? "Deleting..." : "Yes, Delete")
+                        </button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => { showDeleteConfirm = false; deleteError = null; }">Cancel</button>
+                        @if (!string.IsNullOrEmpty(deleteError))
+                        {
+                            <div class="text-danger small mt-1">@deleteError</div>
+                        }
+                    }
+                }
+            </div>
+            <div class="d-flex gap-2">
+                <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">
+                    @(isSaving ? "Saving..." : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public TblLocation Location { get; set; } = null!;
+    [Parameter] public EventCallback OnSave { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+    [Parameter] public EventCallback OnDelete { get; set; }
+
+    private bool isOverrideContentLocation => Location?.LocationType?.LocationTypeName == "Override Content";
+
+    private string locationName = "";
+    private string contentSourceMode = "disabled";
+    private int selectedConnectorId;
+    private List<TblCloudPlatformConnector>? inkConnectors;
+    private bool isSaving;
+    private string? saveError;
+
+    // Delete location
+    private bool showDeleteConfirm;
+    private bool isDeleting;
+    private string? deleteError;
+
+    // Add display
+    private List<TblDisplay> locationDisplays = new();
+    private bool isAddingDisplay;
+    private string newDisplayName = "";
+    private int newDisplayWidth = 1920;
+    private int newDisplayHeight = 1080;
+
+    // Content tool toggles
+    // Content tool toggles (tri-state: ""=default, "true"=on, "false"=off)
+    private string enableMediaUpload = "";
+    private string enableWebContent = "";
+    private string enableStream = "";
+    private string enableCreateMedia = "";
+    private string enableTemplateCreator = "";
+    private string singleAssetMode = "";
+
+    // VideoWall-only: how wall outputs apply content changes
+    private string wallTransitionMode = "standard";
+
+    // Playlist-only: button visibility and current on/off state for Shuffle and Fade
+    private bool showShuffleButton = true;
+    private bool showFadeButton = true;
+    // Engage-only support control; hidden by default for deployments without Engage players
+    private bool showRepublishButton = false;
+    private bool showLiveView = false;
+    private bool shuffleEnabled = false;
+    private bool fadeEnabled = true;
+    private int? imageDurationSeconds;
+
+    // Playlist encoding
+    private string playlistEncodingMode = "off";
+    private List<EncodingProfile> locationEncProfiles = new();
+    private int? encodingFallbackBitrateKbps;
+
+    // Constraint management
+    private List<TblConstraint> locationConstraints = new();
+    private List<TblConstraint> globalConstraints = new();
+
+    // Asset Library resolution
+    private TblConstraint? assetLibraryConstraint;
+    private int? alResWidth;
+    private int? alResHeight;
+    private string alResMode = "aspect-ratio";
+    private bool useVideoMask;
+
+    // Add constraint form
+    private bool isAddingConstraint;
+    private string newConstraintName = "";
+    private int? newConstraintWidth = 1920;
+    private int? newConstraintHeight = 1080;
+    private string newConstraintMode = "aspect-ratio";
+
+    // Edit constraint form
+    private int? editingConstraintId;
+    private string editConstraintName = "";
+    private int? editConstraintWidth;
+    private int? editConstraintHeight;
+    private string editConstraintMode = "aspect-ratio";
+
+    // Constraint content tool overrides (tri-state: null=inherit, true=enabled, false=disabled)
+    private string ctMediaUpload = "";
+    private string ctWebContent = "";
+    private string ctStream = "";
+    private string ctCreateMedia = "";
+    private string ctTemplateCreator = "";
+
+    // Same for new constraint form
+    private string newCtMediaUpload = "";
+    private string newCtWebContent = "";
+    private string newCtStream = "";
+    private string newCtCreateMedia = "";
+    private string newCtTemplateCreator = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        locationName = Location.LocationName ?? "";
+
+        // Parse existing content source config
+        var config = InkContentSyncService.GetContentSourceConfig(Location);
+        if (config != null)
+        {
+            contentSourceMode = config.Mode;
+            selectedConnectorId = config.ConnectorId ?? 0;
+        }
+
+        // Load content tool toggles from ExtendedData
+        var extData = ExtendedDataHelper.Parse<LocationExtendedData>(Location.ExtendedData);
+        if (extData != null)
+        {
+            enableMediaUpload = TriStateToString(extData.EnableMediaUpload);
+            enableWebContent = TriStateToString(extData.EnableWebContent);
+            enableStream = TriStateToString(extData.EnableStream);
+            enableCreateMedia = TriStateToString(extData.EnableCreateMedia);
+            enableTemplateCreator = TriStateToString(extData.EnableTemplateCreator);
+            singleAssetMode = TriStateToString(extData.SingleAssetsOnly);
+            showShuffleButton     = extData.ShowShuffleButton;
+            showFadeButton        = extData.ShowFadeButton;
+            showRepublishButton   = extData.ShowRepublishButton;
+            showLiveView          = extData.ShowLiveView;
+            wallTransitionMode    = extData.WallTransitionMode ?? "standard";
+            imageDurationSeconds  = extData.ImageDurationSeconds;
+            playlistEncodingMode = extData.PlaylistEncodingMode ?? "off";
+            locationEncProfiles = extData.EncodingProfiles ?? new();
+            encodingFallbackBitrateKbps = extData.EncodingFallbackBitrateKbps;
+        }
+
+        // Load current shuffle/fade state directly from the location columns
+        shuffleEnabled = Location.EnableShuffle;
+        fadeEnabled    = Location.EnableFade;
+
+        // Load enabled Ink connectors
+        inkConnectors = await dbContext.TblCloudPlatformConnectors
+            .Where(c => c.IsEnabled && c.PlatformId == "omnivex-ink")
+            .OrderBy(c => c.DisplayName)
+            .ToListAsync();
+
+        // Auto-select if only one connector exists
+        if (inkConnectors.Count == 1 && selectedConnectorId == 0)
+            selectedConnectorId = inkConnectors[0].ConnectorId;
+
+        // Load location-owned constraints
+        locationConstraints = await dbContext.TblConstraints
+            .Where(c => c.OwningLocationId == Location.LocationId && !c.IsGlobal)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        // Load global (Asset Library) constraints for reference
+        globalConstraints = await dbContext.TblConstraints
+            .Include(c => c.TblAssets)
+            .Where(c => c.IsGlobal)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        // Load Asset Library constraint if this is an Asset Library location
+        var extDataParsed = ExtendedDataHelper.Parse<LocationExtendedData>(Location.ExtendedData);
+        if (extDataParsed?.GlobalConstraintId != null)
+        {
+            assetLibraryConstraint = await dbContext.TblConstraints
+                .FirstOrDefaultAsync(c => c.ConstraintId == extDataParsed.GlobalConstraintId.Value);
+            if (assetLibraryConstraint != null)
+            {
+                alResWidth = assetLibraryConstraint.ResolutionWidth;
+                alResHeight = assetLibraryConstraint.ResolutionHeight;
+                alResMode = assetLibraryConstraint.ResolutionMode ?? "aspect-ratio";
+            }
+        }
+
+        useVideoMask = extDataParsed?.UseVideoMask == true;
+
+        if (Location.LocationType?.LinkedToDisplay == true || IsBundleHost)
+        {
+            locationDisplays = await dbContext.TblDisplays
+                .Where(d => d.LocationId == Location.LocationId)
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+        }
+    }
+
+    private async Task Save()
+    {
+        saveError = null;
+        isSaving = true;
+
+        try
+        {
+            if (contentSourceMode != "disabled" && selectedConnectorId == 0)
+            {
+                saveError = "Please select an Ink connector.";
+                return;
+            }
+
+            // Use a dedicated context to avoid saving unrelated tracked entities from the
+            // shared dbContext (e.g. TblDisplays created by CreateLayoutModal in the same circuit).
+            using var db = dbFactory.CreateDbContext();
+
+            var location = await db.TblLocations
+                .FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+            if (location == null)
+            {
+                saveError = "Location not found.";
+                return;
+            }
+
+            location.LocationName = locationName;
+
+            // Persist content tool toggles first (typed model excludes contentSource)
+            location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+            {
+                ed.EnableMediaUpload = ParseTriState(enableMediaUpload);
+                ed.EnableWebContent = ParseTriState(enableWebContent);
+                ed.EnableStream = ParseTriState(enableStream);
+                ed.EnableCreateMedia = ParseTriState(enableCreateMedia);
+                ed.EnableTemplateCreator = ParseTriState(enableTemplateCreator);
+                ed.SingleAssetsOnly = ParseTriState(singleAssetMode);
+                ed.ShowShuffleButton    = showShuffleButton;
+                ed.ShowFadeButton       = showFadeButton;
+                ed.ShowRepublishButton  = showRepublishButton;
+                ed.ShowLiveView         = showLiveView;
+                ed.WallTransitionMode   = wallTransitionMode == "standard" ? null : wallTransitionMode;
+                ed.ImageDurationSeconds = imageDurationSeconds;
+                ed.PlaylistEncodingMode = playlistEncodingMode;
+                ed.EncodingProfiles = playlistEncodingMode == "manual" && locationEncProfiles.Count > 0
+                    ? locationEncProfiles : null;
+                ed.EncodingFallbackBitrateKbps = playlistEncodingMode is "lcd" or "best-effort"
+                    ? encodingFallbackBitrateKbps : null;
+                ed.UseVideoMask = useVideoMask;
+            });
+
+            // Persist Playlist shuffle/fade state directly to the location columns
+            location.EnableShuffle = shuffleEnabled;
+            location.EnableFade    = fadeEnabled;
+
+            // Apply content source config last — uses raw JSON merge so it won't be clobbered
+            int? connId = contentSourceMode != "disabled" ? selectedConnectorId : null;
+            InkContentSyncService.SetContentSourceConfig(location, contentSourceMode, connId);
+
+            // Save Asset Library resolution changes
+            if (assetLibraryConstraint != null)
+            {
+                var constraint = await db.TblConstraints.FindAsync(assetLibraryConstraint.ConstraintId);
+                if (constraint != null)
+                {
+                    constraint.ResolutionWidth = alResWidth;
+                    constraint.ResolutionHeight = alResHeight;
+                    constraint.ResolutionMode = alResMode;
+                }
+            }
+
+            await db.SaveChangesAsync();
+            publicationInvalidator.LocationChanged(location.LocationId);
+            Logger.LogInformation("Location {LocationId} updated: name='{Name}', contentSource mode={Mode}, connectorId={ConnectorId}",
+                location.LocationId, locationName, contentSourceMode, connId);
+
+            await OnSave.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving location {LocationId}", Location.LocationId);
+            saveError = "An error occurred while saving.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task SaveNewConstraint()
+    {
+        if (string.IsNullOrWhiteSpace(newConstraintName)) return;
+
+        var constraint = new TblConstraint
+        {
+            ConstraintName = newConstraintName.Trim(),
+            OwningLocationId = Location.LocationId,
+            IsGlobal = false,
+            ResolutionWidth = newConstraintWidth,
+            ResolutionHeight = newConstraintHeight,
+            ResolutionMode = newConstraintMode,
+            CreateDate = DateTime.UtcNow,
+            ExtendedData = BuildConstraintExtendedData(newCtMediaUpload, newCtWebContent, newCtStream, newCtCreateMedia, newCtTemplateCreator)
+        };
+
+        dbContext.TblConstraints.Add(constraint);
+        await dbContext.SaveChangesAsync();
+        locationConstraints.Add(constraint);
+
+        newConstraintName = "";
+        newConstraintWidth = 1920;
+        newConstraintHeight = 1080;
+        newConstraintMode = "aspect-ratio";
+        newCtMediaUpload = "";
+        newCtWebContent = "";
+        newCtStream = "";
+        newCtCreateMedia = "";
+        newCtTemplateCreator = "";
+        isAddingConstraint = false;
+    }
+
+    private void BeginEditConstraint(TblConstraint c)
+    {
+        editingConstraintId = c.ConstraintId;
+        editConstraintName = c.ConstraintName ?? "";
+        editConstraintWidth = c.ResolutionWidth;
+        editConstraintHeight = c.ResolutionHeight;
+        editConstraintMode = c.ResolutionMode;
+
+        var cd = ExtendedDataHelper.Parse<ConstraintExtendedData>(c.ExtendedData);
+        ctMediaUpload = cd?.EnableMediaUpload?.ToString().ToLower() ?? "";
+        ctWebContent = cd?.EnableWebContent?.ToString().ToLower() ?? "";
+        ctStream = cd?.EnableStream?.ToString().ToLower() ?? "";
+        ctCreateMedia = cd?.EnableCreateMedia?.ToString().ToLower() ?? "";
+        ctTemplateCreator = cd?.EnableTemplateCreator?.ToString().ToLower() ?? "";
+    }
+
+    private async Task SaveEditConstraint()
+    {
+        if (editingConstraintId == null || string.IsNullOrWhiteSpace(editConstraintName)) return;
+
+        var constraint = locationConstraints.FirstOrDefault(c => c.ConstraintId == editingConstraintId);
+        if (constraint != null)
+        {
+            constraint.ConstraintName = editConstraintName.Trim();
+            constraint.ResolutionWidth = editConstraintWidth;
+            constraint.ResolutionHeight = editConstraintHeight;
+            constraint.ResolutionMode = editConstraintMode;
+            constraint.ExtendedData = BuildConstraintExtendedData(ctMediaUpload, ctWebContent, ctStream, ctCreateMedia, ctTemplateCreator);
+            await dbContext.SaveChangesAsync();
+        }
+
+        editingConstraintId = null;
+    }
+
+    private void CancelEditConstraint()
+    {
+        editingConstraintId = null;
+    }
+
+    private async Task DeleteConstraint(TblConstraint c)
+    {
+        dbContext.TblConstraints.Remove(c);
+        await dbContext.SaveChangesAsync();
+        locationConstraints.Remove(c);
+    }
+
+    private static bool? ParseTriState(string val) =>
+        string.IsNullOrEmpty(val) ? null : bool.Parse(val);
+
+    private static string TriStateToString(bool? val) =>
+        val?.ToString().ToLower() ?? "";
+
+    private static string? BuildConstraintExtendedData(string mu, string wc, string st, string cm, string tc)
+    {
+        var data = new ConstraintExtendedData
+        {
+            EnableMediaUpload = ParseTriState(mu),
+            EnableWebContent = ParseTriState(wc),
+            EnableStream = ParseTriState(st),
+            EnableCreateMedia = ParseTriState(cm),
+            EnableTemplateCreator = ParseTriState(tc)
+        };
+        return HasAnyOverride(data) ? ExtendedDataHelper.Serialize(data) : null;
+    }
+
+    private static bool HasAnyOverride(ConstraintExtendedData d) =>
+        d.EnableMediaUpload.HasValue || d.EnableWebContent.HasValue || d.EnableStream.HasValue ||
+        d.EnableCreateMedia.HasValue || d.EnableTemplateCreator.HasValue;
+
+    private static int CountOverrides(ConstraintExtendedData d) =>
+        new[] { d.EnableMediaUpload, d.EnableWebContent, d.EnableStream, d.EnableCreateMedia, d.EnableTemplateCreator }
+            .Count(v => v.HasValue);
+
+    private static string GetOverrideSummary(ConstraintExtendedData d)
+    {
+        var items = new List<string>();
+        if (d.EnableMediaUpload.HasValue) items.Add($"Media Upload: {(d.EnableMediaUpload.Value ? "On" : "Off")}");
+        if (d.EnableWebContent.HasValue) items.Add($"Web Content: {(d.EnableWebContent.Value ? "On" : "Off")}");
+        if (d.EnableStream.HasValue) items.Add($"Stream: {(d.EnableStream.Value ? "On" : "Off")}");
+        if (d.EnableCreateMedia.HasValue) items.Add($"Create Media: {(d.EnableCreateMedia.Value ? "On" : "Off")}");
+        if (d.EnableTemplateCreator.HasValue) items.Add($"Template Creator: {(d.EnableTemplateCreator.Value ? "On" : "Off")}");
+        return string.Join(", ", items);
+    }
+
+    /// <summary>
+    /// Custom and Custom Display both render an uploaded bundle, and either can hold displays the
+    /// bundle addresses through the Location Content API. Recognized by the component sentinel
+    /// rather than LocationTypeId, which is identity-generated and differs per environment.
+    /// </summary>
+    private bool IsBundleHost =>
+        DXSuite.Director.Services.LocationBundles.LocationBundleConstants.IsBundleType(Location?.LocationType);
+
+    private async Task AddNewDisplay()
+    {
+        if (string.IsNullOrWhiteSpace(newDisplayName)) return;
+
+        var display = new TblDisplay
+        {
+            DisplayName = newDisplayName.Trim(),
+            LocationId = Location.LocationId,
+            DisplayWidth = newDisplayWidth,
+            DisplayHeight = newDisplayHeight,
+            DisplayTypeId = (int)Types.DisplayType.StandardDisplay,
+            CreateDate = DateTime.UtcNow,
+            Enabled = true
+        };
+
+        dbContext.TblDisplays.Add(display);
+        await dbContext.SaveChangesAsync();
+
+        locationDisplays.Add(display);
+        newDisplayName = "";
+        newDisplayWidth = 1920;
+        newDisplayHeight = 1080;
+        isAddingDisplay = false;
+    }
+
+    private async Task ExecuteDeleteLocation()
+    {
+        deleteError = null;
+        isDeleting = true;
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var locId = Location.LocationId;
+
+            // Block only if this location is referenced as a child node inside another location's
+            // Floorplan/Visual layout — that reference lives elsewhere and must be removed first.
+            var fpChildRef = await db.TblFloorPlanElements.CountAsync(f => f.ChildLocationId == locId);
+            if (fpChildRef > 0) { deleteError = $"Cannot delete: referenced in {fpChildRef} Floorplan layout(s)."; return; }
+
+            // Delete the location together with any transient cluster child locations it owns
+            // (video-wall airline clusters). They are auto-managed by ClusterLifecycleService and are
+            // meaningless without their parent wall, so they are removed with it.
+            var transientChildIds = await db.TblLocations
+                .Where(l => l.ParentVideoWallLocationId == locId)
+                .Select(l => l.LocationId)
+                .ToListAsync();
+            var allLocIds = new List<int> { locId };
+            allLocIds.AddRange(transientChildIds);
+
+            // Displays attached to these locations: delete them and clear everything that points at
+            // them. Previously any attached display blocked deletion and had to be removed by hand.
+            var displayIds = await db.TblDisplays
+                .Where(d => allLocIds.Contains(d.LocationId))
+                .Select(d => d.DisplayId)
+                .ToListAsync();
+            if (displayIds.Count > 0)
+            {
+                // Schedule events are the displays' own content — remove them.
+                db.TblScheduleEvents.RemoveRange(db.TblScheduleEvents.Where(e => displayIds.Contains(e.DisplayId)));
+
+                // Null the nullable back-references (FK ON DELETE NO ACTION) so the display delete is
+                // not blocked; the referencing rows are kept, just unlinked from the deleted display.
+                foreach (var s in await db.TblAccessSchedules.Where(s => s.DisplayId.HasValue && displayIds.Contains(s.DisplayId.Value)).ToListAsync())
+                    s.DisplayId = null;
+                foreach (var x in await db.TblDevices.Where(x => x.DisplayId.HasValue && displayIds.Contains(x.DisplayId.Value)).ToListAsync())
+                    x.DisplayId = null;
+                foreach (var x in await db.TblEventLogs.Where(x => x.DisplayId.HasValue && displayIds.Contains(x.DisplayId.Value)).ToListAsync())
+                    x.DisplayId = null;
+                foreach (var f in await db.TblFloorPlanElements.Where(f => f.ChildDisplayId.HasValue && displayIds.Contains(f.ChildDisplayId.Value)).ToListAsync())
+                    f.ChildDisplayId = null;
+                foreach (var cc in await db.TblContentChannels.Where(c => c.DisplayId.HasValue && displayIds.Contains(c.DisplayId.Value)).ToListAsync())
+                    cc.DisplayId = null;
+
+                // tblControlClientDisplay, tblOverrideDisplay and tblWallLayoutMapping have ON DELETE
+                // CASCADE, so SQL removes those rows when the displays are deleted.
+                db.TblDisplays.RemoveRange(db.TblDisplays.Where(d => displayIds.Contains(d.DisplayId)));
+            }
+
+            // Displays / icon schedules elsewhere that use any of these locations as their asset
+            // library — unlink so the location delete is not blocked.
+            foreach (var d in await db.TblDisplays.Where(d => d.AssetLibraryLocationId.HasValue && allLocIds.Contains(d.AssetLibraryLocationId.Value)).ToListAsync())
+                d.AssetLibraryLocationId = null;
+            foreach (var i in await db.TblFloorPlanIconSchedules.Where(i => i.AssetLibraryLocationId.HasValue && allLocIds.Contains(i.AssetLibraryLocationId.Value)).ToListAsync())
+                i.AssetLibraryLocationId = null;
+
+            // Floor plan elements + icon schedules owned by these locations
+            var fpElements = await db.TblFloorPlanElements
+                .Include(f => f.IconSchedules)
+                .Where(f => allLocIds.Contains(f.LocationId)).ToListAsync();
+            foreach (var fp in fpElements) db.TblFloorPlanIconSchedules.RemoveRange(fp.IconSchedules);
+            db.TblFloorPlanElements.RemoveRange(fpElements);
+
+            // Access rules + their schedules
+            var rules = await db.TblLocationAccessRules
+                .Include(r => r.AccessSchedules)
+                .Where(r => allLocIds.Contains(r.LocationId)).ToListAsync();
+            foreach (var r in rules) db.TblAccessSchedules.RemoveRange(r.AccessSchedules);
+            db.TblLocationAccessRules.RemoveRange(rules);
+
+            // Approval chains + stages + stage groups
+            var chains = await db.TblApprovalChains
+                .Include(c => c.Stages).ThenInclude(s => s.StageGroups)
+                .Where(c => allLocIds.Contains(c.LocationId)).ToListAsync();
+            foreach (var c in chains)
+                foreach (var s in c.Stages)
+                    db.TblApprovalStageGroups.RemoveRange(s.StageGroups);
+            foreach (var c in chains) db.TblApprovalStages.RemoveRange(c.Stages);
+            db.TblApprovalChains.RemoveRange(chains);
+
+            // User-location assignments
+            db.TblUserLocations.RemoveRange(db.TblUserLocations.Where(ul => allLocIds.Contains(ul.LocationId)));
+
+            // Airline-location mappings
+            db.TblAirlineLocations.RemoveRange(db.TblAirlineLocations.Where(al => allLocIds.Contains(al.LocationId)));
+
+            // Control clients + their display mappings + tokens + pairing requests
+            var clients = await db.TblControlClients
+                .Include(c => c.ControlClientDisplays)
+                .Where(c => allLocIds.Contains(c.LocationId)).ToListAsync();
+            foreach (var c in clients) db.TblControlClientDisplays.RemoveRange(c.ControlClientDisplays);
+            var clientIds = clients.Select(c => c.ControlClientId).ToList();
+            db.TblControlClientTokens.RemoveRange(db.TblControlClientTokens.Where(t => clientIds.Contains(t.ControlClientId)));
+            db.TblControlClientPairingRequests.RemoveRange(db.TblControlClientPairingRequests.Where(p => p.ControlClientId.HasValue && clientIds.Contains(p.ControlClientId.Value)));
+            db.TblControlClients.RemoveRange(clients);
+
+            // Location-owned constraints
+            db.TblConstraints.RemoveRange(db.TblConstraints.Where(c => c.OwningLocationId.HasValue && allLocIds.Contains(c.OwningLocationId.Value)));
+
+            // API keys
+            db.TblApiKeys.RemoveRange(db.TblApiKeys.Where(k => k.LocationId.HasValue && allLocIds.Contains(k.LocationId.Value)));
+
+            // Assets and their metadata/approvals
+            var assets = await db.TblAssets.Where(a => allLocIds.Contains(a.LocationId)).ToListAsync();
+            var assetIds = assets.Select(a => a.AssetId).ToList();
+            db.TblAssetContentMetadata.RemoveRange(db.TblAssetContentMetadata.Where(m => assetIds.Contains(m.AssetId)));
+            db.TblAssetApprovals.RemoveRange(db.TblAssetApprovals.Where(ap => assetIds.Contains(ap.AssetId)));
+            db.TblAssets.RemoveRange(assets);
+
+            // Unassign devices, event logs, content channels and update deployments from these locations
+            foreach (var d in await db.TblDevices.Where(d => d.LocationId.HasValue && allLocIds.Contains(d.LocationId.Value)).ToListAsync())
+                d.LocationId = null;
+            foreach (var e in await db.TblEventLogs.Where(e => e.LocationId.HasValue && allLocIds.Contains(e.LocationId.Value)).ToListAsync())
+                e.LocationId = null;
+            foreach (var cc in await db.TblContentChannels.Where(c => c.LocationId.HasValue && allLocIds.Contains(c.LocationId.Value)).ToListAsync())
+                cc.LocationId = null;
+            foreach (var u in await db.TblUpdateDeployments.Where(u => u.LocationId.HasValue && allLocIds.Contains(u.LocationId.Value)).ToListAsync())
+                u.LocationId = null;
+
+            // tblUserGroupLocationDefault (per-airline wall defaults) has ON DELETE CASCADE on
+            // LocationId, so SQL removes those rows when these locations are deleted.
+
+            // Remove the location(s) — the transient cluster children and the location itself.
+            var locsToRemove = await db.TblLocations.Where(l => allLocIds.Contains(l.LocationId)).ToListAsync();
+            db.TblLocations.RemoveRange(locsToRemove);
+
+            await db.SaveChangesAsync();
+            foreach (var removedLocationId in allLocIds)
+                publicationInvalidator.LocationChanged(removedLocationId);
+            foreach (var removedDisplayId in displayIds)
+                publicationInvalidator.DisplayRemoved(removedDisplayId);
+            await OnDelete.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            deleteError = $"Delete failed: {ex.Message}";
+            Logger.LogError(ex, "Failed to delete location {LocationId}", Location.LocationId);
+        }
+        finally
+        {
+            isDeleting = false;
+        }
+    }
+
+    private async Task Close()
+    {
+        await OnClose.InvokeAsync();
+    }
+}
+
+<style>
+    input[type="checkbox"] {
+        accent-color: var(--dx-blue);
+        width: 15px;
+        height: 15px;
+        cursor: pointer;
+    }
+
+    .lem-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1050;
+    }
+
+    .lem-modal {
+        background: #fff;
+        border-radius: 8px;
+        width: 640px;
+        max-width: 90vw;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    }
+
+    .lem-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background-color: #0071BC;
+        color: #fff;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .lem-header h4 {
+        margin: 0;
+        font-size: 1rem;
+        color: #fff;
+    }
+
+    .lem-close {
+        background: none;
+        border: none;
+        font-size: 1.4rem;
+        cursor: pointer;
+        color: #fff;
+        opacity: 0.8;
+    }
+
+    .lem-close:hover { opacity: 1; }
+
+    .lem-body {
+        padding: 20px;
+        overflow-y: auto;
+        max-height: 60vh;
+    }
+
+    .lem-field {
+        margin-bottom: 12px;
+    }
+
+    .lem-field-split {
+        display: flex;
+        gap: 24px;
+    }
+
+    .lem-label {
+        display: block;
+        font-weight: 600;
+        margin-bottom: 4px;
+        font-size: 13px;
+    }
+
+    .lem-section-title {
+        font-size: 14px;
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .lem-hint {
+        font-size: 12px;
+        color: #888;
+        margin-bottom: 12px;
+    }
+
+    .lem-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        border-top: 1px solid #e0e0e0;
+    }
+
+    .lem-constraint-table {
+        width: 100%;
+        font-size: 13px;
+        border-collapse: collapse;
+        margin-bottom: 8px;
+    }
+
+    .lem-constraint-table th {
+        text-align: left;
+        font-weight: 600;
+        padding: 4px 6px;
+        border-bottom: 1px solid #ddd;
+        font-size: 12px;
+        color: #666;
+    }
+
+    .lem-constraint-table td {
+        padding: 6px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .lem-constraint-add {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 10px;
+        margin-top: 6px;
+    }
+
+    .lem-ct-overrides {
+        padding: 8px 10px;
+        background: #f0f4f8;
+        border-radius: 4px;
+        font-size: 12px;
+    }
+
+    .lem-ct-title {
+        display: block;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 6px;
+        font-size: 12px;
+    }
+
+    .lem-ct-grid {
+        display: grid;
+        grid-template-columns: 120px 1fr;
+        gap: 4px 8px;
+        align-items: center;
+    }
+
+    .lem-ct-grid label {
+        font-size: 12px;
+        color: #444;
+    }
+
+    .lem-ct-badge {
+        display: inline-block;
+        padding: 1px 6px;
+        background: #e8f0fe;
+        color: #1967d2;
+        border-radius: 3px;
+        font-size: 11px;
+        cursor: default;
+    }
+</style>

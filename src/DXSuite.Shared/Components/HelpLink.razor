@@ -1,0 +1,50 @@
+@using Microsoft.Extensions.Configuration
+@inject IConfiguration config
+
+<a href="@ResolvedUrl" target="_blank" rel="noopener" class="help-link" title="@Title">
+    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1zm0 12.5a5.5 5.5 0 1 1 0-11 5.5 5.5 0 0 1 0 11z"/>
+        <path d="M8 10.5a.75.75 0 1 0 0 1.5.75.75 0 0 0 0-1.5zM8 4C6.62 4 5.5 5.01 5.5 6.25h1.5c0-.41.45-.75 1-.75s1 .34 1 .75c0 .38-.24.64-.72.93C7.73 7.5 7.25 8.1 7.25 9h1.5c0-.38.24-.64.72-.93C10.02 7.75 10.5 7.15 10.5 6.25 10.5 5.01 9.38 4 8 4z"/>
+    </svg>
+</a>
+
+@code {
+    /// <summary>Path relative to the help site root (e.g., "director/overrides"). Empty opens the docs home.</summary>
+    [Parameter] public string Page { get; set; } = "";
+
+    /// <summary>Tooltip text shown on hover.</summary>
+    [Parameter] public string Title { get; set; } = "Open help";
+
+    private string ResolvedUrl
+    {
+        get
+        {
+            var baseUrl = config["Help:BaseUrl"]?.TrimEnd('/') ?? "/docs";
+            var page = Page.TrimStart('/');
+            if (!string.IsNullOrEmpty(page))
+            {
+                if (!page.EndsWith(".html"))
+                    page += ".html";
+                return $"{baseUrl}/{page}";
+            }
+            return $"{baseUrl}/index.html";
+        }
+    }
+}
+
+<style>
+    .help-link {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        color: #6c757d;
+        text-decoration: none;
+        margin-left: 6px;
+        vertical-align: middle;
+        transition: color 0.15s;
+    }
+
+    .help-link:hover {
+        color: #0d6efd;
+    }
+</style>

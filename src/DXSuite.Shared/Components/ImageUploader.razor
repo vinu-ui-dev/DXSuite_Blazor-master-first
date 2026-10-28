@@ -1,0 +1,168 @@
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="min-width:420px; max-width:560px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <span>Upload Image</span>
+                <button class="dx-modal-close" @onclick="Close">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:12px;">@errorMessage</div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Select Image</label>
+                    <InputFile OnChange="OnFileSelected" accept=".ico,.png,.jpg,.jpeg,.gif,.webp" />
+                </div>
+
+                @if (selectedFile != null)
+                {
+                    @if (previewDataUri != null)
+                    {
+                        <div style="margin-top:12px; text-align:center;">
+                            <img src="@previewDataUri" style="max-width:100%; max-height:300px; border:1px solid var(--dx-border-color); border-radius:var(--dx-border-radius);" />
+                        </div>
+                    }
+                    <div class="dx-text-muted" style="margin-top:6px; font-size:0.85rem;">
+                        @fileName — @FormatFileSize(fileSize)
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="Close">Cancel</button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="HandleSubmit" disabled="@(selectedFile == null || isUploading)">
+                    @(isUploading ? "Uploading..." : "Submit")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public string TargetDirectory { get; set; } = "";
+    [Parameter] public string TargetFileName { get; set; } = "";
+    [Parameter] public EventCallback OnUploaded { get; set; }
+
+    private bool isVisible;
+    private bool isUploading;
+    private string? errorMessage;
+    private string? previewDataUri;
+    private string? fileName;
+    private long fileSize;
+    private IBrowserFile? selectedFile;
+
+    // Backgrounds and other full-resolution images can be large; the file is streamed to disk
+    // rather than buffered in memory, so this cap only guards against runaway uploads.
+    private const long MaxFileSize = 50 * 1024 * 1024;
+
+    // An inline base64 data-URI preview is only built for small files. A multi-megabyte data URI
+    // produces an oversized render batch over the Blazor circuit and makes the dialog appear to hang.
+    private const long PreviewMaxSize = 2 * 1024 * 1024;
+
+    public void Open()
+    {
+        isVisible = true;
+        errorMessage = null;
+        previewDataUri = null;
+        fileName = null;
+        fileSize = 0;
+        selectedFile = null;
+        isUploading = false;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        isVisible = false;
+        StateHasChanged();
+    }
+
+    private async Task OnFileSelected(InputFileChangeEventArgs e)
+    {
+        errorMessage = null;
+        previewDataUri = null;
+        selectedFile = null;
+        fileSize = 0;
+
+        var file = e.File;
+        if (file == null) return;
+
+        if (file.Size > MaxFileSize)
+        {
+            errorMessage = $"File too large ({FormatFileSize(file.Size)}). Maximum is {FormatFileSize(MaxFileSize)}.";
+            return;
+        }
+
+        if (!file.ContentType.StartsWith("image/"))
+        {
+            errorMessage = "Please select an image file.";
+            return;
+        }
+
+        selectedFile = file;
+        fileName = file.Name;
+        fileSize = file.Size;
+
+        // Build an inline preview only for small files. The actual upload streams from the
+        // original browser file in HandleSubmit, so the bytes read here are for preview only.
+        if (file.Size <= PreviewMaxSize)
+        {
+            try
+            {
+                using var stream = file.OpenReadStream(PreviewMaxSize);
+                using var ms = new MemoryStream();
+                await stream.CopyToAsync(ms);
+                previewDataUri = $"data:{file.ContentType};base64,{Convert.ToBase64String(ms.ToArray())}";
+            }
+            catch (Exception ex)
+            {
+                errorMessage = $"Error reading file: {ex.Message}";
+            }
+        }
+    }
+
+    private async Task HandleSubmit()
+    {
+        if (selectedFile == null || string.IsNullOrEmpty(TargetDirectory)) return;
+
+        isUploading = true;
+        errorMessage = null;
+
+        try
+        {
+            Directory.CreateDirectory(TargetDirectory);
+
+            var outputName = !string.IsNullOrEmpty(TargetFileName)
+                ? TargetFileName
+                : fileName ?? "upload.png";
+
+            var finalPath = Path.Combine(TargetDirectory, outputName);
+
+            // Stream the browser file straight to disk so large images never sit fully in memory.
+            await using var destination = new FileStream(
+                finalPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                bufferSize: 81920, useAsync: true);
+            await selectedFile.OpenReadStream(MaxFileSize).CopyToAsync(destination);
+
+            await OnUploaded.InvokeAsync();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            isUploading = false;
+        }
+    }
+
+    private static string FormatFileSize(long bytes)
+    {
+        if (bytes < 1024) return $"{bytes} B";
+        if (bytes < 1024 * 1024) return $"{bytes / 1024.0:F1} KB";
+        return $"{bytes / (1024.0 * 1024.0):F1} MB";
+    }
+}

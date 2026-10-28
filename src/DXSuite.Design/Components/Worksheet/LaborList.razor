@@ -1,0 +1,312 @@
+@using DXSuite.Design.Entities
+
+<div class="ll-container">
+    <div class="ll-header">
+        <h4 class="lit-section-title" style="margin:0">Labor</h4>
+        <div class="ll-desc-controls">
+            <label class="ll-desc-label" title="Include description row before Labor in NetSuite push">
+                <input type="checkbox"
+                       checked="@(SectionDescription?.IsEnabled ?? false)"
+                       @onchange="() => OnToggleSectionDescription.InvokeAsync()" />
+                <span>Desc.</span>
+            </label>
+            <button class="ll-desc-btn" @onclick="() => OnEditSectionDescription.InvokeAsync()"
+                    title="Edit description row">✎</button>
+        </div>
+    </div>
+    @if (CalculatorContent is not null)
+    {
+        @CalculatorContent
+    }
+    @if (!LaborRows.Any())
+    {
+        <p class="ct-empty" style="padding:24px 0; text-align:center">No labor types configured.</p>
+    }
+    else
+    {
+        <div style="overflow-x:auto">
+            <table class="lit-table">
+                <thead>
+                    <tr class="lit-header-row">
+                        <th class="lit-th">Labor Type</th>
+                        <th class="lit-th lit-num" style="width:130px">Calculated Hrs</th>
+                        <th class="lit-th lit-num" style="width:140px">Estimated Hrs</th>
+                        <th class="lit-th lit-num" style="width:90px">Cost/Hr</th>
+                        <th class="lit-th lit-num" style="width:90px">Sell/Hr</th>
+                        <th class="lit-th lit-num" style="width:110px">Ext. Cost</th>
+                        <th class="lit-th lit-num" style="width:110px">Ext. Sell</th>
+                        <th class="lit-th" style="width:84px; text-align:center">Loc</th>
+                        <th class="lit-th" style="width:44px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in LaborRows)
+                    {
+                        var ltId = row.LaborType.LaborTypeId;
+                        var computed = ComputedHours.GetValueOrDefault(ltId);
+                        var isManual = IsManualType(row.LaborType);
+                        var estimated = row.Entity.IsOverridden ? row.Entity.OverrideHours : computed;
+                        <tr>
+                            <td class="lit-td">
+                                @row.LaborType.TypeName
+                                @if (row.LaborType.IsPercentageOfColumns)
+                                {
+                                    <span class="dx-badge dx-badge-gray" style="margin-left:4px;font-size:.68rem">
+                                        @((row.LaborType.ColumnPercentage ?? 0).ToString("0.#"))%
+                                    </span>
+                                }
+                                else if (isManual)
+                                {
+                                    <span class="dx-badge dx-badge-gray" style="margin-left:4px;font-size:.68rem">Manual</span>
+                                }
+                            </td>
+                            <td class="lit-td lit-num lit-ro">
+                                @(isManual ? "—" : computed.ToString("F2"))
+                            </td>
+                            <td class="lit-td lit-num @(row.Entity.IsOverridden ? "ll-cell-dirty" : "")" style="padding:2px 4px">
+                                <input type="number" class="ll-hrs-input" step="0.25" min="0"
+                                       value="@estimated.ToString("F2")"
+                                       @onchange="e => OnEstimatedChanged(row.Entity.LaborRowId, ltId, computed, e.Value?.ToString())" />
+                            </td>
+                            <td class="lit-td lit-num lit-ro">@row.LaborType.InternalCostPerHr.ToString("N2")</td>
+                            <td class="lit-td lit-num lit-ro">@row.LaborType.InternalPricePerHr.ToString("N2")</td>
+                            <td class="lit-td lit-num lit-ro">@((row.LaborType.InternalCostPerHr * estimated).ToString("N2"))</td>
+                            <td class="lit-td lit-num lit-ro">@((row.LaborType.InternalPricePerHr * estimated).ToString("N2"))</td>
+                            <td class="lit-td" style="text-align:center; position:relative">
+                                <LocationPickerPopover
+                                    CurrentLocationId="@row.Entity.LocationId"
+                                    CurrentLocationName="@row.Entity.LocationName"
+                                    DefaultLocationId="@WorksheetDefaultLocationId"
+                                    DefaultLocationName="@WorksheetDefaultLocationName"
+                                    Locations="CachedLocations"
+                                    OnSelect="args => OnUpdateLocation.InvokeAsync((row.Entity.LaborRowId, args.Id, args.Name))" />
+                            </td>
+                            <td class="lit-td" style="text-align:center; white-space:nowrap">
+                                @if (row.Entity.IsOverridden)
+                                {
+                                    <button class="ll-revert-btn" title="Revert to calculated hours"
+                                            @onclick="() => OnRevert.InvokeAsync(row.Entity.LaborRowId)">↺</button>
+                                }
+                                @{ var hrs = ComputedHours.GetValueOrDefault(row.LaborType.LaborTypeId); }
+                                @if (hrs > 0 || row.Entity.IsOverridden && row.Entity.OverrideHours > 0)
+                                {
+                                    <button class="ll-del-btn ll-del-blocked" title="Remove hours before deleting this row"
+                                            @onclick="() => OnRemoveBlocked.InvokeAsync()"
+                                            style="opacity:.45; cursor:not-allowed">✕</button>
+                                }
+                                else
+                                {
+                                    <button class="ll-del-btn" title="Remove"
+                                            @onclick="() => OnRemoveRow.InvokeAsync(row.Entity.LaborRowId)">✕</button>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    @* Search strip to add a labor type not currently in the list *@
+    @if (AddableLaborTypes.Count > 0)
+    {
+        <div class="lit-add-strip">
+            <div class="lit-add-input-wrap">
+                <input type="text"
+                       class="lit-add-input"
+                       placeholder="+ Add labor type…"
+                       value="@_addSearch"
+                       @oninput="OnAddSearchInput"
+                       @onblur="CloseAddDropdown"
+                       autocomplete="off" />
+                @if (_addResults is { Count: > 0 } && _showAddDropdown)
+                {
+                    <div class="ms-dropdown" @onmousedown:preventDefault>
+                        @foreach (var lt in _addResults)
+                        {
+                            <div class="ms-dropdown-item" @onclick="() => AddLaborType(lt)">
+                                <div class="ms-dropdown-name">@lt.TypeName</div>
+                                <div class="ms-dropdown-sub">
+                                    @(lt.IsPercentageOfColumns ? $"{lt.ColumnPercentage ?? 0:0.#}% of column hrs"
+                                        : lt.SubRole != SubRole.Internal ? lt.SubRole.ToString()
+                                        : "Internal")
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+                else if (_addResults is { Count: 0 } && _showAddDropdown)
+                {
+                    <div class="ms-dropdown" @onmousedown:preventDefault>
+                        <div class="ms-dropdown-empty">No matching labor types</div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public RenderFragment? CalculatorContent { get; set; }
+    [Parameter, EditorRequired] public List<WorksheetEditor.LaborRowView> LaborRows { get; set; } = [];
+    [Parameter, EditorRequired] public Dictionary<int, decimal> ComputedHours { get; set; } = [];
+    /// <summary>LaborTypeIds that have no column assignments and are not percentage-based (driven by manual input only).</summary>
+    [Parameter] public HashSet<int> ManualLaborTypeIds { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback<int> OnRevert { get; set; }
+    [Parameter, EditorRequired] public EventCallback<(int LaborRowId, decimal Hours)> OnUpdateEstimated { get; set; }
+    [Parameter] public EventCallback<(int LaborRowId, string? LocationId, string? LocationName)> OnUpdateLocation { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationId { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationName { get; set; }
+    [Parameter] public List<NetsuiteLocation>? CachedLocations { get; set; }
+    /// <summary>The current section description row for Labor (null if not yet configured).</summary>
+    [Parameter] public TblDesignWorksheetSectionDescription? SectionDescription { get; set; }
+    [Parameter] public EventCallback OnToggleSectionDescription { get; set; }
+    [Parameter] public EventCallback OnEditSectionDescription { get; set; }
+    /// <summary>Labor types not currently in the list that can be added via the search strip.</summary>
+    [Parameter] public List<TblDesignLaborType> AddableLaborTypes { get; set; } = [];
+    /// <summary>Fired when the user selects a labor type from the add-strip dropdown.</summary>
+    [Parameter] public EventCallback<TblDesignLaborType> OnAddLaborType { get; set; }
+    /// <summary>Fired when the user clicks the remove button on a row with no hours.</summary>
+    [Parameter] public EventCallback<int> OnRemoveRow { get; set; }
+    /// <summary>Fired when the user clicks the remove button on a row that still has hours.</summary>
+    [Parameter] public EventCallback OnRemoveBlocked { get; set; }
+
+    private string _addSearch = "";
+    private List<TblDesignLaborType>? _addResults;
+    private bool _showAddDropdown;
+
+    private bool IsManualType(TblDesignLaborType lt) =>
+        !lt.IsPercentageOfColumns && ManualLaborTypeIds.Contains(lt.LaborTypeId);
+
+    private void OnEstimatedChanged(int laborRowId, int ltId, decimal computed, string? raw)
+    {
+        if (!decimal.TryParse(raw, out var h)) return;
+        h = Math.Max(0, h);
+        // If user entered the same value as computed, treat as a revert to avoid spurious override
+        if (h == computed)
+        {
+            _ = OnRevert.InvokeAsync(laborRowId);
+            return;
+        }
+        _ = OnUpdateEstimated.InvokeAsync((laborRowId, h));
+    }
+
+    private void OnAddSearchInput(ChangeEventArgs e)
+    {
+        _addSearch = e.Value?.ToString() ?? "";
+        if (string.IsNullOrWhiteSpace(_addSearch))
+        {
+            _addResults = null;
+            _showAddDropdown = false;
+            return;
+        }
+        _addResults = AddableLaborTypes
+            .Where(lt => lt.TypeName.Contains(_addSearch, StringComparison.OrdinalIgnoreCase))
+            .Take(10)
+            .ToList();
+        _showAddDropdown = true;
+    }
+
+    private void AddLaborType(TblDesignLaborType lt)
+    {
+        _addSearch = "";
+        _addResults = null;
+        _showAddDropdown = false;
+        _ = OnAddLaborType.InvokeAsync(lt);
+    }
+
+    private void CloseAddDropdown()
+    {
+        _showAddDropdown = false;
+        _addSearch = "";
+        _addResults = null;
+    }
+}
+
+<style>
+    .ll-container { margin-bottom: 24px; }
+
+    .ll-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 6px;
+        padding-top: 10px;
+    }
+
+    .ll-desc-controls {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .ll-desc-label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: .75rem;
+        color: var(--text-muted, #6c757d);
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .ll-desc-btn {
+        background: none;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px;
+        padding: 1px 6px;
+        font-size: .8rem;
+        cursor: pointer;
+        color: var(--text-muted, #6c757d);
+        line-height: 1.4;
+    }
+
+    .ll-desc-btn:hover:not(:disabled) { border-color: var(--dx-blue, #0071BC); color: var(--dx-blue, #0071BC); }
+    .ll-desc-btn:disabled { opacity: .45; cursor: default; }
+    .ll-desc-label input[type=checkbox] { accent-color: var(--dx-blue, #0071BC); }
+
+    /* Yellow dirty state */
+    .ll-cell-dirty { background: #fef9c3 !important; }
+
+    .ll-hrs-input {
+        width: 90px;
+        text-align: right;
+        padding: 2px 4px;
+        font-size: .78rem;
+        border: 1px solid transparent;
+        background: transparent;
+        box-sizing: border-box;
+    }
+
+    .ll-hrs-input:focus {
+        border-color: var(--dx-blue, #0071BC);
+        background: #fff;
+        outline: none;
+    }
+
+    .ll-revert-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: .9rem;
+        padding: 1px 4px;
+        color: var(--text-muted, #6c757d);
+        border-radius: 3px;
+    }
+
+    .ll-revert-btn:hover {
+        background: #e9ecef;
+        color: var(--text, #212529);
+    }
+
+    .ll-del-btn {
+        background: none;
+        border: none;
+        color: var(--text-muted, #6c757d);
+        cursor: pointer;
+        font-size: .9rem;
+        padding: 2px 4px;
+        border-radius: 3px;
+    }
+    .ll-del-btn:hover:not(.ll-del-blocked) { color: var(--dx-red, #dc3545); background: #fee2e2; }
+</style>

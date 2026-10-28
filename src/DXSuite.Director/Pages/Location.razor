@@ -1,0 +1,473 @@
+@page "/location/{LocationId:int}"
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services.LocationBundles
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@using System.Reflection
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject DisplayScaleService ScaleService
+@inject ISessionState sessionState
+@inject IJSRuntime JSRuntime
+@inject ILogger<Location> Logger
+@inject ILocationBundleService BundleService
+@inject IManifestCacheService ManifestCache
+@inject IMediaFolderCacheService MediaFolderCache
+@inject ITenantContext TenantContext
+@implements IAsyncDisposable
+@rendermode InteractiveServer
+
+
+@if(isLoading)
+{
+    <div class="dx-loading-overlay">
+        <div class="dx-spinner"></div>
+    </div>
+}
+else
+{
+
+    if (isAuthorized == false)
+    {
+        <div class="unauthorized-wrapper">
+            <h1>Unauthorized</h1>
+            <p>You do not have permission to access this page.</p>
+            <a href="/director">Return Home</a>
+        </div>
+    }
+    else
+    {
+        @if (location != null)
+        {
+            @if (!KioskMode)
+            {
+            <section class="dx-page-header">
+                <div class="dx-page-header-flex">
+                    <h2>@(location.LocationName.ToUpper())</h2>
+                    @if (showRepublishButton)
+                    {
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            @if (manifestVersion != null)
+                            {
+                                <span style="opacity:0.6; font-size:0.85em;" title="Current published manifest version@(manifestPublishedAt != null ? $", built {manifestPublishedAt:g} UTC" : "")">
+                                    Manifest @manifestVersion
+                                </span>
+                            }
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="RepublishContent"
+                                    title="Rebuild this location's content manifest so players re-fetch it on their next poll">
+                                @(republishDone ? "REPUBLISHED" : "REPUBLISH CONTENT")
+                            </button>
+                        </div>
+                    }
+                </div>
+            </section>
+            }
+
+            @if (assets != null && templateDisplay != null && location.LocationType?.ShowOverrideSection == true)
+            {
+                <section class="dx-override-section">
+                    <div class="text-center" style="margin-bottom: 10px;">
+                        <button class="dx-override-toggle" @onclick="showSection">
+                            @(isOverrideSectionVisible ? "HIDE OVERRIDE CONTROL" : "SHOW OVERRIDE CONTROL")
+                            @((selectedAsset != null) ? " — ASSET SELECTED" : "")
+                        </button>
+                    </div>
+                    <div class="@(!isOverrideSectionVisible ? "dx-hidden" : "")">
+                        <div class="dx-override-grid">
+                            @foreach (TblAsset asset in assets)
+                            {
+                                <div class="dx-override-card-wrapper">
+                                    <div class="dx-override-card @(selectedAsset == asset.AssetId ? "selected" : "")"
+                                         @onclick="@(() => OnAssetClick(asset.AssetId))">
+
+                                        <div class="dx-override-card-preview">
+                                            @if (asset.AssetTypeId == (int)Types.AssetType.Video)
+                                            {
+                                                <div class="dx-override-placeholder video">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:32px; height:32px; opacity:0.7;">
+                                                        <path d="M8 5v14l11-7z"/>
+                                                    </svg>
+                                                    <span>Video</span>
+                                                </div>
+                                            }
+                                            else if (asset.AssetTypeId == (int)Types.AssetType.Web)
+                                            {
+                                                <div class="dx-override-placeholder web">
+                                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:32px; height:32px; opacity:0.7;">
+                                                        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+                                                    </svg>
+                                                    <span>Web Content</span>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <img src="@asset.AssetPath" alt="" />
+                                            }
+                                        </div>
+
+                                        <div class="dx-override-card-label" title="@(System.IO.Path.GetFileName(asset.AssetPath))">
+                                            @(System.IO.Path.GetFileName(asset.AssetPath))
+                                        </div>
+
+                                        @if (selectedAsset == asset.AssetId)
+                                        {
+                                            <div class="dx-override-card-badge">SELECTED</div>
+                                        }
+                                    </div>
+
+                                    <button class="dx-override-card-action"
+                                            @onclick="() => OpenAssetInNewTab(asset)"
+                                            @onclick:stopPropagation="true"
+                                            title="Open in new tab">
+                                        VIEW
+                                    </button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </section>
+            }
+
+            <PageTitle>@location.LocationName</PageTitle>
+            <div class="content px-4 locationType-container">
+                @if (isBundleLocation)
+                {
+                    @if (bundleIframeUrl != null)
+                    {
+                        <iframe id="dx-bundle-frame" src="@bundleIframeUrl" title="@location.LocationName"
+                                style="width:100%; min-height:calc(100vh - 220px); border:0; display:block;"
+                                sandbox="allow-scripts allow-same-origin allow-forms allow-downloads"
+                                allow="fullscreen"></iframe>
+                    }
+                    else
+                    {
+                        <div class="dx-card" style="padding:32px; text-align:center;">
+                            <h4>No bundle assigned</h4>
+                            <p class="dx-text-muted">
+                                This custom location has no bundle assigned or the assigned bundle is unavailable.
+                            </p>
+                            @if (sessionState.RoleEnum == Roles.Role.Admin || sessionState.RoleEnum == Roles.Role.Architect)
+                            {
+                                <a href="/configuration" class="dx-btn dx-btn-outline-blue">Configure in Configuration Management</a>
+                            }
+                        </div>
+                    }
+                }
+                else if (componentType != null)
+                {
+                    <DynamicComponent Type="@componentType" Parameters="@componentParameters" />
+                }
+            </div>
+        }
+    }
+}
+
+@code {
+
+    /// <summary>
+    /// Set by MainLayout for accounts (or visits) rendering without DXSuite chrome. Hiding only
+    /// the navbar would leave this page's own title bar sitting above the location's content.
+    /// </summary>
+    [CascadingParameter(Name = "KioskMode")] private bool KioskMode { get; set; }
+
+    [Parameter]
+    public int LocationId { get; set; }
+
+    private bool isLoading = true;
+    private bool isAuthorized = false;
+
+    public double scaleFactorHalf;
+    public double scaleFactorFull;
+
+    public TblLocation? location { get; set; }
+    public IList<TblAsset>? assets { get; set; }
+    public IList<TblDisplay>? displays { get; set; }
+    private bool alignAssetsVertically = false;
+
+    public TblDisplay? templateDisplay { get; set; }
+
+    private double scaleFactor = 0.2;
+
+    private bool isOverrideSectionVisible = false;
+
+    private int? selectedAsset;
+
+    private Type? componentType;
+    private Dictionary<string, object?> componentParameters = new();
+
+    private bool isBundleLocation;
+    private string? bundleIframeUrl;
+    private IJSObjectReference? bundleHostModule;
+    private DotNetObjectReference<Location>? bundleHostRef;
+
+    private int? previousLocationId;
+
+    protected override async Task OnInitializedAsync()
+    {
+        sessionState.LocationAccessChanged += OnLocationAccessChanged;
+        await LoadLocationData();
+    }
+
+    private void OnLocationAccessChanged()
+    {
+        _ = InvokeAsync(() =>
+        {
+            // Access to this location was revoked mid-session — leave immediately.
+            if (!sessionState.AssignedLocationIds.Contains(LocationId))
+            {
+                navMan.NavigateTo("/director");
+                return;
+            }
+            StateHasChanged();
+        });
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        // Reload data when LocationId changes (e.g., navigating from Layout to Playlist location)
+        if (previousLocationId.HasValue && previousLocationId.Value != LocationId)
+        {
+            await LoadLocationData();
+        }
+        previousLocationId = LocationId;
+    }
+
+    private async Task LoadLocationData()
+    {
+        isLoading = true;
+        location = null;
+        assets = null;
+        templateDisplay = null;
+        isAuthorized = false;
+        isBundleLocation = false;
+        bundleIframeUrl = null;
+
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+        {
+            await sessionState.SessionLoaded.Task;
+        }
+
+        if (sessionState.AssignedLocationIds.Contains(LocationId))
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                location = await dbContext.TblLocations
+                    .Include(d => d.TblDisplays)
+                    .Include(d => d.LocationType)
+                    .FirstOrDefaultAsync(x => x.LocationId == LocationId);
+
+                if (location != null)
+                {
+                    templateDisplay = location.TblDisplays.FirstOrDefault(x => x.DisplayTypeId == (int)Types.DisplayType.StandardDisplay);
+                }
+                if (templateDisplay != null)
+                {
+                    scaleFactor = ScaleService.GetScaleFactor(templateDisplay.DisplayWidth, templateDisplay.DisplayHeight, "override");
+                    assets = await dbContext.TblAssets.Where(x => x.LocationId == LocationId && x.ConstraintId == templateDisplay.ConstraintId && x.IsDeleted == false).ToListAsync();
+                }
+            }
+
+            isAuthorized = true;
+            if (LocationBundleConstants.IsBundleType(location?.LocationType))
+            {
+                isBundleLocation = true;
+                await ResolveBundleFrameAsync();
+            }
+            else
+            {
+                ResolveComponent();
+            }
+        }
+        else
+        {
+            Logger.LogWarning("User not authorized to view this location");
+        }
+
+        UpdateAspectRatio();
+
+        LoadManifestVersion();
+
+        isLoading = false;
+    }
+
+    private string? manifestVersion;
+    private DateTime? manifestPublishedAt;
+    private bool republishDone;
+    private bool showRepublishButton;
+
+    private void LoadManifestVersion()
+    {
+        showRepublishButton = ExtendedDataHelper.Parse<LocationExtendedData>(location?.ExtendedData)?.ShowRepublishButton == true;
+
+        manifestVersion = null;
+        manifestPublishedAt = null;
+        if (ManifestCache.TryGetManifest(TenantContext.TenantId, ManifestBucket.ForLocation(LocationId), out var cached) && cached != null)
+        {
+            manifestVersion = cached.Version;
+            manifestPublishedAt = cached.CachedAt;
+        }
+    }
+
+    // Escape hatch for a stale manifest cache: drops the media-file and manifest caches for
+    // this location (and its display-keyed manifests) so the next player poll rebuilds from
+    // disk and DB. Players with matching content simply receive the same version again.
+    private void RepublishContent()
+    {
+        MediaFolderCache.InvalidateLocation(TenantContext.TenantId, LocationId);
+        if (location != null)
+        {
+            foreach (var display in location.TblDisplays)
+            {
+                ManifestCache.InvalidateDisplay(TenantContext.TenantId, display.DisplayId);
+            }
+        }
+        manifestVersion = null;
+        manifestPublishedAt = null;
+        republishDone = true;
+    }
+
+    private async Task ResolveBundleFrameAsync()
+    {
+        bundleIframeUrl = null;
+
+        var assignment = ExtendedDataHelper.Parse<LocationExtendedData>(location?.ExtendedData)?.Bundle;
+        if (assignment == null || string.IsNullOrEmpty(assignment.BundleKey))
+            return;
+
+        var resolved = await BundleService.ResolveVersionAsync(assignment.BundleKey, assignment.PinnedVersion);
+        if (resolved == null)
+        {
+            Logger.LogWarning("Location {LocationId} references bundle {BundleKey} which is missing or disabled",
+                LocationId, assignment.BundleKey);
+            return;
+        }
+
+        // dxLocation/dxVersion query params bootstrap the dx-location.js SDK inside the iframe.
+        bundleIframeUrl = $"/api/location-bundles/content/{LocationId}/{resolved.Version}/{resolved.EntryPath}" +
+                          $"?dxLocation={LocationId}&dxVersion={Uri.EscapeDataString(resolved.Version)}";
+    }
+
+    [JSInvokable]
+    public void OnBundleNavigate(string href)
+    {
+        // Only in-app relative paths — a bundle must not be able to send the top window
+        // to an external origin.
+        if (!string.IsNullOrEmpty(href) && href.StartsWith('/') && !href.StartsWith("//"))
+        {
+            navMan.NavigateTo(href);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (isBundleLocation && bundleIframeUrl != null && bundleHostModule == null)
+        {
+            bundleHostRef = DotNetObjectReference.Create(this);
+            bundleHostModule = await JSRuntime.InvokeAsync<IJSObjectReference>(
+                "import", "/_content/DXSuite.Director/scripts/dxBundleHost.js");
+            await bundleHostModule.InvokeVoidAsync("init", bundleHostRef, "dx-bundle-frame");
+        }
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        sessionState.LocationAccessChanged -= OnLocationAccessChanged;
+
+        if (bundleHostModule != null)
+        {
+            try
+            {
+                await bundleHostModule.InvokeVoidAsync("dispose");
+                await bundleHostModule.DisposeAsync();
+            }
+            catch (JSDisconnectedException)
+            {
+                // Circuit already gone — nothing to clean up client-side.
+            }
+        }
+        bundleHostRef?.Dispose();
+    }
+
+    private void ResolveComponent()
+    {
+        componentType = null;
+        componentParameters.Clear();
+
+        if (location?.LocationType?.ComponentTypeName is not { Length: > 0 } typeName)
+            return;
+
+        // Assembly-qualified lookup within the running app. The fallback chain handles
+        // ComponentTypeName values that point at sibling modules (e.g. DXSuite.NetJets.*),
+        // not just Director's own assembly.
+        componentType = Type.GetType(typeName)
+            ?? typeof(Location).Assembly.GetType(typeName)
+            ?? AppDomain.CurrentDomain
+                .GetAssemblies()
+                .Select(a => a.GetType(typeName))
+                .FirstOrDefault(t => t != null);
+
+        if (componentType == null)
+            return;
+
+        // Build parameter dictionary by reflection -- only pass what the component declares
+        var declared = componentType.GetProperties()
+            .Where(p => p.GetCustomAttribute<Microsoft.AspNetCore.Components.ParameterAttribute>() != null)
+            .Select(p => p.Name)
+            .ToHashSet();
+
+        if (declared.Contains("Location"))
+            componentParameters["Location"] = location;
+        if (declared.Contains("LocationId"))
+            componentParameters["LocationId"] = location.LocationId;
+        if (declared.Contains("SelectedAsset"))
+            componentParameters["SelectedAsset"] = selectedAsset;
+    }
+
+    private void showSection()
+    {
+        isOverrideSectionVisible = !isOverrideSectionVisible;
+    }
+
+    private void OnAssetClick(int assetId)
+    {
+        selectedAsset = (assetId == selectedAsset) ? null : assetId;
+
+        // Keep DynamicComponent parameters in sync
+        if (componentParameters.ContainsKey("SelectedAsset"))
+            componentParameters["SelectedAsset"] = selectedAsset;
+
+        // Bundles receive override selection via postMessage instead of a parameter
+        if (isBundleLocation && bundleHostModule != null)
+        {
+            _ = bundleHostModule.InvokeVoidAsync("pushOverrideAsset", "dx-bundle-frame", selectedAsset);
+        }
+    }
+
+    private void UpdateAspectRatio()
+    {
+        if (templateDisplay != null)
+        {
+            var aspectRatio = templateDisplay.DisplayHeight / templateDisplay.DisplayWidth;
+            if (aspectRatio < 0.3)
+            {
+                alignAssetsVertically = true;
+
+                scaleFactorHalf = ScaleService.GetScaleFactor(templateDisplay.DisplayWidth, templateDisplay.DisplayHeight, "half");
+                scaleFactorFull = ScaleService.GetScaleFactor(templateDisplay.DisplayWidth, templateDisplay.DisplayHeight, "full");
+                scaleFactor = scaleFactorFull;
+
+            }
+            else
+            {
+                alignAssetsVertically = false;
+            }
+        }
+    }
+
+    private async Task OpenAssetInNewTab(TblAsset asset)
+    {
+        await JSRuntime.InvokeVoidAsync("open", asset.AssetPath, "_blank");
+    }
+}

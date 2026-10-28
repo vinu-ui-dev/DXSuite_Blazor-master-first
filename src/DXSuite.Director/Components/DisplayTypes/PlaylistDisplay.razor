@@ -1,0 +1,194 @@
+@using Newtonsoft.Json
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+@using DXSuite.Director.Models
+@using System.Xml
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject ILogger<PlaylistDisplay> Logger
+@rendermode InteractiveServer
+
+@if (Location != null)
+{
+    @if (mediaFiles.Count > 0)
+    {
+        var mediaFile = mediaFiles[currentMediaIndex];
+
+        <div style="@((ContentHeight != 0.0)? "height:" + (ContentHeight * ScaleFactor).ToString() + "px;":"") @((ContentWidth != 0)? "width:" + (ContentWidth * ScaleFactor).ToString() + "px;":"")">
+
+            @if (mediaFile.WebPath.ToUpper().Contains(".MP4") || mediaFile.WebPath.ToUpper().Contains(".AVI"))
+            {
+                <div>
+                    <video src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain;">
+                    </video>
+                </div>
+            }
+            else
+            {
+                <div>
+                    <img src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain;" />
+                </div>
+            }
+
+        </div>
+    }
+
+}
+
+@code {
+    // VARIABLES
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public string? PlaylistName { get; set; }
+    [Parameter] public double ContentHeight { get; set; }
+    [Parameter] public double ContentWidth { get; set; }
+    [Parameter] public double ScaleFactor { get; set; }
+    [Parameter] public int? ConstraintId { get; set; } = null;
+
+    private string? baseDirectory;
+    private List<MediaFile> mediaFiles = new List<MediaFile>();
+    private int currentMediaIndex = 0;
+    private bool isPlaying = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateMediaFiles();
+        StartMediaLoop();
+    }
+
+    public async Task RefreshMediaFiles()
+    {
+        await UpdateMediaFiles();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void StartMediaLoop()
+    {
+        while (isPlaying)
+        {
+            await Task.Delay(7000);
+            if (mediaFiles.Count > 0)
+            {
+                currentMediaIndex = (currentMediaIndex + 1) % mediaFiles.Count;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private async Task UpdateMediaFiles()
+    {
+        try
+        {
+            DateTime now = DateTime.Now;
+            baseDirectory = MediaPaths.GetRoot();
+
+            if (baseDirectory != null && Location != null)
+            {
+                string uploadDirectory;
+
+                if (ConstraintId != null)
+                {
+                    uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString(), ConstraintId.ToString());
+                }
+                else
+                {
+                    uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString());
+                }
+
+                List<MediaFile> tempMediaFiles = new List<MediaFile>();
+
+                foreach (string file in System.IO.Directory.GetFiles(uploadDirectory, "", SearchOption.AllDirectories)
+                    .Where(s => !s.EndsWith(".metadata") && !s.EndsWith(".db")))
+                {
+                    List<MetadataField> metadata = new List<MetadataField>();
+                    string metadataFilePath = file + ".metadata";
+
+                    if (System.IO.File.Exists(metadataFilePath))
+                    {
+                        XmlDocument doc = new XmlDocument();
+                        doc.Load(metadataFilePath);
+                        XmlNodeList nodes = doc.SelectNodes("usermetadata");
+
+                        foreach (XmlNode node in nodes)
+                        {
+                            foreach (XmlNode line in node)
+                            {
+                                MetadataField mdf = new MetadataField()
+                                    {
+                                        Name = line.Attributes["name"].Value,
+                                        DataType = line.Attributes["datatype"].Value,
+                                        Value = line.Attributes["value"].Value
+                                    };
+                                metadata.Add(mdf);
+                            }
+                        }
+                    }
+
+                    MetadataField? location = metadata.Where(x => x.Name == "Location").FirstOrDefault();
+                    if (location != null && location.Value == Location.LocationId.ToString())
+                    {
+                        bool isExpired = false;
+                        DateTime? parsedEndDate = null;
+                        int? zoneId = null;
+
+                        MetadataField? endDate = metadata.Where(x => x.Name == "EndDate").FirstOrDefault();
+                        if (endDate != null && DateTime.TryParse(endDate.Value, out DateTime parsedDate))
+                        {
+                            parsedEndDate = parsedDate;
+                            if (parsedDate < now)
+                            {
+                                isExpired = true;
+                            }
+                        }
+
+                        MetadataField? zone = metadata.Where(x => x.Name == "Zone").FirstOrDefault();
+                        if (zone != null && int.TryParse(zone.Value, out int zoneInt))
+                        {
+                            zoneId = zoneInt;
+                        }
+
+                        if (ConstraintId != null)
+                        {
+                            MediaFile mf = new MediaFile()
+                                {
+                                    WebPath = $"/MediaAssets/{Location.LocationId}/{ConstraintId.ToString()}/{Path.GetFileName(file)}",
+                                    DiskPath = file,
+                                    Metadata = metadata,
+                                    IsExpired = isExpired,
+                                    EndDate = parsedEndDate,
+                                };
+
+                            tempMediaFiles.Add(mf);
+                        }
+                        else
+                        {
+                            MediaFile mf = new MediaFile()
+                                {
+                                    WebPath = $"/MediaAssets/{Location.LocationId}/{Path.GetFileName(file)}",
+                                    DiskPath = file,
+                                    Metadata = metadata,
+                                    IsExpired = isExpired,
+                                    EndDate = parsedEndDate,
+                                };
+
+                            tempMediaFiles.Add(mf);
+                        }
+
+
+                    }
+                }
+
+                mediaFiles = tempMediaFiles
+                    .Where(x => !x.IsExpired)
+                    .OrderBy(x => x.EndDate ?? DateTime.MaxValue)
+                    .ToList();
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating media files");
+        }
+    }
+}

@@ -1,0 +1,263 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@inject IApiKeyService apiKeyService
+@inject IJSRuntime JSRuntime
+@inject IStringLocalizer<ApiKeys> L
+@inject IStringLocalizer<SharedResources> LS
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">@L["Header_ApiKeyManagement"]</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">@L["Label_ApiKeyDescription"]</p>
+
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="dx-alert dx-alert-success" style="max-width:700px; margin-bottom:12px;">@successMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="dx-alert dx-alert-danger" style="max-width:700px; margin-bottom:12px;">@errorMessage</div>
+    }
+
+    @* Newly created key warning *@
+    @if (!string.IsNullOrEmpty(newlyCreatedKey))
+    {
+        <div class="dx-alert dx-alert-warning" style="max-width:700px; margin-bottom:16px;">
+            <strong>@L["Label_NewKeyCreated"]</strong> @L["Label_CopyKeyWarning"]
+            <div style="display:flex; gap:8px; margin-top:8px;">
+                <input type="text" class="dx-form-control" value="@newlyCreatedKey" readonly style="flex:1; font-family:monospace; font-size:0.85rem;" />
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CopyNewKeyToClipboard">Copy</button>
+            </div>
+        </div>
+    }
+
+    @* Create new key card *@
+    <div class="dx-card" style="max-width:700px; margin-bottom:20px;">
+        <div class="dx-card-body" style="padding:12px 16px;">
+            <div class="dx-form-group" style="margin-bottom:10px;">
+                <label class="dx-form-label" style="font-size:0.8rem;">@L["Label_KeyName"]</label>
+                <input type="text" class="dx-form-control" style="max-width:300px;"
+                       @bind="newKeyName" placeholder="@L["Placeholder_KeyName"]" />
+            </div>
+            <div class="dx-form-group" style="margin-bottom:10px;">
+                <label class="dx-form-label" style="font-size:0.8rem;">Scopes</label>
+                <div style="display:flex; flex-wrap:wrap; gap:12px;">
+                    @foreach (var scope in ApiKeyScopes.UserSelectableScopes)
+                    {
+                        <label style="display:flex; align-items:center; gap:5px; cursor:pointer; font-size:0.85rem;">
+                            <input type="checkbox" class="dx-checkbox"
+                                   checked="@selectedScopes.Contains(scope)"
+                                   @onchange="e => ToggleScope(scope, (bool)(e.Value ?? false))" />
+                            <code style="font-size:0.8rem;">@scope</code>
+                        </label>
+                    }
+                </div>
+            </div>
+            <button class="dx-btn dx-btn-blue" @onclick="CreateNewKey">@L["Button_GenerateKey"]</button>
+        </div>
+    </div>
+
+    @* Existing keys list *@
+    <div class="dx-settings-list dx-collapse" style="max-width:700px;">
+        <div class="dx-settings-list-header dx-collapse-header" style="grid-template-columns: minmax(100px,1fr) 80px minmax(120px,1.5fr) 90px 90px 50px 130px;">
+            <div>@L["Column_Name"]</div>
+            <div>@LS["Label_Status"]</div>
+            <div>Scopes</div>
+            <div>Expires</div>
+            <div>Last Used</div>
+            <div>Calls</div>
+            <div style="text-align:right;">Actions</div>
+        </div>
+        @if (apiKeys.Any())
+        {
+            @foreach (var key in apiKeys)
+            {
+                var isExpired = key.ExpiresAt.HasValue && key.ExpiresAt.Value < DateTime.UtcNow;
+                var isEffectivelyActive = key.IsActive && !isExpired;
+                <div class="dx-settings-list-row dx-collapse-row" style="grid-template-columns: minmax(100px,1fr) 80px minmax(120px,1.5fr) 90px 90px 50px 130px; @(!isEffectivelyActive ? "opacity:0.6;" : "")">
+                    <div class="dx-settings-list-label dx-col-primary">@key.KeyName</div>
+                    <div>
+                        @if (isExpired)
+                        {
+                            <span class="dx-badge dx-badge-red">Expired</span>
+                        }
+                        else if (key.IsActive)
+                        {
+                            <span class="dx-badge dx-badge-green">Active</span>
+                        }
+                        else
+                        {
+                            <span class="dx-badge dx-badge-gray">Revoked</span>
+                        }
+                    </div>
+                    <div style="display:flex; flex-wrap:wrap; gap:3px;">
+                        @if (key.Permissions?.Trim() == "*")
+                        {
+                            <span class="dx-badge dx-badge-blue">All</span>
+                        }
+                        else if (!string.IsNullOrWhiteSpace(key.Permissions))
+                        {
+                            @foreach (var scope in key.Permissions.Split(' ', StringSplitOptions.RemoveEmptyEntries))
+                            {
+                                <span class="dx-badge dx-badge-gray" style="font-size:0.7rem; padding:2px 6px;">@scope</span>
+                            }
+                        }
+                        else
+                        {
+                            <span class="dx-text-muted" style="font-size:0.8rem;">None</span>
+                        }
+                    </div>
+                    <div class="dx-text-muted dx-col-hide" style="font-size:0.8rem;">
+                        @(key.ExpiresAt?.ToString("MM/dd/yy") ?? "Never")
+                    </div>
+                    <div class="dx-text-muted dx-col-hide" style="font-size:0.8rem;">
+                        @(key.LastUsedAt?.ToString("MM/dd HH:mm") ?? "Never")
+                    </div>
+                    <div class="dx-text-muted dx-col-hide" style="font-size:0.8rem;">
+                        @key.CallCount.ToString("N0")
+                    </div>
+                    <div class="dx-col-actions" style="display:flex; gap:4px; justify-content:flex-end;">
+                        @if (key.IsActive)
+                        {
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RevokeKey(key)">Revoke</button>
+                        }
+                        else
+                        {
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => ReactivateKey(key)">Activate</button>
+                        }
+                        <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteKey(key)">Delete</button>
+                    </div>
+                </div>
+            }
+        }
+        else
+        {
+            <div style="text-align:center; padding:30px 0; color:#999;">@L["Label_NoApiKeys"]</div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<TblApiKey> apiKeys = new();
+
+    private string newKeyName = "";
+    private HashSet<string> selectedScopes = new();
+
+    private string newlyCreatedKey = "";
+    private string successMessage = "";
+    private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadApiKeys();
+    }
+
+    private async Task LoadApiKeys()
+    {
+        try
+        {
+            apiKeys = await apiKeyService.GetAllApiKeysAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load API keys: {ex.Message}";
+        }
+    }
+
+    private void ToggleScope(string scope, bool isChecked)
+    {
+        if (isChecked)
+            selectedScopes.Add(scope);
+        else
+            selectedScopes.Remove(scope);
+    }
+
+    private async Task CreateNewKey()
+    {
+        if (string.IsNullOrWhiteSpace(newKeyName))
+        {
+            errorMessage = "Please enter a name for the API key.";
+            return;
+        }
+
+        if (selectedScopes.Count == 0)
+        {
+            errorMessage = "Please select at least one scope.";
+            return;
+        }
+
+        try
+        {
+            errorMessage = "";
+            var permissions = string.Join(" ", selectedScopes);
+            var result = await apiKeyService.CreateApiKeyAsync(newKeyName, null, permissions, null);
+            newlyCreatedKey = result.PlaintextKey;
+            successMessage = $"API key '{newKeyName}' created successfully!";
+            newKeyName = "";
+            selectedScopes.Clear();
+            await LoadApiKeys();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to create API key: {ex.Message}";
+        }
+    }
+
+    private async Task RevokeKey(TblApiKey key)
+    {
+        try
+        {
+            await apiKeyService.RevokeApiKeyAsync(key.ApiKeyId);
+            successMessage = $"API key '{key.KeyName}' has been revoked.";
+            errorMessage = "";
+            await LoadApiKeys();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to revoke: {ex.Message}";
+        }
+    }
+
+    private async Task ReactivateKey(TblApiKey key)
+    {
+        try
+        {
+            await apiKeyService.UpdateApiKeyAsync(key.ApiKeyId, null, null, null, true, null);
+            successMessage = $"API key '{key.KeyName}' reactivated.";
+            errorMessage = "";
+            await LoadApiKeys();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to reactivate: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteKey(TblApiKey key)
+    {
+        try
+        {
+            await apiKeyService.DeleteApiKeyAsync(key.ApiKeyId);
+            successMessage = $"API key '{key.KeyName}' deleted.";
+            errorMessage = "";
+            newlyCreatedKey = "";
+            await LoadApiKeys();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to delete: {ex.Message}";
+        }
+    }
+
+    private async Task CopyNewKeyToClipboard()
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("navigator.clipboard.writeText", newlyCreatedKey);
+            successMessage = "API key copied to clipboard!";
+        }
+        catch
+        {
+            errorMessage = "Failed to copy. Please copy manually.";
+        }
+    }
+}

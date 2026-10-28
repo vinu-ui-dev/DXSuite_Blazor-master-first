@@ -1,0 +1,3368 @@
+/* ============================================================
+   DXSuite Design System
+   Core variables, buttons, badges, tables, forms, modals, tabs
+   ============================================================ */
+
+/* --- CSS Variables --- */
+:root {
+    --dx-blue: #0071BC;
+    --dx-blue-hover: #20a6ff;
+    --dx-blue-shadow: #bde5ff;
+    --dx-red: #990000;
+    --dx-red-hover: #FF0000;
+    --dx-red-shadow: lightcoral;
+    --dx-green: #39B54A;
+    --dx-green-hover: #48e35d;
+    --dx-green-shadow: #b8f0c0;
+    --dx-gray: #BBB;
+    --dx-gray-hover: #adadad;
+    --dx-gray-shadow: #d3d3d3;
+    --dx-orange: #FD8204;
+    --dx-font-family: 'BAHNSCHRIFT', Arial, Helvetica, sans-serif;
+    --dx-border-radius: 4px;
+    --dx-border-color: #ddd;
+    --dx-bg-alt: #f0f0f0;
+    --dx-text-primary: #333;
+    --dx-text-muted: #666;
+    --dx-modal-backdrop: rgba(0, 0, 0, 0.5);
+    --dx-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.1);
+    --dx-shadow-md: 0 4px 20px rgba(0, 0, 0, 0.3);
+    --dx-transition: 0.2s ease;
+}
+
+/* --- Responsive breakpoints (convention) ---
+   Keep new @media rules on these values so behavior stays consistent:
+     1200px — wide-desktop refinements (e.g. hide low-priority table columns)
+     1024px — stack side-by-side panel layouts
+      768px — primary tablet/phone cutoff: collapse grids, hide optional
+              columns, switch the navbar to the hamburger menu
+   480–600px — phone-only refinements (single-column forms, reduced padding)
+   Touch affordances (44px targets, tap alternatives to drag-and-drop) key off
+   @media (pointer: coarse) rather than viewport width. */
+
+/* --- Buttons --- */
+.dx-btn {
+    padding: 8px 16px;
+    font-size: 14px;
+    font-weight: 600;
+    text-transform: uppercase;
+    border: none;
+    border-radius: var(--dx-border-radius);
+    cursor: pointer;
+    transition: background-color var(--dx-transition), box-shadow var(--dx-transition);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    line-height: 1.4;
+}
+
+.dx-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.dx-btn-blue {
+    background-color: var(--dx-blue);
+    color: #fff;
+}
+
+.dx-btn-blue:hover:not(:disabled) {
+    background-color: var(--dx-blue-hover);
+    box-shadow: 0 2px 4px var(--dx-blue-shadow);
+}
+
+.dx-btn-blue.active {
+    background-color: var(--dx-blue-hover);
+    box-shadow: 0 2px 4px var(--dx-blue-shadow);
+}
+
+.dx-btn-red {
+    background-color: var(--dx-red);
+    color: #fff;
+}
+
+.dx-btn-red:hover:not(:disabled) {
+    background-color: var(--dx-red-hover);
+    box-shadow: 0 2px 4px var(--dx-red-shadow);
+}
+
+.dx-btn-green {
+    background-color: var(--dx-green);
+    color: #fff;
+}
+
+.dx-btn-green:hover:not(:disabled) {
+    background-color: var(--dx-green-hover);
+    box-shadow: 0 2px 4px var(--dx-green-shadow);
+}
+
+.dx-btn-gray {
+    background-color: var(--dx-gray);
+    color: #fff;
+}
+
+.dx-btn-gray:hover:not(:disabled) {
+    background-color: var(--dx-gray-hover);
+    box-shadow: 0 2px 4px var(--dx-gray-shadow);
+}
+
+.dx-btn-sm {
+    padding: 4px 10px;
+    font-size: 12px;
+}
+
+.dx-btn-lg {
+    padding: 12px 24px;
+    font-size: 16px;
+}
+
+.dx-btn-outline-blue {
+    background: transparent;
+    color: var(--dx-blue);
+    border: 1px solid var(--dx-blue);
+}
+
+.dx-btn-outline-blue:hover:not(:disabled) {
+    background-color: var(--dx-blue);
+    color: #fff;
+}
+
+.dx-btn-outline-red {
+    background: transparent;
+    color: var(--dx-red);
+    border: 1px solid var(--dx-red);
+}
+
+.dx-btn-outline-red:hover:not(:disabled) {
+    background-color: var(--dx-red);
+    color: #fff;
+}
+
+/* --- Badges --- */
+.dx-badge {
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+    line-height: 1.4;
+}
+
+.dx-badge-green {
+    background-color: #d4edda;
+    color: #155724;
+}
+
+.dx-badge-yellow {
+    background-color: #fff3cd;
+    color: #856404;
+}
+
+.dx-badge-red {
+    background-color: #f8d7da;
+    color: #721c24;
+}
+
+.dx-badge-gray {
+    background-color: #e9ecef;
+    color: #495057;
+}
+
+.dx-badge-blue {
+    background-color: #cce5ff;
+    color: #004085;
+}
+
+.dx-badge-orange {
+    background-color: #fff3e0;
+    color: #e65100;
+}
+
+.dx-badge-pill {
+    background-color: var(--dx-blue);
+    color: #fff;
+    border-radius: 999px;
+    padding: 2px 10px;
+    font-size: 0.8rem;
+}
+
+/* --- Status Indicators --- */
+.dx-status-dot {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+}
+
+.dx-status-dot-green { background-color: var(--dx-green); }
+.dx-status-dot-red { background-color: #dc3545; }
+.dx-status-dot-yellow { background-color: #ffc107; }
+.dx-status-dot-gray { background-color: #6c757d; }
+.dx-status-dot-orange { background-color: var(--dx-orange); }
+
+/* --- Tables (CSS Grid) --- */
+.dx-table {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--dx-border-color);
+    /*border-radius: var(--dx-border-radius);*/
+}
+
+.dx-table-header {
+    display: grid;
+    background-color: var(--dx-bg-alt);
+    border-bottom: 2px solid #ccc;
+    font-weight: 600;
+    font-size: 0.85rem;
+    color: var(--dx-text-muted);
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+}
+
+.dx-table-header > div {
+    padding: 12px 16px;
+    white-space: nowrap;
+}
+
+.dx-table-row > div {
+    padding: 12px 16px;
+}
+
+.dx-table-row {
+    display: grid;
+    border-bottom: 1px solid #e0e0e0;
+    font-size: 0.9rem;
+    align-items: center;
+    transition: background-color var(--dx-transition);
+}
+
+.dx-table-row:last-child {
+    border-bottom: none;
+}
+
+.dx-table-row:hover {
+    background-color: #f8f9fa;
+}
+
+/* --- Tabs --- */
+.dx-tab-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0;
+    background-color: var(--dx-bg-alt);
+    border-bottom: 1px solid #ccc;
+    margin-bottom: 0;
+}
+
+.dx-tab-btn {
+    padding: 12px 24px;
+    font-size: 1rem;
+    font-weight: 600;
+    color: var(--dx-text-muted);
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all var(--dx-transition);
+}
+
+.dx-tab-btn:hover {
+    background-color: #e0e0e0;
+    color: var(--dx-text-primary);
+}
+
+.dx-tab-btn.active {
+    background-color: #e0e0e0;
+    color: var(--dx-blue);
+    border-bottom: 2px solid var(--dx-blue);
+}
+
+/* Mobile replacement for tab bars: pages render both a .dx-tab-nav-collapsible
+   bar and a .dx-tab-select bound to the same state; desktop shows the bar,
+   phones show the select. */
+.dx-tab-select {
+    display: none;
+    max-width: 360px;
+    margin-bottom: 12px;
+    font-weight: 600;
+    background-color: #fff;
+    cursor: pointer;
+}
+
+.dx-tab-content {
+    padding: 20px;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-top: none;
+    overflow-y: auto;
+}
+
+@media (max-width: 768px) {
+    /* !important: component style blocks load after this sheet and re-declare
+       display on their tab bars (e.g. .appr-tabs) */
+    .dx-tab-nav-collapsible {
+        display: none !important;
+    }
+
+    .dx-tab-select {
+        display: block;
+    }
+
+    .dx-tab-content {
+        padding: 10px;
+    }
+
+    /* With the tab bar gone, the content panel needs its own top border */
+    .dx-tab-content-standalone {
+        border-top: 1px solid #ccc;
+    }
+}
+
+/* --- Forms --- */
+.dx-form-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 16px;
+}
+
+.dx-form-label {
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--dx-text-primary);
+}
+
+.dx-form-hint {
+    font-size: 0.8rem;
+    color: var(--dx-text-muted);
+}
+
+.dx-form-control {
+    width: 100%;
+    padding: 8px 12px;
+    font-size: 0.95rem;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    transition: border-color var(--dx-transition), box-shadow var(--dx-transition);
+    box-sizing: border-box;
+}
+
+.dx-form-control:focus {
+    outline: none;
+    border-color: var(--dx-blue);
+    box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.2);
+}
+
+.dx-form-control.invalid {
+    border-color: var(--dx-red-hover);
+    box-shadow: 0 0 0 2px rgba(255, 0, 0, 0.1);
+}
+
+/* Compact variant sized to match Bootstrap's .form-select-sm (31px) so mixed
+   dx/Bootstrap controls align in the same row. */
+.dx-form-control-sm {
+    padding: 4px 8px;
+    font-size: 0.875rem;
+    line-height: 1.5;
+}
+
+/* Hide number-input spinners on compact numeric fields (e.g. Z-Index) where
+   the arrows would consume most of the column width. */
+.no-spinner::-webkit-outer-spin-button,
+.no-spinner::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+.no-spinner[type="number"] {
+    -moz-appearance: textfield;
+    appearance: textfield;
+}
+
+.dx-form-validation {
+    color: var(--dx-red-hover);
+    font-size: 0.8rem;
+}
+
+.dx-form-row {
+    display: flex;
+    gap: 16px;
+}
+
+.dx-form-row > .dx-form-group {
+    flex: 1;
+}
+
+/* --- Toggle Switch --- */
+.dx-toggle {
+    position: relative;
+    display: inline-block;
+    width: 40px;
+    height: 20px;
+}
+
+.dx-toggle input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.dx-toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: #ccc;
+    border-radius: 20px;
+    transition: background-color 0.3s;
+}
+
+.dx-toggle-slider::before {
+    content: "";
+    position: absolute;
+    height: 14px;
+    width: 14px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: transform 0.3s;
+}
+
+.dx-toggle input:checked + .dx-toggle-slider {
+    background-color: var(--dx-green);
+}
+
+.dx-toggle input:checked + .dx-toggle-slider::before {
+    transform: translateX(20px);
+}
+
+.dx-toggle:hover .dx-toggle-slider {
+    box-shadow: 0 0 3px rgba(0, 0, 0, 0.3);
+}
+
+/* --- Modals --- */
+.dx-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--dx-modal-backdrop);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 9999;
+}
+
+.dx-modal {
+    background: #fff;
+    border-radius: 8px;
+    box-shadow: var(--dx-shadow-md);
+    /* Clamp so the modal never exceeds narrow (phone) viewports */
+    min-width: min(450px, 92vw);
+    max-width: 90vw;
+    max-height: 80vh;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.dx-modal-header {
+    background-color: var(--dx-blue);
+    color: #fff;
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    font-weight: 600;
+}
+
+.dx-modal-close {
+    background: none;
+    border: none;
+    color: #fff;
+    font-size: 1.5rem;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.dx-modal-close:hover {
+    opacity: 0.8;
+}
+
+.dx-modal-body {
+    padding: 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.dx-modal-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--dx-border-color);
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+/* --- Cards --- */
+.dx-card {
+    background: #fff;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    box-shadow: var(--dx-shadow-sm);
+    overflow: hidden;
+}
+
+.dx-card-header {
+    padding: 12px 16px;
+    background-color: var(--dx-bg-alt);
+    border-bottom: 1px solid var(--dx-border-color);
+    font-weight: 600;
+}
+
+.dx-card-body {
+    padding: 16px;
+}
+
+.dx-card-footer {
+    padding: 12px 16px;
+    border-top: 1px solid var(--dx-border-color);
+    background-color: #fafafa;
+}
+
+.dx-card-accent-left {
+    border-left: 4px solid var(--dx-blue);
+}
+
+.dx-card-accent-green {
+    border-left: 4px solid var(--dx-green);
+}
+
+.dx-card-accent-red {
+    border-left: 4px solid #dc3545;
+}
+
+.dx-card-accent-orange {
+    border-left: 4px solid var(--dx-orange);
+}
+
+/* --- Alerts --- */
+.dx-alert {
+    padding: 12px 16px;
+    border-radius: var(--dx-border-radius);
+    font-size: 0.9rem;
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+}
+
+.dx-alert-info {
+    background-color: #cce5ff;
+    color: #004085;
+    border: 1px solid #b8daff;
+}
+
+.dx-alert-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.dx-alert-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.dx-alert-danger {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* --- Toast --- */
+.dx-toast {
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    background: #333;
+    color: #fff;
+    padding: 12px 24px;
+    border-radius: 8px;
+    box-shadow: var(--dx-shadow-md);
+    z-index: 9999;
+    animation: dx-toast-slide-in 0.3s ease-out;
+}
+
+@keyframes dx-toast-slide-in {
+    from { transform: translateY(100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}
+
+/* --- Upload Minimized Bar --- */
+.dx-upload-bar {
+    position: fixed;
+    bottom: 16px;
+    right: 16px;
+    z-index: 10000;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-width: 320px;
+    max-width: 420px;
+}
+
+.dx-upload-bar-entry {
+    background: #2b2b2b;
+    color: #fff;
+    border-radius: 6px;
+    padding: 8px 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    cursor: pointer;
+    user-select: none;
+    opacity: 1;
+    transition: opacity 0.5s ease;
+}
+
+.dx-upload-bar-entry.dx-auto-removing {
+    opacity: 0;
+}
+
+.dx-upload-bar-entry.dx-needs-attention {
+    animation: dx-upload-flash 0.6s ease-in-out 3;
+}
+
+@keyframes dx-upload-flash {
+    0%, 100% { box-shadow: 0 2px 8px rgba(0,0,0,0.3); }
+    50%       { box-shadow: 0 0 16px 4px var(--dx-blue); }
+}
+
+/* --- Loading --- */
+.dx-loading-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(255, 255, 255, 0.8);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    z-index: 10;
+}
+
+.dx-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid var(--dx-bg-alt);
+    border-top: 4px solid var(--dx-blue);
+    border-radius: 50%;
+    animation: dx-spin 0.8s linear infinite;
+}
+
+@keyframes dx-spin {
+    to { transform: rotate(360deg); }
+}
+
+/* Compact spinner for inline use next to form controls (e.g. upload progress) */
+.dx-spinner-sm {
+    width: 16px;
+    height: 16px;
+    border-width: 2px;
+    flex-shrink: 0;
+}
+
+/* --- Dropdown --- */
+.dx-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dx-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: var(--dx-border-radius);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    min-width: 180px;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 9999;
+}
+
+.dx-dropdown-item {
+    padding: 8px 12px;
+    cursor: pointer;
+    font-size: 0.9rem;
+    transition: background-color var(--dx-transition);
+}
+
+.dx-dropdown-item:hover {
+    background-color: var(--dx-bg-alt);
+}
+
+.dx-dropdown-divider {
+    border-top: 1px solid var(--dx-border-color);
+    margin: 4px 0;
+}
+
+/* --- Scrollbar --- */
+.dx-scrollable::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+
+.dx-scrollable::-webkit-scrollbar-track {
+    background: #ccc;
+    border-radius: 10px;
+}
+
+.dx-scrollable::-webkit-scrollbar-thumb {
+    background-color: var(--dx-blue);
+    border: 2px solid #ccc;
+    border-radius: 10px;
+}
+
+.dx-scrollable::-webkit-scrollbar-thumb:hover {
+    background-color: #005999;
+}
+
+/* --- Utility --- */
+.dx-text-muted { color: var(--dx-text-muted); }
+.dx-text-blue { color: var(--dx-blue); }
+.dx-text-green { color: var(--dx-green); }
+.dx-text-red { color: #dc3545; }
+.dx-text-orange { color: var(--dx-orange); }
+.dx-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Navbar --- */
+.dx-navbar {
+    background-color: #f7f7f7;
+    border-bottom: 1px solid #d6d5d5;
+    height: 3.5rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 1rem;
+    position: sticky;
+    top: 0;
+    z-index: 5000;
+}
+
+.dx-navbar-brand {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+    text-decoration: none;
+    color: var(--dx-text-primary);
+    font-weight: 700;
+    font-size: 1.1rem;
+}
+
+.dx-navbar-brand img {
+    height: 40px;
+}
+
+.dx-navbar-left {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+}
+
+.dx-navbar-links {
+    display: flex;
+    align-items: center;
+}
+
+/* Hamburger toggle — hidden on desktop, replaces the inline nav links below 768px.
+   The SVG bars draw with currentColor: same token as .dx-nav-product-btn text. */
+.dx-nav-hamburger {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    padding: 0;
+    margin-right: 8px;
+    border: none;
+    background: none;
+    cursor: pointer;
+    color: var(--dx-text-primary);
+    transition: color var(--dx-transition);
+}
+
+.dx-nav-hamburger:hover,
+.dx-nav-hamburger.active {
+    color: var(--dx-blue);
+}
+
+/* Flattened nav panel shown under the navbar when the hamburger is open */
+.dx-mobile-nav {
+    position: fixed;
+    top: 3.5rem;
+    left: 0;
+    right: 0;
+    background: #fff;
+    border-bottom: 1px solid var(--dx-border-color);
+    box-shadow: var(--dx-shadow-sm);
+    max-height: calc(100vh - 3.5rem);
+    overflow-y: auto;
+    padding: 8px 0;
+    z-index: 5100;
+}
+
+.dx-mobile-nav-group-label {
+    padding: 12px 20px 4px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dx-text-muted);
+    font-family: var(--dx-font-family);
+}
+
+.dx-mobile-nav-item {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    padding: 10px 20px;
+    border: none;
+    background: none;
+    text-align: left;
+    font-size: 1rem;
+    color: var(--dx-text-primary);
+    font-family: var(--dx-font-family);
+    cursor: pointer;
+}
+
+.dx-mobile-nav-item:hover,
+.dx-mobile-nav-item.active {
+    background-color: var(--dx-bg-alt);
+    color: var(--dx-blue);
+}
+
+@media (max-width: 768px) {
+    .dx-navbar-links {
+        display: none;
+    }
+
+    .dx-nav-hamburger {
+        display: flex;
+    }
+
+    /* Branding images are authored for the desktop header; keep them contained */
+    .dx-navbar-brand img {
+        max-height: 30px;
+        max-width: 40vw;
+        width: auto;
+        object-fit: contain;
+    }
+}
+
+.dx-nav-product-btn {
+    border: none;
+    background: none;
+    margin-left: 20px;
+    padding: 4px 0;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--dx-text-primary);
+    cursor: pointer;
+    transition: color var(--dx-transition);
+    font-family: var(--dx-font-family);
+}
+
+.dx-nav-product-btn:hover,
+.dx-nav-product-btn.active {
+    color: var(--dx-blue);
+}
+
+.dx-nav-group {
+    position: relative;
+    display: inline-block;
+}
+
+.dx-nav-group-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    background: white;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    box-shadow: var(--dx-shadow-sm);
+    min-width: 180px;
+    padding: 4px 0;
+    margin-top: 4px;
+    opacity: 0;
+    transform: translateY(-6px);
+    visibility: hidden;
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    z-index: 5100;
+}
+
+.dx-nav-group-menu.show {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+}
+
+.dx-nav-group-item {
+    display: block;
+    width: 100%;
+    padding: 8px 16px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--dx-text-primary);
+    font-family: var(--dx-font-family);
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.dx-nav-group-item:hover {
+    background-color: var(--dx-bg-alt);
+    color: var(--dx-blue);
+}
+
+/* Profile avatar */
+.dx-profile-avatar {
+    border: none;
+    background: none;
+    padding: 0;
+    cursor: pointer;
+    border-radius: 50%;
+    width: 32px;
+    height: 32px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: box-shadow var(--dx-transition);
+    overflow: hidden;
+    flex-shrink: 0;
+}
+
+.dx-profile-avatar:hover,
+.dx-profile-avatar.active {
+    box-shadow: 0 0 0 2px var(--dx-blue);
+}
+
+.dx-profile-avatar img {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    object-fit: cover;
+}
+
+.dx-profile-initials {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    background-color: var(--dx-blue);
+    color: white;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    user-select: none;
+}
+
+/* Profile dropdown */
+.dx-profile-dropdown {
+    position: relative;
+    display: inline-block;
+}
+
+.dx-profile-dropdown-menu {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: white;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    min-width: 220px;
+    padding: 4px 0;
+    margin-top: 4px;
+    opacity: 0;
+    transform: translateY(-6px);
+    visibility: hidden;
+    transition: opacity 0.15s ease, transform 0.15s ease, visibility 0.15s;
+    z-index: 5100;
+}
+
+.dx-profile-dropdown-menu.show {
+    opacity: 1;
+    transform: translateY(0);
+    visibility: visible;
+}
+
+.dx-profile-dropdown-header {
+    padding: 10px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.dx-profile-dropdown-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--dx-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dx-profile-dropdown-role {
+    font-size: 12px;
+    color: var(--dx-text-muted);
+}
+
+.dx-dropdown-divider {
+    height: 0;
+    margin: 4px 0;
+    overflow: hidden;
+    border-top: 1px solid #e5e5e5;
+}
+
+.dx-dropdown-item {
+    display: block;
+    width: 100%;
+    padding: 8px 16px;
+    border: none;
+    background: none;
+    text-align: left;
+    cursor: pointer;
+    font-size: 0.9rem;
+    color: var(--dx-text-primary);
+    font-family: var(--dx-font-family);
+    transition: color 0.15s ease, background-color 0.15s ease;
+}
+
+.dx-dropdown-item:hover {
+    background-color: var(--dx-bg-alt);
+    color: var(--dx-blue);
+}
+
+.dx-dropdown-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 4999;
+    background: transparent;
+}
+
+/* --- Page Sections --- */
+/* Wraps @Body under the navbar on every page */
+.dx-page-body-wrap {
+    padding: 1rem 1.5rem;
+    background-color: #fff;
+}
+
+@media (max-width: 768px) {
+    .dx-page-body-wrap {
+        padding: 1rem 0.5rem;
+    }
+}
+
+.locationType-container {
+    margin-top: 20px;
+}
+
+/* On phones, reclaim the width eaten by nested container padding. The px-4
+   utility on the location host uses !important, so this must too. */
+@media (max-width: 768px) {
+    .locationType-container {
+        padding-left: 0 !important;
+        padding-right: 0 !important;
+    }
+}
+
+.dx-page-header {
+    background: var(--dx-bg-alt);
+    padding: 15px 30px;
+}
+
+.dx-page-header h2 {
+    color: var(--dx-text-primary);
+    font-size: 28px;
+    margin: 0;
+}
+
+.dx-page-header-flex {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+}
+
+/* Scale header text down on narrow screens instead of letting it wrap */
+@media (max-width: 768px) {
+    .dx-page-header {
+        padding: 12px 16px;
+    }
+
+    .dx-page-header h2 {
+        font-size: 20px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        min-width: 0;
+    }
+}
+
+@media (max-width: 480px) {
+    .dx-page-header h2 {
+        font-size: 17px;
+    }
+}
+
+.dx-page-body {
+    padding: 20px 0;
+}
+
+.dx-page-body h2 {
+    font-size: 28px;
+    color: var(--dx-orange);
+    margin: 20px 0 10px;
+}
+
+/* --- Collapsible Group --- */
+.dx-collapsible-group {
+    margin-bottom: 6px;
+}
+
+.dx-collapsible-header {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-left: 3px solid var(--dx-orange);
+    cursor: pointer;
+    user-select: none;
+    color: var(--dx-orange);
+    transition: background-color 0.15s ease;
+    border-radius: 0 4px 4px 0;
+}
+
+.dx-collapsible-header:hover {
+    background-color: rgba(253, 130, 4, 0.06);
+}
+
+.dx-collapsible-chevron {
+    flex-shrink: 0;
+    transition: transform 0.2s ease;
+    color: var(--dx-orange);
+}
+
+.dx-collapsible-chevron.collapsed {
+    transform: rotate(-90deg);
+}
+
+.dx-collapsible-title {
+    font-size: 18px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.dx-collapsible-content {
+    padding-top: 10px;
+}
+
+/* --- Tile (horizontal image + text card) --- */
+.dx-tile {
+    display: flex;
+    align-items: center;
+    background: #CCCCCC;
+    margin: 0 0 15px;
+    border-radius: var(--dx-border-radius);
+    overflow: hidden;
+    transition: background-color 0.15s ease;
+}
+
+.dx-tile:hover {
+    background: #e5e5e5;
+}
+
+.dx-tile img {
+    height: 120px;
+    padding: 4px;
+    flex-shrink: 0;
+}
+
+.dx-tile-title {
+    font-size: 26px;
+    color: #000;
+    font-weight: bold;
+    line-height: normal;
+    padding: 0 15px;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    min-width: 0;
+}
+
+/* On phones the tiles read as a compact list: no preview image, smaller text */
+@media (max-width: 768px) {
+    .dx-tile img {
+        display: none;
+    }
+
+    .dx-tile {
+        margin: 0 0 8px;
+        min-height: 48px;
+        padding: 10px 0;
+    }
+
+    .dx-tile-title {
+        font-size: 17px;
+        white-space: nowrap;
+    }
+}
+
+/* --- Override Control --- */
+.dx-override-section {
+    background: #F2F2F2;
+    padding: 10px 15px;
+}
+
+.dx-override-toggle {
+    display: block;
+    width: 100%;
+    padding: 10px 20px;
+    background-color: var(--dx-blue);
+    color: #fff;
+    border: none;
+    border-radius: var(--dx-border-radius);
+    font-size: 13px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: background-color var(--dx-transition);
+}
+
+.dx-override-toggle:hover {
+    background-color: var(--dx-blue-hover);
+}
+
+.dx-override-grid {
+    display: flex;
+    gap: 15px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-height: 200px;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 15px 0;
+}
+
+.dx-override-card-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+}
+
+.dx-override-card {
+    background-color: #fff;
+    border-radius: var(--dx-border-radius);
+    padding: 15px;
+    box-shadow: var(--dx-shadow-sm);
+    text-align: center;
+    min-width: 150px;
+    position: relative;
+    cursor: pointer;
+    transition: box-shadow var(--dx-transition);
+}
+
+.dx-override-card:hover {
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.dx-override-card.selected {
+    outline: 3px solid var(--dx-blue);
+    outline-offset: -3px;
+}
+
+.dx-override-card-preview {
+    width: 120px;
+    height: 90px;
+    border-radius: 3px;
+    overflow: hidden;
+    margin: 0 auto 10px;
+    position: relative;
+}
+
+.dx-override-card-preview img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    pointer-events: none;
+}
+
+.dx-override-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: #a0aec0;
+}
+
+.dx-override-placeholder.video {
+    background-color: #1a202c;
+}
+
+.dx-override-placeholder.web {
+    background-color: #2d3748;
+}
+
+.dx-override-placeholder span {
+    font-size: 9px;
+    margin-top: 4px;
+    opacity: 0.8;
+}
+
+.dx-override-card-label {
+    color: #4D4D4D;
+    margin-bottom: 8px;
+    font-size: 11px;
+    font-weight: bold;
+    width: 120px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.dx-override-card-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background-color: var(--dx-blue);
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 3px;
+    font-size: 10px;
+    font-weight: bold;
+    z-index: 10;
+}
+
+.dx-override-card-action {
+    background-color: var(--dx-blue);
+    color: #fff;
+    padding: 6px 12px;
+    border: none;
+    border-radius: 0 0 var(--dx-border-radius) var(--dx-border-radius);
+    font-size: 10px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color var(--dx-transition);
+    width: 100%;
+}
+
+.dx-override-card-action:hover {
+    background-color: #005a94;
+}
+
+/* --- Panel Header --- */
+.dx-panel-header {
+    background-color: #CCCCCC;
+    color: var(--dx-text-primary);
+    padding: 16px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 12px;
+    border-radius: var(--dx-border-radius) var(--dx-border-radius) 0 0;
+}
+
+.dx-panel-header h4 {
+    margin: 0;
+    font-size: 1.25rem;
+    font-weight: 600;
+}
+
+.dx-panel-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+}
+
+.dx-search-input {
+    width: 200px;
+    height: 36px;
+    padding: 4px 12px;
+    font-size: 0.9rem;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    transition: border-color var(--dx-transition), box-shadow var(--dx-transition);
+}
+
+.dx-search-input:focus {
+    outline: none;
+    border-color: var(--dx-blue);
+    box-shadow: 0 0 0 2px rgba(0, 113, 188, 0.2);
+}
+
+/* --- Table Extensions --- */
+.dx-table-row.expanded {
+    background-color: #f0f7ff;
+}
+
+/* Band that heads a group of rows inside a .dx-table; spans the full width
+   whatever the rows' grid-template-columns. */
+.dx-table-group {
+    padding: 6px 16px;
+    background-color: #e8eef5;
+    border-bottom: 1px solid #d0d8e0;
+    font-weight: 600;
+    font-size: 0.75rem;
+    letter-spacing: 0.03em;
+    text-transform: uppercase;
+    color: var(--dx-text-muted);
+}
+
+.dx-table-row .dx-form-hint {
+    margin-top: 4px;
+}
+
+/* A cell holding several badges or buttons side by side. */
+.dx-cell-actions {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px;
+}
+
+/* Names a cell once .dx-collapse has hidden the header row; invisible on desktop. */
+.dx-col-label {
+    display: none;
+}
+
+.dx-table-nested-header {
+    display: grid;
+    gap: 12px;
+    padding: 4px 20px;
+    background-color: #e8eef5;
+    border-bottom: 1px solid #d0d8e0;
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    color: var(--dx-text-muted);
+}
+
+.dx-table-nested-row {
+    display: grid;
+    gap: 12px;
+    padding: 8px 20px;
+    background-color: #f8fbff;
+    border-bottom: 1px solid #e8e8e8;
+    align-items: center;
+    font-size: 0.85rem;
+}
+
+.dx-table-nested-row:last-child {
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.dx-expand-btn {
+    background: none;
+    border: none;
+    cursor: pointer;
+    font-size: 0.8rem;
+    color: var(--dx-text-muted);
+    padding: 4px 8px;
+    border-radius: var(--dx-border-radius);
+    transition: all var(--dx-transition);
+}
+
+.dx-expand-btn:hover {
+    background-color: #e0e0e0;
+    color: var(--dx-blue);
+}
+
+/* --- Table Column Helpers --- */
+.dx-col-id {
+    font-size: 0.8rem;
+    color: #888;
+    text-align: center;
+}
+
+.dx-col-link {
+    color: var(--dx-blue);
+    text-decoration: none;
+    font-weight: 500;
+}
+
+.dx-col-link:hover {
+    text-decoration: underline;
+}
+
+.dx-display-connector {
+    color: #999;
+    font-family: monospace;
+}
+
+.dx-display-resolution {
+    color: var(--dx-text-muted);
+    font-size: 0.8rem;
+}
+
+/* --- Status Indicator (large dot) --- */
+.dx-status-indicator {
+    font-size: 1.2rem;
+    line-height: 1;
+}
+
+.dx-status-indicator.online {
+    color: var(--dx-green);
+}
+
+.dx-status-indicator.offline {
+    color: #dc3545;
+}
+
+/* --- Column Dropdown --- */
+.dx-column-dropdown-wrapper {
+    position: relative;
+    display: inline-block;
+}
+
+.dx-column-dropdown {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: var(--dx-border-radius);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    z-index: 5001;
+    min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+    padding: 4px 0;
+    margin-top: 4px;
+}
+
+.dx-column-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 12px;
+    cursor: pointer;
+    white-space: nowrap;
+    font-size: 0.85rem;
+    transition: background-color var(--dx-transition);
+}
+
+.dx-column-option:hover {
+    background-color: var(--dx-bg-alt);
+}
+
+.dx-column-option input[type="checkbox"] {
+    accent-color: var(--dx-blue);
+}
+
+/* --- Drag-and-Drop Table Headers --- */
+.dx-table-header > div[draggable="true"] {
+    cursor: grab;
+}
+
+.dx-table-header > div[draggable="true"]:active {
+    cursor: grabbing;
+}
+
+.dx-table-header > div.dragging {
+    opacity: 0.4;
+}
+
+.dx-table-header > div.drag-over {
+    border-left: 3px solid var(--dx-blue);
+}
+
+/* --- Aligned Asset Cards (opt-in: .dx-asset-container.dx-card-align) --- */
+/* Cards in a row hold different amounts of schedule and metadata, and in normal flow each
+   card's sections start wherever the section above it ended, so a card with a wrapped
+   schedule row pushes its metadata and buttons out of step with its neighbours. Here the
+   container owns the row tracks and each card passes them down, so every card's thumbnail,
+   schedule, metadata and buttons sit on the same lines. A band is only as tall as its own
+   busiest card. Desktop only: below 768px the cards are one per row, .pl-move-controls adds
+   an in-flow element the tracks do not account for, and there is nothing to align anyway. */
+@media (min-width: 769px) {
+    /* Both classes: .dx-asset-container sets display:flex further down the sheet and would
+       otherwise win on source order. */
+    .dx-asset-container.dx-card-align {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, 300px);
+        /* Row gap would fall between a card's own sections, since each card spans the tracks.
+           Bands are separated by the card's margin instead. */
+        row-gap: 0;
+        column-gap: 12px;
+        align-items: start;
+    }
+
+    .dx-card-align .dx-asset-card {
+        display: grid;
+        grid-template-rows: subgrid;
+        grid-row: span 4;
+        margin-bottom: 12px;
+    }
+
+    /* The card's sections sit two levels down, so each wrapper passes the tracks along. */
+    .dx-card-align .dx-asset-card > article {
+        display: grid;
+        grid-template-rows: subgrid;
+        grid-row: span 4;
+        min-width: 0;
+    }
+
+    .dx-card-align .dx-asset-info {
+        display: grid;
+        grid-template-rows: subgrid;
+        grid-row: span 3;
+        min-width: 0;
+    }
+
+    /* An implicit column grows to its widest content, and a filename with no spaces cannot
+       wrap, so the card's sections would widen past its 300px face and over the next card. */
+    .dx-card-align .dx-asset-card,
+    .dx-card-align .dx-asset-card > article,
+    .dx-card-align .dx-asset-info {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    /* Pinned to the bottom of its track so buttons line up even when one card's metadata
+       block is shorter than the tallest in the band. */
+    .dx-card-align .dx-asset-footer {
+        align-self: end;
+    }
+}
+
+/* --- Resizable Table Columns --- */
+/* The handle sits on the header cell's trailing edge, so the cell anchors it. Its own
+   col-resize cursor has to win over the grab cursor the draggable header cell sets. */
+.dx-table-header > div {
+    position: relative;
+}
+
+.dx-col-resize {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 8px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+}
+
+.dx-col-resize:hover {
+    background-color: var(--dx-blue);
+    opacity: 0.35;
+}
+
+/* --- Scrollable Panel Content --- */
+.dx-panel-content {
+    flex: 1;
+    overflow: auto;
+    padding: 0;
+}
+
+/* --- Panel layout --- */
+/* A tab's card fills the tab so .dx-panel-content scrolls between a fixed header and footer. */
+.dx-card-fill {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.dx-panel-hint {
+    padding: 6px 20px;
+    font-size: 0.85rem;
+    color: var(--dx-text-muted);
+    flex-shrink: 0;
+}
+
+.dx-panel-footer {
+    padding: 8px 20px;
+    font-size: 0.85rem;
+    color: var(--dx-text-muted);
+    flex-shrink: 0;
+}
+
+/* A .dx-alert placed between a panel's header and its content. */
+.dx-panel-alert {
+    margin: 6px 20px;
+    flex-shrink: 0;
+}
+
+/* --- Editable Cell --- */
+.dx-editable-cell {
+    cursor: pointer;
+    padding: 4px 8px;
+    border-radius: var(--dx-border-radius);
+    transition: background-color var(--dx-transition);
+    min-height: 32px;
+    display: flex;
+    align-items: center;
+}
+
+.dx-editable-cell:hover {
+    background-color: var(--dx-bg-alt);
+}
+
+.dx-editable-cell input {
+    width: 100%;
+    padding: 4px 8px;
+    font-size: inherit;
+    border: 1px solid var(--dx-blue);
+    border-radius: var(--dx-border-radius);
+    outline: none;
+}
+
+/* Compact select for inline table cell editing */
+.dx-cell-select {
+    width: 100%;
+    padding: 2px 6px;
+    font-size: 0.85rem;
+    height: 28px;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    background: #fff;
+    cursor: pointer;
+}
+
+.dx-cell-select:focus {
+    border-color: var(--dx-blue);
+    outline: none;
+    box-shadow: 0 0 0 2px var(--dx-blue-shadow);
+}
+
+/* --- Constraint Badge --- */
+.dx-constraint-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    background: #e8f0fe;
+    color: #1967d2;
+    border-radius: 3px;
+    font-size: 11px;
+    font-weight: 500;
+    max-width: 110px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* --- Metadata Type Badges --- */
+.dx-type-badge {
+    display: inline-block;
+    padding: 2px 10px;
+    border-radius: 12px;
+    font-size: 0.8rem;
+    font-weight: 600;
+}
+
+.dx-type-string {
+    background-color: #e3f2fd;
+    color: #1565c0;
+}
+
+.dx-type-int {
+    background-color: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.dx-type-list {
+    background-color: #e8f5e9;
+    color: #2e7d32;
+}
+
+.dx-type-multi-select {
+    background-color: #fff3e0;
+    color: #e65100;
+}
+
+/* --- Login Page --- */
+.dx-login-page {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100vh;
+    background-color: #e8e8e8;
+    background-image: url('/images/branding/login-bg.png');
+    background-size: cover;
+    background-position: center;
+    background-repeat: no-repeat;
+}
+
+.dx-login-card {
+    background-color: #fff;
+    border-radius: 8px;
+    overflow: hidden;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+    max-width: 400px;
+    width: 100%;
+}
+
+.dx-login-block-img {
+    border-radius: 8px 8px 0 0;
+    display: block;
+    width: 100%;
+}
+
+.dx-login-card-body {
+    padding: 20px 24px 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dx-login-btn {
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+}
+
+.dx-login-provider-btn {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    width: 100%;
+    padding: 12px;
+    font-size: 15px;
+    font-weight: 600;
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    background: #fff;
+    color: var(--dx-text-primary);
+    cursor: pointer;
+    transition: background-color var(--dx-transition), box-shadow var(--dx-transition);
+}
+
+.dx-login-provider-btn:hover {
+    background-color: var(--dx-bg-alt);
+    box-shadow: var(--dx-shadow-sm);
+}
+
+.dx-login-provider-btn i {
+    font-size: 1.1rem;
+}
+
+.dx-login-divider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin: 6px 0;
+    color: var(--dx-text-muted);
+    font-size: 0.85rem;
+}
+
+.dx-login-divider::before,
+.dx-login-divider::after {
+    content: "";
+    flex: 1;
+    border-top: 1px solid var(--dx-border-color);
+}
+
+.dx-login-local-form {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dx-login-link-btn {
+    background: none;
+    border: none;
+    color: var(--dx-blue);
+    cursor: pointer;
+    font-size: 0.85rem;
+    padding: 0;
+}
+
+.dx-login-link-btn:hover {
+    text-decoration: underline;
+}
+
+.dx-login-error {
+    color: #dc3545;
+    font-size: 0.85rem;
+    text-align: center;
+    padding: 8px;
+    background: #f8d7da;
+    border-radius: var(--dx-border-radius);
+}
+
+/* --- Settings List (borderless row layout for preference tables) --- */
+.dx-settings-list {
+    display: flex;
+    flex-direction: column;
+    max-width: 640px;
+}
+
+.dx-settings-list-header {
+    display: grid;
+    padding: 8px 0;
+    border-bottom: 2px solid #ccc;
+    font-weight: 600;
+    font-size: 0.9rem;
+    color: var(--dx-text-primary);
+}
+
+.dx-settings-list-row {
+    display: grid;
+    padding: 12px 0;
+    border-bottom: 1px solid #e0e0e0;
+    align-items: flex-start;
+    font-size: 0.9rem;
+}
+
+.dx-settings-list-row:last-child {
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.dx-settings-list-label {
+    font-weight: 600;
+    color: var(--dx-text-primary);
+    line-height: 1.4;
+}
+
+.dx-settings-list-desc {
+    color: var(--dx-text-muted);
+    font-size: 0.85rem;
+    line-height: 1.4;
+}
+
+/* --- Checkbox --- */
+.dx-checkbox {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--dx-blue);
+    cursor: pointer;
+    vertical-align: middle;
+}
+
+/* --- Utility --- */
+.dx-hidden {
+    display: none;
+}
+
+/* ============================================================
+   Playlist / Asset Card Styles
+   ============================================================ */
+
+/* Section layout (used by Playlist, Card, and other location types) */
+.dx-section {
+    background-color: var(--dx-bg-alt);
+    border-radius: var(--dx-border-radius);
+    padding: 20px;
+}
+
+.dx-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.dx-section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--dx-text-primary);
+    margin: 0;
+}
+
+/* Asset card container (wrapping grid of media cards) */
+.dx-asset-container {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    background-color: #d5d5d5;
+    border-radius: var(--dx-border-radius);
+    padding: 15px;
+    min-height: 100px;
+    position: relative;
+}
+
+/* Halve section/container padding on phones to reclaim content width */
+@media (max-width: 768px) {
+    .dx-section {
+        padding: 10px;
+    }
+
+    .dx-asset-container {
+        padding: 8px;
+        /* Rows hold a single card at this width; center it */
+        justify-content: center;
+    }
+}
+
+/* Individual asset card */
+.dx-asset-card {
+    width: 300px;
+    /* Never exceed the container on narrow (phone) viewports */
+    max-width: 100%;
+    background: #fff;
+    border-radius: var(--dx-border-radius);
+    box-shadow: var(--dx-shadow-sm);
+    position: relative;
+    user-select: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+
+.dx-asset-card[draggable="true"] {
+    cursor: move;
+}
+
+.dx-asset-card:hover:not(.dragging) {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.16);
+}
+
+.dx-asset-card.dragging {
+    opacity: 0.5;
+    transform: scale(0.95);
+    z-index: 1000;
+    box-shadow: 0 8px 16px rgba(0, 0, 0, 0.3);
+}
+
+/* Prevent child elements from interfering with drag events */
+.dx-asset-card * {
+    pointer-events: none !important;
+}
+
+.dx-asset-card:not(.dragging) button,
+.dx-asset-card:not(.dragging) a,
+.dx-asset-card:not(.dragging) input,
+.dx-asset-card:not(.dragging) select,
+.dx-asset-card:not(.dragging) label {
+    pointer-events: auto !important;
+}
+
+/* Drop indicator: glowing left bar */
+.dx-asset-card.drag-over::before {
+    content: '';
+    position: absolute;
+    left: -8px;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    background: linear-gradient(180deg, var(--dx-blue), #0056b3);
+    border-radius: 3px;
+    z-index: 1001;
+    box-shadow: 0 0 12px rgba(0, 113, 188, 0.8);
+    animation: dx-drag-glow 1s ease-in-out infinite alternate;
+    pointer-events: none;
+}
+
+@keyframes dx-drag-glow {
+    from { opacity: 0.8; box-shadow: 0 0 8px rgba(0, 113, 188, 0.6); }
+    to   { opacity: 1;   box-shadow: 0 0 16px rgba(0, 113, 188, 1); }
+}
+
+/* Play order badge (circular number overlay) */
+.dx-play-order {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    background: var(--dx-blue);
+    color: #fff;
+    border-radius: 50%;
+    width: 28px;
+    height: 28px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    z-index: 10;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+/* Drag handle (appears on hover) */
+.dx-drag-handle {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font-size: 14px;
+    z-index: 10;
+    cursor: move;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+    font-family: monospace;
+}
+
+.dx-asset-card:hover .dx-drag-handle {
+    opacity: 1;
+}
+
+/* Empty state message for asset containers */
+.dx-no-media {
+    text-align: center;
+    padding: 40px 20px;
+    color: var(--dx-text-muted);
+    font-style: italic;
+    width: 100%;
+}
+
+/* Full-width bar shown at the bottom of the asset grid when the list is truncated */
+.dx-playlist-show-more {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    padding: 12px 0 4px;
+    color: var(--dx-text-muted);
+    font-size: 0.875rem;
+}
+
+/* Asset card preview area */
+.dx-asset-preview {
+    position: relative;
+    background: #fff;
+    border-radius: var(--dx-border-radius) var(--dx-border-radius) 0 0;
+    padding: 12px 12px 0 12px;
+}
+
+.dx-asset-preview h3 {
+    text-align: center;
+    word-wrap: break-word;
+    overflow-wrap: break-word;
+    white-space: normal;
+    height: 3em;
+    line-height: 1.5em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.95rem;
+    margin: 0 0 8px 0;
+}
+
+.dx-asset-preview img {
+    object-position: center center;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: #fff;
+}
+
+/* Asset card info/metadata area */
+.dx-asset-info {
+    padding: 10px;
+    line-height: 20px;
+    background: #fff;
+    border-radius: 0 0 var(--dx-border-radius) var(--dx-border-radius);
+    font-size: 0.85rem;
+}
+
+/* Schedule/metadata table inside asset cards */
+.dx-asset-info table {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: 0.8rem;
+}
+
+.dx-asset-info table td {
+    padding: 2px 4px;
+    vertical-align: middle;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.dx-asset-info table tr:last-child td {
+    border-bottom: none;
+}
+
+/* Column header row (START / END labels) */
+.dx-asset-info table tr:first-child td {
+    color: #aaa;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-bottom: 1px solid #e0e0e0;
+    padding-bottom: 3px;
+}
+
+/* Label column — DATE, TIME, DAYS, metadata key */
+.dx-asset-info table td:first-child {
+    color: #888;
+    font-weight: 500;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+}
+
+/* Value cells */
+.dx-asset-info table td.assigned {
+    color: #333;
+    font-weight: 400;
+}
+
+/* Day-of-week badges on asset cards */
+.dx-day-badge {
+    display: inline-block;
+    padding: 1px 5px;
+    margin: 1px 2px;
+    background: var(--dx-blue);
+    color: #fff;
+    border-radius: 3px;
+    font-size: 0.75rem;
+    font-weight: 500;
+}
+
+/* Metadata section divider within asset cards */
+.dx-metadata-divider {
+    text-align: center;
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #999;
+    letter-spacing: 0.05em;
+    margin: 6px 0 4px 0;
+}
+
+/* Read-only badge overlay on asset cards */
+.dx-readonly-badge {
+    position: absolute;
+    top: 5px;
+    right: 5px;
+    background-color: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    padding: 2px 6px;
+    border-radius: 3px;
+    font-size: 10px;
+    z-index: 10;
+}
+
+/* Video thumbnail (black letterbox background) */
+.dx-asset-thumb-video {
+    width: 100%;
+    height: auto;
+    object-fit: contain;
+    background: #000;
+}
+
+/* 16:9 placeholder shown when no thumbnail was generated */
+.dx-video-placeholder {
+    position: relative;
+    width: 100%;
+    padding-bottom: 56.25%;
+    background: #ccc;
+}
+
+.dx-video-placeholder-inner {
+    position: absolute;
+    top: 0; left: 0; right: 0; bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 3rem;
+}
+
+/* Asset card action button row. Wraps because a playlist card can carry four actions, which do not fit
+   one row at the card's minimum width. */
+.dx-asset-actions {
+    padding-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+/* Fixed-aspect thumbnail well: neutral letterbox and drop shadow so the media
+   reads as its own layer instead of blending into the white card */
+.dx-asset-thumb-well {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #eceef1;
+    border: 1px solid #e0e2e6;
+    border-radius: var(--dx-border-radius);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+    overflow: hidden;
+}
+
+.dx-asset-thumb-well a,
+.dx-asset-thumb-well .dx-thumb-fill {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
+
+.dx-asset-thumb-well img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    background: transparent;
+}
+
+.dx-asset-thumb-well .dx-video-placeholder {
+    width: 100%;
+    height: 100%;
+    padding-bottom: 0;
+    background: transparent;
+}
+
+/* Schedule chips: shown only for values that differ from the defaults */
+.dx-sched-chips {
+    display: flex;
+    flex-wrap: wrap;
+    /* In an aligned row this box is as tall as the busiest card's chips; without this a
+       single chip would stretch to fill it. */
+    align-content: flex-start;
+    gap: 6px;
+    padding: 2px 0 4px 0;
+}
+
+.dx-sched-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 2px 10px;
+    background: #f1f3f5;
+    border: 1px solid #e3e6e9;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    color: #495057;
+    white-space: nowrap;
+}
+
+.dx-sched-note {
+    display: inline-flex;
+    align-items: center;
+    font-size: 0.7rem;
+    color: #868e96;
+    white-space: nowrap;
+}
+
+.dx-sched-chip i {
+    font-size: 0.8rem;
+    color: #868e96;
+}
+
+.dx-sched-chip .dx-day-badge {
+    font-size: 0.7rem;
+    padding: 0 5px;
+    margin: 0 1px;
+}
+
+.dx-sched-chip-muted {
+    color: #979fa6;
+    background: #f7f8f9;
+    border-color: #eceef0;
+}
+
+/* Compact metadata rows inside asset cards */
+.dx-meta-list {
+    margin-top: 2px;
+}
+
+.dx-meta-line {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 3px 2px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.8rem;
+}
+
+.dx-meta-line:last-child {
+    border-bottom: none;
+}
+
+.dx-meta-key {
+    color: #888;
+    font-weight: 500;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    flex-shrink: 0;
+}
+
+/* One line per key, whatever the key holds. The card is a fixed width and its height is
+   content-driven, so an unbounded value list pushes the rest of the card down the page and
+   leaves neighbouring cards in the row misaligned. */
+.dx-meta-val {
+    color: #333;
+    text-align: right;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* The count of values the line had no room for. Outside .dx-meta-val so the ellipsis can
+   never eat it: the number is the part that says the list is longer than it looks. */
+.dx-meta-more {
+    color: #6c757d;
+    font-weight: 600;
+    font-size: 0.72rem;
+    flex-shrink: 0;
+}
+
+.dx-meta-val-none {
+    color: #b0b5ba;
+    font-style: italic;
+}
+
+/* Loop length badge in the playlist section header */
+.dx-loop-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    margin-left: 10px;
+    padding: 2px 10px;
+    background: #f1f3f5;
+    border: 1px solid #e3e6e9;
+    border-radius: 999px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    color: #495057;
+    text-transform: none;
+    letter-spacing: normal;
+    vertical-align: middle;
+    white-space: nowrap;
+}
+
+.dx-loop-badge i {
+    color: var(--dx-blue);
+}
+
+/* Plays-per-loop stepper on asset cards */
+.dx-weight-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 2px 0 2px;
+}
+
+.dx-weight-label {
+    color: #888;
+    font-weight: 500;
+    font-size: 0.72rem;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.dx-weight-stepper {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.dx-weight-stepper button {
+    width: 22px;
+    height: 22px;
+    padding: 0;
+    line-height: 1;
+    border: 1px solid #d4d8dc;
+    border-radius: 4px;
+    background: #f8f9fa;
+    color: #495057;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.dx-weight-stepper button:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.dx-weight-stepper button:not(:disabled):hover {
+    background: #e9ecef;
+}
+
+.dx-weight-value {
+    min-width: 22px;
+    text-align: center;
+    font-size: 0.8rem;
+    font-weight: 600;
+    color: #333;
+}
+
+/* Preview As modal */
+.cpv-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #eceef0;
+    margin-bottom: 12px;
+}
+
+.cpv-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cpv-field label {
+    font-size: 0.7rem;
+    font-weight: 600;
+    color: #888;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+}
+
+.cpv-check {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    margin-bottom: 6px;
+}
+
+.cpv-summary {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    font-size: 0.85rem;
+    color: #333;
+    margin-bottom: 8px;
+}
+
+.cpv-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.cpv-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 5px 2px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.85rem;
+}
+
+.cpv-row:last-child {
+    border-bottom: none;
+}
+
+.cpv-order {
+    min-width: 26px;
+    text-align: right;
+    color: #979fa6;
+    font-size: 0.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.cpv-thumb {
+    width: 64px;
+    height: 36px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #eceef1;
+    border: 1px solid #e0e2e6;
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.cpv-thumb img {
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.cpv-thumb-web {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #979fa6;
+}
+
+.cpv-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.cpv-duration {
+    color: #666;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+/* Two explicit toolbar rows. A date input renders taller than a select or button at the same
+   padding, so every control is pinned to one height or the row cannot line up. */
+.cpv-toolbar-stacked {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+.cpv-toolbar-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 10px 14px;
+}
+
+.cpv-toolbar-stacked .dx-form-control,
+.cpv-toolbar-stacked .dx-btn {
+    height: 32px;
+    box-sizing: border-box;
+}
+
+.cpv-toolbar-row .cpv-check {
+    margin-bottom: 0;
+}
+
+.cpv-segmented {
+    display: flex;
+    gap: 4px;
+}
+
+.cpv-note {
+    margin-bottom: 10px;
+    font-size: 0.8rem;
+}
+
+.cpv-name-text {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cpv-tags {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    font-size: 0.74rem;
+    color: var(--dx-text-muted);
+}
+
+.cpv-row-out {
+    background: #fafafa;
+}
+
+.cpv-row-out .cpv-name,
+.cpv-row-out .cpv-thumb {
+    opacity: 0.55;
+}
+
+.cpv-row-reasoned {
+    border-bottom: none;
+}
+
+.cpv-reason {
+    padding: 0 10px 8px 110px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 0.78rem;
+    line-height: 1.55;
+    color: #6a4b00;
+}
+
+.cpv-reason-line {
+    display: block;
+}
+
+.cpv-reason-meta::before,
+.cpv-reason-approval::before {
+    content: "\25CF";
+    font-size: 0.6em;
+    vertical-align: 2px;
+    margin-right: 6px;
+}
+
+.cpv-reason-meta::before {
+    color: var(--dx-gray);
+}
+
+.cpv-reason-approval::before {
+    color: #d39e00;
+}
+
+.cpv-reason-mode {
+    color: var(--dx-text-muted);
+    font-style: italic;
+}
+
+.cpv-reason b {
+    color: #333;
+}
+
+/* The previewed subject. A mock player is visibly not a real screen. */
+.cpv-subject {
+    border: 1px solid var(--dx-border-color);
+    border-radius: var(--dx-border-radius);
+    background: #fff;
+    margin-bottom: 10px;
+}
+
+.cpv-subject-mock {
+    border-color: var(--dx-orange);
+    box-shadow: 0 0 0 2px rgba(253, 130, 4, 0.14);
+}
+
+.cpv-subject-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px;
+    padding: 8px 12px;
+    border-bottom: 1px solid #eee;
+    background: var(--dx-bg-alt);
+}
+
+.cpv-subject-mock .cpv-subject-head {
+    background: #fff4e6;
+    border-bottom-color: #ffd9ac;
+}
+
+.cpv-subject-title {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--dx-text-muted);
+}
+
+.cpv-subject-name {
+    font-weight: 600;
+    font-size: 0.95rem;
+}
+
+.cpv-subject-body {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 8px 18px;
+    padding: 10px 12px;
+}
+
+.cpv-kv {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    min-width: 150px;
+    max-width: 220px;
+}
+
+.cpv-kv-key {
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--dx-text-muted);
+}
+
+.cpv-kv-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+}
+
+.cpv-kv-none {
+    font-weight: 400;
+    font-style: italic;
+    color: var(--dx-text-muted);
+}
+
+.cpv-subject-mockbar {
+    padding: 8px 12px;
+    background: #fff4e6;
+    border-top: 1px solid #ffd9ac;
+    font-size: 0.8rem;
+    color: #8a5100;
+}
+
+.cpv-empty {
+    padding: 20px 18px;
+    text-align: center;
+}
+
+.cpv-empty-banner {
+    margin-bottom: 10px;
+    border-radius: var(--dx-border-radius);
+}
+
+.cpv-empty-gate {
+    background: #fdf1f2;
+}
+
+.cpv-empty-title {
+    font-size: 1rem;
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.cpv-empty-gate .cpv-empty-title {
+    color: #8e1620;
+}
+
+.cpv-empty-body {
+    max-width: 560px;
+    margin: 0 auto;
+    font-size: 0.85rem;
+    line-height: 1.6;
+    color: var(--dx-text-muted);
+}
+
+/* Live players panel */
+.lpv-list {
+    display: flex;
+    flex-direction: column;
+    background: #fff;
+    border-radius: var(--dx-border-radius);
+    box-shadow: var(--dx-shadow-sm);
+    padding: 4px 12px;
+}
+
+.lpv-row {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    padding: 10px 2px;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.lpv-row:last-child {
+    border-bottom: none;
+}
+
+.lpv-device {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-width: 180px;
+    flex-shrink: 0;
+}
+
+.lpv-device-name {
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lpv-dot {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.lpv-dot-online { background: #39B54A; }
+.lpv-dot-offline { background: #c0392b; }
+
+.lpv-now {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex: 1;
+    min-width: 0;
+}
+
+.lpv-now-detail {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    flex: 1;
+}
+
+.lpv-now-name {
+    font-size: 0.85rem;
+    color: #333;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lpv-now-meta {
+    font-size: 0.72rem;
+    color: #979fa6;
+}
+
+.lpv-progress {
+    height: 4px;
+    background: #eceef1;
+    border-radius: 2px;
+    overflow: hidden;
+    max-width: 260px;
+}
+
+.lpv-progress-fill {
+    height: 100%;
+    background: var(--dx-blue);
+    border-radius: 2px;
+    transition: width 1s linear;
+}
+
+.lpv-actions {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+}
+
+.lpv-screenshot {
+    height: 40px;
+    border-radius: 3px;
+    border: 1px solid #e0e2e6;
+    display: block;
+}
+
+/* Expired content overlay — white text with shadow, no opaque background */
+.dx-expired-overlay {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    z-index: 5;
+}
+
+.dx-expired-overlay span {
+    display: block;
+    color: #fff;
+    text-shadow: 3px 3px 5px rgba(0, 0, 0, 0.7);
+    font-size: 1rem;
+    font-weight: 700;
+    text-align: center;
+    white-space: nowrap;
+}
+
+/* Approval status overlay */
+.dx-approval-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--dx-border-radius) var(--dx-border-radius) 0 0;
+    z-index: 5;
+}
+
+.dx-approval-overlay span {
+    background: rgba(0, 0, 0, 0.7);
+    color: #fff;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+}
+
+/* Content filter dropdown (playlist toolbar) */
+.dx-filter-btn {
+    background: var(--dx-blue);
+    color: #fff;
+    border: none;
+    border-radius: var(--dx-border-radius);
+    /* Match .dx-btn metrics so filter dropdowns and action buttons align in toolbars */
+    padding: 8px 16px;
+    font-size: 14px;
+    line-height: 1.4;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: background 0.15s, box-shadow 0.15s;
+}
+
+.dx-filter-btn:hover,
+.dx-filter-btn.opened {
+    background: var(--dx-blue-hover);
+    box-shadow: 0 2px 4px var(--dx-blue-shadow);
+}
+
+.dx-filter-btn .dx-chevron {
+    transition: transform 0.3s ease;
+    width: 16px;
+    height: 16px;
+}
+
+.dx-filter-btn .dx-chevron.rotate {
+    transform: rotate(180deg);
+}
+
+.dx-filter-menu {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    min-width: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+    z-index: 1050;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: 0 0 var(--dx-border-radius) var(--dx-border-radius);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.dx-filter-menu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    padding: 8px 14px;
+    border: none;
+    background: none;
+    font-size: 0.85rem;
+    cursor: pointer;
+}
+
+.dx-filter-menu button:hover {
+    background: var(--dx-bg-alt);
+}
+
+/* --- Display preview placeholders (Web / Video content indicators) --- */
+/* The placeholder div is sized to match the scaled display dimensions; the icon inside
+   must be capped so it doesn't flood a wide landscape container. */
+.web-content-placeholder,
+.video-content-placeholder {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    background: #ffffff;
+    color: #444;
+    overflow: hidden;
+    gap: 4px;
+    /* Bezel border visually separates the "screen" area from the surrounding card */
+    border: 3px solid #1a1a1a;
+    border-radius: 2px;
+    box-sizing: border-box;
+}
+
+.web-content-placeholder svg,
+.video-content-placeholder svg {
+    /* Fixed cap so the icon stays icon-sized regardless of display aspect ratio */
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+}
+
+.web-content-placeholder span,
+.video-content-placeholder span {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: #444;
+}
+
+.display-loading-placeholder {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #e8e8e8;
+}
+
+/* ============================================================
+   Location Type Overlays (CheckinBackwall, etc.)
+   Hover banners, override controls, scroll/image containers
+   ============================================================ */
+
+/* Scrollable canvas for locations with a background image */
+.body {
+    overflow: hidden;
+}
+
+.scroll-container {
+    overflow: auto;
+    width: 100%;
+    height: 100%;
+}
+
+/* Fixed-size container that holds the background image and positioned displays */
+.image-container {
+    position: relative;
+    background-size: cover;
+    background-repeat: no-repeat;
+    display: inline-block;
+}
+
+/* Wrapper that establishes a stacking context for the floating edit button */
+.backgroundStatusButtonWrapper {
+    position: relative;
+    height: 0;
+}
+
+/* Full-bleed overlay that appears on hover to indicate the interactive display */
+.hoverOverlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 100;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
+/* Display name label pinned to the top of the hovered display */
+.topBanner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    z-index: 110;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #ffffff;
+    text-align: center;
+    font-family: var(--dx-font-family);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 4px 0;
+    pointer-events: none;
+    box-sizing: border-box;
+}
+
+/* Full-cover click target shown over a display preview when an asset is staged
+   for override; without this the OVERRIDE label renders in-flow under the card */
+.fullBanner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 110;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background-color: rgba(0, 0, 0, 0.35);
+    color: #ffffff;
+    text-align: center;
+    font-family: var(--dx-font-family);
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: background-color var(--dx-transition);
+}
+
+.fullBanner:hover {
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+/* Action button pinned to the bottom of the hovered display */
+.bottomBanner {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    z-index: 110;
+    background-color: rgba(0, 0, 0, 0.5);
+    color: #ffffff;
+    text-align: center;
+    font-family: var(--dx-font-family);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 4px 0;
+    cursor: pointer;
+    box-sizing: border-box;
+    transition: background-color var(--dx-transition);
+}
+
+.bottomBanner:hover {
+    background-color: rgba(0, 0, 0, 0.7);
+}
+
+/* Override indicator shown below a display that is currently in override mode */
+.overrideBanner {
+    background-color: var(--dx-red);
+    color: #ffffff;
+    text-align: center;
+    font-family: var(--dx-font-family);
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    padding: 6px 12px;
+    border-radius: var(--dx-border-radius);
+    cursor: pointer;
+    box-shadow: 0 2px 6px var(--dx-red-shadow);
+    transition: background-color var(--dx-transition);
+}
+
+.overrideBanner:hover {
+    background-color: var(--dx-red-hover);
+}
+
+/* ==== Mobile collapse for wide data lists (annotation-driven) ====
+   Add .dx-collapse to the list/table container, then annotate:
+     .dx-collapse-header — grid header row, hidden on phones (a native thead needs no class)
+     .dx-collapse-row    — grid rows that become wrapped flex cards (native tbody tr is automatic)
+     .dx-col-hide        — cells dropped on phones
+     .dx-col-primary     — identity cell, emphasized
+     .dx-col-break       — cell starts a new line inside the card
+     .dx-col-actions     — action cell moved to its own full-width row
+   Works for both div-grid lists (display:grid rows — the flex flip makes their
+   inline grid-template-columns inert) and native tables. Desktop is untouched. */
+@media (max-width: 768px) {
+    /* Neutralize inline min-width:max-content on collapsing containers */
+    .dx-collapse {
+        min-width: 0 !important;
+    }
+
+    .dx-collapse .dx-collapse-header,
+    .dx-collapse thead {
+        display: none;
+    }
+
+    .dx-collapse .dx-collapse-row,
+    .dx-collapse tbody tr {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 4px 10px;
+        padding: 10px 4px;
+        border-bottom: 1px solid var(--dx-border-color);
+    }
+
+    .dx-collapse .dx-collapse-row > *,
+    .dx-collapse tbody td {
+        display: block;
+        border: none;
+        padding: 0;
+        min-width: 0;
+    }
+
+    .dx-collapse .dx-col-primary {
+        font-weight: 600;
+    }
+
+    .dx-collapse .dx-col-break {
+        flex-basis: 100%;
+    }
+
+    .dx-collapse .dx-col-actions {
+        flex-basis: 100%;
+        margin-top: 6px;
+        text-align: left;
+    }
+
+    .dx-collapse .dx-col-hide {
+        display: none;
+    }
+
+    .dx-collapse .dx-collapse-row > .dx-cell-actions {
+        display: flex;
+    }
+
+    .dx-collapse .dx-col-label {
+        display: block;
+        margin-bottom: 2px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--dx-text-muted);
+    }
+
+    /* Side-by-side form fields stack on phones */
+    .dx-form-row {
+        flex-wrap: wrap;
+    }
+
+    .dx-form-row > .dx-form-group {
+        flex-basis: 100%;
+    }
+
+    /* Power grids that keep horizontal scroll on phones (too many columns to
+       card): the leading column stays pinned while the rest scrolls under it. */
+    .dx-sticky-first .dx-table-header > div:first-child,
+    .dx-sticky-first .dx-table-row > div:first-child {
+        position: sticky;
+        left: 0;
+        z-index: 1;
+        background: #fff;
+        box-shadow: 2px 0 4px -2px rgba(0, 0, 0, 0.15);
+    }
+
+    .dx-sticky-first .dx-table-header > div:first-child {
+        background: var(--dx-bg-alt);
+    }
+}
+
+/* --- Touch devices --- */
+/* Playlist reorder buttons: drag events never fire on touchscreens, so
+   reordering falls back to these (hidden on mouse devices, where drag works). */
+.pl-move-controls {
+    display: none;
+    justify-content: flex-end;
+    gap: 6px;
+    padding: 4px 4px 6px 4px;
+}
+
+.pl-move-btn {
+    min-width: 40px;
+    min-height: 40px;
+    border: 1px solid #bbb;
+    border-radius: var(--dx-border-radius);
+    background-color: #fff;
+    cursor: pointer;
+}
+
+.pl-move-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+/* On coarse pointers (fingers), enforce the ~44px minimum recommended tap size
+   for the shared button classes so primary actions stay usable on tablets/phones. */
+@media (pointer: coarse) {
+    .dx-btn,
+    .dx-filter-btn {
+        min-height: 44px;
+    }
+
+    .dx-btn-sm {
+        min-height: 38px;
+    }
+
+    .dx-modal-close {
+        min-width: 44px;
+        min-height: 44px;
+    }
+
+    .pl-move-controls {
+        display: flex;
+    }
+
+    .dx-drag-handle {
+        display: none;
+    }
+}
+

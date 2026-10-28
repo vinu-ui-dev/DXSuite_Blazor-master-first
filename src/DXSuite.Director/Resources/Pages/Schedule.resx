@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="PageTitle_ManageSchedule">
+    <value>Manage Schedule</value>
+  </data>
+  <data name="Header_ManageSchedule">
+    <value>MANAGE SCHEDULE</value>
+  </data>
+  <data name="Placeholder_EnterDisplayName">
+    <value>Enter display name</value>
+  </data>
+  <data name="Button_EditName">
+    <value>Edit Name</value>
+  </data>
+  <data name="Header_CurrentStatus">
+    <value>Current Status</value>
+  </data>
+  <data name="Label_Override">
+    <value>OVERRIDE</value>
+  </data>
+  <data name="Label_OnSchedule">
+    <value>ON SCHEDULE</value>
+  </data>
+  <data name="Button_Disable">
+    <value>Disable</value>
+  </data>
+  <data name="Header_ScheduleManagement">
+    <value>Schedule Management</value>
+  </data>
+  <data name="Button_CancelScheduleEntry">
+    <value>CANCEL SCHEDULE ENTRY</value>
+  </data>
+  <data name="Button_NewScheduleEntry">
+    <value>NEW SCHEDULE ENTRY</value>
+  </data>
+  <data name="Label_ScheduleManagementDescription">
+    <value>Create and manage display content schedules for automated scheduling</value>
+  </data>
+  <data name="Header_DefaultContent">
+    <value>Default Content</value>
+  </data>
+  <data name="Label_Duration">
+    <value>Duration:</value>
+  </data>
+  <data name="Label_NoDefaultContent">
+    <value>No default content assigned</value>
+  </data>
+  <data name="Header_CurrentScheduleEntries">
+    <value>Current Schedule Entries</value>
+  </data>
+  <data name="Header_ScheduleEntry">
+    <value>Schedule Entry</value>
+  </data>
+  <data name="Header_Content">
+    <value>Content</value>
+  </data>
+  <data name="Label_Video">
+    <value>Video</value>
+  </data>
+  <data name="Label_NoContentAssigned">
+    <value>No content assigned</value>
+  </data>
+  <data name="Header_DateRange">
+    <value>Date Range</value>
+  </data>
+  <data name="Label_Start">
+    <value>Start:</value>
+  </data>
+  <data name="Label_End">
+    <value>End:</value>
+  </data>
+  <data name="Label_NoLimit">
+    <value>No limit</value>
+  </data>
+  <data name="Label_AlwaysActive">
+    <value>Always active</value>
+  </data>
+  <data name="Header_TimeRange">
+    <value>Time Range</value>
+  </data>
+  <data name="Label_StartOfDay">
+    <value>Start of day</value>
+  </data>
+  <data name="Label_EndOfDay">
+    <value>End of day</value>
+  </data>
+  <data name="Label_AllDay">
+    <value>All day</value>
+  </data>
+  <data name="Header_ActiveDays">
+    <value>Active Days</value>
+  </data>
+  <data name="Label_ActiveEveryday">
+    <value>Active everyday</value>
+  </data>
+  <data name="Button_SaveScheduleEdit">
+    <value>SAVE SCHEDULE EDIT</value>
+  </data>
+  <data name="Modal_ScheduleContentPreview">
+    <value>Schedule Content Preview</value>
+  </data>
+  <data name="Label_Type">
+    <value>Type:</value>
+  </data>
+  <data name="Label_Seconds">
+    <value>seconds</value>
+  </data>
+  <data name="Label_URL">
+    <value>URL:</value>
+  </data>
+  <data name="Label_File">
+    <value>File:</value>
+  </data>
+  <data name="Label_MissingAsset">
+    <value>Missing Asset</value>
+  </data>
+  <data name="Label_MissingAssetDescription">
+    <value>This asset may have been deleted or moved.</value>
+  </data>
+  <data name="Label_NoContentItems">
+    <value>No content items assigned to this schedule.</value>
+  </data>
+  <data name="Label_Total">
+    <value>Total:</value>
+  </data>
+  <data name="Label_ContentItem">
+    <value>content item</value>
+  </data>
+  <data name="Label_ContentItems">
+    <value>content items</value>
+  </data>
+  <data name="Label_Daily">
+    <value>Daily</value>
+  </data>
+  <data name="Label_ContentItemsAssigned">
+    <value>content item(s) assigned</value>
+  </data>
+  <data name="Label_ContentAssignmentError">
+    <value>Content assignment error</value>
+  </data>
+  <data name="Label_Image">
+    <value>Image</value>
+  </data>
+  <data name="Label_Web">
+    <value>Web</value>
+  </data>
+  <data name="Label_Stream">
+    <value>Stream</value>
+  </data>
+  <data name="Label_Unknown">
+    <value>Unknown</value>
+  </data>
+</root>

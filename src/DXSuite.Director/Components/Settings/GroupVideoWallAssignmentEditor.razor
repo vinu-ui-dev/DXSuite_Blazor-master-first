@@ -1,0 +1,179 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject IUserGroupMetadataService groupMetadataService
+@inject ILogger<GroupVideoWallAssignmentEditor> Logger
+
+@* Controls where this group appears as a schedulable airline in the Ticket
+   Counter Scheduler. Stored as group metadata (videoWallAssignments = "all" or
+   a CSV of LocationIds); groups without the key are hidden from all walls. *@
+<div class="gvw-editor">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Video Wall Scheduling</h6>
+        <small class="dx-text-muted">Where this group appears as a schedulable airline</small>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-bottom:8px; padding:6px 10px; font-size:0.85rem;">@errorMessage</div>
+    }
+
+    <div class="dx-card">
+        <div class="dx-card-body" style="padding:8px 16px;">
+            <div class="d-flex flex-column gap-1" style="font-size:0.9rem;">
+                <label style="cursor:pointer;">
+                    <input type="radio" name="gvwMode-@UserGroupId" checked="@(mode == ModeNone)"
+                           @onchange="@(() => SetModeAsync(ModeNone))" />
+                    Not schedulable on video walls
+                </label>
+                <label style="cursor:pointer;">
+                    <input type="radio" name="gvwMode-@UserGroupId" checked="@(mode == ModeAll)"
+                           @onchange="@(() => SetModeAsync(ModeAll))" />
+                    All video walls (including walls created later)
+                </label>
+                <label style="cursor:pointer;">
+                    <input type="radio" name="gvwMode-@UserGroupId" checked="@(mode == ModeSelected)"
+                           @onchange="@(() => SetModeAsync(ModeSelected))" />
+                    Selected video walls
+                </label>
+            </div>
+
+            @if (mode == ModeSelected)
+            {
+                <div class="mt-2 ms-4 d-flex flex-column gap-1" style="font-size:0.85rem;">
+                    @if (!videoWallLocations.Any())
+                    {
+                        <span class="dx-text-muted">No video wall locations exist yet.</span>
+                    }
+                    @foreach (var loc in videoWallLocations)
+                    {
+                        var locId = loc.LocationId;
+                        <label style="cursor:pointer;">
+                            <input type="checkbox" checked="@selectedWallIds.Contains(locId)"
+                                   @onchange="@(e => ToggleWallAsync(locId, e.Value is true))" />
+                            @loc.LocationName
+                        </label>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(saveStatus))
+            {
+                <div class="dx-text-muted mt-1" style="font-size:0.8rem;">@saveStatus</div>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int UserGroupId { get; set; }
+
+    private const string ModeNone = "none";
+    private const string ModeAll = "all";
+    private const string ModeSelected = "selected";
+
+    private string mode = ModeNone;
+    private HashSet<int> selectedWallIds = new();
+    private List<TblLocation> videoWallLocations = new();
+    private string? errorMessage;
+    private string? saveStatus;
+    private int loadedGroupId = -1;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (UserGroupId == loadedGroupId) return;
+        loadedGroupId = UserGroupId;
+        await LoadAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        errorMessage = null;
+        saveStatus = null;
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            var videoWallTypeId = await db.TblLocationTypes.AsNoTracking()
+                .Where(t => t.LocationTypeName == "VideoWall")
+                .Select(t => t.LocationTypeId)
+                .FirstOrDefaultAsync();
+
+            videoWallLocations = videoWallTypeId > 0
+                ? await db.TblLocations.AsNoTracking()
+                    .Where(l => l.LocationTypeId == videoWallTypeId)
+                    .OrderBy(l => l.LocationName)
+                    .ToListAsync()
+                : new();
+
+            var value = GroupVideoWallAssignments.SingleValue(UserGroupId,
+                await groupMetadataService.GetValuesAsync(UserGroupId, GroupVideoWallAssignments.MetadataKey));
+
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                mode = ModeNone;
+                selectedWallIds = new();
+            }
+            else if (value.Equals(GroupVideoWallAssignments.AllWalls, StringComparison.OrdinalIgnoreCase))
+            {
+                mode = ModeAll;
+                selectedWallIds = new();
+            }
+            else
+            {
+                mode = ModeSelected;
+                selectedWallIds = value
+                    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                    .Select(s => int.TryParse(s, out var id) ? id : 0)
+                    .Where(id => id > 0)
+                    .ToHashSet();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load video wall assignments for group {GroupId}", UserGroupId);
+            errorMessage = ex.Message;
+        }
+    }
+
+    private async Task SetModeAsync(string newMode)
+    {
+        mode = newMode;
+        await SaveAsync();
+    }
+
+    private async Task ToggleWallAsync(int locationId, bool isChecked)
+    {
+        if (isChecked) selectedWallIds.Add(locationId);
+        else selectedWallIds.Remove(locationId);
+        await SaveAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        errorMessage = null;
+        try
+        {
+            string? newValue = mode switch
+            {
+                ModeAll      => GroupVideoWallAssignments.AllWalls,
+                ModeSelected => string.Join(",", selectedWallIds.OrderBy(id => id)),
+                _            => null
+            };
+
+            // "Selected" with nothing checked and "none" both mean not schedulable —
+            // represented by the absence of the metadata row.
+            await groupMetadataService.SetMetadataAsync(UserGroupId, GroupVideoWallAssignments.MetadataKey,
+                string.IsNullOrEmpty(newValue) ? [] : [newValue]);
+            saveStatus = "Saved.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save video wall assignments for group {GroupId}", UserGroupId);
+            errorMessage = ex.Message;
+        }
+        StateHasChanged();
+    }
+}

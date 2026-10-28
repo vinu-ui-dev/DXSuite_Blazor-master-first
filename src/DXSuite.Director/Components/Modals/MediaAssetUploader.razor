@@ -1,0 +1,2171 @@
+@using System.Xml
+@using System.IO
+@using Microsoft.Extensions.Options
+@using static DXSuite.Director.Models.Types
+@inject IJSRuntime JSRuntime
+@inject IDirectorDBContext dbContext
+@inject NavigationManager navMan
+@inject IConfiguration config
+@inject DisplayScaleService ScaleService
+@inject ThumbnailService ThumbnailService
+@inject IOptions<FfmpegOptions> FfmpegOptions
+@inject PixeraService pixeraService
+@inject ISessionState sessionState
+@inject IAssetApprovalService approvalService
+@inject IContentModerationService moderationService
+@inject IApprovalChainService approvalChainService
+@inject IContentMetadataService contentMetadataService
+@inject IUploadIdentityService uploadIdentity
+@inject ILogger<MediaAssetUploader> Logger
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject IContentMetadataRuleEditor ruleEditor
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject IUploadStateService uploadStateService
+@inject IVideoProcessingService VideoProcessingService
+@inject IPublicationInvalidator publicationInvalidator
+@implements IDisposable
+@rendermode InteractiveServer
+
+<div class="modal @modalClass" tabindex="-1" role="dialog" style="display:@modalDisplay;">
+    <div class="modal-dialog modal-dialog-centered" role="document" style="max-width:@windowMaxWidth; max-height:@windowMaxHeight">
+        <div class="modal-content position-relative">
+
+            <!-- Modal Header -->
+            <div class="modal-header" style="background-color: var(--dx-blue); color: white;">
+                @if (mediaFile != null && mediaFile.WebPath != null)
+                {
+                    <h5 class="modal-title">@mediaFile.Metadata.FirstOrDefault(m => m.Name == "FileName")?.Value</h5>
+                }
+                else
+                {
+                    <h5 class="modal-title">Upload Media File</h5>
+                }
+                @if (isLoading)
+                {
+                    <button type="button" class="btn-close btn-close-white btn-close-minimize" aria-label="Minimize"
+                            @onclick="MinimizeModal" title="Minimize to bar"></button>
+                }
+                else
+                {
+                    <button type="button" class="btn-close btn-close-white" data-dismiss="modal" aria-label="Close"
+                            @onclick="@(async () => await Close())"></button>
+                }
+            </div>
+
+            <!-- Modal Body -->
+            <div class="modal-body-footer-wrapper position-relative">
+                <div class="modal-body">
+                    @if (expectedWidth > 0 && expectedHeight > 0)
+                    {
+                        <div class="mau-resolution-info">
+                            <i class="fa fa-info-circle"></i>
+                            <span>@expectedWidth &times; @expectedHeight</span>
+                            <span class="mau-mode-label">@(resolutionMode == "exact" ? "Exact Match" : "Aspect Ratio")</span>
+                        </div>
+                    }
+                    <div class="inputForm d-flex">
+                        <div class="flex-row">
+                            <div>
+                                @if (mediaFile == null || mediaFile.WebPath == null)
+                                {
+                                    <div class="mb-3">
+                                        @if (baseDirectory != null)
+                                        {
+                                            @if (uploadedAssetWebPath != null)
+                                            {
+                                                if (IsVideoFile(uploadedAssetWebPath) && isClosing == false)
+                                                {
+                                                    <video @key="uploadedAssetWebPath"
+                                                           src="@uploadedAssetWebPath"
+                                                           class="mau-preview"
+                                                           muted
+                                                           preload="metadata"
+                                                           playsinline
+                                                           controls
+                                                           controlslist="nodownload noplaybackrate" />
+                                                }
+                                                else
+                                                {
+                                                    <img class="mau-preview" src="@uploadedAssetWebPath" />
+                                                }
+                                            }
+
+                                            @if (_matchedProfile != null && _videoAnalysis != null)
+                                            {
+                                                <div class="alert @(_reencodeComplete ? "alert-success" : "alert-warning") mt-2">
+                                                    @if (!_reencodeComplete)
+                                                    {
+                                                        <strong>Video may not play back smoothly on target devices.</strong>
+                                                        <ul class="mb-2 small">
+                                                            @if (_matchedProfile.MaxBitrateKbps.HasValue && _videoAnalysis.VideoBitrateKbps > _matchedProfile.MaxBitrateKbps.Value)
+                                                            {
+                                                                <li>Bitrate @((_videoAnalysis.VideoBitrateKbps / 1000.0).ToString("F1")) Mbps — limit @((_matchedProfile.MaxBitrateKbps.Value / 1000.0).ToString("F1")) Mbps</li>
+                                                            }
+                                                            @if (_matchedProfile.MaxFps.HasValue && _videoAnalysis.Fps > _matchedProfile.MaxFps.Value)
+                                                            {
+                                                                <li>FPS @_videoAnalysis.Fps — limit @_matchedProfile.MaxFps.Value</li>
+                                                            }
+                                                            @if (_matchedProfile.ResolutionMode == "max"
+                                                                 && ((_matchedProfile.MaxWidth.HasValue && _videoAnalysis.Width > _matchedProfile.MaxWidth.Value)
+                                                                     || (_matchedProfile.MaxHeight.HasValue && _videoAnalysis.Height > _matchedProfile.MaxHeight.Value)))
+                                                            {
+                                                                <li>Resolution @_videoAnalysis.Width×@_videoAnalysis.Height — limit @(_matchedProfile.MaxWidth?.ToString() ?? "?")×@(_matchedProfile.MaxHeight?.ToString() ?? "?")</li>
+                                                            }
+                                                            @if (_matchedProfile.StripAudio && _videoAnalysis.HasAudioTrack)
+                                                            {
+                                                                <li>Audio track will be stripped</li>
+                                                            }
+                                                        </ul>
+                                                        @if (_isReencoding)
+                                                        {
+                                                            <div class="progress mt-1" style="height:8px;">
+                                                                <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                                     style="width:@_reencodeProgress%"></div>
+                                                            </div>
+                                                            <small class="text-muted">Re-encoding… @_reencodeProgress%</small>
+                                                        }
+                                                        else
+                                                        {
+                                                            <div class="mt-2 d-flex gap-2">
+                                                                <button class="dx-btn dx-btn-blue btn-sm" @onclick="StartReencode">Re-encode</button>
+                                                                @if (!_autoReencode)
+                                                                {
+                                                                    <button class="dx-btn dx-btn-gray btn-sm" @onclick="@(() => _matchedProfile = null)">Keep Original</button>
+                                                                }
+                                                            </div>
+                                                        }
+                                                    }
+                                                    else
+                                                    {
+                                                        <span>✓ Re-encoded — preview updated.</span>
+                                                    }
+                                                </div>
+                                            }
+
+                                            @if (!fileInputReset)
+                                            {
+                                                <InputFile class="form-control mt-3" style="@(isLoading ? "pointer-events: none;" : "")" OnChange="@OnMediaUpload" />
+                                            }
+                                        }
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div class="mb-3" style="align-items:center;">
+                                        @if (mediaFile != null && mediaFile.WebPath != null)
+                                        {
+                                            @if (IsVideoFile(mediaFile.WebPath) && isClosing == false)
+                                            {
+                                                <div>
+                                                    <video @key="@mediaFile.WebPath"
+                                                           src="@($"{mediaFile.WebPath}?t={DateTime.UtcNow.Ticks}")"
+                                                           class="mau-preview"
+                                                           muted
+                                                           preload="metadata"
+                                                           playsinline
+                                                           controls
+                                                           controlslist="nodownload noplaybackrate" />
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div>
+                                                    <img src="@($"{mediaFile.WebPath}?t={DateTime.UtcNow.Ticks}")" class="w-100 mau-preview" />
+                                                </div>
+                                            }
+                                        }
+                                    </div>
+                                }
+                                @if (!string.IsNullOrEmpty(uploadErrorMessage))
+                                {
+                                    <div class="alert alert-danger mt-2" style="word-wrap: break-word; white-space: pre-wrap; overflow-wrap: break-word;">@uploadErrorMessage</div>
+                                }
+
+                                @if (isSchedulable)
+                                {
+                                    @if (formData != null && IsEditMedia == false)
+                                    {
+                                        <div style="display: block; gap: 20px;">
+                                            <div>
+                                                <h3 class="uploaderText">Start</h3>
+                                                <div class="mau-datetime-row">
+                                                    <label class="uploaderText">Date:</label>
+                                                    <InputDate class="form-control" Type="InputDateType.Date" @bind-Value="formData.StartDate"></InputDate>
+                                                    <label class="uploaderText">Time:</label>
+                                                    <InputDate class="form-control" Type="InputDateType.Time" @bind-Value="formData.StartTime"></InputDate>
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <h3 class="uploaderText" style="margin-top:10px;">End</h3>
+                                                <div class="mau-datetime-row">
+                                                    <label class="uploaderText">Date:</label>
+                                                    <InputDate class="form-control" Type="InputDateType.Date" @bind-Value="formData.EndDate"></InputDate>
+                                                    <label class="uploaderText">Time:</label>
+                                                    <InputDate class="form-control" Type="InputDateType.Time" @bind-Value="formData.EndTime"></InputDate>
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <div style="margin-top:10px;">
+                                            <h3 class="uploaderText">Days</h3>
+                                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                                @foreach (var day in new[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" })
+                                                {
+                                                    var d = day;
+                                                    <button type="button"
+                                                            class="dow-toggle @(selectedDays.Contains(d) ? "dow-active" : "")"
+                                                            @onclick="@(() => { if (selectedDays.Contains(d)) selectedDays.Remove(d); else selectedDays.Add(d); })">
+                                                        @d
+                                                    </button>
+                                                }
+                                            </div>
+                                            <span class="uploaderText" style="font-size:0.75rem; opacity:0.7;">Leave empty for every day</span>
+                                        </div>
+                                    }
+                                    else if (mediaFile != null)
+                                    {
+                                        <div style="display: block; gap: 20px;">
+                                            <div>
+                                                <h3 class="uploaderText">Start</h3>
+                                                <div class="mau-datetime-row">
+                                                    <label class="uploaderText">Date:</label>
+                                                    <input type="date" class="form-control" id="StartDateSelection" name="@mediaFile.DiskPath" @onchange="@((ChangeEventArgs args) => UpdateMetadataDateTimeValue(@mediaFile.DiskPath, "StartDate", args.Value?.ToString()))" value="@(((mediaFile.Metadata.Where(x=>x.Name == "StartDate").FirstOrDefault()) != null)? mediaFile.Metadata.Where(x=>x.Name == "StartDate").FirstOrDefault().Value : "")" /><br />
+                                                    <label class="uploaderText">Time:</label>
+                                                    <input type="time" class="form-control" id="StartTimeSelection" name="@mediaFile.DiskPath" @onchange="@((ChangeEventArgs args) => UpdateMetadataDateTimeValue(@mediaFile.DiskPath, "StartTime", args.Value?.ToString()))" value="@(mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime")?.Value is string start && start.Length >= 5 ? start.Substring(0, 5) : "")" />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <h3 class="uploaderText" style="margin-top:10px;">End</h3>
+                                                <div class="mau-datetime-row">
+                                                    <label class="uploaderText">Date:</label>
+                                                    <input type="date" class="form-control" id="EndDateSelection" name="@mediaFile.DiskPath" @onchange="@((ChangeEventArgs args) => UpdateMetadataDateTimeValue(@mediaFile.DiskPath, "EndDate", args.Value?.ToString()))" value="@(((mediaFile.Metadata.Where(x=>x.Name == "EndDate").FirstOrDefault()) != null)? mediaFile.Metadata.Where(x=>x.Name == "EndDate").FirstOrDefault().Value : "")" /><br />
+                                                    <label class="uploaderText">Time:</label>
+                                                    <input type="time" class="form-control" id="EndTimeSelection" name="@mediaFile.DiskPath" @onchange="@((ChangeEventArgs args) => UpdateMetadataDateTimeValue(@mediaFile.DiskPath, "EndTime", args.Value?.ToString()))" value="@(mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime")?.Value is string end && end.Length >= 5 ? end.Substring(0, 5) : "")" />
+                                                </div>
+                                            </div>
+                                        </div>
+                                        <small style="color:#4D4D4D; font-size:12px;">Times are each player's local time.</small>
+                                        <div style="margin-top:10px;">
+                                            <h3 class="uploaderText">Days</h3>
+                                            <div style="display: flex; gap: 4px; flex-wrap: wrap;">
+                                                @foreach (var day in new[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" })
+                                                {
+                                                    var d = day;
+                                                    <button type="button"
+                                                            class="dow-toggle @(selectedDays.Contains(d) ? "dow-active" : "")"
+                                                            @onclick="@(() => ToggleEditDay(d))">
+                                                        @d
+                                                    </button>
+                                                }
+                                            </div>
+                                            <span class="uploaderText" style="font-size:0.75rem; opacity:0.7;">Leave empty for every day</span>
+                                        </div>
+                                    }
+                                }
+                            </div>
+                            @if (languageMetadata && mediaFile != null)
+                            {
+                                <div style="margin-top:15px;">
+                                    <h3 for="languageSearch">Language</h3>
+                                    <LanguageSelector @ref="languageSelectorRef"
+                                                      SelectedLanguageCodeChanged="@((value) => OnLanguageChanged(value))"
+                                                      SelectedLanguageCode="@selectedLanguageCode"/>
+                                </div>
+                            }
+                            else if (languageMetadata)
+                            {
+                                <div style="margin-top:15px;">
+                                    <h3 for="languageSearch">Language</h3>
+                                    <LanguageSelector @ref="languageSelectorRef"
+                                                      SelectedLanguageCodeChanged="@((value) => OnLanguageChanged(value))"/>
+                                </div>
+                            }
+
+                            @* Tagging an existing asset happens in the metadata editor, not here. *@
+                            @if (ShowsUploadingAs)
+                            {
+                                <div style="margin-top:15px;">
+                                    <UploadingAsSection @ref="uploadingAs" @key="uploadSectionKey"
+                                                        LocationId="@locationId"
+                                                        InitialIdentity="@_lastOpenConfig?.UploadingAs"
+                                                        InitialPicks="@_lastOpenConfig?.UploadPicks"
+                                                        OnChanged="OnUploadingAsChanged" />
+                                </div>
+                            }
+
+                            @if (!IsEditMedia && VisibleCustomFields.Count > 0)
+                            {
+                                <div style="margin-top:15px;">
+                                    <h3 class="uploaderText">Custom Fields</h3>
+                                    @foreach (var fieldName in VisibleCustomFields)
+                                    {
+                                        var fieldDef = uploaderMetadataDefs.FirstOrDefault(d => d.MetadataKey == fieldName);
+                                        <div style="margin-bottom:6px;">
+                                            <label class="uploaderText" style="font-size:0.85rem;">@(fieldDef?.DisplayName ?? fieldName)</label>
+                                            <MetadataValueInput FieldType="@(fieldDef?.FieldType ?? "string")"
+                                                                Values="@(customMetadataValues.GetValueOrDefault(fieldName) ?? new List<string>())"
+                                                                ValuesChanged="@((List<string> v) => customMetadataValues[fieldName] = v)"
+                                                                Options="@(fieldDef?.Options ?? new())" />
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                        </div>
+                    </div>
+                </div>
+
+                @* ── Resubmit: comment thread + required comment ── *@
+                @if (isResubmit)
+                {
+                    <div class="mau-resubmit-section">
+                        @if (resubmitComments.Count > 0)
+                        {
+                            <h6 class="mau-resubmit-title">Discussion</h6>
+                            <div class="mau-comment-thread">
+                                @foreach (var comment in resubmitComments)
+                                {
+                                    <div class="mau-comment-item">
+                                        <span class="mau-comment-user">@comment.UserName</span>
+                                        <span class="mau-comment-type mau-ct-@comment.CommentType">@comment.CommentType</span>
+                                        <span class="mau-comment-date">@comment.CreatedDate.ToString("MMM d, h:mm tt")</span>
+                                        <div class="mau-comment-body">@comment.CommentText</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        <h6 class="mau-resubmit-title">Why are you re-submitting? (required)</h6>
+                        <textarea class="form-control" rows="3" maxlength="2000"
+                                  placeholder="Explain what was changed or why the content should be reconsidered..."
+                                  @bind="resubmitComment"></textarea>
+                        <small class="form-text text-muted">@(resubmitComment?.Length ?? 0) / 2000</small>
+                    </div>
+                }
+
+            </div>
+
+            <!-- Modal Footer (outside scrollable wrapper so it stays pinned) -->
+            <div class="modal-footer">
+                @if (_lastOpenConfig?.EnablePlaylistPreview == true && !string.IsNullOrEmpty(uploadedAssetLocalPath))
+                {
+                    <button type="button" class="dx-btn dx-btn-gray"
+                            style="margin-right: auto; @(isLoading ? "pointer-events: none;" : "")"
+                            @onclick="StartPlaylistPreview">
+                        Preview
+                    </button>
+                }
+                <button type="button" class="dx-btn dx-btn-gray" data-dismiss="modal"
+                        style="@(isLoading ? "pointer-events: none;" : "")"
+                        @onclick="@(async () => await Close())">
+                    Close
+                </button>
+                @if (UploadBlockReason is { } blockReason)
+                {
+                    <span class="dx-text-red" style="font-size:0.8rem; margin-right:auto;">@blockReason</span>
+                }
+                <button class="dx-btn dx-btn-blue" type="submit"
+                        style="@(isLoading ? "pointer-events: none;" : "")"
+                        title="@UploadBlockReason"
+                        disabled="@((isResubmit && string.IsNullOrWhiteSpace(resubmitComment)) || (_matchedProfile != null && !_reencodeComplete) || UploadBlockReason != null)"
+                        @onclick="@(() => HandleSubmit())">
+                    @(isResubmit ? "Re-submit" : "Submit")
+                </button>
+            </div>
+
+            @if (isLoading)
+            {
+                <div class="modal-loading-overlay">
+                    @if (isClosing)
+                    {
+                        <div class="dx-spinner"></div>
+                    }
+                    else
+                    {
+                        <p class="mb-2">@currentStatusMessage</p>
+                        <div class="progress" style="width:80%; height:14px;">
+                            <div class="progress-bar progress-bar-striped progress-bar-animated bg-primary"
+                                 role="progressbar"
+                                 style="width:@uploadProgressPercent%;"
+                                 aria-valuenow="@uploadProgressPercent"
+                                 aria-valuemin="0"
+                                 aria-valuemax="100">
+                            </div>
+                        </div>
+                        <small class="text-muted mt-1">@uploadProgressPercent%</small>
+                        <button class="dx-btn dx-btn-gray btn-sm mt-3" @onclick="CancelUpload">Cancel</button>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+@if (showBackdrop)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+<!-- Content Moderation Modal for flagged image uploads -->
+<ContentModerationModal @ref="moderationModal"
+                        OnCancel="HandleModerationCancel"
+                        OnSubmitForApproval="HandleModerationSubmit" />
+
+<ContentPreviewPlayer @ref="previewPlayer"
+                      FrameWidth="@(_lastOpenConfig?.ExpectedWidth ?? 1920)"
+                      FrameHeight="@(_lastOpenConfig?.ExpectedHeight ?? 1080)"
+                      DefaultImageSeconds="@(_lastOpenConfig?.ImageDurationSeconds ?? 7)" />
+
+@code {
+    [Parameter]
+    public EventCallback OnAssetSubmit { get; set; }
+
+    string? baseDirectory;
+    MediaFile mediaFile = new MediaFile();
+
+    private int locationId;
+    private int constraintId;
+    private int? _displayId;
+
+    // Encoding check state
+    private VideoAnalysisResult? _videoAnalysis;
+    private EncodingProfile? _matchedProfile;
+    private bool _isReencoding;
+    private bool _reencodeComplete;
+    private int _reencodeProgress;
+    // When true, the upload has playlist-level encoding requirements — "Cancel Upload" is shown instead of "Keep Original"
+    private bool _autoReencode;
+    private string? contentHeight;
+    private string? contentWidth;
+    private string windowMaxWidth = "600px";
+    private string windowMaxHeight = "90vh";
+
+    private string modalDisplay = "none;";
+    private string modalClass = "";
+    private bool showBackdrop = false;
+    private bool fileInputReset = true;
+
+    private int maxAllowedFiles = 3;
+
+    // Maximum accepted upload size. Files stream to disk, so this is a policy ceiling rather than a
+    // technical limit; override with the Uploads:MaxBytes app setting. The default comfortably fits
+    // multi-GB ProRes/mastering sources while still rejecting runaway uploads.
+    private long MaxUploadBytes =>
+        long.TryParse(config["Uploads:MaxBytes"], out var max) && max > 0 ? max : 10_000_000_000L;
+
+    // A byte[] (and MemoryStream) cannot exceed 2 GiB (Int32.MaxValue). Only the in-memory copy
+    // used by image moderation and alpha-mask generation is bounded by this; larger uploads are
+    // handled entirely on disk.
+    private const long InMemoryByteLimit = int.MaxValue;
+    private bool isLoading;
+    private bool showLongLoadMessage = false;
+    private bool isClosing = false;
+
+    // Upload progress tracking
+    private Guid? _currentTaskId;
+    private int uploadProgressPercent;
+    private string currentStatusMessage = "Please wait…";
+
+    private bool uploadToSql;
+    private string? uploadedAssetWebPath;
+    private string? uploadedAssetLocalPath;
+    private AssetType uploadedAssetType;
+
+    private string? uploadedVideoMaskLocalPath;
+    private string? uploadedVideoMaskWebPath;
+
+    private MediaFileUploadMetadata? formData;
+    private bool IsEditMedia = false;
+    private bool isSchedulable;
+    private bool languageMetadata;
+
+    private double? expectedWidth;
+    private double? expectedHeight;
+    private string resolutionMode = "aspect-ratio";
+    private string? uploadErrorMessage;
+    private string? selectedLanguageCode = "eng";
+    private LanguageSelector? languageSelectorRef;
+
+    private bool videoMask = false;
+    private TblEndpoint? endpoint;
+
+    private string? fileNameOriginal;
+    private byte[]? fileBytes;
+    private string? fileName;
+    private string? endpointPath;
+    private string? targetFileName;
+
+    // Metadata-driven access control
+    private ResolvedAccess? userAccess;
+
+    // Sidecar metadata files are always generated for playlist uploads
+    private bool useMetadataFiles = false;
+
+    // Day-of-week selection for playlist scheduling
+    private HashSet<string> selectedDays = new();
+
+    // The location's content metadata field keys, from its rule rows
+    private List<string> customMetadataFields = new();
+    private Dictionary<string, List<string>> customMetadataValues = new();
+    private List<MetadataDefinitionDto> uploaderMetadataDefs = new();
+
+    // Metadata filter for full-access users
+    private UploadingAsSection? uploadingAs;
+
+    // The modal stays in the page between uploads, so each open gets a fresh section rather than one
+    // still holding the previous upload's identity and picks.
+    private Guid uploadSectionKey = Guid.NewGuid();
+
+    // A new asset row is being created here, so it needs an owner and its participating tags.
+    private bool ShowsUploadingAs => uploadToSql && !IsEditMedia && locationId > 0;
+
+    private List<string> VisibleCustomFields =>
+        uploadingAs == null
+            ? customMetadataFields
+            : customMetadataFields.Where(f => !uploadingAs.ParticipatingKeys.Contains(f)).ToList();
+
+    // Participating keys are tagged from the picked identity only, so a value typed into this form's own
+    // fields for one must reach neither the sidecar nor the database.
+    private IEnumerable<KeyValuePair<string, List<string>>> CustomValuesToWrite
+    {
+        get
+        {
+            var participating = uploadingAs?.ParticipatingKeys ?? new HashSet<string>();
+            return customMetadataValues.Where(kvp => kvp.Value.Count > 0 && !participating.Contains(kvp.Key));
+        }
+    }
+
+    private string? UploadBlockReason =>
+        ShowsUploadingAs && !isResubmit && uploadingAs is { IsBlocked: true } section ? section.BlockReason : null;
+
+    private void OnUploadingAsChanged()
+    {
+        // A section replaced mid-load can still report in; only a loaded section's pick is worth remembering.
+        if (_lastOpenConfig != null && uploadingAs is { IsReady: true })
+        {
+            _lastOpenConfig.UploadingAs = uploadingAs.PickedIdentity;
+            _lastOpenConfig.UploadPicks = uploadingAs.Picks.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+        }
+        StateHasChanged();
+    }
+
+    // Image moderation state
+    private ContentModerationModal? moderationModal;
+    private bool imageModerationPending = false;
+    private ModerationResult? currentModerationResult;
+
+    // Approval chain gating
+    private bool enableContentApproval;
+    private bool enableLlmModeration;
+
+    // Resubmit workflow state
+    private TblAssetApproval? existingApproval;
+    private bool isResubmit;
+    private List<ApprovalCommentDto> resubmitComments = new();
+    private string? resubmitComment;
+
+    // Stored so it can be attached to the UploadTask for cross-navigation resume
+    private MediaUploadConfig? _lastOpenConfig;
+
+    // Playlist rotation preview (uploader context)
+    private ContentPreviewPlayer? previewPlayer;
+
+    /// <summary>
+    /// Previews the current playlist with the not-yet-submitted upload spliced in, unfiltered. Which players
+    /// receive what is the location preview's question, so this answers only how the upload sits in the loop.
+    /// </summary>
+    private Task StartPlaylistPreview()
+    {
+        if (_lastOpenConfig?.EnablePlaylistPreview != true) return Task.CompletedTask;
+
+        var items = ActivePlaylistFiles()
+            .Select(f => PlaylistPreviewBuilder.ToPreviewItem(f))
+            .ToList();
+
+        var uploadWebPath = UploadedTempWebPath();
+        if (uploadWebPath != null)
+        {
+            items.Add(new PreviewItem
+            {
+                Url = uploadWebPath,
+                AssetTypeId = PlaylistPreviewBuilder.IsVideo(uploadedAssetLocalPath!)
+                    ? (int)Types.AssetType.Video
+                    : (int)Types.AssetType.Image,
+                Badge = "Not yet submitted"
+            });
+        }
+
+        previewPlayer?.Open(items);
+        return Task.CompletedTask;
+    }
+
+    private List<MediaFile> ActivePlaylistFiles() =>
+        (_lastOpenConfig?.PlaylistFiles ?? new List<MediaFile>()).Where(f => !f.IsExpired).ToList();
+
+    private string? UploadedTempWebPath()
+    {
+        if (string.IsNullOrEmpty(uploadedAssetLocalPath)) return null;
+        var root = MediaPaths.GetRoot();
+        if (string.IsNullOrEmpty(root) || !uploadedAssetLocalPath.StartsWith(root, StringComparison.OrdinalIgnoreCase)) return null;
+        return uploadedAssetLocalPath.Substring(root.Length).Replace("\\", "/");
+    }
+
+    protected override void OnInitialized()
+    {
+        uploadStateService.OnExpandRequested += OnExpandRequested;
+    }
+
+    private void OnExpandRequested(Guid id)
+    {
+        if (id == _currentTaskId)
+        {
+            modalDisplay = "inline-block;";
+            modalClass = "show";
+            showBackdrop = true;
+            _ = InvokeAsync(StateHasChanged);
+        }
+    }
+
+    public void Dispose()
+    {
+        uploadStateService.OnExpandRequested -= OnExpandRequested;
+    }
+
+    /// <summary>
+    /// Restores the modal from a previously minimized awaiting-submit task after navigation.
+    /// Called by the parent location page when a pending expand is detected on load.
+    /// </summary>
+    public void ResumeFromTask(UploadTask task)
+    {
+        if (task.ResumeConfig == null) return;
+        uploadSectionKey = Guid.NewGuid();
+
+        // A failed task (e.g. wrong aspect ratio) re-opens the modal for a fresh retry.
+        // Dismiss the stale toast now — a new task will be created when the user re-uploads.
+        if (task.Stage == "failed")
+        {
+            var cfg = task.ResumeConfig;
+            locationId = task.LocationId;
+            constraintId = cfg.ConstraintId;
+            baseDirectory = cfg.UploadFolder;
+            uploadToSql = cfg.AddToSql;
+            endpoint = cfg.Endpoint;
+            userAccess = cfg.UserAccess;
+            isSchedulable = cfg.IsSchedulable;
+            languageMetadata = cfg.LanguageMetadata;
+            videoMask = cfg.VideoMask;
+            formData = cfg.FormData;
+            _lastOpenConfig = cfg;
+            customMetadataFields = task.MetadataFieldKeys ?? new List<string>();
+            customMetadataValues = task.CustomMetadataValues ?? new Dictionary<string, List<string>>();
+
+            // Clear file state so the user starts a clean retry
+            fileName = null;
+            uploadedAssetWebPath = null;
+            uploadedAssetLocalPath = null;
+            fileBytes = null;
+            fileInputReset = true;
+            uploadErrorMessage = null;
+            _currentTaskId = null;
+
+            uploadStateService.DismissTask(task.Id);
+            uploadStateService.ClearPendingExpand();
+
+            modalDisplay = "inline-block;";
+            modalClass = "show";
+            showBackdrop = true;
+            isLoading = false;
+            isClosing = false;
+            StateHasChanged();
+            return;
+        }
+
+        var resumeCfg = task.ResumeConfig;
+        locationId = task.LocationId;
+        constraintId = resumeCfg.ConstraintId;
+        baseDirectory = resumeCfg.UploadFolder;
+        fileName = task.FileName;
+        uploadedAssetWebPath = task.TempWebPath;
+        uploadedAssetLocalPath = task.TempDiskPath;
+        uploadedAssetType = IsVideoFile(task.FileName) ? AssetType.Video : AssetType.Image;
+        uploadToSql = resumeCfg.AddToSql;
+        endpoint = resumeCfg.Endpoint;
+        userAccess = resumeCfg.UserAccess;
+        isSchedulable = resumeCfg.IsSchedulable;
+        languageMetadata = resumeCfg.LanguageMetadata;
+        videoMask = resumeCfg.VideoMask;
+        formData = resumeCfg.FormData;
+        _lastOpenConfig = resumeCfg;
+        _currentTaskId = task.Id;
+        fileBytes = null; // moderation skipped on resume (file already passed Stage 1)
+
+        // Restore custom metadata fields and any values the user entered before navigating away
+        customMetadataFields = task.MetadataFieldKeys ?? new List<string>();
+        customMetadataValues = task.CustomMetadataValues ?? new Dictionary<string, List<string>>();
+
+        modalDisplay = "inline-block;";
+        modalClass = "show";
+        showBackdrop = true;
+        isLoading = false;
+        isClosing = false;
+
+        uploadStateService.ClearPendingExpand();
+        StateHasChanged();
+    }
+
+    private void MinimizeModal()
+    {
+        modalDisplay = "none;";
+        modalClass = "";
+        showBackdrop = false;
+        // Upload continues — modal is hidden but component stays alive
+        StateHasChanged();
+    }
+
+    private void CancelUpload()
+    {
+        if (_currentTaskId.HasValue)
+            uploadStateService.CancelUpload(_currentTaskId.Value);
+    }
+
+    public async Task Open(MediaUploadConfig uploadConfig)
+    {
+        isClosing = false;
+        IsEditMedia = false;
+        uploadedAssetWebPath = null;
+        uploadedAssetLocalPath = null;
+        fileBytes = null;
+        fileName = null;
+        uploadErrorMessage = null;
+
+        baseDirectory = uploadConfig.UploadFolder;
+        fileInputReset = false;
+        modalDisplay = "inline-block;";
+        modalClass = "show";
+        showBackdrop = true;
+        _lastOpenConfig = uploadConfig;
+
+        locationId = uploadConfig.LocationId;
+        constraintId = uploadConfig.ConstraintId;
+        _displayId = uploadConfig.DisplayId;
+        _videoAnalysis = null;
+        _matchedProfile = null;
+        _reencodeComplete = false;
+        _autoReencode = false;
+        expectedWidth = uploadConfig.ExpectedWidth;
+        expectedHeight = uploadConfig.ExpectedHeight;
+        resolutionMode = uploadConfig.ResolutionMode ?? "aspect-ratio";
+        isSchedulable = uploadConfig.IsSchedulable;
+        uploadToSql = uploadConfig.AddToSql;
+        languageMetadata = uploadConfig.LanguageMetadata;
+        formData = uploadConfig.FormData;
+        videoMask = uploadConfig.VideoMask;
+        endpoint = uploadConfig.Endpoint;
+        targetFileName = uploadConfig.TargetFileName;
+        userAccess = uploadConfig.UserAccess;
+
+        // Resolve approval chain settings for this location
+        enableContentApproval = uploadConfig.EnableContentApproval;
+        enableLlmModeration = false;
+        if (enableContentApproval)
+        {
+            var chain = await approvalChainService.GetChainForLocationAsync(locationId);
+            enableLlmModeration = chain?.IsEnabled == true && chain.EnableLlmAutoApproval;
+        }
+
+        // Resubmit workflow: load existing approval and comment thread
+        existingApproval = uploadConfig.ExistingApproval;
+        isResubmit = existingApproval != null && existingApproval.ApprovalStatus == (int)ApprovalStatus.Declined;
+        resubmitComment = null;
+        resubmitComments = isResubmit
+            ? await approvalChainService.GetCommentsAsync(existingApproval!.AssetApprovalId)
+            : new();
+
+        useMetadataFiles = true;
+        selectedDays = new HashSet<string>();
+
+        // Load the location's content metadata fields from its rule rows
+        customMetadataFields = new List<string>();
+        customMetadataValues = new Dictionary<string, List<string>>();
+        try
+        {
+            if (locationId > 0)
+            {
+                customMetadataFields = (await ruleEditor.GetParticipatingKeysAsync(locationId)).ToList();
+                foreach (var field in customMetadataFields)
+                    customMetadataValues[field] = new List<string>();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading custom metadata fields for location {LocationId}", locationId);
+        }
+
+        // Load metadata definitions for type-aware field inputs
+        try { uploaderMetadataDefs = await metadataDefinitionService.GetAllDefinitionsAsync(); } catch { }
+
+        // Force SQL upload for metadata-access users (needed for content tagging and approval workflows)
+        if (userAccess != null && (userAccess.AccessLevel == "partial" || userAccess.AccessLevel == "full"))
+            uploadToSql = true;
+
+        // Force SQL upload when content approval is enabled (approval records require TblAsset)
+        if (enableContentApproval)
+            uploadToSql = true;
+
+        // Force SQL upload when custom metadata fields exist so values can be persisted in tblAssetContentMetadata
+        if (customMetadataFields.Count > 0)
+            uploadToSql = true;
+
+        uploadSectionKey = Guid.NewGuid();
+
+        // An upload at a location with access rules or participating keys needs an asset row: that row
+        // carries the owner and the tags.
+        try
+        {
+            var identityContext = await uploadIdentity.GetFormContextAsync(sessionState.User?.UserId ?? 0, locationId);
+            if (identityContext.Candidates.Mode != UploadIdentityMode.Unrestricted || identityContext.Rules.Count > 0)
+                uploadToSql = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading upload identities for location {LocationId}", locationId);
+        }
+
+        // A resumed upload restores from this config, so it must carry the decision made here rather than
+        // the opener's original flag, or the resume would skip the asset row and its owner.
+        uploadConfig.AddToSql = uploadToSql;
+
+        if (uploadConfig.EditMediaFile != null)
+        {
+            mediaFile = uploadConfig.EditMediaFile;
+            IsEditMedia = true;
+            // formData is still created so the HandleSubmit path works if the user also replaces the file
+            formData = new MediaFileUploadMetadata();
+
+            if (languageMetadata && mediaFile != null)
+            {
+                selectedLanguageCode = mediaFile.Metadata.FirstOrDefault(x => x.Name == "Language")?.Value;
+                languageSelectorRef?.ResetState();
+            }
+
+            var existingDays = mediaFile?.Metadata.FirstOrDefault(m => m.Name == "Days")?.Value;
+            if (!string.IsNullOrEmpty(existingDays))
+                selectedDays = new HashSet<string>(existingDays.Split(',', StringSplitOptions.TrimEntries));
+
+        }
+        else
+        {
+            formData = new MediaFileUploadMetadata();
+            mediaFile = new MediaFile();
+
+            if (languageMetadata)
+            {
+                selectedLanguageCode = "eng";
+                languageSelectorRef?.ResetState();
+            }
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async Task Close()
+    {
+        isLoading = true;
+        showLongLoadMessage = false;
+        isClosing = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("unloadUploaderVideo");
+            await Task.Delay(250);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "JavaScript unload failed");
+        }
+
+        await Task.Delay(1000);
+
+        modalDisplay = "none;";
+        modalClass = "";
+        showBackdrop = false;
+        fileInputReset = true;
+        isLoading = false;
+        fileBytes = null;
+        fileName = null;
+        uploadedAssetWebPath = "";
+
+        await InvokeAsync(StateHasChanged);
+        await Task.Delay(1000);
+
+        // Clean up any un-submitted temp file
+        if (!string.IsNullOrEmpty(uploadedAssetLocalPath) && File.Exists(uploadedAssetLocalPath))
+        {
+            try
+            {
+                File.Delete(uploadedAssetLocalPath);
+                if (!string.IsNullOrEmpty(uploadedVideoMaskLocalPath) && File.Exists(uploadedVideoMaskLocalPath))
+                    File.Delete(uploadedVideoMaskLocalPath);
+            }
+            catch (IOException ex)
+            {
+                Logger.LogError(ex, "Error deleting temp file on close");
+            }
+        }
+
+        uploadedAssetLocalPath = null;
+        uploadedAssetWebPath = null;
+        uploadedVideoMaskLocalPath = null;
+        uploadedVideoMaskWebPath = null;
+        isLoading = false;
+
+        // Dismiss any pending bar entry so the toast doesn't linger after the user closes
+        if (_currentTaskId.HasValue)
+        {
+            uploadStateService.DismissTask(_currentTaskId.Value);
+            _currentTaskId = null;
+        }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task HandleSubmit()
+    {
+        // The pick is re-checked before anything is processed. A refusal leaves the staged file in place
+        // and re-opens the picker on the identities the user still holds.
+        PreparedUpload? prepared = null;
+        if (ShowsUploadingAs && !isResubmit)
+        {
+            prepared = await uploadIdentity.PrepareAsync(sessionState.User?.UserId ?? 0, locationId,
+                uploadingAs?.PickedGroupId, uploadingAs?.Picks);
+            if (!prepared.IsValid)
+            {
+                uploadErrorMessage = prepared.Error;
+                if (uploadingAs != null)
+                    await uploadingAs.ReloadAfterRefusalAsync(prepared.Error);
+                StateHasChanged();
+                return;
+            }
+        }
+
+        isLoading = true;
+        showLongLoadMessage = false;
+        uploadProgressPercent = 0;
+        currentStatusMessage = "Processing…";
+
+        // Dismiss the Stage 1 awaiting-submit toast before creating the Stage 2 progress entry
+        if (_currentTaskId.HasValue)
+        {
+            uploadStateService.DismissTask(_currentTaskId.Value);
+            _currentTaskId = null;
+        }
+
+        // Start a new submit task on the service for Stage 2
+        var submitTask = uploadStateService.StartUpload(fileName ?? "file", locationId);
+        submitTask.DisplayName = fileNameOriginal ?? fileName ?? "file";
+        _currentTaskId = submitTask.Id;
+        uploadStateService.UpdateProgress(submitTask.Id, 0, "Processing…");
+
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("unloadUploaderVideo");
+            await Task.Delay(250);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "JavaScript unload failed");
+        }
+
+        await Task.Delay(1000);
+
+        // Image moderation — scan uploaded images when LLM moderation is enabled on the approval chain
+        if (!imageModerationPending && enableLlmModeration
+            && fileBytes != null && fileBytes.Length > 0
+            && uploadedAssetType == AssetType.Image)
+        {
+            try
+            {
+                var ext = Path.GetExtension(fileName ?? "").ToLowerInvariant();
+                var mimeType = ext switch
+                {
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".gif" => "image/gif",
+                    ".webp" => "image/webp",
+                    ".bmp" => "image/bmp",
+                    _ => "image/png"
+                };
+
+                var moderationContext = new ModerationContext
+                {
+                    UserId = sessionState.User?.UserId,
+                    LocationId = locationId
+                };
+
+                var moderationResult = await moderationService.ScanImageAsync(fileBytes, mimeType, moderationContext);
+
+                if (moderationResult != null && !moderationResult.IsInappropriate)
+                {
+                    Logger.LogInformation("Image passed AI moderation");
+                }
+                else if (moderationResult?.IsInappropriate == true)
+                {
+                    Logger.LogWarning("Image flagged by AI moderation: {Reason}", moderationResult.Reason);
+                    currentModerationResult = moderationResult;
+                    isLoading = false;
+                    await InvokeAsync(StateHasChanged);
+                    moderationModal?.Open(moderationResult);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Image moderation error");
+            }
+        }
+
+        try
+        {
+            // Write .metadata sidecar file for playlist uploads
+            bool shouldCreateMetadata = formData != null && uploadedAssetLocalPath != null && useMetadataFiles;
+            if (shouldCreateMetadata)
+            {
+                await UpdateMetadataFile(uploadedAssetLocalPath!, "Location", locationId.ToString(), "ovx_String");
+
+                if (fileNameOriginal != null)
+                    await UpdateMetadataFile(uploadedAssetLocalPath!, "FileName", fileNameOriginal, "ovx_String");
+
+                if (formData!.StartDate != null)
+                    await UpdateMetadataDateTimeValue(uploadedAssetLocalPath!, "StartDate", formData.StartDate.Value.ToString("yyyy-MM-dd"));
+                if (formData.StartTime != null)
+                    await UpdateMetadataDateTimeValue(uploadedAssetLocalPath!, "StartTime", formData.StartTime.Value.ToString("HH:mm:ss"));
+                if (formData.EndDate != null)
+                    await UpdateMetadataDateTimeValue(uploadedAssetLocalPath!, "EndDate", formData.EndDate.Value.ToString("yyyy-MM-dd"));
+                if (formData.EndTime != null)
+                    await UpdateMetadataDateTimeValue(uploadedAssetLocalPath!, "EndTime", formData.EndTime.Value.ToString("HH:mm:ss"));
+
+                if (selectedDays.Count > 0)
+                {
+                    var daysValue = string.Join(",", new[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }.Where(d => selectedDays.Contains(d)));
+                    await UpdateMetadataFile(uploadedAssetLocalPath!, "Days", daysValue, "ovx_String");
+                }
+                if (formData.Days != null && formData.Days.Count > 0)
+                {
+                    var daysValue = string.Join(",", formData.Days);
+                    await UpdateMetadataFile(uploadedAssetLocalPath!, "Days", daysValue, "ovx_String");
+                }
+                if (languageMetadata && !string.IsNullOrEmpty(formData.LanguageCode))
+                    await UpdateMetadataFile(uploadedAssetLocalPath!, "Language", formData.LanguageCode, "ovx_String");
+
+                // Write custom metadata field values. The sidecar field is a single string, so a
+                // multi-valued key is comma-joined there; the database holds one row per value.
+                foreach (var kvp in CustomValuesToWrite)
+                    await UpdateMetadataFile(uploadedAssetLocalPath!, kvp.Key, string.Join(",", kvp.Value), "ovx_String");
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error writing metadata sidecar");
+        }
+
+        if (string.IsNullOrWhiteSpace(uploadedAssetLocalPath))
+        {
+            // Resubmit with comment only (no new file)
+            if (isResubmit && existingApproval != null && sessionState.User != null)
+                await ExecuteResubmitAsync();
+
+            if (_currentTaskId.HasValue) { uploadStateService.CompleteUpload(_currentTaskId.Value); _currentTaskId = null; }
+            await OnAssetSubmit.InvokeAsync();
+            modalDisplay = "none;";
+            modalClass = "";
+            showBackdrop = false;
+            fileInputReset = true;
+            isLoading = false;
+            return;
+        }
+
+        // A file becomes visible to the manifest builder the instant it lands in MediaAssets: the
+        // folder watcher invalidates the manifest cache and wakes every player at the location. The
+        // approval gate keys on the asset's database rows and treats a missing row as legacy content
+        // that predates approvals, so a file revealed before its rows exist is served unapproved
+        // until the next rebuild. Everything that records the asset therefore runs while the file is
+        // still staged outside the watched folder, and the move that reveals it comes last.
+        string tempFilePath = uploadedAssetLocalPath;
+
+        string finalFolderPath = constraintId != 0
+            ? Path.Combine(baseDirectory!, "MediaAssets", locationId.ToString(), constraintId.ToString())
+            : Path.Combine(baseDirectory!, "MediaAssets", locationId.ToString());
+
+        if (!Directory.Exists(finalFolderPath))
+            Directory.CreateDirectory(finalFolderPath);
+
+        string finalFilePath = Path.Combine(finalFolderPath, Path.GetFileName(tempFilePath));
+        string finalWebPath = constraintId != 0
+            ? $"/MediaAssets/{locationId}/{constraintId}/{Path.GetFileName(finalFilePath)}"
+            : $"/MediaAssets/{locationId}/{Path.GetFileName(finalFilePath)}";
+
+        // Persist true video length so loop-duration math and schedule defaults use the
+        // real runtime instead of the 7-second placeholder
+        double? probedDurationSeconds = null;
+        double probedWidth = 0, probedHeight = 0;
+        if (uploadedAssetType == AssetType.Video)
+        {
+            try
+            {
+                var probe = await VideoProcessingService.AnalyzeAsync(tempFilePath);
+                if (probe?.Duration > 0)
+                {
+                    probedDurationSeconds = probe.Duration;
+                    probedWidth = probe.Width;
+                    probedHeight = probe.Height;
+                    await UpdateMetadataFile(tempFilePath, "Duration",
+                        Math.Max(1, (int)Math.Round(probe.Duration)).ToString(), "ovx_String");
+                }
+            }
+            catch (Exception ex) { Logger.LogWarning(ex, "Video duration probe failed"); }
+        }
+
+        // Generate grayscale alpha mask PNG for Pixera video mask mode.
+        // The mask encodes the original image's alpha channel as brightness: opaque = white, transparent = black.
+        // Pixera uses this as a luma key so the graphic floats over underlying video layers.
+        // Staged alongside the media file so it is revealed in the same move.
+        string? tempMaskPath = null;
+        string? finalMaskPath = null;
+        if (videoMask && fileBytes != null)
+        {
+            try
+            {
+                byte[] alphaMask = ImageProcessor.InvertAlphaToGrayscaleMask(fileBytes);
+                string maskFileName = $"{Path.GetFileNameWithoutExtension(fileName)}_mask.png";
+
+                tempMaskPath = Path.Combine(Path.GetDirectoryName(tempFilePath)!, maskFileName);
+                await File.WriteAllBytesAsync(tempMaskPath, alphaMask);
+                finalMaskPath = Path.Combine(finalFolderPath, maskFileName);
+
+                uploadedVideoMaskLocalPath = tempMaskPath;
+                uploadedVideoMaskWebPath = constraintId != 0
+                    ? $"/MediaAssets/{locationId}/{constraintId}/{maskFileName}"
+                    : $"/MediaAssets/{locationId}/{maskFileName}";
+            }
+            catch (Exception ex) { Logger.LogError(ex, "Error generating alpha mask"); }
+        }
+
+        // Persist to DB
+        uploadProgressPercent = 40;
+        currentStatusMessage = "Saving…";
+        if (_currentTaskId.HasValue) uploadStateService.UpdateProgress(_currentTaskId.Value, 40, "Saving…");
+        await InvokeAsync(StateHasChanged);
+
+        TblAsset? newAsset = null;
+
+        try
+        {
+            if (uploadToSql)
+            {
+                // Replacing an asset's file through the uploader changes the bytes, not the owner or the
+                // targeting, so both come from the asset being edited rather than from a pick.
+                var editedAsset = isResubmit && existingApproval != null
+                    ? await dbContext.TblAssets.AsNoTracking().FirstOrDefaultAsync(a => a.AssetId == existingApproval.AssetId)
+                    : IsEditMedia ? await FindEditedAssetAsync() : null;
+
+                newAsset = new TblAsset
+                {
+                    AssetGroupId = 1,
+                    AssetName = fileNameOriginal,
+                    AssetPath = finalWebPath,
+                    AssetTypeId = (int)uploadedAssetType,
+                    ConstraintId = constraintId,
+                    LocationId = locationId,
+                    VideoMaskPath = uploadedVideoMaskWebPath,
+                    EndpointId = endpoint?.EndpointId,
+                    UploadedByUserId = editedAsset != null ? editedAsset.UploadedByUserId : prepared?.OwnerUserId ?? sessionState.User?.UserId,
+                    UploadedByUserGroupId = editedAsset != null ? editedAsset.UploadedByUserGroupId : prepared?.OwnerGroupId
+                };
+                if (probedDurationSeconds.HasValue)
+                {
+                    newAsset.Duration = probedDurationSeconds.Value;
+                    newAsset.AssetWidth = probedWidth;
+                    newAsset.AssetHeight = probedHeight;
+                }
+                dbContext.TblAssets.Add(newAsset);
+                await dbContext.SaveChangesAsync();
+                publicationInvalidator.AssetsChanged([newAsset.LocationId]);
+
+                if (editedAsset != null)
+                {
+                    foreach (var group in (await contentMetadataService.GetMetadataForAssetAsync(editedAsset.AssetId)).GroupBy(t => t.MetadataKey))
+                        await contentMetadataService.SetMetadataAsync(newAsset.AssetId, group.Key, group.Select(t => t.MetadataValue), sessionState.User?.UserId);
+                }
+                else
+                {
+                    foreach (var (key, values) in prepared?.Tags ?? new Dictionary<string, List<string>>())
+                        await contentMetadataService.SetMetadataAsync(newAsset.AssetId, key, values, sessionState.User?.UserId);
+                    foreach (var kvp in CustomValuesToWrite.ToList())
+                        await contentMetadataService.SetMetadataAsync(newAsset.AssetId, kvp.Key, kvp.Value, sessionState.User?.UserId);
+                }
+
+                // Approval chain: resubmit or create new record
+                if (isResubmit && existingApproval != null && sessionState.User != null)
+                {
+                    await ExecuteResubmitAsync();
+                }
+                else if (enableContentApproval && sessionState.User != null)
+                {
+                    var approval = new TblAssetApproval
+                    {
+                        AssetId = newAsset.AssetId,
+                        UploadedByUserId = sessionState.User.UserId,
+                        ApprovalStatus = (int)ApprovalStatus.Pending,
+                        SubmittedDate = DateTime.UtcNow,
+                        ExtendedData = System.Text.Json.JsonSerializer.Serialize(new { source = "MediaAssetUploader" })
+                    };
+                    dbContext.TblAssetApprovals.Add(approval);
+                    await dbContext.SaveChangesAsync();
+                    publicationInvalidator.AssetsChanged([newAsset.LocationId]);
+
+                    var passedModeration = !imageModerationPending;
+                    await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, locationId, passedModeration,
+                        uploadingUserId: null, pickedRuleId: prepared?.PickedRuleId);
+
+                    // Written to the staged sidecar: the zone and video-wall manifest path reads
+                    // approval state from the sidecar rather than from the database.
+                    await UpdateMetadataFile(tempFilePath, "ApprovalStatus", approval.ApprovalStatus.ToString(), "ovx_String");
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            // The staged file is discarded rather than published. Revealing content with no asset
+            // row would bypass the approval gate, which reads that row to decide.
+            Logger.LogError(ex, "Error persisting asset to DB");
+            uploadErrorMessage = $"Upload failed: the file could not be recorded in the database and was not published. ({ex.Message})";
+
+            try
+            {
+                if (File.Exists(tempFilePath)) File.Delete(tempFilePath);
+                if (File.Exists(tempFilePath + ".metadata")) File.Delete(tempFilePath + ".metadata");
+                if (tempMaskPath != null && File.Exists(tempMaskPath)) File.Delete(tempMaskPath);
+            }
+            catch (Exception cleanupEx) { Logger.LogWarning(cleanupEx, "Failed to discard staged upload"); }
+
+            uploadedAssetLocalPath = null;
+            uploadedAssetWebPath = null;
+            uploadedVideoMaskLocalPath = null;
+            uploadedVideoMaskWebPath = null;
+
+            if (_currentTaskId.HasValue)
+            {
+                uploadStateService.CompleteUpload(_currentTaskId.Value);
+                _currentTaskId = null;
+            }
+
+            uploadProgressPercent = 0;
+            currentStatusMessage = "Please wait…";
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+
+        // Reveal the upload. Past this point the manifest builder can see it, and its rows exist.
+        uploadProgressPercent = 60;
+        currentStatusMessage = "Moving to MediaAssets…";
+        if (_currentTaskId.HasValue) uploadStateService.UpdateProgress(_currentTaskId.Value, 60, "Moving to MediaAssets…");
+        await InvokeAsync(StateHasChanged);
+
+        // The sidecar moves ahead of the media file so the gate never sees the file without it
+        string tempMetadataPath = tempFilePath + ".metadata";
+        string finalMetadataPath = finalFilePath + ".metadata";
+        if (File.Exists(tempMetadataPath))
+        {
+            if (File.Exists(finalMetadataPath))
+                File.Delete(finalMetadataPath);
+            File.Move(tempMetadataPath, finalMetadataPath);
+        }
+
+        if (tempMaskPath != null && finalMaskPath != null && File.Exists(tempMaskPath))
+        {
+            if (File.Exists(finalMaskPath))
+                File.Delete(finalMaskPath);
+            File.Move(tempMaskPath, finalMaskPath);
+            uploadedVideoMaskLocalPath = finalMaskPath;
+        }
+
+        if (File.Exists(finalFilePath))
+            File.Delete(finalFilePath);
+        File.Move(tempFilePath, finalFilePath);
+
+        uploadedAssetLocalPath = finalFilePath;
+        uploadedAssetWebPath = finalWebPath;
+
+        // Generate video thumbnail
+        uploadProgressPercent = 75;
+        currentStatusMessage = "Generating thumbnail…";
+        if (_currentTaskId.HasValue) uploadStateService.UpdateProgress(_currentTaskId.Value, 75, "Generating thumbnail…");
+        await InvokeAsync(StateHasChanged);
+
+        try { await ThumbnailService.GenerateThumbnailAsync(uploadedAssetLocalPath); }
+        catch (Exception ex) { Logger.LogError(ex, "Thumbnail generation failed"); }
+
+        // Endpoint upload (Pixera). Pixera pulls the file from its final UNC path, so this runs
+        // after the reveal and the resulting resource path is patched onto the asset row.
+        uploadProgressPercent = 90;
+        currentStatusMessage = "Uploading to endpoint…";
+        if (_currentTaskId.HasValue) uploadStateService.UpdateProgress(_currentTaskId.Value, 90, "Uploading to endpoint…");
+        await InvokeAsync(StateHasChanged);
+
+        if (endpoint is not null)
+        {
+            switch (endpoint.Type)
+            {
+                case "Pixera":
+                    string pixeraRelativePath = finalWebPath.TrimStart('/', '\\').Replace("/", "\\");
+                    var success = await pixeraService.UploadContentToPixeraAsync(pixeraRelativePath, endpoint.Ipaddress);
+                    if (!success)
+                    {
+                        Logger.LogWarning("Upload to Pixera failed");
+                    }
+                    else
+                    {
+                        endpointPath = Path.Combine("Media", pixeraRelativePath).Replace("\\", "/");
+                        if (newAsset != null)
+                        {
+                            try
+                            {
+                                newAsset.EndpointPath = endpointPath;
+                                await dbContext.SaveChangesAsync();
+                            }
+                            catch (Exception ex) { Logger.LogError(ex, "Failed to record endpoint path for asset {AssetId}", newAsset.AssetId); }
+                        }
+                    }
+                    break;
+            }
+        }
+
+        imageModerationPending = false;
+        currentModerationResult = null;
+
+        if (_currentTaskId.HasValue)
+        {
+            uploadStateService.CompleteUpload(_currentTaskId.Value);
+            _currentTaskId = null;
+        }
+
+        uploadProgressPercent = 0;
+        currentStatusMessage = "Please wait…";
+
+        await OnAssetSubmit.InvokeAsync();
+        modalDisplay = "none;";
+        modalClass = "";
+        showBackdrop = false;
+        fileInputReset = true;
+        isLoading = false;
+    }
+
+    private void HandleModerationCancel()
+    {
+        Logger.LogInformation("Moderation cancel — upload aborted");
+        imageModerationPending = false;
+        currentModerationResult = null;
+        isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task HandleModerationSubmit()
+    {
+        Logger.LogInformation("User chose Submit for Approval — continuing with Pending status");
+        imageModerationPending = true;
+        await HandleSubmit();
+    }
+
+    private async Task ExecuteResubmitAsync()
+    {
+        if (existingApproval == null || sessionState.User == null || string.IsNullOrWhiteSpace(resubmitComment)) return;
+
+        await approvalChainService.AddCommentAsync(
+            existingApproval.AssetApprovalId, null,
+            sessionState.User.UserId, resubmitComment.Trim(), "resubmit");
+
+        await approvalService.ResubmitAsync(
+            existingApproval.AssetApprovalId,
+            sessionState.User.UserId, resubmitComment.Trim());
+
+        await approvalChainService.SubmitToChainAsync(existingApproval.AssetApprovalId, locationId);
+
+        if (!string.IsNullOrEmpty(uploadedAssetLocalPath))
+            await UpdateMetadataFile(uploadedAssetLocalPath, "ApprovalStatus", ((int)ApprovalStatus.Pending).ToString(), "ovx_String");
+        else if (mediaFile?.DiskPath != null)
+            await UpdateMetadataFile(mediaFile.DiskPath, "ApprovalStatus", ((int)ApprovalStatus.Pending).ToString(), "ovx_String");
+    }
+
+    private async Task OnMediaUpload(InputFileChangeEventArgs e)
+    {
+        isLoading = true;
+        showLongLoadMessage = false;
+        uploadProgressPercent = 0;
+        currentStatusMessage = "Uploading…";
+
+        uploadedAssetWebPath = null;
+        uploadErrorMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        // Always write temp files to local wwwroot — FilePaths:BaseUNC is the network share path
+        // Pixera reads media from; it is not a write target for Director's own file operations.
+        string baseRoot = MediaPaths.GetRoot();
+
+        foreach (var file in e.GetMultipleFiles(maxAllowedFiles))
+        {
+            try
+            {
+                // Reject oversized files before streaming. IBrowserFile.Size is known from the
+                // browser up front, so we fail fast with a clear message instead of part-way
+                // through a long transfer.
+                if (file.Size > MaxUploadBytes)
+                {
+                    uploadErrorMessage =
+                        $"{file.Name} is {file.Size / 1_000_000_000d:F2} GB, which exceeds the " +
+                        $"{MaxUploadBytes / 1_000_000_000d:F2} GB upload limit. Re-encode or " +
+                        "compress the video before uploading.";
+                    await InvokeAsync(StateHasChanged);
+                    continue;
+                }
+
+                if (!string.IsNullOrEmpty(baseRoot))
+                {
+                    string tempFolderPath = constraintId != 0
+                        ? Path.Combine(baseRoot, "TempFiles", locationId.ToString(), constraintId.ToString())
+                        : Path.Combine(baseRoot, "TempFiles", locationId.ToString());
+
+                    if (!Directory.Exists(tempFolderPath))
+                        Directory.CreateDirectory(tempFolderPath);
+
+                    if (targetFileName != null)
+                    {
+                        fileName = targetFileName;
+                        formData = null;
+                    }
+                    else
+                    {
+                        // file.Name is client-controlled; strip any path segments so it cannot
+                        // steer the write outside the temp folder.
+                        var safeFileName = Path.GetFileName(file.Name);
+                        fileNameOriginal = safeFileName;
+                        fileName = $"{Guid.NewGuid().ToString("N")[..8]}_{safeFileName}";
+                    }
+
+                    string uploadPath = Path.Combine(tempFolderPath, fileName);
+                    string extensionType = Path.GetExtension(file.Name).TrimStart('.').ToUpper();
+
+                    // Register with upload state service and read in chunks for real progress reporting
+                    var uploadTask = uploadStateService.StartUpload(fileName!, locationId);
+                    uploadTask.DisplayName = fileNameOriginal ?? fileName!;
+                    _currentTaskId = uploadTask.Id;
+
+                    const int chunkSize = 65536;
+                    var buffer = new byte[chunkSize];
+                    long totalRead = 0;
+                    long fileSize = file.Size;
+
+                    // Stream straight to disk rather than buffering the whole file in memory: a
+                    // MemoryStream/byte[] is capped at 2 GiB (Int32.MaxValue) and throws "Stream was
+                    // too long" on larger masters (multi-GB ProRes and the like). Disk streaming has
+                    // no such ceiling and keeps memory flat regardless of file size.
+                    try
+                    {
+                        // MaxUploadBytes as the stream cap makes the limit authoritative on the
+                        // server; the Size check above trusts the browser-reported value.
+                        await using var stream = file.OpenReadStream(MaxUploadBytes, uploadTask.Cts.Token);
+                        await using var destination = new FileStream(
+                            uploadPath, FileMode.Create, FileAccess.Write, FileShare.None,
+                            chunkSize, useAsync: true);
+                        while (true)
+                        {
+                            uploadTask.Cts.Token.ThrowIfCancellationRequested();
+                            int read = await stream.ReadAsync(buffer, 0, chunkSize, uploadTask.Cts.Token);
+                            if (read == 0) break;
+                            await destination.WriteAsync(buffer, 0, read, uploadTask.Cts.Token);
+                            totalRead += read;
+                            int pct = fileSize > 0 ? (int)(totalRead * 100 / fileSize) : 0;
+                            uploadProgressPercent = pct;
+                            currentStatusMessage = "Uploading…";
+                            uploadStateService.UpdateProgress(uploadTask.Id, pct, "Uploading…");
+                            await InvokeAsync(StateHasChanged);
+                        }
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        uploadStateService.FailUpload(uploadTask.Id, "Cancelled");
+                        if (File.Exists(uploadPath)) File.Delete(uploadPath);
+                        isLoading = false;
+                        await InvokeAsync(StateHasChanged);
+                        return;
+                    }
+
+                    // Only load the file into memory when it fits (images need it for moderation and
+                    // alpha-mask generation); larger videos are processed entirely on disk. A byte[]
+                    // cannot exceed 2 GiB, so never read a bigger file back into memory.
+                    fileBytes = file.Size <= InMemoryByteLimit
+                        ? await File.ReadAllBytesAsync(uploadPath)
+                        : null;
+
+                    // Write a separate copy for validation (cleaned up after validation)
+                    string customTempFolder = Path.Combine(baseRoot, "TempFiles");
+                    if (!Directory.Exists(customTempFolder))
+                        Directory.CreateDirectory(customTempFolder);
+
+                    string tempPath = Path.Combine(customTempFolder, fileName);
+                    if (File.Exists(tempPath))
+                        File.Delete(tempPath);
+                    File.Copy(uploadPath, tempPath, overwrite: true);
+
+                    // Resolution / aspect-ratio validation
+                    if (expectedWidth.HasValue && expectedHeight.HasValue)
+                    {
+                        var dims = await GetMediaDimensions(tempPath);
+                        if (dims.HasValue)
+                        {
+                            var (contentW, contentH) = dims.Value;
+                            if (resolutionMode == "exact")
+                            {
+                                if (!ScaleService.ExactResolutionMatch(contentW, contentH, expectedWidth.Value, expectedHeight.Value))
+                                {
+                                    uploadErrorMessage = $"File {file.Name} must be exactly {expectedWidth}×{expectedHeight} pixels.";
+                                    File.Delete(uploadPath);
+                                    File.Delete(tempPath);
+                                    uploadTask.ResumeConfig = _lastOpenConfig;
+                                    uploadStateService.FailUpload(uploadTask.Id, uploadErrorMessage);
+                                    continue;
+                                }
+                            }
+                            else
+                            {
+                                if (!ScaleService.MatchingAspectRatio(contentW, contentH, expectedWidth.Value, expectedHeight.Value))
+                                {
+                                    uploadErrorMessage = $"File {file.Name} has an incorrect aspect ratio. Expected {expectedWidth}×{expectedHeight}.";
+                                    File.Delete(uploadPath);
+                                    File.Delete(tempPath);
+                                    uploadTask.ResumeConfig = _lastOpenConfig;
+                                    uploadStateService.FailUpload(uploadTask.Id, uploadErrorMessage);
+                                    continue;
+                                }
+                                if (contentW < expectedWidth.Value || contentH < expectedHeight.Value)
+                                {
+                                    uploadErrorMessage = $"File {file.Name} is too small ({contentW}×{contentH}). Minimum is {expectedWidth}×{expectedHeight}.";
+                                    File.Delete(uploadPath);
+                                    File.Delete(tempPath);
+                                    uploadTask.ResumeConfig = _lastOpenConfig;
+                                    uploadStateService.FailUpload(uploadTask.Id, uploadErrorMessage);
+                                    continue;
+                                }
+                            }
+                        }
+                        else
+                        {
+                            // Dimensions could not be read at all — this is a tooling/config failure
+                            // (ffprobe missing or misconfigured), NOT a real aspect-ratio mismatch.
+                            // Reporting it honestly avoids sending the user to chase the wrong problem.
+                            uploadErrorMessage = $"Could not read the dimensions of {file.Name}. " +
+                                "Verify ffprobe is available — check that the Ffmpeg:Path setting points to the " +
+                                "folder containing ffprobe.exe, or that ffprobe is on the system PATH. See logs for details.";
+                            File.Delete(uploadPath);
+                            File.Delete(tempPath);
+                            uploadTask.ResumeConfig = _lastOpenConfig;
+                            uploadStateService.FailUpload(uploadTask.Id, uploadErrorMessage);
+                            continue;
+                        }
+                    }
+
+                    File.Delete(tempPath);
+
+                    uploadedAssetWebPath = constraintId != 0
+                        ? $"/TempFiles/{locationId}/{constraintId}/{fileName}"
+                        : $"/TempFiles/{locationId}/{fileName}";
+
+                    uploadedAssetLocalPath = uploadPath;
+                    uploadedAssetType = IsVideoFile(fileName) ? AssetType.Video : AssetType.Image;
+
+                    // Encoding threshold check for video uploads. Probes the common delivery and
+                    // mastering containers so oversized or non-deliverable sources — e.g. a multi-GB
+                    // ProRes .mov master — are caught and offered for re-encode, not just MP4s.
+                    // WebM is deliberately excluded: it's normally chosen for players that lack
+                    // H.264 support, so re-encoding it back to H.264 would defeat the point.
+                    _matchedProfile = null;
+                    _reencodeComplete = false;
+                    _autoReencode = false;
+                    if (extensionType is "MP4" or "MOV" or "AVI" or "M4V")
+                    {
+                        try
+                        {
+                            _videoAnalysis = await VideoProcessingService.AnalyzeAsync(uploadedAssetLocalPath);
+                            if (_videoAnalysis != null)
+                            {
+                                var profiles = await ResolveEncodingProfilesAsync();
+                                if (profiles.Count > 0)
+                                    _matchedProfile = VideoProcessingService.MatchProfile(_videoAnalysis, profiles);
+                            }
+
+                        }
+                        catch (Exception ex)
+                        {
+                            Logger.LogWarning(ex, "Encoding profile check failed — skipping");
+                        }
+                    }
+
+                    // Stage 1 complete — persist resume data on the task then flash the bar
+                    if (_currentTaskId.HasValue)
+                    {
+                        var t = uploadStateService.GetTask(_currentTaskId.Value);
+                        if (t != null)
+                        {
+                            t.TempWebPath = uploadedAssetWebPath;
+                            t.TempDiskPath = uploadedAssetLocalPath;
+                            t.ResumeConfig = _lastOpenConfig;
+                            // Snapshot custom field definitions and any values the user entered
+                            // before or during the upload, so they survive navigation away
+                            t.MetadataFieldKeys = new List<string>(customMetadataFields);
+                            t.CustomMetadataValues = customMetadataValues.ToDictionary(kv => kv.Key, kv => kv.Value.ToList());
+                        }
+                        uploadStateService.MarkAwaitingSubmit(_currentTaskId.Value);
+                    }
+
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+            catch (Exception ex)
+            {
+                uploadErrorMessage = $"Error uploading file: {ex.Message}";
+                if (_currentTaskId.HasValue)
+                    uploadStateService.FailUpload(_currentTaskId.Value, ex.Message);
+            }
+        }
+
+        uploadProgressPercent = 0;
+        currentStatusMessage = "Please wait…";
+        isLoading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// Resolves encoding profiles to check against the uploaded video.
+    /// Priority: display-level → location-level (manual/lcd), highest priority first.
+    /// </summary>
+    private async Task<List<EncodingProfile>> ResolveEncodingProfilesAsync()
+    {
+        // 1. Display-level profiles (highest priority)
+        if (_displayId.HasValue)
+        {
+            var display = await dbContext.TblDisplays.AsNoTracking()
+                .FirstOrDefaultAsync(d => d.DisplayId == _displayId.Value);
+            var dProfiles = ExtendedDataHelper.Parse<DisplayExtendedData>(display?.ExtendedData)?.EncodingProfiles;
+            if (dProfiles?.Count > 0) return dProfiles;
+        }
+
+        // 2. Location-level profiles
+        var location = await dbContext.TblLocations.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.LocationId == locationId);
+        var locExt = ExtendedDataHelper.Parse<LocationExtendedData>(location?.ExtendedData);
+        var mode = locExt?.PlaylistEncodingMode ?? "off";
+
+        if (mode == "manual" && locExt?.EncodingProfiles?.Count > 0)
+        {
+            _autoReencode = true;
+            return locExt.EncodingProfiles;
+        }
+
+        if (mode == "lcd")
+        {
+            // Collect device model profiles for all devices at this location
+            var deviceModels = await dbContext.TblDevices.AsNoTracking()
+                .Where(d => d.LocationId == locationId && d.Manufacturer != null && d.Model != null)
+                .Select(d => new { d.Manufacturer, d.Model })
+                .Distinct()
+                .ToListAsync();
+
+            var allDeviceProfiles = new List<List<EncodingProfile>>();
+            foreach (var dev in deviceModels)
+            {
+                var cfg = await dbContext.TblDeviceModelConfigs.AsNoTracking()
+                    .FirstOrDefaultAsync(c => c.Manufacturer == dev.Manufacturer && c.Model == dev.Model);
+                var p = ExtendedDataHelper.Parse<List<EncodingProfile>>(cfg?.ProfilesJson);
+                if (p?.Count > 0) allDeviceProfiles.Add(p);
+            }
+
+            if (allDeviceProfiles.Count > 0 && _videoAnalysis != null)
+            {
+                // Build most-restrictive profile: for each device's profile list, find the first
+                // matching profile, then synthesize the tightest thresholds across all devices.
+                var matchedPerDevice = allDeviceProfiles
+                    .Select(pl => VideoProcessingService.MatchProfile(_videoAnalysis, pl))
+                    .Where(p => p != null)
+                    .Cast<EncodingProfile>()
+                    .ToList();
+
+                if (matchedPerDevice.Count > 0)
+                {
+                    var lcd = new EncodingProfile
+                    {
+                        ResolutionMode = "all",
+                        MaxBitrateKbps = matchedPerDevice.Where(p => p.MaxBitrateKbps.HasValue).Select(p => p.MaxBitrateKbps!.Value).DefaultIfEmpty(0).Min() is int b && b > 0 ? b : null,
+                        MaxFps = matchedPerDevice.Where(p => p.MaxFps.HasValue).Select(p => p.MaxFps!.Value).DefaultIfEmpty(0).Min() is int f && f > 0 ? f : null,
+                        StripAudio = matchedPerDevice.Any(p => p.StripAudio)
+                    };
+                    // Use the most restrictive resolution from matched profiles
+                    var maxProfiles = matchedPerDevice.Where(p => p.ResolutionMode == "max").ToList();
+                    if (maxProfiles.Count > 0)
+                    {
+                        lcd.ResolutionMode = "max";
+                        lcd.MaxWidth = maxProfiles.Where(p => p.MaxWidth.HasValue).Select(p => p.MaxWidth!.Value).DefaultIfEmpty(0).Min() is int w && w > 0 ? w : null;
+                        lcd.MaxHeight = maxProfiles.Where(p => p.MaxHeight.HasValue).Select(p => p.MaxHeight!.Value).DefaultIfEmpty(0).Min() is int h && h > 0 ? h : null;
+                    }
+                    _autoReencode = true;
+                    return new List<EncodingProfile> { lcd };
+                }
+            }
+
+            // Fallback bitrate when no device info available
+            if (locExt?.EncodingFallbackBitrateKbps.HasValue == true)
+            {
+                _autoReencode = true;
+                return new List<EncodingProfile> { new() { ResolutionMode = "all", MaxBitrateKbps = locExt.EncodingFallbackBitrateKbps } };
+            }
+        }
+
+        return new List<EncodingProfile>();
+    }
+
+    private async Task StartReencode()
+    {
+        if (_matchedProfile == null || string.IsNullOrEmpty(uploadedAssetLocalPath)) return;
+
+        _isReencoding = true;
+        _reencodeProgress = 0;
+        // Force the re-encode progress UI to render before FFmpeg starts.
+        // StateHasChanged marks dirty but doesn't flush; Task.Yield releases the
+        // thread so Blazor can send the update to the browser first.
+        StateHasChanged();
+        await Task.Yield();
+
+        var outputPath = Path.Combine(
+            Path.GetDirectoryName(uploadedAssetLocalPath)!,
+            Path.GetFileNameWithoutExtension(uploadedAssetLocalPath) + "_reenc.mp4");
+
+        var progress = new Progress<int>(p =>
+        {
+            _reencodeProgress = p;
+            // Mirror into the main loading overlay bar so auto-encode is visible during upload flow
+            uploadProgressPercent = p;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        bool ok = await VideoProcessingService.ReencodeAsync(uploadedAssetLocalPath, outputPath, _matchedProfile, progress);
+
+        // Progress<T> fires callbacks asynchronously, so the 100% report from the service
+        // may not have rendered yet. Force a synchronous 100% render here before we continue.
+        _reencodeProgress = 100;
+        uploadProgressPercent = 100;
+        await InvokeAsync(StateHasChanged);
+
+        if (ok)
+        {
+            try { File.Delete(uploadedAssetLocalPath); } catch { }
+            uploadedAssetLocalPath = outputPath;
+            // Keep fileName in sync — used in subsequent HandleSubmit paths (mask, display name, etc.)
+            fileName = Path.GetFileName(outputPath);
+            // Derive new web path from new filename in same folder
+            uploadedAssetWebPath = Path.Combine(
+                Path.GetDirectoryName(uploadedAssetWebPath ?? "")!,
+                Path.GetFileName(outputPath)).Replace('\\', '/');
+            _reencodeComplete = true;
+        }
+        else
+        {
+            uploadErrorMessage = "Re-encode failed — the original file has been kept.";
+        }
+
+        _isReencoding = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // Video formats accepted end-to-end by the uploader: dimension probing (ffprobe),
+    // AssetType classification, thumbnail generation, and the preview player. Any
+    // extension not listed here falls through to the image handling paths.
+    private static readonly string[] VideoExtensions = [".mp4", ".avi", ".mov", ".webm", ".m4v"];
+
+    private static bool IsVideoFile(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        VideoExtensions.Contains(Path.GetExtension(path).ToLowerInvariant());
+
+    private async Task<(double width, double height)?> GetMediaDimensions(string tempFilePath)
+    {
+        if (IsVideoFile(tempFilePath))
+            return await GetMediaDimensionsUsingFFmpeg(tempFilePath);
+
+        return await Task.Run<(double, double)?>(() =>
+        {
+            try
+            {
+                using var image = System.Drawing.Image.FromFile(tempFilePath);
+                return ((double)image.Width, (double)image.Height);
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error reading image dimensions");
+                return null;
+            }
+        });
+    }
+
+    private async Task<(double width, double height)?> GetMediaDimensionsUsingFFmpeg(string filePath)
+    {
+        string ffprobePath = FfmpegOptions.Value.ResolveBinary("ffprobe.exe", env.ContentRootPath);
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ffprobePath,
+                Arguments = $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0:s=x \"{filePath}\"",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null)
+            {
+                Logger.LogError("ffprobe failed to start (path: {Path})", ffprobePath);
+                return null;
+            }
+            string output = await process.StandardOutput.ReadToEndAsync();
+            string error = await process.StandardError.ReadToEndAsync();
+            process.WaitForExit();
+
+            if (!string.IsNullOrWhiteSpace(output))
+            {
+                var parts = output.Trim().Split('x');
+                if (parts.Length == 2 &&
+                    double.TryParse(parts[0], out double width) &&
+                    double.TryParse(parts[1], out double height))
+                    return (width, height);
+            }
+
+            // No parseable dimensions: surface the real reason (bad path, codec, etc.) so this
+            // doesn't get misreported downstream as an aspect-ratio failure.
+            Logger.LogError("ffprobe produced no dimensions for {File}. Exit {Code}, stderr: {Err}",
+                filePath, process.ExitCode, string.IsNullOrWhiteSpace(error) ? "(none)" : error.Trim());
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "ffprobe dimension extraction failed (path: {Path}). " +
+                "Verify Ffmpeg:Path points to the folder containing ffprobe.exe, or that ffprobe is on PATH.",
+                ffprobePath);
+        }
+        return null;
+    }
+
+    public async Task<MetadataUpdateResponse> UpdateMetadataValue(MediaFile mf, string name, bool isChecked, string metadataName)
+    {
+        if (mf != null)
+        {
+            var metadata = mf.Metadata.FirstOrDefault(x => x.Name.ToUpper() == metadataName.ToUpper());
+            List<string> newMetadata = new();
+            if (metadata != null)
+            {
+                if (name == "All" && isChecked)
+                {
+                    newMetadata = new List<string> { "All" };
+                }
+                else
+                {
+                    string[] existingMetadata = metadata.Value.Split(',');
+                    foreach (string em in existingMetadata)
+                    {
+                        if (em != "" && em != "All")
+                        {
+                            if (!isChecked && em == name) { /* remove */ }
+                            else newMetadata.Add(em);
+                        }
+                    }
+                    if (isChecked && !newMetadata.Contains(name))
+                        newMetadata.Add(name);
+                }
+            }
+            else
+            {
+                newMetadata.Add(name);
+            }
+
+            string metadataValue = newMetadata.Count switch
+            {
+                1 => newMetadata[0],
+                > 1 => string.Join(',', newMetadata),
+                _ => string.Empty
+            };
+
+            await UpdateMetadataFile(mf.DiskPath, metadataName, metadataValue, "ovx_String");
+            return new MetadataUpdateResponse { DiskPath = mf.DiskPath, MetadataName = metadataName, MetadataValue = metadataValue };
+        }
+        return new MetadataUpdateResponse();
+    }
+
+    public async Task<MetadataUpdateResponse> UpdateMetadataDateTimeValue(string diskPath, string name, string? value)
+    {
+        bool delete = value == null;
+        string dataType = name.Contains("Time") ? "ovx_TimeSpan"
+                         : name.Contains("Date") ? "ovx_DateTime"
+                         : "ovx_String";
+
+        await UpdateMetadataFile(diskPath, name, value ?? "", dataType, delete);
+        return new MetadataUpdateResponse { DiskPath = diskPath, MetadataName = name, MetadataValue = value };
+    }
+
+    public async Task UpdateMetadataFile(string diskPath, string metadataName, string metadataValue, string metadataType, bool deleteValue = false)
+    {
+        string metadataFilePath = diskPath + ".metadata";
+        bool updateProcessed = false;
+
+        if (metadataName == "Location" && string.IsNullOrWhiteSpace(metadataValue))
+            Logger.LogWarning("Location metadata value is missing");
+
+        if (File.Exists(metadataFilePath))
+        {
+            XmlDocument doc = new XmlDocument();
+            doc.Load(metadataFilePath);
+            XmlNodeList nodes = doc.SelectNodes("usermetadata")!;
+
+            foreach (XmlNode node in nodes)
+            {
+                foreach (XmlNode line in node)
+                {
+                    if (line.Attributes!["name"]?.Value == metadataName)
+                    {
+                        if (deleteValue)
+                            node.RemoveChild(line);
+                        else
+                            line.Attributes["value"]!.Value = metadataValue;
+                        updateProcessed = true;
+                        break;
+                    }
+                }
+            }
+
+            if (!updateProcessed && !deleteValue)
+            {
+                XmlElement newElement = doc.CreateElement("field");
+                newElement.SetAttribute("name", metadataName);
+                newElement.SetAttribute("datatype", metadataType);
+                newElement.SetAttribute("value", metadataValue);
+                nodes[0]?.AppendChild(newElement);
+            }
+
+            doc.Save(metadataFilePath);
+        }
+        else if (!deleteValue)
+        {
+            using StreamWriter writer = new StreamWriter(metadataFilePath, false);
+            writer.WriteLine("<usermetadata>");
+            writer.WriteLine($"  <field name=\"{metadataName}\" datatype=\"{metadataType}\" value=\"{metadataValue}\" />");
+            writer.WriteLine("</usermetadata>");
+        }
+    }
+
+    private async Task OnLanguageChanged(string value)
+    {
+        if (formData != null)
+        {
+            formData.LanguageCode = value;
+            StateHasChanged();
+        }
+        else if (mediaFile != null)
+        {
+            await UpdateMetadataFile(mediaFile.DiskPath, "Language", value, "ovx_String");
+            StateHasChanged();
+        }
+    }
+
+    private async Task<TblAsset?> FindEditedAssetAsync()
+    {
+        if (_lastOpenConfig?.EditMediaFile?.DiskPath is not { } diskPath) return null;
+
+        // DiskPath is a full local path; AssetPath in DB is the web path, derived from the file name
+        var editFileName = Path.GetFileName(diskPath);
+        var editAssetPath = constraintId != 0
+            ? $"/MediaAssets/{locationId}/{constraintId}/{editFileName}"
+            : $"/MediaAssets/{locationId}/{editFileName}";
+        return await dbContext.TblAssets.AsNoTracking()
+            .FirstOrDefaultAsync(a => a.AssetPath == editAssetPath && !a.IsDeleted);
+    }
+
+    private async Task ToggleEditDay(string day)
+    {
+        if (selectedDays.Contains(day)) selectedDays.Remove(day); else selectedDays.Add(day);
+
+        var daysValue = string.Join(",", new[] { "Mo", "Tu", "We", "Th", "Fr", "Sa", "Su" }.Where(d => selectedDays.Contains(d)));
+        if (string.IsNullOrEmpty(daysValue))
+            await UpdateMetadataFile(mediaFile!.DiskPath, "Days", "", "ovx_String", deleteValue: true);
+        else
+            await UpdateMetadataFile(mediaFile!.DiskPath, "Days", daysValue, "ovx_String");
+    }
+}
+
+<style>
+    .modal-body-footer-wrapper {
+        overflow-y: auto;
+        max-height: calc(100vh - 300px);
+    }
+
+    /* Uploaded media preview; shrinks on phones so config options stay reachable */
+    .mau-preview {
+        max-width: 100%;
+        max-height: 300px;
+        height: auto;
+        object-fit: contain;
+    }
+
+    .mau-datetime-row {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        flex-wrap: wrap;
+    }
+
+    .mau-datetime-row .form-control {
+        width: 150px;
+    }
+
+    @@media (max-width: 576px) {
+        .mau-preview {
+            max-height: 180px;
+        }
+
+        /* Date/time pickers stack full-width instead of forcing the modal wide */
+        .mau-datetime-row .form-control {
+            width: 100%;
+        }
+    }
+
+    .mau-resolution-info {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #e3f2fd;
+        border-radius: 4px;
+        font-size: 13px;
+        color: #1565c0;
+        margin-bottom: 12px;
+    }
+
+    .mau-mode-label {
+        color: #666;
+        font-size: 12px;
+    }
+
+    .uploaderText {
+        font-size: 14px;
+        margin-bottom: 4px;
+    }
+
+    .dow-toggle {
+        padding: 4px 10px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        background: #f5f5f5;
+        cursor: pointer;
+        font-size: 13px;
+    }
+
+    .dow-toggle.dow-active {
+        background: var(--dx-blue);
+        color: #fff;
+        border-color: var(--dx-blue);
+    }
+
+    .mau-resubmit-section {
+        padding: 12px 16px;
+        border-top: 1px solid #e0e0e0;
+        background: #fafafa;
+    }
+
+    .mau-resubmit-title {
+        font-size: 13px;
+        color: #555;
+        margin-bottom: 6px;
+    }
+
+    .mau-comment-thread {
+        max-height: 200px;
+        overflow-y: auto;
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        padding: 8px;
+        margin-bottom: 12px;
+    }
+
+    .mau-comment-item {
+        padding: 6px 0;
+        border-bottom: 1px solid #f0f0f0;
+    }
+
+    .mau-comment-item:last-child { border-bottom: none; }
+
+    .mau-comment-user {
+        font-weight: 600;
+        font-size: 12px;
+        color: #333;
+        margin-right: 6px;
+    }
+
+    .mau-comment-type {
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 600;
+        text-transform: uppercase;
+        margin-right: 6px;
+    }
+
+    .mau-ct-submit   { background: #e3f2fd; color: #1565c0; }
+    .mau-ct-resubmit { background: #fff3e0; color: #e65100; }
+    .mau-ct-approve  { background: #e8f5e9; color: #2e7d32; }
+    .mau-ct-decline  { background: #ffebee; color: #c62828; }
+    .mau-ct-general  { background: #f5f5f5; color: #666; }
+
+    .mau-comment-date {
+        font-size: 11px;
+        color: #999;
+    }
+
+    .mau-comment-body {
+        font-size: 13px;
+        color: #444;
+        margin-top: 2px;
+        line-height: 1.4;
+    }
+
+    /* Minimize button: same btn-close sizing/position, dash glyph instead of × */
+    .btn-close-minimize {
+        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='%23fff'%3e%3crect x='2' y='7' width='12' height='2' rx='1'/%3e%3c/svg%3e");
+    }
+
+    .modal-loading-overlay {
+        position: absolute;
+        inset: 0;
+        background: rgba(255,255,255,0.85);
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        z-index: 10;
+        border-radius: inherit;
+    }
+
+    /* Keep the header above the loading overlay so the minimize button stays clickable */
+    .modal-header {
+        position: relative;
+        z-index: 11;
+    }
+</style>

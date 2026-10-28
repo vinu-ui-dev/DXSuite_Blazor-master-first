@@ -1,0 +1,1987 @@
+@page "/ticket-counter-scheduler"
+@page "/ticket-counter-scheduler/{LocationId:int}"
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Options
+@using System.Text.Json
+@inject IOptions<FfmpegOptions> FfmpegOptions
+@inject IServiceScopeFactory scopeFactory
+@inject ISessionState sessionState
+@inject IUserGroupLocationDefaultService defaultService
+@inject IStatusSelectorService statusSelectorService
+@inject NavigationManager navMan
+@inject IWebHostEnvironment webHostEnv
+@inject ITenantMediaPathResolver MediaPaths
+@inject IWallContentBroadcastService wallBroadcast
+@inject DXSuite.Shared.Multitenancy.ITenantContext TenantContext
+@inject IPublicationInvalidator publicationInvalidator
+@rendermode InteractiveServer
+
+@if (sessionState.User == null)
+{
+    <div class="tcs-unauthorized"><p>Please log in to access the scheduler.</p></div>
+}
+else if (!accessResolved)
+{
+    <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+}
+else if (!hasSchedulerAccess)
+{
+    <div class="tcs-unauthorized"><p>You do not have permission to access the Ticket Counter Scheduler.</p></div>
+}
+else if (LocationId == 0)
+{
+    @* Location picker — shown when navigating to /ticket-counter-scheduler without a LocationId *@
+    <section class="dx-page-header">
+        <div class="dx-page-header-flex">
+            <h2>TICKET COUNTER SCHEDULER</h2>
+        </div>
+    </section>
+    <section class="dx-page-body">
+        @if (wallLocations == null)
+        {
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        }
+        else if (!wallLocations.Any())
+        {
+            <div class="tcs-empty">No Video Wall locations are configured.</div>
+        }
+        else
+        {
+            <div class="tcs-picker-list">
+                @foreach (var loc in wallLocations)
+                {
+                    <div class="tcs-picker-card" @onclick="@(() => navMan.NavigateTo($"/ticket-counter-scheduler/{loc.LocationId}"))">
+                        <span class="bi bi-grid-3x3 tcs-picker-icon"></span>
+                        <span class="tcs-picker-name">@loc.LocationName</span>
+                    </div>
+                }
+            </div>
+        }
+    </section>
+}
+else if (loadError != null)
+{
+    <div style="padding:40px;">
+        <div class="alert alert-danger">
+            <strong>Failed to load scheduler:</strong> @loadError
+        </div>
+    </div>
+}
+else if (location == null)
+{
+    <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+}
+else
+{
+    <section class="dx-page-header">
+        <div class="dx-page-header-flex">
+            <h2>TICKET COUNTER SCHEDULER — @(location.LocationName?.ToUpper()) <DXSuite.Shared.Components.HelpLink Page="director/counter-scheduler" Title="Counter Scheduler help" /></h2>
+            <div class="tcs-date-row">
+                <button class="tcs-nav-btn" @onclick="PrevDay">‹</button>
+                <input type="date" class="dx-form-control tcs-date-input"
+                       value="@selectedDate.ToString("yyyy-MM-dd")"
+                       @onchange="OnDateChanged" />
+                <button class="tcs-nav-btn" @onclick="NextDay">›</button>
+            </div>
+        </div>
+    </section>
+
+    <div class="tcs-tab-bar">
+        <button class="tcs-tab @(tcsTab == "schedule" ? "tcs-tab-active" : "")" @onclick='() => tcsTab = "schedule"'>Counter Schedule</button>
+        <button class="tcs-tab @(tcsTab == "content" ? "tcs-tab-active" : "")"  @onclick='() => tcsTab = "content"'>Airline Content</button>
+    </div>
+
+    @if (tcsTab == "schedule")
+    {
+        <section class="body tcs-body">
+            @if (config == null || !config.Layout.Groups.Any(g => g.AllowAirlineAllocation))
+            {
+                <div class="tcs-empty">This location has no airline-allocation counter groups configured.</div>
+            }
+            else
+            {
+                @if (moveToast != null)
+                {
+                    <div class="alert alert-warning tcs-move-toast">@moveToast</div>
+                }
+
+                <CounterCalendar
+                    Config="config"
+                    Displays="displays"
+                    Events="scheduleEvents"
+                    AirlineGroups="airlineGroups"
+                    SelectedDate="selectedDate"
+                    SlotActivated="HandleSlotActivated"
+                    EventActivated="HandleEventActivated"
+                    EventMoved="HandleEventMoved"
+                    EventResized="HandleEventResized" />
+
+                @if (applyWallStatus != null)
+                {
+                    <div class="alert @(applyWallIsError ? "alert-danger" : "alert-success") mt-2" style="padding:8px; font-size:13px;">
+                        @applyWallStatus
+                    </div>
+                }
+
+
+            }
+        </section>
+    }
+    else if (tcsTab == "content")
+    {
+        <section class="body tcs-body">
+            @if (!airlineGroups.Any())
+            {
+                <div class="tcs-empty">No airline groups are configured.</div>
+            }
+            else
+            {
+                <div class="tcs-content-grid">
+                    @foreach (var group in airlineGroups)
+                    {
+                        var gid = group.UserGroupId;
+                        if (!contentStates.TryGetValue(gid, out var cs)) { cs = new AirlineContentState(); contentStates[gid] = cs; }
+
+                        <div class="tcs-content-card">
+                            <div class="tcs-content-card-header">@group.GroupName</div>
+
+                            @* Content states: tabs select which dayparting variant is being edited *@
+                            <div class="tcs-state-tabs">
+                                @foreach (var (st, idx) in StatesFor(gid).Select((s, i) => (s, i)))
+                                {
+                                    var stateIdx = idx;
+                                    <button class="tcs-state-tab @(cs == st ? "active" : "")"
+                                            title="@(st.IsDefaultState ? "Default state (plays when no state schedule matches)" : "Scheduled state")"
+                                            @onclick="() => SelectState(gid, stateIdx)">
+                                        @st.StateName@(st.IsDefaultState ? " ★" : "")
+                                    </button>
+                                }
+                                @if (addingStateFor == gid)
+                                {
+                                    <input type="text" class="dx-form-control tcs-state-name-input" placeholder="State name"
+                                           @bind="newStateName" />
+                                    <button class="dx-btn dx-btn-blue tcs-state-add-btn" @onclick="() => ConfirmAddState(gid)">Create</button>
+                                    <button class="dx-btn dx-btn-gray tcs-state-add-btn" @onclick="() => { addingStateFor = null; newStateName = string.Empty; }">Cancel</button>
+                                }
+                                else
+                                {
+                                    <button class="tcs-state-tab tcs-state-tab-add"
+                                            disabled="@(cs.RowId == 0)"
+                                            title="@(cs.RowId == 0 ? "Save this airline's content before adding states" : "Add a content state")"
+                                            @onclick="() => { addingStateFor = gid; newStateName = string.Empty; }">+</button>
+                                }
+                            </div>
+
+                            @if (StatesFor(gid).Count > 1)
+                            {
+                                <div class="tcs-state-meta">
+                                    <label class="tcs-state-default-check" title="The default state plays whenever no state schedule matches">
+                                        <input type="checkbox" class="dx-checkbox"
+                                               checked="@cs.IsDefaultState"
+                                               disabled="@cs.IsDefaultState"
+                                               @onchange="() => MakeStateDefault(gid)" />
+                                        Default state
+                                    </label>
+                                    @if (!cs.IsDefaultState)
+                                    {
+                                        <div class="tcs-state-schedule">
+                                            <span class="tcs-content-label">Active</span>
+                                            <input type="time" class="dx-form-control tcs-time-input"
+                                                   value="@cs.SchedStart" @onchange="e => cs.SchedStart = e.Value?.ToString()" />
+                                            <span>to</span>
+                                            <input type="time" class="dx-form-control tcs-time-input"
+                                                   value="@cs.SchedEnd" @onchange="e => cs.SchedEnd = e.Value?.ToString()" />
+                                            <div class="tcs-dow-row">
+                                                @foreach (var (i, label) in _days)
+                                                {
+                                                    var dayIdx = i;
+                                                    <label class="tcs-dow-label">
+                                                        <input type="checkbox" checked="@cs.SchedDays[dayIdx]"
+                                                               @onchange="e => cs.SchedDays[dayIdx] = (bool)(e.Value ?? false)" />
+                                                        @label
+                                                    </label>
+                                                }
+                                            </div>
+                                            <span class="tcs-hint">End before start spans midnight. Unsaved until you hit SAVE.</span>
+                                        </div>
+                                    }
+                                    @if (!cs.IsDefaultState && cs.RowId != 0)
+                                    {
+                                        <button class="dx-btn dx-btn-red tcs-state-delete-btn" @onclick="() => deleteStateConfirmGroup = gid">Delete State</button>
+                                    }
+                                </div>
+                            }
+
+                            @* Counter content constraint *@
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Counter Content</span>
+                                <select class="dx-form-control tcs-content-select"
+                                        value="@(cs.ConstraintId?.ToString() ?? "")"
+                                        @onchange="e => cs.ConstraintId = int.TryParse(e.Value?.ToString(), out var v) ? v : null">
+                                    <option value="">— No Default —</option>
+                                    @foreach (var c in pickerConstraints)
+                                    {
+                                        <option value="@c.ConstraintId" selected="@(cs.ConstraintId == c.ConstraintId)">@(c.ConstraintName ?? $"Constraint {c.ConstraintId}")</option>
+                                    }
+                                </select>
+                            </div>
+
+                            @* Background layer *@
+                            <div class="tcs-content-section-header">Background Layer</div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Web URL</span>
+                                <input type="text" class="dx-form-control tcs-content-url-input"
+                                       placeholder="https://..."
+                                       value="@cs.BackgroundPath"
+                                       @onchange="e => { cs.BackgroundPath = NullIfEmpty(e.Value?.ToString()); StateHasChanged(); }" />
+                                @if (!string.IsNullOrEmpty(cs.BackgroundPath))
+                                {
+                                    <button class="tcs-clear-btn" title="Clear" @onclick="() => { cs.BackgroundPath = null; StateHasChanged(); }">×</button>
+                                }
+                            </div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Upload File</span>
+                                <InputFile OnChange="async (e) => await OnBackgroundFileUpload(e, gid)" accept="image/*,video/*,.html" class="tcs-file-input" />
+                                @if (IsUploading(gid, "background"))
+                                {
+                                    <span class="dx-spinner dx-spinner-sm"></span>
+                                    <span class="tcs-path-hint">Uploading...</span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(cs.BackgroundPath))
+                            {
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label"></span>
+                                    @RenderLayerPreview(cs.BackgroundPath)
+                                    <span class="tcs-path-hint">@cs.BackgroundPath</span>
+                                </div>
+                                @* Render mode only applies to image/video — HTML fills its iframe natively *@
+                                @if (!IsWebUrl(cs.BackgroundPath) && !IsHtmlPath(cs.BackgroundPath))
+                                {
+                                    <div class="tcs-content-row">
+                                        <span class="tcs-content-label">Render Mode</span>
+                                        <select class="dx-form-control tcs-content-select" @bind="cs.BackgroundMode">
+                                            <option value="fill-width">Fill Width</option>
+                                            <option value="fill-height">Fill Height</option>
+                                            <option value="fit">Fit</option>
+                                            <option value="tile">Tile</option>
+                                            <option value="native">Native (1:1)</option>
+                                        </select>
+                                    </div>
+                                }
+                            }
+                            @if (!string.IsNullOrEmpty(cs.BackgroundPath) || cs.BackgroundSegments.Count > 0)
+                            {
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label">Opacity (%)</span>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" style="width:110px;"
+                                           min="0" max="100" step="5"
+                                           value="@cs.BackgroundOpacityPct"
+                                           @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var v)) { cs.BackgroundOpacityPct = Math.Clamp(v, 0, 100); StateHasChanged(); } }" />
+                                </div>
+                            }
+                            @RenderSegmentEditor(cs.BackgroundSegments, gid, isMask: false)
+
+                            @* Mask layer *@
+                            <div class="tcs-content-section-header">Mask Layer</div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Web URL</span>
+                                <input type="text" class="dx-form-control tcs-content-url-input"
+                                       placeholder="https://..."
+                                       value="@cs.MaskPath"
+                                       @onchange="e => { cs.MaskPath = NullIfEmpty(e.Value?.ToString()); StateHasChanged(); }" />
+                                @if (!string.IsNullOrEmpty(cs.MaskPath))
+                                {
+                                    <button class="tcs-clear-btn" title="Clear" @onclick="() => { cs.MaskPath = null; StateHasChanged(); }">×</button>
+                                }
+                            </div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Upload File</span>
+                                <InputFile OnChange="async (e) => await OnMaskFileUpload(e, gid)" accept="image/*,video/*,.html" class="tcs-file-input" />
+                                @if (IsUploading(gid, "mask"))
+                                {
+                                    <span class="dx-spinner dx-spinner-sm"></span>
+                                    <span class="tcs-path-hint">Uploading...</span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(cs.MaskPath))
+                            {
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label"></span>
+                                    @RenderLayerPreview(cs.MaskPath)
+                                    <span class="tcs-path-hint">@cs.MaskPath</span>
+                                </div>
+                                @* Render mode only applies to image/video — HTML fills its iframe natively *@
+                                @if (!IsWebUrl(cs.MaskPath) && !IsHtmlPath(cs.MaskPath))
+                                {
+                                    <div class="tcs-content-row">
+                                        <span class="tcs-content-label">Render Mode</span>
+                                        <select class="dx-form-control tcs-content-select" @bind="cs.MaskMode">
+                                            <option value="fill-width">Fill Width</option>
+                                            <option value="fill-height">Fill Height</option>
+                                            <option value="fit">Fit</option>
+                                            <option value="tile">Tile</option>
+                                            <option value="native">Native (1:1)</option>
+                                        </select>
+                                    </div>
+                                }
+                            }
+                            @if (!string.IsNullOrEmpty(cs.MaskPath) || cs.MaskSegments.Count > 0)
+                            {
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label">Opacity (%)</span>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" style="width:110px;"
+                                           min="0" max="100" step="5"
+                                           value="@cs.MaskOpacityPct"
+                                           @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var v)) { cs.MaskOpacityPct = Math.Clamp(v, 0, 100); StateHasChanged(); } }" />
+                                </div>
+                            }
+                            @RenderSegmentEditor(cs.MaskSegments, gid, isMask: true)
+
+                            @* Logo layer — the default logo renders in every zone without a named role *@
+                            <div class="tcs-content-section-header">Logo@(WallLogoRoles.Any() ? " — Default" : "")</div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Web URL</span>
+                                <input type="text" class="dx-form-control tcs-content-url-input"
+                                       placeholder="https://..."
+                                       value="@cs.LogoPath"
+                                       @onchange="e => { cs.LogoPath = NullIfEmpty(e.Value?.ToString()); StateHasChanged(); }" />
+                                @if (!string.IsNullOrEmpty(cs.LogoPath))
+                                {
+                                    <button class="tcs-clear-btn" title="Clear" @onclick="() => { cs.LogoPath = null; StateHasChanged(); }">×</button>
+                                }
+                            </div>
+                            <div class="tcs-content-row">
+                                <span class="tcs-content-label">Upload File</span>
+                                <InputFile OnChange="async (e) => await OnLogoFileUpload(e, gid)" accept="image/*,.svg,video/*,.html" class="tcs-file-input" />
+                                @if (IsUploading(gid, "logo"))
+                                {
+                                    <span class="dx-spinner dx-spinner-sm"></span>
+                                    <span class="tcs-path-hint">Uploading...</span>
+                                }
+                            </div>
+                            @if (!string.IsNullOrEmpty(cs.LogoPath))
+                            {
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label"></span>
+                                    @RenderLayerPreview(cs.LogoPath)
+                                    <span class="tcs-path-hint">@cs.LogoPath</span>
+                                </div>
+                            }
+
+                            @* One slot per named logo role present on this wall's zones *@
+                            @foreach (var role in WallLogoRoles)
+                            {
+                                var slot = GetRoleSlot(cs, role.Key);
+                                <div class="tcs-content-section-header">Logo — @role.Name</div>
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label">Web URL</span>
+                                    <input type="text" class="dx-form-control tcs-content-url-input"
+                                           placeholder="https://..."
+                                           value="@slot.Path"
+                                           @onchange="e => { slot.Path = NullIfEmpty(e.Value?.ToString()); StateHasChanged(); }" />
+                                    @if (!string.IsNullOrEmpty(slot.Path))
+                                    {
+                                        <button class="tcs-clear-btn" title="Clear" @onclick="() => { slot.Path = null; StateHasChanged(); }">×</button>
+                                    }
+                                </div>
+                                <div class="tcs-content-row">
+                                    <span class="tcs-content-label">Upload File</span>
+                                    <InputFile OnChange="async (e) => await OnRoleLogoFileUpload(e, gid, role.Key)" accept="image/*,.svg,video/*,.html" class="tcs-file-input" />
+                                    @if (IsUploading(gid, $"role:{role.Key}"))
+                                    {
+                                        <span class="dx-spinner dx-spinner-sm"></span>
+                                        <span class="tcs-path-hint">Uploading...</span>
+                                    }
+                                </div>
+                                @if (!string.IsNullOrEmpty(slot.Path))
+                                {
+                                    <div class="tcs-content-row">
+                                        <span class="tcs-content-label"></span>
+                                        @RenderLayerPreview(slot.Path)
+                                        <span class="tcs-path-hint">@slot.Path</span>
+                                    </div>
+                                    @if (!IsWebUrl(slot.Path) && !IsHtmlPath(slot.Path))
+                                    {
+                                        <div class="tcs-content-row">
+                                            <span class="tcs-content-label">Render Mode</span>
+                                            <select class="dx-form-control tcs-content-select" @bind="slot.Mode">
+                                                <option value="fit">Fit</option>
+                                                <option value="fill-width">Fill Width</option>
+                                                <option value="fill-height">Fill Height</option>
+                                                <option value="native">Native (1:1)</option>
+                                            </select>
+                                        </div>
+                                    }
+                                }
+                            }
+
+                            @if (!string.IsNullOrEmpty(cs.UploadError))
+                            {
+                                <div class="tcs-save-error" style="margin-bottom:8px;">@cs.UploadError</div>
+                            }
+
+                            <div class="tcs-content-save-row">
+                                <button class="dx-btn dx-btn-blue" @onclick="() => SaveAirlineContent(gid)">SAVE</button>
+                                <button class="dx-btn dx-btn-gray" @onclick="() => PreviewAirlineContent(gid)">PREVIEW</button>
+                                @if (StatesFor(gid).Count > 1 && cs.RowId != 0)
+                                {
+                                    <button class="dx-btn dx-btn-gray" title="Copy this state's content to all other states"
+                                            @onclick="() => syncStateConfirmGroup = gid">SYNC TO ALL STATES</button>
+                                }
+                                @if (!string.IsNullOrEmpty(cs.SaveStatus))
+                                {
+                                    <span class="@(cs.SaveIsError ? "tcs-save-error" : "tcs-save-ok")">@cs.SaveStatus</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
+}
+
+@* ── Schedule event modal ───────────────────────────────────────────────── *@
+@if (modal != null)
+{
+    <div class="tcs-modal-backdrop" @onclick="CloseModal"></div>
+    <div class="tcs-modal tcs-modal-lg" @onclick:stopPropagation>
+
+        <div class="tcs-modal-header">
+            <h5>@(modal.IsNew ? "New Schedule Block" : "Edit Schedule Block")</h5>
+            <button class="btn-close btn-close-white" aria-label="Close" @onclick="CloseModal"></button>
+        </div>
+
+        <div class="tcs-modal-body">
+
+            <div class="dx-form-group">
+                <label class="dx-form-label">Airline Group</label>
+                <select class="dx-form-control" @bind="modal.GroupId" @bind:after="OnModalGroupChanged">
+                    <option value="0">— Unassigned —</option>
+                    @foreach (var g in airlineGroups)
+                    {
+                        <option value="@g.UserGroupId">@g.GroupName</option>
+                    }
+                </select>
+            </div>
+
+            @if (modal.GroupId > 0 && _modalDefaultAssets.Count > 0)
+            {
+                @if (_modalMetadataKeys.Any())
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Sort assets by</label>
+                        <select class="dx-form-control"
+                                value="@(_modalMetadataFilterKey ?? "")"
+                                @onchange="e => _ = OnMetadataFilterKeyChanged(e.Value?.ToString())">
+                            <option value="">— File Name —</option>
+                            @foreach (var (key, displayName) in _modalMetadataKeys)
+                            {
+                                <option value="@key">@displayName</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Default Asset <span class="tcs-optional">(optional)</span></label>
+                    <select class="dx-form-control"
+                            value="@(modal.DefaultAssetId?.ToString() ?? "")"
+                            @onchange="e => { modal.DefaultAssetId = int.TryParse(e.Value?.ToString(), out var v) ? v : null; }">
+                        <option value="">— None —</option>
+                        @foreach (var a in _modalDefaultAssets)
+                        {
+                            <option value="@a.AssetId">@GetAssetLabel(a)</option>
+                        }
+                    </select>
+                    <p class="tcs-hint" style="margin-top:3px;">Content that plays automatically when this schedule block becomes active.</p>
+                </div>
+            }
+
+            <div class="dx-form-group">
+                <label class="tcs-allday-label">
+                    <input type="checkbox" checked="@modal.IsAllDay"
+                           @onchange="e => {
+                               modal.IsAllDay = (bool)(e.Value ?? false);
+                               if (modal.IsAllDay)
+                               {
+                                   modal.StartTime = new TimeOnly(0, 0);
+                                   modal.EndTime   = new TimeOnly(23, 59);
+                               }
+                           }" />
+                    All Day
+                </label>
+            </div>
+
+            <div class="dx-form-group tcs-time-row">
+                <label class="dx-form-label">Start</label>
+                <input type="time" step="900" class="dx-form-control tcs-time-input @(modal.IsAllDay ? "tcs-input-disabled" : "")"
+                       value="@modal.StartTime.ToString("HH:mm")"
+                       disabled="@modal.IsAllDay"
+                       @onchange="e => { if (TimeOnly.TryParse(e.Value?.ToString(), out var t)) modal.StartTime = t; }" />
+                <label class="dx-form-label">End</label>
+                <input type="time" step="900" class="dx-form-control tcs-time-input @(modal.IsAllDay ? "tcs-input-disabled" : "")"
+                       value="@modal.EndTime.ToString("HH:mm")"
+                       disabled="@modal.IsAllDay"
+                       @onchange="e => { if (TimeOnly.TryParse(e.Value?.ToString(), out var t)) modal.EndTime = t; }" />
+            </div>
+
+            <div class="dx-form-group tcs-date-range-row">
+                <div>
+                    <label class="dx-form-label">From date <span class="tcs-optional">(optional)</span></label>
+                    <input type="date" class="dx-form-control" @bind="modal.StartDate" />
+                </div>
+                <div>
+                    <label class="dx-form-label">To date <span class="tcs-optional">(optional)</span></label>
+                    <input type="date" class="dx-form-control" @bind="modal.EndDate" />
+                </div>
+            </div>
+
+            <div class="dx-form-group">
+                <label class="dx-form-label">Recurs on <span class="tcs-optional">(leave all unchecked = every day)</span></label>
+                <div class="tcs-dow-row">
+                    @foreach (var (i, label) in _days)
+                    {
+                        var dayIdx = i;
+                        <label class="tcs-dow-label">
+                            <input type="checkbox" checked="@modal.Days[dayIdx]"
+                                   @onchange="e => modal.Days[dayIdx] = (bool)(e.Value ?? false)" />
+                            @label
+                        </label>
+                    }
+                </div>
+            </div>
+
+            @if (modal.Overlaps.Any())
+            {
+                <div class="alert alert-warning tcs-overlap-alert">
+                    <strong>Schedule overlap detected:</strong>
+                    @foreach (var ov in modal.Overlaps)
+                    {
+                        <div>• @ov</div>
+                    }
+                    @if (_saveWithOverrideConfirm)
+                    {
+                        <div class="tcs-overlap-confirm-msg">Click <strong>Save Anyway</strong> to proceed.</div>
+                    }
+                </div>
+            }
+
+            @if (!string.IsNullOrEmpty(modal.ErrorMessage))
+            {
+                <div class="alert alert-danger" style="padding:6px; font-size:12px; margin-bottom:8px;">@modal.ErrorMessage</div>
+            }
+
+        </div>
+
+        <div class="tcs-modal-footer">
+            <button class="dx-btn dx-btn-blue" @onclick="SaveModal">
+                @(_saveWithOverrideConfirm && modal.Overlaps.Any() ? "Save Anyway" : "SAVE")
+            </button>
+            @if (!modal.IsNew)
+            {
+                <button class="dx-btn dx-btn-red" @onclick="DeleteModal">DELETE</button>
+            }
+            <button class="dx-btn dx-btn-gray" @onclick="CloseModal">CANCEL</button>
+        </div>
+
+    </div>
+}
+
+@* ── Sync-state confirmation ────────────────────────────────────────────── *@
+@if (syncStateConfirmGroup != null)
+{
+    <div class="tcs-modal-backdrop" @onclick="() => syncStateConfirmGroup = null"></div>
+    <div class="tcs-modal">
+        <div class="tcs-modal-header">
+            <h5>Sync Content To All States</h5>
+            <button class="btn-close btn-close-white" aria-label="Close" @onclick="() => syncStateConfirmGroup = null"></button>
+        </div>
+        <div class="tcs-modal-body">
+            <p>This copies the current state's content to every other state for this airline, replacing whatever those states have now. State schedules are kept. Continue?</p>
+        </div>
+        <div class="tcs-modal-footer">
+            <button class="dx-btn dx-btn-blue" @onclick="ConfirmSyncState">Sync</button>
+            <button class="dx-btn dx-btn-gray" @onclick="() => syncStateConfirmGroup = null">Cancel</button>
+        </div>
+    </div>
+}
+
+@* ── Delete-state confirmation ──────────────────────────────────────────── *@
+@if (deleteStateConfirmGroup != null)
+{
+    <div class="tcs-modal-backdrop" @onclick="() => deleteStateConfirmGroup = null"></div>
+    <div class="tcs-modal">
+        <div class="tcs-modal-header">
+            <h5>Delete State</h5>
+            <button class="btn-close btn-close-white" aria-label="Close" @onclick="() => deleteStateConfirmGroup = null"></button>
+        </div>
+        <div class="tcs-modal-body">
+            <p>Delete this content state and its content? The airline's other states are unaffected.</p>
+        </div>
+        <div class="tcs-modal-footer">
+            <button class="dx-btn dx-btn-red" @onclick="ConfirmDeleteState">Delete</button>
+            <button class="dx-btn dx-btn-gray" @onclick="() => deleteStateConfirmGroup = null">Cancel</button>
+        </div>
+    </div>
+}
+
+<DXSuite.Director.Components.LocationTypes.Custom.VideoWallPreview @ref="wallPreview" />
+
+@code {
+    [Parameter] public int LocationId { get; set; }
+
+    private List<TblLocation>? wallLocations;
+    private TblLocation? location;
+    private VideoWallConfiguration? config;
+    private List<TblDisplay> displays = new();
+    private List<TblScheduleEvent> scheduleEvents = new();
+    private List<TblUserGroup> airlineGroups = new();
+    private DateOnly selectedDate = DateOnly.FromDateTime(DateTime.Now);
+
+    private SchedulerModal? modal;
+    private bool _saveWithOverrideConfirm;
+    private string? moveToast;
+
+    private string? applyWallStatus;
+    private bool applyWallIsError;
+    private string? loadError;
+    private int lastLoadedLocationId = -1;
+
+    // Airline Content tab. contentStates holds the SELECTED state per group so all
+    // slot editors and upload handlers bind through it unchanged; stateSets holds
+    // every dayparting state, and switching tabs re-points contentStates[gid].
+    private string tcsTab = "schedule";
+    private Dictionary<int, AirlineContentState> contentStates = new();
+    private Dictionary<int, List<AirlineContentState>> stateSets = new();
+    private List<TblConstraint> pickerConstraints = new();
+
+    // State tab interactions
+    private int? addingStateFor;
+    private string newStateName = string.Empty;
+    private int? syncStateConfirmGroup;
+    private int? deleteStateConfirmGroup;
+
+    private List<AirlineContentState> StatesFor(int gid)
+        => stateSets.TryGetValue(gid, out var list) ? list : new List<AirlineContentState>();
+
+    // Announces a wall content change to all connected wall surfaces. Standard walls
+    // refresh on receipt; synchronized walls get a short-lead activation instant so
+    // every output applies this edit together.
+    private async Task PublishWallContentChangeAsync()
+    {
+        if (location == null || !TenantContext.IsPopulated) return;
+
+        string mode = "standard";
+        try
+        {
+            mode = ExtendedDataHelper.Parse<LocationExtendedData>(location.ExtendedData)?.WallTransitionMode ?? "standard";
+        }
+        catch { }
+
+        var activateAt = string.Equals(mode, "synchronized", StringComparison.OrdinalIgnoreCase)
+            ? DateTime.UtcNow.AddSeconds(10)
+            : (DateTime?)null;
+        await wallBroadcast.PublishAsync(TenantContext.TenantId, LocationId, new WallContentChange(activateAt));
+    }
+
+    private static readonly (int i, string label)[] _days =
+    {
+        (0, "Sun"), (1, "Mon"), (2, "Tue"), (3, "Wed"), (4, "Thu"), (5, "Fri"), (6, "Sat")
+    };
+
+    private sealed class SchedulerModal
+    {
+        public bool IsNew { get; set; }
+        public int? ExistingEventId { get; set; }
+        public int DisplayId { get; set; }
+        public int GroupId { get; set; }
+        public int? DefaultAssetId { get; set; }
+        public bool IsAllDay { get; set; }
+        public TimeOnly StartTime { get; set; } = new TimeOnly(6, 0);
+        public TimeOnly EndTime   { get; set; } = new TimeOnly(7, 0);
+        public DateOnly? StartDate { get; set; }
+        public DateOnly? EndDate   { get; set; }
+        // [0]=Sun [1]=Mon ... [6]=Sat — all false means "every day"
+        public bool[] Days { get; set; } = new bool[7];
+        public List<string> Overlaps { get; set; } = new();
+        public string? ErrorMessage { get; set; }
+    }
+
+    private List<TblAsset> _modalDefaultAssets = new();
+    private int            _modalGroupForAssets = 0;
+
+    // Metadata keys that exist on the loaded assets (key + display name pairs)
+    private List<(string Key, string DisplayName)> _modalMetadataKeys = new();
+    // Currently selected metadata key — when set, asset labels use its value instead of file name
+    private string? _modalMetadataFilterKey;
+    // assetId → metadata value for the selected key
+    private Dictionary<int, string> _modalAssetMetadataValues = new();
+
+    private class AirlineContentState
+    {
+        // ── Dayparting state identity ──
+        public int    RowId          { get; set; }
+        public string StateName      { get; set; } = "Default";
+        public bool   IsDefaultState { get; set; } = true;
+        // Schedule editor fields, serialized to StateScheduleJson on save ("HH:mm"; empty = open)
+        public string? SchedStart    { get; set; }
+        public string? SchedEnd      { get; set; }
+        public bool[]  SchedDays     { get; set; } = new bool[7];
+
+        public int?    ConstraintId    { get; set; }
+        public string? BackgroundPath  { get; set; }
+        public string  BackgroundMode  { get; set; } = "fill-width";
+        public int     BackgroundOpacityPct { get; set; } = 100;
+        public string? MaskPath        { get; set; }
+        public string  MaskMode        { get; set; } = "fill-width";
+        public int     MaskOpacityPct  { get; set; } = 100;
+        public string? LogoPath        { get; set; }
+        /// <summary>Per-role logo content keyed by the wall's logo role keys.</summary>
+        public Dictionary<string, LogoSlotState> RoleLogos { get; } = new();
+        /// <summary>Ordered side-by-side segments; when non-empty they replace the single-file layer.</summary>
+        public List<LayerSegmentState> BackgroundSegments { get; } = new();
+        public List<LayerSegmentState> MaskSegments { get; } = new();
+        public string? SaveStatus      { get; set; }
+        public bool    SaveIsError     { get; set; }
+        public string? UploadError     { get; set; }
+    }
+
+    private class LayerSegmentState
+    {
+        public string? Path { get; set; }
+        public int WidthPx { get; set; }
+    }
+
+    private class LogoSlotState
+    {
+        public string? Path { get; set; }
+        public string  Mode { get; set; } = "fit";
+    }
+
+    /// <summary>Wall logo roles that at least one logo zone is actually assigned to.</summary>
+    private List<LogoRoleDefinition> WallLogoRoles =>
+        config?.LogoRoles?
+            .Where(r => config.Layout?.Groups.Any(g =>
+                string.Equals(g.Role, "logo", StringComparison.OrdinalIgnoreCase) &&
+                g.LogoRoleKey == r.Key) == true)
+            .OrderBy(r => r.SortOrder)
+            .ToList() ?? new();
+
+    private static LogoSlotState GetRoleSlot(AirlineContentState state, string roleKey)
+    {
+        if (!state.RoleLogos.TryGetValue(roleKey, out var slot))
+            state.RoleLogos[roleKey] = slot = new LogoSlotState();
+        return slot;
+    }
+
+    private static readonly string[] GroupColors =
+    {
+        "rgba(0,113,188,0.25)", "rgba(220,53,69,0.25)", "rgba(40,167,69,0.25)",
+        "rgba(255,193,7,0.25)", "rgba(102,16,242,0.25)", "rgba(0,188,212,0.25)"
+    };
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+
+    private bool accessResolved;
+    private bool hasSchedulerAccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hasSchedulerAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageTicketCounterScheduler);
+        accessResolved = true;
+        await LoadForCurrentParams();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LocationId == lastLoadedLocationId) return;
+        await LoadForCurrentParams();
+    }
+
+    private async Task LoadForCurrentParams()
+    {
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+            await sessionState.SessionLoaded.Task;
+
+        lastLoadedLocationId = LocationId;
+        loadError = null;
+        location = null;
+        wallLocations = null;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        if (LocationId == 0)
+        {
+            try
+            {
+                wallLocations = await db.TblLocations.AsNoTracking()
+                    .Include(l => l.LocationType)
+                    .Where(l => l.LocationType != null && l.LocationType.LocationTypeName == "VideoWall"
+                             && !l.IsTransientCluster)
+                    .OrderBy(l => l.LocationName)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                loadError = ex.Message;
+            }
+            return;
+        }
+
+        try
+        {
+            await LoadData(db);
+        }
+        catch (Exception ex)
+        {
+            loadError = ex.Message;
+        }
+    }
+
+    private async Task LoadData(IDirectorDBContext db)
+    {
+        location = await db.TblLocations.AsNoTracking()
+            .Include(l => l.LocationType)
+            .FirstOrDefaultAsync(l => l.LocationId == LocationId);
+
+        if (location == null) return;
+
+        ParseConfig();
+
+        var displayIds = config?.Layout.Groups
+            .Where(g => g.AllowAirlineAllocation)
+            .SelectMany(g => g.DisplayIds)
+            .Distinct()
+            .ToList() ?? new();
+
+        displays = await db.TblDisplays.AsNoTracking()
+            .Where(d => displayIds.Contains(d.DisplayId))
+            .ToListAsync();
+
+        await LoadScheduleEvents(db);
+
+        if (sessionState.RoleEnum == Roles.Role.Admin)
+        {
+            airlineGroups = await db.TblUserGroups.AsNoTracking()
+                .Where(g => g.IsActive)
+                .OrderBy(g => g.GroupName)
+                .ToListAsync();
+        }
+        else
+        {
+            var userId = sessionState.User!.UserId;
+            var memberGroupIds = await db.TblUserGroupMemberships.AsNoTracking()
+                .Where(m => m.UserId == userId)
+                .Select(m => m.UserGroupId)
+                .ToListAsync();
+            airlineGroups = await db.TblUserGroups.AsNoTracking()
+                .Where(g => g.IsActive && memberGroupIds.Contains(g.UserGroupId))
+                .OrderBy(g => g.GroupName)
+                .ToListAsync();
+        }
+
+        // Only groups assigned to this wall (or to all walls) via group metadata are
+        // schedulable airlines here — most groups are not airlines and stay hidden.
+        // Configured per group in Settings → Groups → Video Wall Scheduling.
+        var wallAssignments = await db.TblUserGroupMetadata.AsNoTracking()
+            .Where(m => m.MetadataKey == GroupVideoWallAssignments.MetadataKey)
+            .Select(m => new { m.UserGroupId, m.MetadataValue })
+            .ToListAsync();
+        var allowedGroupIds = wallAssignments
+            .GroupBy(m => m.UserGroupId)
+            .Where(g => GroupVideoWallAssignments.AppliesTo(
+                GroupVideoWallAssignments.SingleValue(g.Key, g.Select(m => m.MetadataValue).ToList()), LocationId))
+            .Select(g => g.Key)
+            .ToHashSet();
+        airlineGroups = airlineGroups.Where(g => allowedGroupIds.Contains(g.UserGroupId)).ToList();
+
+        var existingDefaults = await db.TblUserGroupLocationDefaults
+            .AsNoTracking()
+            .Include(d => d.Logos)
+            .Include(d => d.LayerContents)
+            .Where(d => d.LocationId == LocationId)
+            .ToListAsync();
+
+        contentStates = new();
+        stateSets = new();
+        foreach (var g in airlineGroups)
+        {
+            var rows = existingDefaults
+                .Where(d => d.UserGroupId == g.UserGroupId)
+                .OrderByDescending(d => d.IsDefaultState)
+                .ThenBy(d => d.StateName)
+                .ToList();
+
+            var states = rows.Count > 0
+                ? rows.Select(BuildStateVm).ToList()
+                : new List<AirlineContentState> { new() };
+
+            stateSets[g.UserGroupId] = states;
+            contentStates[g.UserGroupId] = states[0];
+        }
+
+        pickerConstraints = await db.TblConstraints.AsNoTracking()
+            .Where(c => c.IsGlobal)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+    }
+
+    private static AirlineContentState BuildStateVm(TblUserGroupLocationDefault row)
+    {
+        var state = new AirlineContentState
+        {
+            RowId          = row.UserGroupLocationDefaultId,
+            StateName      = row.StateName,
+            IsDefaultState = row.IsDefaultState,
+            ConstraintId   = row.DefaultConstraintId,
+            BackgroundPath = row.BackgroundPath,
+            BackgroundMode = row.BackgroundMode,
+            BackgroundOpacityPct = row.BackgroundOpacityPct,
+            MaskPath       = row.MaskPath,
+            MaskMode       = row.MaskMode,
+            MaskOpacityPct = row.MaskOpacityPct,
+            LogoPath       = row.LogoPath
+        };
+
+        var schedule = AirlineStateResolver.Parse(row.StateScheduleJson);
+        if (schedule != null)
+        {
+            state.SchedStart = schedule.StartTime;
+            state.SchedEnd = schedule.EndTime;
+            if (schedule.Days is { Count: > 0 })
+            {
+                foreach (var (i, label) in _days)
+                    state.SchedDays[i] = schedule.Days.Contains(label, StringComparer.OrdinalIgnoreCase);
+            }
+        }
+
+        foreach (var logo in row.Logos)
+            state.RoleLogos[logo.LogoRoleKey] = new LogoSlotState { Path = logo.ContentPath, Mode = logo.ContentMode };
+        foreach (var seg in row.LayerContents.OrderBy(s => s.SortOrder))
+        {
+            var list = string.Equals(seg.LayerRole, "mask", StringComparison.OrdinalIgnoreCase)
+                ? state.MaskSegments : state.BackgroundSegments;
+            list.Add(new LayerSegmentState { Path = seg.ContentPath, WidthPx = seg.IntrinsicWidthPx });
+        }
+        return state;
+    }
+
+    private static string? BuildScheduleJson(AirlineContentState state)
+    {
+        var days = _days.Where(d => state.SchedDays[d.i]).Select(d => d.label).ToList();
+        if (string.IsNullOrEmpty(state.SchedStart) && string.IsNullOrEmpty(state.SchedEnd) && days.Count == 0)
+            return null;
+
+        return System.Text.Json.JsonSerializer.Serialize(new AirlineStateSchedule
+        {
+            StartTime = string.IsNullOrEmpty(state.SchedStart) ? null : state.SchedStart,
+            EndTime = string.IsNullOrEmpty(state.SchedEnd) ? null : state.SchedEnd,
+            Days = days.Count > 0 ? days : null
+        });
+    }
+
+    private async Task ReloadGroupStatesAsync(int groupId)
+    {
+        var rows = await defaultService.GetStatesAsync(groupId, LocationId);
+        var selectedName = contentStates.TryGetValue(groupId, out var current) ? current.StateName : null;
+
+        var states = rows.Count > 0
+            ? rows.Select(BuildStateVm).ToList()
+            : new List<AirlineContentState> { new() };
+        stateSets[groupId] = states;
+        contentStates[groupId] = states.FirstOrDefault(s =>
+            string.Equals(s.StateName, selectedName, StringComparison.OrdinalIgnoreCase)) ?? states[0];
+        StateHasChanged();
+    }
+
+    private void SelectState(int groupId, int index)
+    {
+        var states = StatesFor(groupId);
+        if (index < 0 || index >= states.Count) return;
+        contentStates[groupId] = states[index];
+        StateHasChanged();
+    }
+
+    private async Task ConfirmAddState(int groupId)
+    {
+        var name = newStateName.Trim();
+        if (name.Length == 0) return;
+        if (!contentStates.TryGetValue(groupId, out var current) || current.RowId == 0) return;
+
+        try
+        {
+            await defaultService.AddStateAsync(groupId, LocationId, name, current.RowId);
+            addingStateFor = null;
+            newStateName = string.Empty;
+            await ReloadGroupStatesAsync(groupId);
+            var states = StatesFor(groupId);
+            var added = states.FindIndex(s => string.Equals(s.StateName, name, StringComparison.OrdinalIgnoreCase));
+            if (added >= 0) SelectState(groupId, added);
+        }
+        catch (Exception ex)
+        {
+            if (contentStates.TryGetValue(groupId, out var cs))
+            {
+                cs.SaveStatus = ex.Message;
+                cs.SaveIsError = true;
+            }
+            StateHasChanged();
+        }
+    }
+
+    private async Task MakeStateDefault(int groupId)
+    {
+        if (!contentStates.TryGetValue(groupId, out var current) || current.RowId == 0) return;
+        await defaultService.SetDefaultStateAsync(current.RowId);
+        await ReloadGroupStatesAsync(groupId);
+        await PublishWallContentChangeAsync();
+    }
+
+    private async Task ConfirmSyncState()
+    {
+        var groupId = syncStateConfirmGroup;
+        syncStateConfirmGroup = null;
+        if (groupId == null || !contentStates.TryGetValue(groupId.Value, out var current) || current.RowId == 0) return;
+
+        await defaultService.SyncStateContentAsync(current.RowId);
+        await ReloadGroupStatesAsync(groupId.Value);
+        if (contentStates.TryGetValue(groupId.Value, out var cs))
+        {
+            cs.SaveStatus = "Synced to all states.";
+            cs.SaveIsError = false;
+        }
+        await PublishWallContentChangeAsync();
+        StateHasChanged();
+    }
+
+    private async Task ConfirmDeleteState()
+    {
+        var groupId = deleteStateConfirmGroup;
+        deleteStateConfirmGroup = null;
+        if (groupId == null || !contentStates.TryGetValue(groupId.Value, out var current) || current.RowId == 0) return;
+
+        await defaultService.DeleteStateAsync(current.RowId);
+        contentStates.Remove(groupId.Value);
+        await ReloadGroupStatesAsync(groupId.Value);
+        await PublishWallContentChangeAsync();
+    }
+
+    private async Task LoadScheduleEvents(IDirectorDBContext db)
+    {
+        if (location == null) return;
+
+        var displayIds = displays.Select(d => d.DisplayId).ToList();
+        var dayStart = selectedDate.ToDateTime(new TimeOnly(0, 0));
+        var dayEnd   = selectedDate.ToDateTime(new TimeOnly(23, 59, 59));
+
+        scheduleEvents = await db.TblScheduleEvents.AsNoTracking()
+            .Where(e => displayIds.Contains(e.DisplayId) && e.UserGroupId != null)
+            .Where(e =>
+                (e.StartDate == null || e.StartDate <= dayEnd) &&
+                (e.EndDate   == null || e.EndDate   >= dayStart))
+            .ToListAsync();
+    }
+
+    private void ParseConfig()
+    {
+        if (!string.IsNullOrEmpty(location?.ExtendedData))
+        {
+            try
+            {
+                config = JsonSerializer.Deserialize<VideoWallConfiguration>(location.ExtendedData,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch { }
+        }
+        config ??= new VideoWallConfiguration();
+    }
+
+    // ── Calendar event handlers ──────────────────────────────────────────────
+
+    private void HandleSlotActivated(CalendarSlotArgs args)
+    {
+        var startMins = args.StartMinutes;
+        var endMins   = Math.Min(args.EndMinutes, 1439);
+
+        modal = new SchedulerModal
+        {
+            IsNew     = true,
+            DisplayId = args.DisplayId,
+            StartTime = new TimeOnly(startMins / 60, startMins % 60),
+            EndTime   = new TimeOnly(endMins   / 60, endMins   % 60)
+        };
+        _saveWithOverrideConfirm = false;
+    }
+
+    private async Task HandleEventActivated(TblScheduleEvent ev)
+    {
+        var evStart = ev.StartTime ?? new TimeOnly(6, 0);
+        var evEnd   = ev.EndTime   ?? new TimeOnly(7, 0);
+        var isAllDay = evStart == new TimeOnly(0, 0) && evEnd == new TimeOnly(23, 59);
+
+        modal = new SchedulerModal
+        {
+            IsNew           = false,
+            ExistingEventId = ev.ScheduleEventId,
+            DisplayId       = ev.DisplayId,
+            GroupId         = ev.UserGroupId ?? 0,
+            DefaultAssetId  = ev.DefaultAssetId,
+            IsAllDay        = isAllDay,
+            StartTime       = evStart,
+            EndTime         = evEnd,
+            StartDate       = ev.StartDate.HasValue ? DateOnly.FromDateTime(ev.StartDate.Value) : null,
+            EndDate         = ev.EndDate.HasValue   ? DateOnly.FromDateTime(ev.EndDate.Value)   : null,
+            Days            = new bool[]
+            {
+                ev.Sunday, ev.Monday, ev.Tuesday, ev.Wednesday,
+                ev.Thursday, ev.Friday, ev.Saturday
+            }
+        };
+        _saveWithOverrideConfirm = false;
+        await LoadModalDefaultAssetsAsync(ev.UserGroupId ?? 0);
+    }
+
+    private async Task HandleEventMoved(CalendarMoveArgs args)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var ev = await db.TblScheduleEvents.FirstOrDefaultAsync(e => e.ScheduleEventId == args.EventId);
+        if (ev == null) return;
+
+        var oldDuration = ev.StartTime.HasValue && ev.EndTime.HasValue
+            ? (int)(ev.EndTime.Value - ev.StartTime.Value).TotalMinutes
+            : 60;
+
+        var newStartMins = args.NewStartMinutes;
+        var newEndMins   = Math.Min(newStartMins + oldDuration, 1439);
+        var newStart = new TimeOnly(newStartMins / 60, newStartMins % 60);
+        var newEnd   = new TimeOnly(newEndMins   / 60, newEndMins   % 60);
+
+        var days = new bool[] { ev.Sunday, ev.Monday, ev.Tuesday, ev.Wednesday, ev.Thursday, ev.Friday, ev.Saturday };
+        var overlaps = ScheduleOverlapValidator.FindOverlaps(
+            scheduleEvents.Where(e => e.DisplayId == ev.DisplayId),
+            newStart, newEnd, ev.StartDate, ev.EndDate, days, ev.ScheduleEventId,
+            id => GetGroupName(id));
+
+        if (overlaps.Any())
+        {
+            moveToast = $"Move blocked — overlaps with: {string.Join(", ", overlaps)}";
+            _ = ClearToastAsync();
+            await LoadScheduleEvents(db);
+            StateHasChanged();
+            return;
+        }
+
+        ev.StartTime = newStart;
+        ev.EndTime   = newEnd;
+        await db.SaveChangesAsync();
+        publicationInvalidator.DisplayScheduleChanged(ev.DisplayId);
+        await LoadScheduleEvents(db);
+        await PublishWallContentChangeAsync();
+        StateHasChanged();
+    }
+
+    private async Task HandleEventResized(CalendarResizeArgs args)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var ev = await db.TblScheduleEvents.FirstOrDefaultAsync(e => e.ScheduleEventId == args.EventId);
+        if (ev == null) return;
+
+        var newEndMins = Math.Min(args.NewEndMinutes, 1439);
+        var newEnd     = new TimeOnly(newEndMins / 60, newEndMins % 60);
+
+        // Enforce minimum 15-minute duration
+        if (ev.StartTime.HasValue && (newEnd - ev.StartTime.Value).TotalMinutes < 15)
+        {
+            await LoadScheduleEvents(db);
+            StateHasChanged();
+            return;
+        }
+
+        var days = new bool[] { ev.Sunday, ev.Monday, ev.Tuesday, ev.Wednesday, ev.Thursday, ev.Friday, ev.Saturday };
+        var overlaps = ScheduleOverlapValidator.FindOverlaps(
+            scheduleEvents.Where(e => e.DisplayId == ev.DisplayId),
+            ev.StartTime ?? TimeOnly.MinValue, newEnd, ev.StartDate, ev.EndDate, days, ev.ScheduleEventId,
+            id => GetGroupName(id));
+
+        if (overlaps.Any())
+        {
+            moveToast = $"Resize blocked — overlaps with: {string.Join(", ", overlaps)}";
+            _ = ClearToastAsync();
+            await LoadScheduleEvents(db);
+            StateHasChanged();
+            return;
+        }
+
+        ev.EndTime = newEnd;
+        await db.SaveChangesAsync();
+        publicationInvalidator.DisplayScheduleChanged(ev.DisplayId);
+        await LoadScheduleEvents(db);
+        await PublishWallContentChangeAsync();
+        StateHasChanged();
+    }
+
+    private async Task ClearToastAsync()
+    {
+        await Task.Delay(4000);
+        moveToast = null;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // ── Modal save / delete ──────────────────────────────────────────────────
+
+    private void CloseModal()
+    {
+        modal = null;
+        _saveWithOverrideConfirm  = false;
+        _modalDefaultAssets       = new();
+        _modalGroupForAssets      = 0;
+        _modalMetadataKeys        = new();
+        _modalMetadataFilterKey   = null;
+        _modalAssetMetadataValues = new();
+    }
+
+    private async Task OnMetadataFilterKeyChanged(string? key)
+    {
+        _modalMetadataFilterKey   = NullIfEmpty(key);
+        _modalAssetMetadataValues = new();
+
+        if (string.IsNullOrEmpty(_modalMetadataFilterKey) || _modalDefaultAssets.Count == 0) return;
+
+        var assetIds = _modalDefaultAssets.Select(a => a.AssetId).ToList();
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var rows = await db.TblAssetContentMetadata
+            .AsNoTracking()
+            .Where(m => assetIds.Contains(m.AssetId) && m.MetadataKey == _modalMetadataFilterKey)
+            .OrderBy(m => m.AssetContentMetadataId)
+            .Select(m => new { m.AssetId, m.MetadataValue })
+            .ToListAsync();
+
+        // One label per asset: a key may hold several values, and the earliest is as good a label as any.
+        _modalAssetMetadataValues = rows
+            .GroupBy(r => r.AssetId)
+            .ToDictionary(g => g.Key, g => g.First().MetadataValue);
+        StateHasChanged();
+    }
+
+    // Returns the metadata value for the selected key, falling back to the file name when
+    // no key is selected or the asset has no value for the selected key.
+    private string GetAssetLabel(TblAsset asset)
+    {
+        if (!string.IsNullOrEmpty(_modalMetadataFilterKey)
+            && _modalAssetMetadataValues.TryGetValue(asset.AssetId, out var val))
+            return val;
+        return asset.AssetName;
+    }
+
+    private async Task OnModalGroupChanged()
+    {
+        if (modal == null) return;
+        modal.DefaultAssetId      = null; // reset default when airline changes
+        _modalMetadataFilterKey   = null;
+        _modalAssetMetadataValues = new();
+        await LoadModalDefaultAssetsAsync(modal.GroupId);
+        StateHasChanged();
+    }
+
+    private async Task LoadModalDefaultAssetsAsync(int groupId)
+    {
+        if (groupId == _modalGroupForAssets) return;
+        _modalGroupForAssets      = groupId;
+        _modalDefaultAssets       = new();
+        _modalMetadataKeys        = new();
+        _modalMetadataFilterKey   = null;
+        _modalAssetMetadataValues = new();
+
+        if (groupId <= 0) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var def = await db.TblUserGroupLocationDefaults.AsNoTracking()
+            .FirstOrDefaultAsync(d => d.UserGroupId == groupId && d.LocationId == LocationId);
+
+        if (def?.DefaultConstraintId.HasValue == true)
+        {
+            _modalDefaultAssets = await db.TblAssets.AsNoTracking()
+                .Where(a => a.ConstraintId == def.DefaultConstraintId.Value && !a.IsDeleted)
+                .OrderBy(a => a.AssetName)
+                .ToListAsync();
+        }
+
+        // Discover metadata keys that actually exist on these assets, then resolve display names.
+        if (_modalDefaultAssets.Count > 0)
+        {
+            var assetIds = _modalDefaultAssets.Select(a => a.AssetId).ToList();
+
+            var usedKeys = await db.TblAssetContentMetadata
+                .AsNoTracking()
+                .Where(m => assetIds.Contains(m.AssetId))
+                .Select(m => m.MetadataKey)
+                .Distinct()
+                .ToListAsync();
+
+            if (usedKeys.Count > 0)
+            {
+                var defs = await db.TblMetadataDefinitions
+                    .AsNoTracking()
+                    .Where(d => usedKeys.Contains(d.MetadataKey))
+                    .Select(d => new { d.MetadataKey, d.DisplayName })
+                    .ToListAsync();
+
+                _modalMetadataKeys = usedKeys
+                    .Select(k => (k, defs.FirstOrDefault(d => d.MetadataKey == k)?.DisplayName ?? k))
+                    .OrderBy(x => x.Item2)
+                    .ToList();
+            }
+        }
+    }
+
+    private async Task SaveModal()
+    {
+        if (modal == null) return;
+        modal.ErrorMessage = null;
+
+        if (modal.EndTime <= modal.StartTime)
+        {
+            modal.ErrorMessage = "End time must be after start time.";
+            return;
+        }
+
+        DateTime? startDate = modal.StartDate.HasValue
+            ? modal.StartDate.Value.ToDateTime(TimeOnly.MinValue) : (DateTime?)null;
+        DateTime? endDate   = modal.EndDate.HasValue
+            ? modal.EndDate.Value.ToDateTime(TimeOnly.MinValue)   : (DateTime?)null;
+
+        // Check overlaps — first Save shows warning and requires confirmation; second Save proceeds
+        modal.Overlaps = ScheduleOverlapValidator.FindOverlaps(
+            scheduleEvents.Where(e => e.DisplayId == modal.DisplayId),
+            modal.StartTime, modal.EndTime, startDate, endDate, modal.Days, modal.ExistingEventId,
+            id => GetGroupName(id));
+
+        if (modal.Overlaps.Any() && !_saveWithOverrideConfirm)
+        {
+            _saveWithOverrideConfirm = true;
+            return; // Keep modal open showing the warning; user clicks Save Anyway
+        }
+
+        _saveWithOverrideConfirm = false;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        // When the saved block covers this moment, its selection is enforced on the
+        // live counter below: an in-place airline swap must not inherit the previous
+        // airline's manual counter selection ("none" unless a default was chosen).
+        bool enforceSelection = false;
+
+        try
+        {
+            if (modal.IsNew)
+            {
+                db.TblScheduleEvents.Add(new TblScheduleEvent
+                {
+                    ScheduleEventTypeId = 1,
+                    DisplayId           = modal.DisplayId,
+                    UserGroupId         = modal.GroupId > 0 ? modal.GroupId : null,
+                    DefaultAssetId      = modal.GroupId > 0 ? modal.DefaultAssetId : null,
+                    StartTime           = modal.StartTime,
+                    EndTime             = modal.EndTime,
+                    StartDate           = startDate,
+                    EndDate             = endDate,
+                    ContentAssignment   = "{}",
+                    CreateDate          = DateTime.UtcNow,
+                    Sunday              = modal.Days[0],
+                    Monday              = modal.Days[1],
+                    Tuesday             = modal.Days[2],
+                    Wednesday           = modal.Days[3],
+                    Thursday            = modal.Days[4],
+                    Friday              = modal.Days[5],
+                    Saturday            = modal.Days[6]
+                });
+            }
+            else if (modal.ExistingEventId.HasValue)
+            {
+                var ev = await db.TblScheduleEvents
+                    .FirstOrDefaultAsync(e => e.ScheduleEventId == modal.ExistingEventId.Value);
+                if (ev != null)
+                {
+                    var oldGroupId = ev.UserGroupId;
+                    ev.UserGroupId     = modal.GroupId > 0 ? modal.GroupId : null;
+                    ev.DefaultAssetId  = modal.GroupId > 0 ? modal.DefaultAssetId : null;
+                    ev.StartTime   = modal.StartTime;
+                    ev.EndTime     = modal.EndTime;
+                    ev.StartDate   = startDate;
+                    ev.EndDate     = endDate;
+                    ev.Sunday      = modal.Days[0];
+                    ev.Monday      = modal.Days[1];
+                    ev.Tuesday     = modal.Days[2];
+                    ev.Wednesday   = modal.Days[3];
+                    ev.Thursday    = modal.Days[4];
+                    ev.Friday      = modal.Days[5];
+                    ev.Saturday    = modal.Days[6];
+
+                    // Only an airline change forces enforcement — editing times/days of
+                    // the same airline preserves any manual StatusSelector selection.
+                    enforceSelection = oldGroupId != ev.UserGroupId && IsEventActiveNow(ev);
+                }
+            }
+
+            await db.SaveChangesAsync();
+            publicationInvalidator.DisplayScheduleChanged(modal.DisplayId);
+
+            if (enforceSelection)
+            {
+                // Use the circuit-scoped service (not one resolved from a fresh
+                // scopeFactory scope): StatusSelectorService depends on ITenantContext,
+                // which only the circuit/request scopes have populated — a manually
+                // created scope throws "ITenantContext has not been populated".
+                if (modal.GroupId > 0 && modal.DefaultAssetId.HasValue)
+                    await statusSelectorService.SetActiveContentAsync(modal.DisplayId, modal.DefaultAssetId.Value, null, "Scheduler");
+                else
+                    await statusSelectorService.ClearActiveContentAsync(modal.DisplayId, "Scheduler");
+            }
+
+            await LoadScheduleEvents(db);
+            await PublishWallContentChangeAsync();
+            CloseModal();
+        }
+        catch (Exception ex)
+        {
+            modal.ErrorMessage = ex.Message;
+        }
+    }
+
+    private async Task DeleteModal()
+    {
+        if (modal?.ExistingEventId == null) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var ev = await db.TblScheduleEvents
+            .FirstOrDefaultAsync(e => e.ScheduleEventId == modal.ExistingEventId.Value);
+        if (ev != null) db.TblScheduleEvents.Remove(ev);
+
+        await db.SaveChangesAsync();
+        if (ev != null)
+            publicationInvalidator.DisplayScheduleChanged(ev.DisplayId);
+        await LoadScheduleEvents(db);
+        await PublishWallContentChangeAsync();
+        CloseModal();
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
+
+    /// <summary>True when the event's date range, day flags, and time window cover this moment.</summary>
+    private static bool IsEventActiveNow(TblScheduleEvent e)
+    {
+        var now = DateTime.Now;
+        bool dateOk = (e.StartDate == null || now.Date >= e.StartDate.Value.Date) &&
+                      (e.EndDate == null || now.Date <= e.EndDate.Value.Date);
+        if (!dateOk) return false;
+
+        bool anyDay = e.Sunday || e.Monday || e.Tuesday || e.Wednesday || e.Thursday || e.Friday || e.Saturday;
+        if (anyDay)
+        {
+            bool dayOk = now.DayOfWeek switch
+            {
+                DayOfWeek.Sunday    => e.Sunday,
+                DayOfWeek.Monday    => e.Monday,
+                DayOfWeek.Tuesday   => e.Tuesday,
+                DayOfWeek.Wednesday => e.Wednesday,
+                DayOfWeek.Thursday  => e.Thursday,
+                DayOfWeek.Friday    => e.Friday,
+                DayOfWeek.Saturday  => e.Saturday,
+                _                   => false
+            };
+            if (!dayOk) return false;
+        }
+
+        return ScheduleTime.IsWithinWindow(TimeOnly.FromDateTime(now), e.StartTime, e.EndTime);
+    }
+
+    private bool IsDayActive(TblScheduleEvent e)
+    {
+        bool anySet = e.Sunday || e.Monday || e.Tuesday || e.Wednesday || e.Thursday || e.Friday || e.Saturday;
+        if (!anySet) return true;
+        return selectedDate.DayOfWeek switch
+        {
+            DayOfWeek.Sunday    => e.Sunday,
+            DayOfWeek.Monday    => e.Monday,
+            DayOfWeek.Tuesday   => e.Tuesday,
+            DayOfWeek.Wednesday => e.Wednesday,
+            DayOfWeek.Thursday  => e.Thursday,
+            DayOfWeek.Friday    => e.Friday,
+            DayOfWeek.Saturday  => e.Saturday,
+            _ => false
+        };
+    }
+
+    private string GetGroupColor(int? groupId)
+    {
+        if (groupId == null) return "transparent";
+        var idx = airlineGroups.FindIndex(g => g.UserGroupId == groupId);
+        if (idx < 0) return "rgba(150,150,150,0.2)";
+        return GroupColors[idx % GroupColors.Length];
+    }
+
+    private string GetGroupName(int? groupId)
+    {
+        if (groupId == null) return "";
+        return airlineGroups.FirstOrDefault(g => g.UserGroupId == groupId)?.GroupName?.Split(' ').FirstOrDefault() ?? "";
+    }
+
+    private string GetDisplayName(int displayId)
+        => displays.FirstOrDefault(d => d.DisplayId == displayId)?.DisplayName ?? $"Display {displayId}";
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        if (DateOnly.TryParse(e.Value?.ToString(), out var d))
+        {
+            selectedDate = d;
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            await LoadScheduleEvents(db);
+        }
+    }
+
+    private async Task PrevDay()
+    {
+        selectedDate = selectedDate.AddDays(-1);
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        await LoadScheduleEvents(db);
+    }
+
+    private async Task NextDay()
+    {
+        selectedDate = selectedDate.AddDays(1);
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        await LoadScheduleEvents(db);
+    }
+
+    private DXSuite.Director.Components.LocationTypes.Custom.VideoWallPreview? wallPreview;
+
+    /// <summary>
+    /// Previews the wall with this airline's CURRENT form values, saved or not, so content can be
+    /// checked in place before committing.
+    /// </summary>
+    private async Task PreviewAirlineContent(int groupId)
+    {
+        if (location == null || config == null || wallPreview == null) return;
+        if (!contentStates.TryGetValue(groupId, out var state)) return;
+
+        var airlineName = airlineGroups.FirstOrDefault(g => g.UserGroupId == groupId)?.GroupName ?? $"Group {groupId}";
+        await wallPreview.OpenForAirline(location, config, displays, airlineName,
+            new DXSuite.Director.Components.LocationTypes.Custom.VideoWallPreview.DraftAirlineContent
+            {
+                ConstraintId = state.ConstraintId,
+                BackgroundPath = state.BackgroundPath,
+                BackgroundMode = state.BackgroundMode,
+                MaskPath = state.MaskPath,
+                MaskMode = state.MaskMode,
+                LogoPath = state.LogoPath,
+                RoleLogos = state.RoleLogos.ToDictionary(
+                    kv => kv.Key,
+                    kv => new AirlineLogoContent(kv.Value.Path, kv.Value.Mode)),
+                BackgroundOpacityPct = state.BackgroundOpacityPct,
+                MaskOpacityPct = state.MaskOpacityPct
+            });
+    }
+
+    private async Task SaveAirlineContent(int groupId)
+    {
+        if (!contentStates.TryGetValue(groupId, out var state)) return;
+        state.SaveStatus = null;
+        try
+        {
+            await defaultService.UpsertAsync(groupId, LocationId,
+                state.ConstraintId,
+                state.BackgroundPath, state.BackgroundMode,
+                state.MaskPath, state.MaskMode,
+                state.LogoPath,
+                state.RoleLogos.ToDictionary(
+                    kv => kv.Key,
+                    kv => new AirlineLogoContent(kv.Value.Path, kv.Value.Mode)),
+                state.BackgroundSegments.Select(s => new AirlineLayerSegment(s.Path ?? "", s.WidthPx)).ToList(),
+                state.MaskSegments.Select(s => new AirlineLayerSegment(s.Path ?? "", s.WidthPx)).ToList(),
+                state.BackgroundOpacityPct,
+                state.MaskOpacityPct,
+                state.StateName,
+                BuildScheduleJson(state),
+                state.IsDefaultState);
+
+            // First save creates the row; refresh so the state carries its RowId
+            if (state.RowId == 0)
+                await ReloadGroupStatesAsync(groupId);
+            if (contentStates.TryGetValue(groupId, out var saved))
+            {
+                saved.SaveStatus = "Saved.";
+                saved.SaveIsError = false;
+            }
+            await PublishWallContentChangeAsync();
+        }
+        catch (Exception ex)
+        {
+            state.SaveStatus = ex.Message;
+            state.SaveIsError = true;
+        }
+        StateHasChanged();
+    }
+
+    // Razor attribute expressions cannot contain double-quoted string literals, so each target
+    // variant is a thin wrapper that delegates to the shared implementation.
+    // Upload-in-progress markers keyed by "{groupId}:{slot}" so each file selector
+    // shows its own spinner while its file streams over the circuit.
+    private readonly HashSet<string> _activeUploads = new();
+    private bool IsUploading(int groupId, string slot) => _activeUploads.Contains($"{groupId}:{slot}");
+
+    private Task OnBackgroundFileUpload(InputFileChangeEventArgs e, int groupId) => OnLayerFileUpload(e, groupId, "background");
+    private Task OnMaskFileUpload(InputFileChangeEventArgs e, int groupId)       => OnLayerFileUpload(e, groupId, "mask");
+    private Task OnLogoFileUpload(InputFileChangeEventArgs e, int groupId)       => OnLayerFileUpload(e, groupId, "logo");
+    private Task OnRoleLogoFileUpload(InputFileChangeEventArgs e, int groupId, string roleKey)
+        => OnLayerFileUpload(e, groupId, $"role:{roleKey}");
+
+    private Task OnBackgroundSegmentUpload(InputFileChangeEventArgs e, int groupId) => OnSegmentFileUpload(e, groupId, "background");
+    private Task OnMaskSegmentUpload(InputFileChangeEventArgs e, int groupId)       => OnSegmentFileUpload(e, groupId, "mask");
+
+    private async Task<(string RelativePath, string FullPath)?> SaveAirlineContentFileAsync(
+        Microsoft.AspNetCore.Components.Forms.IBrowserFile? file, AirlineContentState state)
+    {
+        if (file == null) return null;
+        if (file.Size > 200 * 1024 * 1024)
+        {
+            state.UploadError = "File must be under 200 MB.";
+            return null;
+        }
+
+        var folder = Path.Combine(MediaPaths.GetRoot(), "MediaAssets", "AirlineContent");
+        Directory.CreateDirectory(folder);
+
+        var uniqueFileName = $"{Guid.NewGuid()}{Path.GetExtension(file.Name)}";
+        var filePath       = Path.Combine(folder, uniqueFileName);
+
+        await using var stream = file.OpenReadStream(maxAllowedSize: 200 * 1024 * 1024);
+        await using var fs     = new FileStream(filePath, FileMode.Create);
+        await stream.CopyToAsync(fs);
+
+        return ($"/MediaAssets/AirlineContent/{uniqueFileName}", filePath);
+    }
+
+    // Native width drives side-by-side segment placement. ffprobe reads both video and
+    // image dimensions; a failed probe leaves 0 (fill-remaining) for the user to correct.
+    private async Task<int> ProbeMediaWidthAsync(string filePath)
+    {
+        try
+        {
+            var psi = new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = FfmpegOptions.Value.ResolveBinary("ffprobe.exe", webHostEnv.ContentRootPath),
+                Arguments = $"-v error -select_streams v:0 -show_entries stream=width -of csv=p=0 \"{filePath}\"",
+                RedirectStandardOutput = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            using var process = System.Diagnostics.Process.Start(psi);
+            if (process == null) return 0;
+            var output = await process.StandardOutput.ReadToEndAsync();
+            await process.WaitForExitAsync();
+            return int.TryParse(output.Trim(), out var w) ? Math.Max(0, w) : 0;
+        }
+        catch { return 0; }
+    }
+
+    private async Task OnSegmentFileUpload(InputFileChangeEventArgs e, int groupId, string layerRole)
+    {
+        if (!contentStates.TryGetValue(groupId, out var state)) return;
+        state.UploadError = null;
+        var uploadKey = $"{groupId}:seg:{layerRole}";
+        _activeUploads.Add(uploadKey);
+        StateHasChanged();
+        try
+        {
+            var saved = await SaveAirlineContentFileAsync(e.File, state);
+            if (saved != null)
+            {
+                var list = layerRole == "mask" ? state.MaskSegments : state.BackgroundSegments;
+                list.Add(new LayerSegmentState
+                {
+                    Path    = saved.Value.RelativePath,
+                    WidthPx = await ProbeMediaWidthAsync(saved.Value.FullPath)
+                });
+            }
+        }
+        catch (Exception ex)
+        {
+            state.UploadError = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            _activeUploads.Remove(uploadKey);
+            StateHasChanged();
+        }
+    }
+
+    /// <param name="target">"mask", "background", "logo", or "role:{roleKey}"</param>
+    private async Task OnLayerFileUpload(InputFileChangeEventArgs e, int groupId, string target)
+    {
+        if (!contentStates.TryGetValue(groupId, out var state)) return;
+        state.UploadError = null;
+        var uploadKey = $"{groupId}:{target}";
+        _activeUploads.Add(uploadKey);
+        StateHasChanged();
+
+        try
+        {
+            var saved = await SaveAirlineContentFileAsync(e.File, state);
+            if (saved == null) return;
+
+            var relativePath = saved.Value.RelativePath;
+            if (target == "mask")
+            {
+                state.MaskPath = relativePath;
+                // Videos default to pixel-exact rendering; scaling modes are explicit opt-ins.
+                if (LayerRenderMode.IsVideo(relativePath)) state.MaskMode = "native";
+            }
+            else if (target == "logo")
+            {
+                state.LogoPath = relativePath;
+            }
+            else if (target.StartsWith("role:"))
+            {
+                var slot = GetRoleSlot(state, target["role:".Length..]);
+                slot.Path = relativePath;
+                if (LayerRenderMode.IsVideo(relativePath)) slot.Mode = "native";
+            }
+            else
+            {
+                state.BackgroundPath = relativePath;
+                if (LayerRenderMode.IsVideo(relativePath)) state.BackgroundMode = "native";
+            }
+        }
+        catch (Exception ex)
+        {
+            state.UploadError = $"Upload failed: {ex.Message}";
+        }
+        finally
+        {
+            _activeUploads.Remove(uploadKey);
+            StateHasChanged();
+        }
+    }
+
+    private static bool IsWebUrl(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        (path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+    private static string? NullIfEmpty(string? s) =>
+        string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    // Ordered side-by-side segments for one layer. When any exist the wall renders the
+    // sequence (each at native width, wrapping back to segment 1 across the cluster)
+    // instead of the layer's single file.
+    private RenderFragment RenderSegmentEditor(List<LayerSegmentState> segments, int groupId, bool isMask) => __builder =>
+    {
+        <div class="tcs-content-row">
+            <span class="tcs-content-label">Segments</span>
+            <span class="tcs-path-hint">Optional side-by-side sequence — replaces the single file above and wraps back to segment 1 across the cluster</span>
+        </div>
+        @for (int i = 0; i < segments.Count; i++)
+        {
+            var seg = segments[i];
+            var idx = i;
+            <div class="tcs-content-row">
+                <span class="tcs-content-label">#@(idx + 1)</span>
+                <span class="tcs-path-hint" style="flex:1; overflow:hidden; text-overflow:ellipsis;">@seg.Path</span>
+                <input type="number" class="dx-form-control dx-form-control-sm" style="width:110px;"
+                       title="Native width (px); 0 fills the remaining cluster width"
+                       value="@seg.WidthPx"
+                       @onchange="e => { if (int.TryParse(e.Value?.ToString(), out var w)) { seg.WidthPx = w; StateHasChanged(); } }" />
+                @if (idx > 0)
+                {
+                    <button class="tcs-clear-btn" title="Move up"
+                            @onclick="() => { segments.RemoveAt(idx); segments.Insert(idx - 1, seg); StateHasChanged(); }">↑</button>
+                }
+                <button class="tcs-clear-btn" title="Remove"
+                        @onclick="() => { segments.RemoveAt(idx); StateHasChanged(); }">×</button>
+            </div>
+        }
+        <div class="tcs-content-row">
+            <span class="tcs-content-label">Add Segment</span>
+            @if (isMask)
+            {
+                <InputFile OnChange="async (e) => await OnMaskSegmentUpload(e, groupId)" accept="image/*,video/*" class="tcs-file-input" />
+            }
+            else
+            {
+                <InputFile OnChange="async (e) => await OnBackgroundSegmentUpload(e, groupId)" accept="image/*,video/*" class="tcs-file-input" />
+            }
+            @if (IsUploading(groupId, isMask ? "seg:mask" : "seg:background"))
+            {
+                <span class="dx-spinner dx-spinner-sm"></span>
+                <span class="tcs-path-hint">Uploading...</span>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderLayerPreview(string? path) => __builder =>
+    {
+        if (string.IsNullOrEmpty(path)) return;
+        if (IsWebUrl(path))
+        {
+            <div class="tcs-thumb tcs-thumb-web">
+                <span class="bi bi-globe2"></span>
+                <span>Web URL</span>
+            </div>
+        }
+        else if (IsHtmlPath(path))
+        {
+            @* Live preview of the uploaded HTML — same iframe treatment as a web URL mask *@
+            <iframe class="tcs-thumb tcs-thumb-html" src="@path"
+                    scrolling="no" frameborder="0"
+                    sandbox="allow-scripts allow-same-origin"></iframe>
+        }
+        else
+        {
+            var ext = Path.GetExtension(path).ToLowerInvariant();
+            if (ext is ".mp4" or ".webm" or ".mov")
+            {
+                <video class="tcs-thumb" src="@path" muted preload="metadata"></video>
+            }
+            else
+            {
+                <img class="tcs-thumb" src="@path" alt="" />
+            }
+        }
+    };
+
+    private static bool IsHtmlPath(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        path.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyToWall()
+    {
+        applyWallStatus = "Wall controller update pending — platform implementation not yet available.";
+        applyWallIsError = false;
+    }
+}
+
+<style>
+    .tcs-body { padding: 0 20px 20px; }
+    .tcs-unauthorized { padding: 40px; text-align: center; color: #666; }
+    .tcs-empty { padding: 40px; text-align: center; color: #999; }
+    .tcs-date-row { display: flex; align-items: center; gap: 8px; }
+    .tcs-date-input { width: 150px; font-size: 14px; }
+    .tcs-nav-btn { background: none; border: 1px solid #ccc; border-radius: 4px; cursor: pointer; padding: 4px 10px; font-size: 18px; line-height: 1; }
+    .tcs-nav-btn:hover { background: #f0f0f0; }
+
+    .tcs-footer { margin-top: 16px; display: flex; gap: 10px; }
+
+    .tcs-move-toast { padding: 8px 12px; font-size: 12px; margin-bottom: 8px; }
+
+    /* ── Tabs ─────────────────────────────────────────────────────────────── */
+    .tcs-tab-bar { display: flex; border-bottom: 2px solid #ddd; padding: 0 20px; background: #fff; }
+    .tcs-tab { background: none; border: none; border-bottom: 2px solid transparent; margin-bottom: -2px; padding: 10px 20px; font-size: 13px; font-weight: 600; cursor: pointer; color: #666; transition: color 0.15s; }
+    .tcs-tab:hover { color: #333; }
+    .tcs-tab-active { color: #0071bc; border-bottom-color: #0071bc; }
+
+    /* ── Schedule event modal ─────────────────────────────────────────────── */
+    .tcs-modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 1000; }
+    .tcs-modal {
+        position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+        background: white; border-radius: 8px; z-index: 1001;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.25);
+        display: flex; flex-direction: column;
+        max-height: 90vh;
+    }
+    .tcs-modal-lg { width: 440px; }
+    .tcs-modal-header {
+        background: #0071BC; color: white;
+        padding: 14px 20px;
+        display: flex; justify-content: space-between; align-items: center;
+        border-radius: 8px 8px 0 0;
+        flex-shrink: 0;
+    }
+    .tcs-modal-header h5 { margin: 0; font-size: 1rem; font-weight: 600; color: white; font-family: "BAHNSCHRIFT", sans-serif; }
+    .tcs-modal-body { padding: 20px; overflow-y: auto; flex: 1; }
+    .tcs-modal-footer { padding: 12px 20px; border-top: 1px solid #eee; display: flex; gap: 8px; flex-shrink: 0; flex-wrap: wrap; }
+
+    .tcs-allday-label { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; cursor: pointer; user-select: none; }
+    .tcs-allday-label input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; accent-color: #0071BC; }
+    .tcs-time-row { display: flex; flex-direction: row; align-items: center; gap: 10px; }
+    .tcs-time-input { width: 130px; }
+    .tcs-input-disabled { background: var(--dx-bg-muted, #f5f5f5) !important; color: var(--dx-text-muted, #aaa) !important; cursor: not-allowed !important; }
+    .tcs-date-range-row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .tcs-optional { font-size: 10px; color: #999; font-weight: 400; }
+
+    .tcs-dow-row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
+    .tcs-dow-label { display: flex; align-items: center; gap: 4px; font-size: 12px; cursor: pointer; user-select: none; }
+
+    .tcs-overlap-alert { padding: 8px 12px; font-size: 12px; margin-bottom: 8px; }
+    .tcs-overlap-alert div { margin-top: 3px; }
+    .tcs-overlap-confirm-msg { margin-top: 6px; font-style: italic; }
+
+    /* ── Location picker ─────────────────────────────────────────────────── */
+    .tcs-picker-list { display: flex; flex-wrap: wrap; gap: 16px; padding: 24px; }
+    .tcs-picker-card {
+        display: flex; align-items: center; gap: 12px; padding: 20px 28px;
+        border: 1px solid #ddd; border-radius: 8px; cursor: pointer;
+        background: #fafafa; transition: background 0.15s, box-shadow 0.15s;
+        min-width: 220px;
+    }
+    .tcs-picker-card:hover { background: #eef4ff; box-shadow: 0 2px 8px rgba(0,113,188,0.15); }
+    .tcs-picker-icon { font-size: 22px; color: #0071bc; }
+    .tcs-picker-name { font-size: 15px; font-weight: 600; }
+
+    /* ── Airline Content tab ──────────────────────────────────────────────── */
+    .tcs-content-grid { display: flex; flex-direction: column; gap: 16px; padding: 20px; max-width: 860px; }
+    .tcs-content-card { border: 1px solid #e0e0e0; border-radius: 6px; padding: 16px; background: #fafafa; }
+    .tcs-content-card-header { font-size: 13px; font-weight: 700; color: #1a1a2e; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Content state tabs (dayparting variants) */
+    .tcs-state-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid #d5d5e0; margin-bottom: 10px; padding-bottom: 6px; }
+    .tcs-state-tab { border: 1px solid #c5c5d5; border-radius: 4px 4px 0 0; background: #f0f0f5; padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer; color: #44445a; }
+    .tcs-state-tab.active { background: var(--dx-blue); border-color: var(--dx-blue); color: #fff; }
+    .tcs-state-tab-add { min-width: 30px; font-weight: 700; }
+    .tcs-state-tab-add:disabled { opacity: 0.4; cursor: not-allowed; }
+    .tcs-state-name-input { width: 140px; padding: 3px 8px; font-size: 12px; }
+    .tcs-state-add-btn { padding: 4px 10px; font-size: 12px; }
+    .tcs-state-meta { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; background: #f7f7fb; border-radius: 4px; padding: 8px 10px; }
+    .tcs-state-default-check { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .tcs-state-schedule { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+    .tcs-state-schedule .tcs-hint { flex-basis: 100%; }
+    .tcs-state-delete-btn { padding: 4px 10px; font-size: 12px; margin-left: auto; }
+    .tcs-content-section-header { font-size: 11px; font-weight: 700; color: #0071bc; text-transform: uppercase; letter-spacing: 0.5px; margin: 12px 0 6px; border-top: 1px solid #e8e8e8; padding-top: 10px; }
+    .tcs-content-row { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
+    .tcs-content-label { font-size: 12px; font-weight: 600; width: 110px; flex-shrink: 0; color: #555; }
+    .tcs-content-select { max-width: 300px; font-size: 12px; }
+    .tcs-content-url-input { max-width: 380px; font-size: 12px; }
+    .tcs-file-input { font-size: 12px; }
+    .tcs-clear-btn { background: none; border: none; color: #999; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; }
+    .tcs-clear-btn:hover { color: #dc3545; }
+    .tcs-thumb { width: 80px; height: 50px; object-fit: cover; border: 1px solid #ddd; border-radius: 3px; flex-shrink: 0; }
+    .tcs-thumb-web { display: flex; flex-direction: column; align-items: center; justify-content: center; background: #eef4ff; color: #0071bc; font-size: 10px; gap: 3px; }
+    .tcs-thumb-web .bi { font-size: 18px; }
+    /* HTML mask preview: iframe shows live content but pointer events are disabled so clicks don't navigate */
+    .tcs-thumb-html { pointer-events: none; overflow: hidden; }
+    .tcs-path-hint { font-size: 11px; color: #888; word-break: break-all; max-width: 300px; }
+    .tcs-content-save-row { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
+    .tcs-save-ok { font-size: 12px; color: #28a745; font-weight: 600; }
+    .tcs-save-error { font-size: 12px; color: #dc3545; }
+</style>

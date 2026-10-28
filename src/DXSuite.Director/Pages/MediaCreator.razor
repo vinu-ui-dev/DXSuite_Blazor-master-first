@@ -1,0 +1,1291 @@
+@page "/mediacreator"
+@using Microsoft.AspNetCore.Components.Forms
+@using DXSuite.Director.Models.Canvas
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@using System.Drawing
+@using System.IO
+@using SkiaSharp
+@using Newtonsoft.Json
+@using DXSuite.Director.Components
+@using static DXSuite.Director.Models.Types
+@inject IJSRuntime JSRuntime
+@inject IDirectorDBContext dbContext
+@inject NavigationManager Navigation
+@inject CanvasImageGenerationService ImageGenerator
+@using Microsoft.AspNetCore.Hosting
+@inject IConfiguration config
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject IFontService FontService
+@inject JsonSerializerSettings JsonSettings
+@inject ILogger<MediaCreator> Logger
+@inject ISessionState sessionState
+@inject IApprovalChainService approvalChainService
+@inject IUploadIdentityService uploadIdentity
+@inject IContentMetadataService contentMetadataService
+@inject IPublicationInvalidator publicationInvalidator
+@rendermode InteractiveServer
+
+<PageTitle>Media Creator</PageTitle>
+
+@* Inject custom font CSS *@
+<style>
+@((MarkupString)FontService.GetWebFontCss())
+</style>
+
+<style>
+    .element-properties {
+        margin-top: 15px;
+        padding-top: 15px;
+        border-top: 1px solid #ddd;
+    }
+
+    .fit-controls {
+        margin-bottom: 15px;
+        display: flex;
+        flex-direction: column;
+        gap: 5px;
+    }
+
+    .fit-controls button {
+        width: 100%;
+    }
+
+    .position-controls, .size-controls {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        gap: 5px 10px;
+        margin-bottom: 15px;
+        align-items: center;
+    }
+
+    .position-controls label, .size-controls label {
+        font-weight: 500;
+        margin: 0;
+    }
+
+    .position-controls input, .size-controls input {
+        width: 100%;
+        padding: 4px 8px;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+    }
+
+    .file-name-section {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .file-name-section label {
+        margin: 0;
+        font-weight: 500;
+    }
+</style>
+
+<script>
+    window.getViewportWidth = () => window.innerWidth;
+    window.getViewportHeight = () => window.innerHeight;
+
+    window.setupKeyboardListeners = (dotNetObjectRef) => {
+        const handleKeyDown = (event) => {
+            if (event.ctrlKey && event.key === 'z' && !event.shiftKey) {
+                event.preventDefault();
+                dotNetObjectRef.invokeMethodAsync('HandleUndo');
+            }
+        };
+
+        document.addEventListener('keydown', handleKeyDown);
+
+        return {
+            dispose: () => {
+                document.removeEventListener('keydown', handleKeyDown);
+            }
+        };
+    };
+
+    window.getCanvasMousePosition = (event) => {
+        const canvas = document.getElementById('canvas-container');
+        if (!canvas) return { x: 0, y: 0 };
+
+        const rect = canvas.getBoundingClientRect();
+
+        const canvasWidth = parseFloat(canvas.style.width) || canvas.offsetWidth;
+        const canvasHeight = parseFloat(canvas.style.height) || canvas.offsetHeight;
+
+        const displayedWidth = rect.width;
+        const displayedHeight = rect.height;
+
+        const scaleX = displayedWidth / canvasWidth;
+        const scaleY = displayedHeight / canvasHeight;
+
+        const mouseX = event.clientX - rect.left;
+        const mouseY = event.clientY - rect.top;
+
+        return {
+            x: mouseX / scaleX,
+            y: mouseY / scaleY
+        };
+    };
+</script>
+
+<div class="media-creator-container">
+    <div class="creator-header">
+        <div class="file-name-section">
+            <label class="form-label">File Name:</label>
+            <input type="text" class="dx-form-control" @bind="customFileName" placeholder="Custom_Canvas" style="width: 300px;" />
+        </div>
+        <div class="header-controls">
+            <button class="dx-btn dx-btn-gray" @onclick="GoBack">Cancel</button>
+            <button class="dx-btn dx-btn-blue" @onclick="GenerateImage" disabled="@(isGenerating || UploadBlockReason != null)" title="@UploadBlockReason">
+                @if (isGenerating)
+                {
+                    <span class="spinner-border spinner-border-sm me-2"></span>
+                }
+                Generate Image
+            </button>
+        </div>
+    </div>
+
+    @if (UsesAssetRow && LocationId > 0)
+    {
+        <div class="dx-card" style="margin-bottom:12px;">
+            <div class="dx-card-body" style="padding:8px 16px;">
+                <UploadingAsSection @ref="uploadingAs" LocationId="@LocationId" OnChanged="StateHasChanged" />
+                @if (!string.IsNullOrEmpty(uploadIdentityError))
+                {
+                    <div class="dx-text-red" style="font-size:0.8rem;">@uploadIdentityError</div>
+                }
+                else if (UploadBlockReason is { } blockReason)
+                {
+                    <div class="dx-text-red" style="font-size:0.8rem;">@blockReason</div>
+                }
+            </div>
+        </div>
+    }
+
+    <div class="creator-workspace">
+        <div class="canvas-area">
+            <div class="canvas-toolbar">
+                <div class="zoom-controls">
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ZoomOut" title="Zoom Out">-</button>
+                    <span class="zoom-level">@(Math.Round(zoomLevel * 100))%</span>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="ZoomIn" title="Zoom In">+</button>
+                    <button class="btn btn-sm btn-outline-secondary" @onclick="FitToScreen" title="Fit to Screen">Fit</button>
+                </div>
+            </div>
+            <div class="canvas-viewport">
+                <div class="canvas-wrapper" style="width: @(Math.Max(baseCanvasWidth * zoomLevel, 1))px; height: @(Math.Max(baseCanvasHeight * zoomLevel, 1))px;">
+                    <div class="canvas-container" id="canvas-container"
+                         style="width: @(baseCanvasWidth)px; height: @(baseCanvasHeight)px; transform: scale(@zoomLevel); transform-origin: top left;"
+                         @onmousemove="OnCanvasMouseMove"
+                         @onmouseup="OnCanvasMouseUp"
+                         @onmouseleave="OnCanvasMouseLeave"
+                         @ondrop="OnCanvasDrop"
+                         @ondragover="OnCanvasDragOver"
+                         @ondragover:preventDefault="true">
+
+                @if (canvasProject?.Background != null && !isBackgroundTransparent)
+                {
+                    <div class="canvas-background"
+                         style="background-color: @canvasProject.Background.BackgroundColor; width: 100%; height: 100%; position: absolute; top: 0; left: 0; z-index: 0;">
+                    </div>
+                }
+
+                @if (showGrid)
+                {
+                    <div class="grid-overlay"
+                         style="position: absolute; top: @(gridOffsetTop)px; left: @(gridOffsetLeft)px; width: calc(100% - @(gridOffsetLeft)px); height: calc(100% - @(gridOffsetTop)px); z-index: 9999; pointer-events: none; background-image: @GetGridBackgroundImage(); background-size: @(gridWidth)px @(gridHeight)px;">
+                    </div>
+                }
+
+                @if (canvasProject != null)
+                {
+                    @foreach (var element in canvasProject.GetElementsOrderedByZIndex().Where(e => e is not CanvasBackground))
+                    {
+                        <div class="canvas-element @(element.IsSelected ? "selected" : "") @(IsElementOutOfBounds(element) ? "out-of-bounds" : "")"
+                             style="position: absolute; left: @(element.X)px; top: @(element.Y)px; width: @(element.Width)px; height: @(element.Height)px; z-index: @element.ZIndex; cursor: @(isDragging && draggingElementId == element.Id ? "grabbing" : "grab");"
+                             @onclick="(e) => OnElementClick(element.Id, e)"
+                             @onmousedown="(e) => StartDrag(element.Id, e)"
+                             @onmousedown:stopPropagation="true"
+                             draggable="false">
+
+                            @if (element is CanvasImage img)
+                            {
+                                <img src="@img.Base64Data" style="width: 100%; height: 100%; object-fit: contain; filter: saturate(@(img.Saturation));" draggable="false" />
+                            }
+                            else if (element is CanvasColorBlock block)
+                            {
+                                <div style="width: 100%; height: 100%; background-color: @block.Color !important; opacity: @block.Opacity; position: relative; z-index: 1;"></div>
+                            }
+                            else if (element is CanvasText txt)
+                            {
+                                <div style="font-family: '@FontService.GetCssFontFamily(txt.FontFamily)'; font-size: @(txt.FontSize)px; color: @txt.FontColor; font-weight: @(txt.IsBold ? "bold" : "normal"); font-style: @(txt.IsItalic ? "italic" : "normal"); text-align: @txt.TextAlign; width: 100%; height: 100%; display: flex; align-items: center; justify-content: @GetJustifyContent(txt.TextAlign); @GetTextShadowStyle(txt)">
+                                    @txt.Text
+                                </div>
+                            }
+
+                            @if (element.IsSelected)
+                            {
+                                <div class="resize-handles">
+                                    <div class="resize-handle nw" @onmousedown="(e) => StartResize(element.Id, resizeNw, e)" @onmousedown:stopPropagation="true"></div>
+                                    <div class="resize-handle ne" @onmousedown="(e) => StartResize(element.Id, resizeNe, e)" @onmousedown:stopPropagation="true"></div>
+                                    <div class="resize-handle sw" @onmousedown="(e) => StartResize(element.Id, resizeSw, e)" @onmousedown:stopPropagation="true"></div>
+                                    <div class="resize-handle se" @onmousedown="(e) => StartResize(element.Id, resizeSe, e)" @onmousedown:stopPropagation="true"></div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="controls-panel">
+            <div class="control-section">
+                <h4>Elements</h4>
+                <div class="asset-list">
+                    @if (canvasProject != null)
+                    {
+                        @foreach (var element in canvasProject.Elements.Where(e => e is not CanvasBackground).OrderByDescending(e => e.ZIndex))
+                        {
+                            <div class="asset-item @(element.IsSelected ? "selected" : "") @(dragOverElementId == element.Id && draggingZOrderElementId != null ? "drag-over" : "")"
+                                 @onclick="() => SelectElement(element.Id)"
+                                 draggable="true"
+                                 @ondragstart="(e) => OnElementDragStart(e, element.Id)"
+                                 @ondragover="(e) => OnElementDragOver(e, element.Id)"
+                                 @ondragover:preventDefault="true"
+                                 @ondragleave="() => OnElementDragLeave(element.Id)"
+                                 @ondrop="(e) => OnElementDrop(e, element.Id)"
+                                 @ondrop:preventDefault="true">
+                                <div class="asset-info">
+                                    <span class="drag-handle" title="Drag to reorder">&#8801;</span>
+                                    @if (element is CanvasImage img)
+                                    {
+                                        <span class="element-name">Image: @img.FileName</span>
+                                    }
+                                    else if (element is CanvasText txt)
+                                    {
+                                        <span class="element-name">Text: @(txt.Text.Length > 20 ? txt.Text.Substring(0, 20) + "..." : txt.Text)</span>
+                                    }
+                                    else if (element is CanvasColorBlock blk)
+                                    {
+                                        <span class="element-name">Color Block</span>
+                                    }
+                                </div>
+                                <button class="dx-btn dx-btn-red" style="padding: 2px 8px; font-size: 0.8rem;" @onclick="() => RemoveElement(element.Id)" @onclick:stopPropagation="true">
+                                    X
+                                </button>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h4>Add Elements</h4>
+                <div class="element-buttons">
+                    <button class="btn btn-outline-primary" @onclick="ShowImageUploadModal">
+                        Upload Image
+                    </button>
+                    <button class="btn btn-outline-primary" @onclick="AddTextElement">
+                        Add Text
+                    </button>
+                    <button class="btn btn-outline-primary" @onclick="AddColorBlockElement">
+                        Add Color Block
+                    </button>
+                </div>
+            </div>
+
+            <div class="control-section">
+                <h4>Background</h4>
+                <div class="mb-2">
+                    <label class="form-check">
+                        <input class="dx-checkbox" type="checkbox" @onchange="OnBackgroundTransparentChanged" checked="@isBackgroundTransparent" />
+                        Transparent Background
+                    </label>
+                </div>
+                @if (!isBackgroundTransparent)
+                {
+                    <div class="mb-2">
+                        <label class="form-label">Background Color:</label>
+                        <input type="color" class="form-control form-control-color" @bind="BackgroundColorValue" @bind:event="oninput" />
+                    </div>
+                }
+            </div>
+
+            <div class="control-section">
+                <h4>Grid & Snap</h4>
+                <div class="mb-2">
+                    <label class="form-check">
+                        <input class="dx-checkbox" type="checkbox" @bind="showGrid" />
+                        Show Grid
+                    </label>
+                </div>
+                @if (showGrid)
+                {
+                    <div class="grid-controls">
+                        <div class="grid-control">
+                            <label>Width (px):</label>
+                            <input type="number" @bind="gridWidth" min="5" max="100" />
+                        </div>
+
+                        <div class="grid-control">
+                            <label>Height (px):</label>
+                            <input type="number" @bind="gridHeight" min="5" max="100" />
+                        </div>
+
+                        <div class="grid-control">
+                            <label>Offset Top:</label>
+                            <input type="number" @bind="gridOffsetTop" min="0" max="100" />
+                        </div>
+
+                        <div class="grid-control">
+                            <label>Offset Left:</label>
+                            <input type="number" @bind="gridOffsetLeft" min="0" max="100" />
+                        </div>
+
+                        <div class="grid-control">
+                            <label>Snap Distance:</label>
+                            <input type="number" @bind="snapThreshold" min="1" max="50" />
+                        </div>
+
+                        <div class="grid-control">
+                            <label>Color:</label>
+                            <input type="color" @bind="gridColor" @bind:event="oninput" />
+                        </div>
+                    </div>
+                }
+            </div>
+
+            @if (selectedElement != null)
+            {
+                <div class="control-section">
+                    <h4>Element Properties</h4>
+
+                    @if (selectedElement is CanvasImage imageElement)
+                    {
+                        <div class="image-controls">
+                            <label>Saturation:</label>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <input type="range" @bind="imageElement.Saturation" min="0" max="2" step="0.1" @bind:event="oninput" style="flex: 1;" />
+                                <span style="font-size: 0.8em; color: #666; min-width: 60px;">@(Math.Round(imageElement.Saturation * 100))%</span>
+                            </div>
+                        </div>
+                    }
+                    else if (selectedElement is CanvasColorBlock colorBlockElement)
+                    {
+                        <div class="color-block-controls">
+                            <label>Color:</label>
+                            <input type="color" @bind="colorBlockElement.Color" @bind:event="oninput" style="width: 100%; margin-bottom: 10px;" />
+
+                            <label>Opacity:</label>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <input type="range" @bind="colorBlockElement.Opacity" min="0" max="1" step="0.05" @bind:event="oninput" style="flex: 1;" />
+                                <span style="font-size: 0.8em; color: #666; min-width: 40px;">@(Math.Round(colorBlockElement.Opacity * 100))%</span>
+                            </div>
+                        </div>
+                    }
+                    else if (selectedElement is CanvasText textElement)
+                    {
+                        <div class="text-controls">
+                            <label>Text:</label>
+                            <input type="text" @bind="textElement.Text" @bind:event="oninput" />
+
+                            <label>Font:</label>
+                            <select @bind="textElement.FontFamily">
+                                @if (availableFonts != null)
+                                {
+                                    @foreach (var font in availableFonts)
+                                    {
+                                        <option value="@font">@font</option>
+                                    }
+                                }
+                            </select>
+
+                            <label>Size:</label>
+                            <input type="number" @bind="textElement.FontSize" min="8" max="200" @bind:event="oninput" />
+
+                            <label>Color:</label>
+                            <input type="color" @bind="textElement.FontColor" @bind:event="oninput" />
+
+                            <label>
+                                <input type="checkbox" class="dx-checkbox" @bind="textElement.IsBold" />
+                                Bold
+                            </label>
+
+                            <label>
+                                <input type="checkbox" class="dx-checkbox" @bind="textElement.IsItalic" />
+                                Italic
+                            </label>
+
+                            <label>Alignment:</label>
+                            <select @bind="textElement.TextAlign">
+                                <option value="left">Left</option>
+                                <option value="center">Center</option>
+                                <option value="right">Right</option>
+                            </select>
+
+                            <!-- Shadow Controls -->
+                            <div class="shadow-controls" style="margin-top: 15px; padding-top: 15px; border-top: 1px solid #ddd;">
+                                <h6>Drop Shadow</h6>
+
+                                <label>
+                                    <input type="checkbox" class="dx-checkbox" @bind="textElement.HasShadow" @bind:event="onchange" />
+                                    Enable Shadow
+                                </label>
+
+                                @if (textElement.HasShadow)
+                                {
+                                    <div class="shadow-grid">
+                                        <div class="shadow-control">
+                                            <label>Offset X:</label>
+                                            <input type="number" @bind="textElement.ShadowOffsetX" min="-20" max="20" step="1" @bind:event="oninput" />
+                                        </div>
+
+                                        <div class="shadow-control">
+                                            <label>Offset Y:</label>
+                                            <input type="number" @bind="textElement.ShadowOffsetY" min="-20" max="20" step="1" @bind:event="oninput" />
+                                        </div>
+
+                                        <div class="shadow-control">
+                                            <label>Blur:</label>
+                                            <input type="number" @bind="textElement.ShadowBlur" min="0" max="20" step="1" @bind:event="oninput" />
+                                        </div>
+
+                                        <div class="shadow-control">
+                                            <label>Color:</label>
+                                            <input type="color" @bind="textElement.ShadowColor" @bind:event="oninput" />
+                                        </div>
+                                    </div>
+
+                                    <div class="opacity-control">
+                                        <label>Opacity:</label>
+                                        <div style="display: flex; align-items: center; gap: 10px;">
+                                            <input type="range" @bind="textElement.ShadowOpacity" min="0" max="1" step="0.1" @bind:event="oninput" style="flex: 1;" />
+                                            <span style="font-size: 0.8em; color: #666; min-width: 40px;">@(Math.Round(textElement.ShadowOpacity * 100))%</span>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <!-- Common element properties -->
+                    <div class="element-properties">
+                        <h5>Position & Size</h5>
+
+                        <div class="fit-controls">
+                            <button class="btn btn-sm btn-outline-primary" @onclick="FitElementVertically">Fit Vertically</button>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="FitElementHorizontally">Fit Horizontally</button>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="CenterElementVertically">Center Vertically</button>
+                            <button class="btn btn-sm btn-outline-primary" @onclick="CenterElementHorizontally">Center Horizontally</button>
+                        </div>
+
+                        <div class="position-controls">
+                            <label>Left (X):</label>
+                            <input type="number" @bind="ElementXRounded" @bind:event="oninput" step="1" />
+
+                            <label>Top (Y):</label>
+                            <input type="number" @bind="ElementYRounded" @bind:event="oninput" step="1" />
+                        </div>
+
+                        <div class="size-controls">
+                            <label>Width:</label>
+                            <input type="number" @bind="ElementWidthRounded" @bind:event="oninput" step="1" min="1" />
+
+                            <label>Height:</label>
+                            <input type="number" @bind="ElementHeightRounded" @bind:event="oninput" step="1" min="1" />
+                        </div>
+                    </div>
+                </div>
+            }
+
+
+        </div>
+    </div>
+</div>
+
+<!-- Image Upload Modal -->
+@if (showImageUploadModal)
+{
+    <div class="modal fade show" style="display: flex; align-items: center; justify-content: center; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0,0,0,0.5); z-index: 1050;">
+        <div class="modal-dialog modal-lg">
+            <div class="modal-content">
+                <div class="modal-header" style="background-color: var(--dx-blue); color: white;">
+                    <h5 class="modal-title">Upload Image</h5>
+                    <button type="button" class="btn-close btn-close-white" @onclick="HideImageUploadModal"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="mb-3">
+                        <label class="form-label">Select an image file:</label>
+                        <InputFile class="form-control mt-3" @ref="imageInput" OnChange="OnImageUpload" accept="image/*" />
+                    </div>
+                    @if (uploadError != null)
+                    {
+                        <div class="alert alert-danger">
+                            @uploadError
+                        </div>
+                    }
+                    @if (isUploading)
+                    {
+                        <div class="text-center">
+                            <div class="spinner-border text-primary" role="status">
+                                <span class="visually-hidden">Uploading...</span>
+                            </div>
+                            <p class="mt-2">Uploading image...</p>
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="dx-btn dx-btn-gray" @onclick="HideImageUploadModal">Cancel</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<MediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="OnMediaUploaderSubmit" />
+
+@code {
+    [Parameter, SupplyParameterFromQuery] public int LocationId { get; set; }
+    [Parameter, SupplyParameterFromQuery] public int? ConstraintId { get; set; }
+    [Parameter, SupplyParameterFromQuery] public int? DisplayId { get; set; }
+    [Parameter, SupplyParameterFromQuery] public double Width { get; set; } = 800;
+    [Parameter, SupplyParameterFromQuery] public double Height { get; set; } = 600;
+
+    private CanvasProject? canvasProject;
+    private CanvasElement? selectedElement;
+    private bool isGenerating = false;
+    private InputFile? imageInput;
+    private bool showImageUploadModal = false;
+    private bool isUploading = false;
+    private string? uploadError = null;
+    private MediaAssetUploader? mediaUploaderModal;
+
+    private Stack<string> undoHistory = new Stack<string>();
+    private const int MaxUndoSteps = 20;
+
+    private bool showGrid = false;
+    private int gridWidth = 20;
+    private int gridHeight = 20;
+    private int gridOffsetTop = 0;
+    private int gridOffsetLeft = 0;
+    private int snapThreshold = 10;
+    private string gridColor = "#cccccc";
+    private bool isBackgroundTransparent = false;
+
+    private double zoomLevel = 1.0;
+    private double baseCanvasWidth => canvasProject?.CanvasWidth ?? 800;
+    private double baseCanvasHeight => canvasProject?.CanvasHeight ?? 600;
+
+    private bool isDragging = false;
+    private string? draggingElementId = null;
+    private double dragStartMouseX = 0;
+    private double dragStartMouseY = 0;
+    private double dragStartElementX = 0;
+    private double dragStartElementY = 0;
+
+    private string? draggingZOrderElementId = null;
+    private string? dragOverElementId = null;
+
+    private bool isResizing = false;
+    private string? resizingElementId = null;
+    private string resizeDirection = "";
+    private double resizeStartX = 0;
+    private double resizeStartY = 0;
+    private double resizeStartWidth = 0;
+    private double resizeStartHeight = 0;
+    private double resizeStartElementX = 0;
+    private double resizeStartElementY = 0;
+
+    private const string resizeNw = "nw";
+    private const string resizeNe = "ne";
+    private const string resizeSw = "sw";
+    private const string resizeSe = "se";
+
+    private string backgroundColorValue = "#FFFFFF";
+    private string customFileName = "";
+    private List<string>? availableFonts;
+
+    private string BackgroundColorValue
+    {
+        get => backgroundColorValue;
+        set
+        {
+            backgroundColorValue = value;
+            if (canvasProject?.Background != null)
+            {
+                canvasProject.Background.BackgroundColor = value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void OnBackgroundTransparentChanged(ChangeEventArgs e)
+    {
+        isBackgroundTransparent = (bool?)e.Value ?? false;
+        StateHasChanged();
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        canvasProject = new CanvasProject(Width, Height, LocationId, ConstraintId);
+        BackgroundColorValue = canvasProject.Background?.BackgroundColor ?? "#FFFFFF";
+
+        var location = await dbContext.TblLocations.FirstOrDefaultAsync(x => x.LocationId == LocationId);
+        availableFonts = await FontService.GetAvailableFontsAsync();
+
+        if (baseCanvasWidth > 2000 || baseCanvasHeight > 1000)
+        {
+            var estimatedZoom = Math.Min(1200.0 / baseCanvasWidth, 600.0 / baseCanvasHeight);
+            zoomLevel = Math.Max(estimatedZoom, 0.1);
+        }
+
+        SaveStateForUndo();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await FitToScreen();
+            await JSRuntime.InvokeVoidAsync("setupKeyboardListeners", DotNetObjectReference.Create(this));
+        }
+    }
+
+    private void GoBack() { Navigation.NavigateTo($"/location/{LocationId}"); }
+
+    private void SelectElement(string elementId)
+    {
+        if (canvasProject == null) return;
+        foreach (var element in canvasProject.Elements)
+            element.IsSelected = element.Id == elementId;
+        selectedElement = canvasProject.Elements.FirstOrDefault(e => e.Id == elementId);
+        StateHasChanged();
+    }
+
+    private void OnElementClick(string elementId, MouseEventArgs e)
+    {
+        if (!isDragging && !isResizing) SelectElement(elementId);
+    }
+
+    private async Task OnImageUpload(InputFileChangeEventArgs e)
+    {
+        if (canvasProject == null || e.File == null) return;
+        isUploading = true;
+        uploadError = null;
+        StateHasChanged();
+
+        try
+        {
+            var file = e.File;
+            if (!file.ContentType.StartsWith("image/")) { uploadError = "Please select a valid image file."; return; }
+            if (file.Size > 10 * 1024 * 1024) { uploadError = "File size must be less than 10MB."; return; }
+
+            using var stream = file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024);
+            using var memoryStream = new MemoryStream();
+            await stream.CopyToAsync(memoryStream);
+            var buffer = memoryStream.ToArray();
+
+            var base64 = Convert.ToBase64String(buffer);
+            var dataUrl = $"data:{file.ContentType};base64,{base64}";
+
+            using var skImage = SkiaSharp.SKImage.FromEncodedData(buffer);
+            if (skImage == null) { uploadError = "Unable to process the image file."; return; }
+
+            var canvasImage = new CanvasImage
+            {
+                FileName = file.Name,
+                Base64Data = dataUrl,
+                OriginalWidth = skImage.Width,
+                OriginalHeight = skImage.Height,
+                Width = skImage.Width,
+                Height = skImage.Height
+            };
+
+            (canvasImage.X, canvasImage.Y) = SnapElementToGrid(canvasImage, 0, 0);
+            canvasProject.AddElement(canvasImage);
+            SelectElement(canvasImage.Id);
+            SaveStateForUndo();
+            HideImageUploadModal();
+        }
+        catch (Exception ex) { uploadError = $"Error uploading image: {ex.Message}"; }
+        finally { isUploading = false; StateHasChanged(); }
+    }
+
+    private void ShowImageUploadModal() { showImageUploadModal = true; uploadError = null; StateHasChanged(); }
+    private void HideImageUploadModal() { showImageUploadModal = false; uploadError = null; isUploading = false; StateHasChanged(); }
+
+    private void AddTextElement()
+    {
+        if (canvasProject == null) return;
+        var textElement = new CanvasText { Text = "New Text", Width = 200, Height = 50 };
+        (textElement.X, textElement.Y) = SnapElementToGrid(textElement, 100, 100);
+        canvasProject.AddElement(textElement);
+        SelectElement(textElement.Id);
+        SaveStateForUndo();
+        StateHasChanged();
+    }
+
+    private void AddColorBlockElement()
+    {
+        if (canvasProject == null) return;
+        var colorBlockElement = new CanvasColorBlock
+        {
+            Width = canvasProject.CanvasWidth, Height = canvasProject.CanvasHeight,
+            Color = "#001E62", Opacity = 0.75
+        };
+        (colorBlockElement.X, colorBlockElement.Y) = SnapElementToGrid(colorBlockElement, 0, 0);
+        canvasProject.AddElement(colorBlockElement);
+        SelectElement(colorBlockElement.Id);
+        SaveStateForUndo();
+        StateHasChanged();
+    }
+
+    private void SaveStateForUndo()
+    {
+        if (canvasProject == null) return;
+        try
+        {
+            var jsonState = JsonConvert.SerializeObject(canvasProject, JsonSettings);
+            undoHistory.Push(jsonState);
+            while (undoHistory.Count > MaxUndoSteps)
+            {
+                var temp = new Stack<string>();
+                for (int i = 0; i < MaxUndoSteps - 1; i++)
+                {
+                    if (undoHistory.Count > 0) temp.Push(undoHistory.Pop());
+                }
+                undoHistory.Clear();
+                while (temp.Count > 0) undoHistory.Push(temp.Pop());
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error saving undo state"); }
+    }
+
+    [JSInvokable]
+    public async Task HandleUndo() { await PerformUndo(); }
+
+    private async Task PerformUndo()
+    {
+        if (canvasProject == null || undoHistory.Count <= 1) return;
+        try
+        {
+            if (undoHistory.Count > 0) undoHistory.Pop();
+            if (undoHistory.Count > 0)
+            {
+                var previousState = undoHistory.Peek();
+                canvasProject = JsonConvert.DeserializeObject<CanvasProject>(previousState, JsonSettings);
+                selectedElement = null;
+                BackgroundColorValue = canvasProject?.Background?.BackgroundColor ?? "#FFFFFF";
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error performing undo"); }
+    }
+
+    private void RemoveElement(string elementId)
+    {
+        if (canvasProject == null) return;
+        canvasProject.RemoveElement(elementId);
+        if (selectedElement?.Id == elementId) selectedElement = null;
+        SaveStateForUndo();
+        StateHasChanged();
+    }
+
+    private UploadingAsSection? uploadingAs;
+    private PreparedUpload? preparedUpload;
+    private string? uploadIdentityError;
+
+    // Called from a display or a non-playlist constraint, the image becomes an asset row here and needs an
+    // owner. Otherwise it is handed to the media uploader, which carries its own picker.
+    private bool UsesAssetRow => DisplayId.HasValue || (ConstraintId.HasValue && ConstraintId.Value != 0);
+
+    private string? UploadBlockReason => UsesAssetRow && LocationId > 0 && uploadingAs is { IsBlocked: true } section ? section.BlockReason : null;
+
+    private async Task GenerateImage()
+    {
+        if (canvasProject == null) return;
+
+        preparedUpload = null;
+        uploadIdentityError = null;
+        if (UsesAssetRow && LocationId > 0)
+        {
+            preparedUpload = await uploadIdentity.PrepareAsync(sessionState.User?.UserId ?? 0, LocationId,
+                uploadingAs?.PickedGroupId, uploadingAs?.Picks);
+            if (!preparedUpload.IsValid)
+            {
+                uploadIdentityError = preparedUpload.Error;
+                if (uploadingAs != null)
+                    await uploadingAs.ReloadAfterRefusalAsync(preparedUpload.Error);
+                return;
+            }
+        }
+
+        isGenerating = true;
+        StateHasChanged();
+        try
+        {
+            var baseDirectory = MediaPaths.GetRoot();
+
+            // DisplayId indicates invocation from a Display page — always use SQL path.
+            // ConstraintId != 0 is the legacy check for non-playlist SQL content.
+            if (DisplayId.HasValue || (ConstraintId.HasValue && ConstraintId.Value != 0))
+            {
+                // Staged out of the watched location folder until the asset row exists: the
+                // manifest builder serves a media file that has no row as unapproved legacy content.
+                var stagingFolder = Path.Combine(baseDirectory, "MediaAssets", "_staging", Guid.NewGuid().ToString("N"));
+                Directory.CreateDirectory(stagingFolder);
+
+                var fileName = await ImageGenerator.SaveCanvasImageAsync(canvasProject, baseDirectory, !isBackgroundTransparent, customFileName, stagingFolder);
+
+                await CreateSqlAssetEntry(fileName);
+
+                var targetDirectory = CanvasImageGenerationService.GetTargetDirectory(canvasProject, baseDirectory);
+                Directory.CreateDirectory(targetDirectory);
+                var finalPath = Path.Combine(targetDirectory, fileName);
+                if (File.Exists(finalPath)) File.Delete(finalPath);
+                File.Move(Path.Combine(stagingFolder, fileName), finalPath);
+                try { Directory.Delete(stagingFolder, recursive: true); } catch { }
+
+                var returnDisplayId = DisplayId ?? GetDisplayIdForConstraint(ConstraintId);
+                Navigation.NavigateTo($"/display/{returnDisplayId}");
+            }
+            else
+            {
+                // No asset row is created on this path, so there is nothing to race and the image
+                // is written straight to its folder before the metadata modal opens.
+                var fileName = await ImageGenerator.SaveCanvasImageAsync(canvasProject, baseDirectory, !isBackgroundTransparent, customFileName);
+                var filePath = GetGeneratedFilePath(fileName);
+                var webPath = $"/MediaAssets/{LocationId}/{fileName}";
+                var mediaFile = new MediaFile { DiskPath = filePath, WebPath = webPath, Metadata = new List<MetadataField>() };
+                await ShowMediaUploaderForMetadata(mediaFile);
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error generating image"); }
+        finally { isGenerating = false; StateHasChanged(); }
+    }
+
+    private void OnCanvasDragOver(DragEventArgs e) { e.DataTransfer.DropEffect = "move"; }
+    private void OnCanvasDrop(DragEventArgs e) { }
+
+    private void StartDrag(string elementId, MouseEventArgs e)
+    {
+        if (canvasProject == null) return;
+        var element = canvasProject.Elements.FirstOrDefault(x => x.Id == elementId);
+        if (element == null) return;
+        isDragging = true;
+        draggingElementId = elementId;
+        dragStartMouseX = e.ClientX; dragStartMouseY = e.ClientY;
+        dragStartElementX = element.X; dragStartElementY = element.Y;
+        SelectElement(elementId);
+    }
+
+    private void OnCanvasMouseMove(MouseEventArgs e)
+    {
+        if (isResizing && resizingElementId != null && canvasProject != null) { HandleResize(e); return; }
+        if (!isDragging || draggingElementId == null || canvasProject == null) return;
+        var element = canvasProject.Elements.FirstOrDefault(x => x.Id == draggingElementId);
+        if (element == null) return;
+        var deltaX = e.ClientX - dragStartMouseX;
+        var deltaY = e.ClientY - dragStartMouseY;
+        var canvasDeltaX = deltaX / zoomLevel;
+        var canvasDeltaY = deltaY / zoomLevel;
+        var newX = dragStartElementX + canvasDeltaX;
+        var newY = dragStartElementY + canvasDeltaY;
+        (newX, newY) = SnapElementToGrid(element, newX, newY);
+        element.X = newX; element.Y = newY;
+        StateHasChanged();
+    }
+
+    private void OnCanvasMouseUp(MouseEventArgs e)
+    {
+        isDragging = false; draggingElementId = null;
+        isResizing = false; resizingElementId = null; resizeDirection = "";
+    }
+
+    private void OnCanvasMouseLeave(MouseEventArgs e)
+    {
+        if (isDragging || isResizing)
+        {
+            isDragging = false; draggingElementId = null;
+            isResizing = false; resizingElementId = null; resizeDirection = "";
+            StateHasChanged();
+        }
+    }
+
+    private void HandleResize(MouseEventArgs e)
+    {
+        if (canvasProject == null) return;
+        var element = canvasProject.Elements.FirstOrDefault(x => x.Id == resizingElementId);
+        if (element == null) return;
+
+        var deltaX = (e.ClientX - resizeStartX) / zoomLevel;
+        var deltaY = (e.ClientY - resizeStartY) / zoomLevel;
+
+        var newX = resizeStartElementX;
+        var newY = resizeStartElementY;
+        var newWidth = resizeStartWidth;
+        var newHeight = resizeStartHeight;
+
+        switch (resizeDirection)
+        {
+            case "nw":
+                newX = resizeStartElementX + deltaX;
+                newY = resizeStartElementY + deltaY;
+                newWidth = resizeStartWidth - deltaX;
+                newHeight = resizeStartHeight - deltaY;
+                break;
+            case "ne":
+                newY = resizeStartElementY + deltaY;
+                newWidth = resizeStartWidth + deltaX;
+                newHeight = resizeStartHeight - deltaY;
+                break;
+            case "sw":
+                newX = resizeStartElementX + deltaX;
+                newWidth = resizeStartWidth - deltaX;
+                newHeight = resizeStartHeight + deltaY;
+                break;
+            case "se":
+                newWidth = resizeStartWidth + deltaX;
+                newHeight = resizeStartHeight + deltaY;
+                break;
+        }
+
+        var minSize = 20;
+        if (newWidth < minSize)
+        {
+            if (resizeDirection.Contains("w")) newX = resizeStartElementX + (resizeStartWidth - minSize);
+            newWidth = minSize;
+        }
+        if (newHeight < minSize)
+        {
+            if (resizeDirection.Contains("n")) newY = resizeStartElementY + (resizeStartHeight - minSize);
+            newHeight = minSize;
+        }
+
+        if (showGrid)
+        {
+            switch (resizeDirection)
+            {
+                case "nw":
+                    var (snappedNwX, snappedNwY) = SnapToGrid(newX, newY);
+                    if (Math.Abs(newX - snappedNwX) <= snapThreshold)
+                    { var nwRight = newX + newWidth; newX = snappedNwX; newWidth = nwRight - newX; }
+                    if (Math.Abs(newY - snappedNwY) <= snapThreshold)
+                    { var nwBottom = newY + newHeight; newY = snappedNwY; newHeight = nwBottom - newY; }
+                    break;
+                case "ne":
+                    var neTopRightX = newX + newWidth;
+                    var (snappedNeX, snappedNeY) = SnapToGrid(neTopRightX, newY);
+                    if (Math.Abs(neTopRightX - snappedNeX) <= snapThreshold)
+                        newWidth = snappedNeX - newX;
+                    if (Math.Abs(newY - snappedNeY) <= snapThreshold)
+                    { var neBottom = newY + newHeight; newY = snappedNeY; newHeight = neBottom - newY; }
+                    break;
+                case "sw":
+                    var swBottomY = newY + newHeight;
+                    var (snappedSwX, snappedSwY) = SnapToGrid(newX, swBottomY);
+                    if (Math.Abs(newX - snappedSwX) <= snapThreshold)
+                    { var swRight = newX + newWidth; newX = snappedSwX; newWidth = swRight - newX; }
+                    if (Math.Abs(swBottomY - snappedSwY) <= snapThreshold)
+                        newHeight = snappedSwY - newY;
+                    break;
+                case "se":
+                    var seRight = newX + newWidth;
+                    var seBottom = newY + newHeight;
+                    var (snappedSeX, snappedSeY) = SnapToGrid(seRight, seBottom);
+                    if (Math.Abs(seRight - snappedSeX) <= snapThreshold)
+                        newWidth = snappedSeX - newX;
+                    if (Math.Abs(seBottom - snappedSeY) <= snapThreshold)
+                        newHeight = snappedSeY - newY;
+                    break;
+            }
+        }
+
+        element.X = newX; element.Y = newY; element.Width = newWidth; element.Height = newHeight;
+        StateHasChanged();
+    }
+
+    private (double width, double height) SnapDimensionsToGrid(double width, double height)
+    {
+        if (!showGrid) return (width, height);
+        var snappedWidth = Math.Round(width / gridWidth) * gridWidth;
+        if (Math.Abs(width - snappedWidth) <= snapThreshold) width = snappedWidth;
+        var snappedHeight = Math.Round(height / gridHeight) * gridHeight;
+        if (Math.Abs(height - snappedHeight) <= snapThreshold) height = snappedHeight;
+        return (width, height);
+    }
+
+    private void StartResize(string elementId, string handle, MouseEventArgs e)
+    {
+        if (canvasProject == null) return;
+        var element = canvasProject.Elements.FirstOrDefault(x => x.Id == elementId);
+        if (element == null) return;
+        isResizing = true; resizingElementId = elementId; resizeDirection = handle;
+        resizeStartX = e.ClientX; resizeStartY = e.ClientY;
+        resizeStartWidth = element.Width; resizeStartHeight = element.Height;
+        resizeStartElementX = element.X; resizeStartElementY = element.Y;
+        SelectElement(elementId);
+    }
+
+    private string GetGridBackgroundImage()
+    {
+        var encodedColor = gridColor.Replace("#", "%23");
+        return $"url(\"data:image/svg+xml,%3csvg width='{gridWidth}' height='{gridHeight}' xmlns='http://www.w3.org/2000/svg'%3e%3cdefs%3e%3cpattern id='grid' width='{gridWidth}' height='{gridHeight}' patternUnits='userSpaceOnUse'%3e%3cpath d='M {gridWidth} 0 L 0 0 0 {gridHeight}' fill='none' stroke='{encodedColor}' stroke-width='1'/%3e%3c/pattern%3e%3c/defs%3e%3crect width='100%25' height='100%25' fill='url(%23grid)' /%3e%3c/svg%3e\")";
+    }
+
+    private (double x, double y) SnapToGrid(double x, double y)
+    {
+        if (!showGrid) return (x, y);
+        var adjustedX = x - gridOffsetLeft; var adjustedY = y - gridOffsetTop;
+        var snappedX = Math.Round(adjustedX / gridWidth) * gridWidth + gridOffsetLeft;
+        var snappedY = Math.Round(adjustedY / gridHeight) * gridHeight + gridOffsetTop;
+        if (Math.Abs(x - snappedX) <= snapThreshold && Math.Abs(y - snappedY) <= snapThreshold)
+            return (snappedX, snappedY);
+        return (x, y);
+    }
+
+    private (double x, double y) SnapElementToGrid(CanvasElement element, double proposedX, double proposedY)
+    {
+        if (!showGrid) return (proposedX, proposedY);
+        var snapPoints = new[]
+        {
+            (proposedX, proposedY), (proposedX + element.Width, proposedY),
+            (proposedX, proposedY + element.Height), (proposedX + element.Width, proposedY + element.Height),
+            (proposedX + element.Width / 2, proposedY), (proposedX + element.Width / 2, proposedY + element.Height),
+            (proposedX, proposedY + element.Height / 2), (proposedX + element.Width, proposedY + element.Height / 2),
+        };
+        foreach (var (pointX, pointY) in snapPoints)
+        {
+            var (snappedPointX, snappedPointY) = SnapToGrid(pointX, pointY);
+            if (Math.Abs(pointX - snappedPointX) <= snapThreshold && Math.Abs(pointY - snappedPointY) <= snapThreshold)
+            {
+                var offsetX = pointX - proposedX; var offsetY = pointY - proposedY;
+                return (snappedPointX - offsetX, snappedPointY - offsetY);
+            }
+        }
+        return (proposedX, proposedY);
+    }
+
+    private async Task ZoomIn() { zoomLevel = Math.Min(zoomLevel * 1.2, 5.0); StateHasChanged(); }
+    private async Task ZoomOut() { zoomLevel = Math.Max(zoomLevel / 1.2, 0.1); StateHasChanged(); }
+
+    private async Task FitToScreen()
+    {
+        var viewportWidth = await JSRuntime.InvokeAsync<double>("getViewportWidth");
+        var viewportHeight = await JSRuntime.InvokeAsync<double>("getViewportHeight");
+        var availableWidth = Math.Max(viewportWidth - 370, 200);
+        var availableHeight = Math.Max(viewportHeight - 200, 200);
+        var scaleX = availableWidth / baseCanvasWidth;
+        var scaleY = availableHeight / baseCanvasHeight;
+        zoomLevel = Math.Min(Math.Min(scaleX, scaleY), 1.0);
+        StateHasChanged();
+    }
+
+    private string GetJustifyContent(string textAlign) => textAlign.ToLower() switch { "center" => "center", "right" => "flex-end", _ => "flex-start" };
+
+    private string GetTextShadowStyle(CanvasText textElement)
+    {
+        if (!textElement.HasShadow) return "";
+        var shadowColorWithOpacity = ConvertToRgba(textElement.ShadowColor, textElement.ShadowOpacity);
+        return $"filter: drop-shadow({textElement.ShadowOffsetX}px {textElement.ShadowOffsetY}px {textElement.ShadowBlur}px {shadowColorWithOpacity});";
+    }
+
+    private string ConvertToRgba(string hexColor, double opacity)
+    {
+        var hex = hexColor.TrimStart('#');
+        var r = Convert.ToInt32(hex.Substring(0, 2), 16);
+        var g = Convert.ToInt32(hex.Substring(2, 2), 16);
+        var b = Convert.ToInt32(hex.Substring(4, 2), 16);
+        return $"rgba({r}, {g}, {b}, {opacity:F2})";
+    }
+
+    private void OnElementDragStart(DragEventArgs e, string elementId) { draggingZOrderElementId = elementId; e.DataTransfer.EffectAllowed = "move"; }
+    private void OnElementDragOver(DragEventArgs e, string elementId)
+    {
+        if (draggingZOrderElementId != null && draggingZOrderElementId != elementId) { dragOverElementId = elementId; e.DataTransfer.DropEffect = "move"; StateHasChanged(); }
+    }
+    private void OnElementDragLeave(string elementId) { if (dragOverElementId == elementId) { dragOverElementId = null; StateHasChanged(); } }
+
+    private void OnElementDrop(DragEventArgs e, string targetElementId)
+    {
+        if (draggingZOrderElementId == null || canvasProject == null || draggingZOrderElementId == targetElementId) { draggingZOrderElementId = null; return; }
+        var draggedElement = canvasProject.Elements.FirstOrDefault(el => el.Id == draggingZOrderElementId);
+        var targetElement = canvasProject.Elements.FirstOrDefault(el => el.Id == targetElementId);
+        if (draggedElement != null && targetElement != null && draggedElement != canvasProject.Background && targetElement != canvasProject.Background)
+        {
+            var draggedIndex = canvasProject.Elements.IndexOf(draggedElement);
+            var targetIndex = canvasProject.Elements.IndexOf(targetElement);
+            canvasProject.Elements.RemoveAt(draggedIndex);
+            if (draggedIndex < targetIndex) targetIndex--;
+            canvasProject.Elements.Insert(targetIndex, draggedElement);
+            for (int i = 0; i < canvasProject.Elements.Count; i++) canvasProject.Elements[i].ZIndex = i;
+            StateHasChanged();
+        }
+        draggingZOrderElementId = null; dragOverElementId = null;
+    }
+
+    private async Task CreateSqlAssetEntry(string fileName)
+    {
+        try
+        {
+            var webPath = $"/MediaAssets/{LocationId}/{ConstraintId}/{fileName}";
+            var newAsset = new TblAsset
+            {
+                AssetGroupId = 1,
+                AssetPath = webPath,
+                AssetTypeId = (int)Types.AssetType.Image,
+                ConstraintId = ConstraintId ?? 0,
+                LocationId = LocationId,
+                AssetWidth = (int)Width,
+                AssetHeight = (int)Height,
+                UploadedByUserId = preparedUpload?.OwnerUserId ?? sessionState.User?.UserId,
+                UploadedByUserGroupId = preparedUpload?.OwnerGroupId
+            };
+            dbContext.TblAssets.Add(newAsset);
+            await dbContext.SaveChangesAsync();
+            publicationInvalidator.AssetsChanged([newAsset.LocationId]);
+
+            foreach (var (key, values) in preparedUpload?.Tags ?? new Dictionary<string, List<string>>())
+                await contentMetadataService.SetMetadataAsync(newAsset.AssetId, key, values, sessionState.User?.UserId);
+
+            var location = await dbContext.TblLocations.FindAsync(LocationId);
+            if (location?.EnableContentApproval == true && sessionState.User != null)
+            {
+                var approval = new TblAssetApproval
+                {
+                    AssetId = newAsset.AssetId,
+                    UploadedByUserId = sessionState.User.UserId,
+                    ApprovalStatus = (int)ApprovalStatus.Pending,
+                    SubmittedDate = DateTime.UtcNow,
+                    ExtendedData = System.Text.Json.JsonSerializer.Serialize(new { source = "MediaCreator" })
+                };
+                dbContext.TblAssetApprovals.Add(approval);
+                await dbContext.SaveChangesAsync();
+                publicationInvalidator.AssetsChanged([LocationId]);
+                await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, LocationId, true,
+                    uploadingUserId: null, pickedRuleId: preparedUpload?.PickedRuleId);
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error creating SQL asset entry"); }
+    }
+
+    private int GetDisplayIdForConstraint(int? constraintId)
+    {
+        if (constraintId == null) return 0;
+        var display = dbContext.TblDisplays.FirstOrDefault(d => d.ConstraintId == constraintId);
+        return display?.DisplayId ?? 0;
+    }
+
+    private string GetGeneratedFilePath(string fileName)
+    {
+        var baseDirectory = MediaPaths.GetRoot();
+        if (ConstraintId.HasValue && ConstraintId.Value != 0)
+            return Path.Combine(baseDirectory, "MediaAssets", LocationId.ToString(), ConstraintId.Value.ToString(), fileName);
+        else
+            return Path.Combine(baseDirectory, "MediaAssets", LocationId.ToString(), fileName);
+    }
+
+    private async Task ShowMediaUploaderForMetadata(MediaFile mediaFile)
+    {
+        await PopulateRequiredMetadata(mediaFile);
+        await CreateMetadataFile(mediaFile);
+        var uploadConfig = new MediaUploadConfig
+        {
+            UploadFolder = MediaPaths.GetRoot(), LocationId = LocationId, ConstraintId = 0,
+            ExpectedWidth = Width, ExpectedHeight = Height, EditMediaFile = mediaFile, AddToSql = false, IsSchedulable = true
+        };
+        mediaUploaderModal?.Open(uploadConfig);
+    }
+
+    private async Task OnMediaUploaderSubmit() { Navigation.NavigateTo($"/location/{LocationId}"); }
+
+    private async Task PopulateRequiredMetadata(MediaFile mediaFile)
+    {
+        mediaFile.Metadata.Add(new MetadataField { Name = "Location", DataType = "ovx_String", Value = LocationId.ToString() });
+        var fileName = Path.GetFileName(mediaFile.DiskPath);
+        mediaFile.Metadata.Add(new MetadataField { Name = "FileName", DataType = "ovx_String", Value = fileName });
+        var nextPlayOrder = await GetNextPlayOrder();
+        mediaFile.Metadata.Add(new MetadataField { Name = "PlayOrder", DataType = "ovx_String", Value = nextPlayOrder.ToString() });
+    }
+
+    private async Task<int> GetNextPlayOrder()
+    {
+        try
+        {
+            var baseDirectory = MediaPaths.GetRoot();
+            var uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", LocationId.ToString());
+            if (!Directory.Exists(uploadDirectory)) return 1;
+            int highestOrder = 0;
+            foreach (string file in Directory.GetFiles(uploadDirectory, "*", SearchOption.AllDirectories).Where(s => !s.EndsWith(".metadata") && !s.EndsWith(".db")))
+            {
+                string metadataFilePath = file + ".metadata";
+                if (File.Exists(metadataFilePath))
+                {
+                    try
+                    {
+                        var doc = new System.Xml.XmlDocument(); doc.Load(metadataFilePath);
+                        var nodes = doc.SelectNodes("usermetadata");
+                        foreach (System.Xml.XmlNode node in nodes)
+                        {
+                            foreach (System.Xml.XmlNode line in node.ChildNodes)
+                            {
+                                if (line.NodeType == System.Xml.XmlNodeType.Element && line.Name == "field" && line.Attributes?["name"]?.Value == "Location" && line.Attributes?["value"]?.Value == LocationId.ToString())
+                                {
+                                    foreach (System.Xml.XmlNode childNode in node.ChildNodes)
+                                    {
+                                        if (childNode.NodeType == System.Xml.XmlNodeType.Element && childNode.Name == "field" && childNode.Attributes?["name"]?.Value == "PlayOrder")
+                                        {
+                                            if (int.TryParse(childNode.Attributes?["value"]?.Value, out int order)) highestOrder = Math.Max(highestOrder, order);
+                                        }
+                                    }
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    catch (Exception ex) { Logger.LogError(ex, "Error reading metadata from {MetadataFilePath}", metadataFilePath); }
+                }
+            }
+            return highestOrder + 1;
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error determining next play order"); return 1; }
+    }
+
+    private void FitElementVertically() { if (selectedElement != null && canvasProject != null) { selectedElement.Y = 0; selectedElement.Height = canvasProject.CanvasHeight; StateHasChanged(); } }
+    private void FitElementHorizontally() { if (selectedElement != null && canvasProject != null) { selectedElement.X = 0; selectedElement.Width = canvasProject.CanvasWidth; StateHasChanged(); } }
+    private void CenterElementVertically() { if (selectedElement != null && canvasProject != null) { selectedElement.Y = (canvasProject.CanvasHeight - selectedElement.Height) / 2; StateHasChanged(); } }
+    private void CenterElementHorizontally() { if (selectedElement != null && canvasProject != null) { selectedElement.X = (canvasProject.CanvasWidth - selectedElement.Width) / 2; StateHasChanged(); } }
+
+    private int ElementXRounded { get => selectedElement != null ? (int)Math.Round(selectedElement.X) : 0; set { if (selectedElement != null) { selectedElement.X = value; StateHasChanged(); } } }
+    private int ElementYRounded { get => selectedElement != null ? (int)Math.Round(selectedElement.Y) : 0; set { if (selectedElement != null) { selectedElement.Y = value; StateHasChanged(); } } }
+    private int ElementWidthRounded { get => selectedElement != null ? (int)Math.Round(selectedElement.Width) : 0; set { if (selectedElement != null) { selectedElement.Width = Math.Max(1, value); StateHasChanged(); } } }
+    private int ElementHeightRounded { get => selectedElement != null ? (int)Math.Round(selectedElement.Height) : 0; set { if (selectedElement != null) { selectedElement.Height = Math.Max(1, value); StateHasChanged(); } } }
+
+    private bool IsElementOutOfBounds(CanvasElement element)
+    {
+        if (canvasProject == null) return false;
+        return element.X < 0 || element.Y < 0 || element.X + element.Width > canvasProject.CanvasWidth || element.Y + element.Height > canvasProject.CanvasHeight;
+    }
+
+    private async Task CreateMetadataFile(MediaFile mediaFile)
+    {
+        try
+        {
+            var metadataFilePath = mediaFile.DiskPath + ".metadata";
+            using (var writer = new StreamWriter(metadataFilePath))
+            {
+                await writer.WriteLineAsync("<usermetadata>");
+                foreach (var metadata in mediaFile.Metadata)
+                    await writer.WriteLineAsync($"  <field name=\"{metadata.Name}\" datatype=\"{metadata.DataType}\" value=\"{metadata.Value}\" />");
+                await writer.WriteLineAsync("</usermetadata>");
+            }
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Error creating metadata file"); }
+    }
+}

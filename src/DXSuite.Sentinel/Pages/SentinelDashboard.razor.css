@@ -1,0 +1,229 @@
+/* Sentinel Dashboard Styles */
+
+.sentinel-db-warning {
+    text-align: center;
+    padding: 60px 20px;
+    color: #666;
+}
+
+.sentinel-db-warning h2 {
+    color: #333;
+    margin-bottom: 10px;
+}
+
+.sentinel-db-warning code {
+    background: #f0f0f0;
+    padding: 2px 8px;
+    border-radius: 3px;
+    font-size: 14px;
+}
+
+.sentinel-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.last-refresh {
+    font-size: 13px;
+    color: #888;
+    font-family: "BAHNSCHRIFT";
+}
+
+/* Summary Bar */
+::deep .sentinel-summary-bar {
+    display: grid;
+    grid-template-columns: repeat(7, 1fr);
+    gap: 12px;
+    margin-bottom: 20px;
+}
+
+::deep .summary-card {
+    background: #fff;
+    border: 1px solid #e0e0e0;
+    border-radius: 6px;
+    padding: 16px;
+    text-align: center;
+}
+
+::deep .summary-count {
+    font-size: 28px;
+    font-weight: 700;
+    font-family: "BAHNSCHRIFT";
+    line-height: 1.2;
+}
+
+::deep .summary-label {
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+    font-family: "BAHNSCHRIFT";
+    margin-top: 4px;
+}
+
+/* Outage Banner */
+.sentinel-outage-banner {
+    background: #dc3545;
+    color: white;
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.outage-icon {
+    flex-shrink: 0;
+}
+
+.outage-item {
+    font-size: 14px;
+    font-family: "BAHNSCHRIFT";
+}
+
+.outage-count {
+    opacity: 0.85;
+    font-size: 13px;
+}
+
+.action-link {
+    color: #0071BC;
+    text-decoration: none;
+    font-size: 13px;
+    font-family: "BAHNSCHRIFT";
+    background: none;
+    border: none;
+    cursor: pointer;
+    padding: 0;
+}
+
+.action-link:hover {
+    text-decoration: underline;
+}
+
+/* Activity Feed */
+::deep .sentinel-activity-feed {
+    margin-top: 24px;
+}
+
+::deep .sentinel-activity-feed h3 {
+    font-family: "BAHNSCHRIFT";
+    font-size: 16px;
+    text-transform: uppercase;
+    margin-bottom: 12px;
+    color: #333;
+}
+
+::deep .no-activity {
+    color: #888;
+    font-style: italic;
+    padding: 16px 0;
+}
+
+::deep .activity-list {
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+}
+
+::deep .activity-item {
+    padding: 10px 16px;
+    border-bottom: 1px solid #f0f0f0;
+    font-size: 13px;
+}
+
+::deep .activity-row {
+    display: grid;
+    grid-template-columns: 140px 1.5fr 2fr 80px 60px;
+    gap: 8px;
+    align-items: center;
+}
+
+::deep .activity-detail {
+    margin-top: 6px;
+    padding: 6px 8px;
+    background: #f7f9fc;
+    border-left: 3px solid #cdd8e6;
+    color: #444;
+    font-size: 12.5px;
+    white-space: pre-wrap;
+}
+
+::deep .activity-item:last-child {
+    border-bottom: none;
+}
+
+::deep .activity-timestamp {
+    color: #888;
+    font-family: monospace;
+}
+
+::deep .activity-device {
+    font-weight: 600;
+}
+
+::deep .activity-tier {
+    color: #888;
+    font-size: 12px;
+}
+
+::deep .result-success { color: #2e7d32; font-weight: 600; }
+::deep .result-failed { color: #c62828; font-weight: 600; }
+::deep .result-pending { color: #e65100; font-weight: 600; }
+
+/* Loading */
+.loading-overlay {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 300px;
+}
+
+.unauthorized-wrapper {
+    text-align: center;
+    padding: 60px 20px;
+}
+
+@media only screen and (max-width: 1200px) {
+    ::deep .sentinel-summary-bar {
+        grid-template-columns: repeat(4, 1fr);
+    }
+
+    .sentinel-grid-header,
+    .sentinel-device-row {
+        grid-template-columns: minmax(180px, 2fr) 1fr 120px 70px;
+    }
+
+    /* Hide IP and Last Seen on medium screens */
+    .sentinel-grid-header > div:nth-child(4),
+    .sentinel-device-row > div:nth-child(4),
+    .sentinel-grid-header > div:nth-child(5),
+    .sentinel-device-row > div:nth-child(5) {
+        display: none;
+    }
+}
+
+@media only screen and (max-width: 768px) {
+    ::deep .sentinel-summary-bar {
+        grid-template-columns: repeat(2, 1fr);
+    }
+
+    .sentinel-grid-header,
+    .sentinel-device-row {
+        grid-template-columns: 1fr 100px;
+    }
+
+    .sentinel-grid-header > div:nth-child(n+3),
+    .sentinel-device-row > div:nth-child(n+3) {
+        display: none;
+    }
+
+    ::deep .activity-row {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    ::deep .activity-row > div:nth-child(n+3) {
+        display: none;
+    }
+}

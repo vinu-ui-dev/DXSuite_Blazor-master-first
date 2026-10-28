@@ -1,0 +1,334 @@
+@using System.Xml
+@using System.IO
+@inject IConfiguration config
+@rendermode InteractiveServer
+
+<style>
+    .concourse-uploader-modal {
+        max-width: 800px;
+    }
+
+    .concourse-uploader-modal input[type="checkbox"]:checked,
+    .concourse-uploader-modal input[type="radio"]:checked {
+        accent-color: #0071BC;
+    }
+
+    .concourse-uploader-modal input[type="checkbox"],
+    .concourse-uploader-modal input[type="radio"] {
+        accent-color: #0071BC;
+    }
+</style>
+
+<div class="modal @modalClass" tabindex="-1" role="dialog" style="display:@modalDisplay;">
+    <div class="modal-dialog modal-dialog-centered concourse-uploader-modal" role="document">
+        <div class="modal-content">
+
+            <div class="modal-header" style="background-color: var(--dx-blue); color: white;">
+                <h5 class="modal-title">
+                    @if (mediaFile != null)
+                    {
+                        <span>Edit Media - @System.IO.Path.GetFileName(mediaFile.DiskPath)</span>
+                    }
+                    else
+                    {
+                        <span>Upload Media File</span>
+                    }
+                </h5>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+            </div>
+
+            <EditForm Model="uploadModel" OnValidSubmit="HandleValidSubmit">
+                <DataAnnotationsValidator />
+
+                <div class="modal-body">
+                    @if (mediaFile == null)
+                    {
+                        <div class="mb-3">
+                            <label style="display:block; font-weight:500; margin-bottom:0.25rem;">Select Media File</label>
+                            <InputFile OnChange="OnInputFileChange" class="form-control mt-3" accept="image/*,video/*" />
+                        </div>
+                    }
+
+                    <div class="mb-3">
+                        <label style="display:block; font-weight:500; margin-bottom:0.5rem;">Content Type</label>
+                        <div style="display: flex; gap: 20px;">
+                            <InputRadioGroup @bind-Value="uploadModel.ContentType" Name="contentType">
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <InputRadio Value="@("Background")" />
+                                    Background Content
+                                </label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                    <InputRadio Value="@("Message")" />
+                                    Message Content
+                                </label>
+                            </InputRadioGroup>
+                        </div>
+                    </div>
+
+                    <div class="mb-3">
+                        <label style="display:block; font-weight:500; margin-bottom:0.5rem;">Target Displays (select all that apply)</label>
+                        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; padding: 15px; background-color: #f8f9fa; border-radius: 4px;">
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <InputCheckbox @bind-Value="uploadModel.ConcourseAEast" />
+                                Concourse A East
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <InputCheckbox @bind-Value="uploadModel.ConcourseAWest" />
+                                Concourse A West
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <InputCheckbox @bind-Value="uploadModel.ConcourseBEast" />
+                                Concourse B East
+                            </label>
+                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+                                <InputCheckbox @bind-Value="uploadModel.ConcourseBWest" />
+                                Concourse B West
+                            </label>
+                        </div>
+                        @if (!uploadModel.ConcourseAEast && !uploadModel.ConcourseAWest &&
+                             !uploadModel.ConcourseBEast && !uploadModel.ConcourseBWest)
+                        {
+                            <div style="color: #dc3545; margin-top: 0.5rem; font-size: 0.875rem;">Please select at least one display.</div>
+                        }
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="mb-3">
+                        <div>
+                            <label style="display:block; font-weight:500; margin-bottom:0.25rem;">Start Date (optional)</label>
+                            <InputDate @bind-Value="uploadModel.StartDate" class="form-control" />
+                        </div>
+                        <div>
+                            <label style="display:block; font-weight:500; margin-bottom:0.25rem;">End Date (optional)</label>
+                            <InputDate @bind-Value="uploadModel.EndDate" class="form-control" />
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;" class="mb-3">
+                        <div>
+                            <label style="display:block; font-weight:500; margin-bottom:0.25rem;">Start Time (optional)</label>
+                            <input type="time" value="@uploadModel.StartTime" @oninput="@(e => uploadModel.StartTime = e.Value?.ToString())" class="form-control" />
+                        </div>
+                        <div>
+                            <label style="display:block; font-weight:500; margin-bottom:0.25rem;">End Time (optional)</label>
+                            <input type="time" value="@uploadModel.EndTime" @oninput="@(e => uploadModel.EndTime = e.Value?.ToString())" class="form-control" />
+                        </div>
+                    </div>
+
+                    @if (uploadError != null)
+                    {
+                        <div style="color: #dc3545; background-color: #f8d7da; padding: 0.75rem; border-radius: 4px;">
+                            @uploadError
+                        </div>
+                    }
+                </div>
+
+                <div class="modal-footer">
+                    <button type="button" class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                    <button type="submit" class="dx-btn dx-btn-blue" disabled="@isUploading">
+                        @if (isUploading)
+                        {
+                            @(mediaFile == null ? "Uploading..." : "Updating...")
+                        }
+                        else
+                        {
+                            @(mediaFile == null ? "Upload" : "Update")
+                        }
+                    </button>
+                </div>
+            </EditForm>
+
+        </div>
+    </div>
+</div>
+
+@if (showBackdrop)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    [Parameter] public EventCallback OnAssetSubmit { get; set; }
+
+    private string modalDisplay = "none";
+    private string modalClass = "";
+    private bool showBackdrop = false;
+    private bool isUploading;
+    private string? uploadError;
+    private UploadModel uploadModel = new();
+    private MediaFile? mediaFile;
+    private string? baseDirectory;
+    private int locationId;
+    private int constraintId;
+
+    public async Task Open(string? baseDir, int locId, int constId, MediaFile? existingMediaFile = null, bool readOnly = false, bool showScheduling = true)
+    {
+        baseDirectory = baseDir;
+        locationId = locId;
+        constraintId = constId;
+        mediaFile = existingMediaFile;
+        uploadError = null;
+
+        uploadModel = new UploadModel
+        {
+            ContentType = "Background",
+            ConcourseAEast = true,
+            ConcourseAWest = true,
+            ConcourseBEast = true,
+            ConcourseBWest = true
+        };
+
+        if (mediaFile != null)
+        {
+            var contentTypeField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "ContentType");
+            uploadModel.ContentType = contentTypeField?.Value ?? "Background";
+
+            var displaysField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "Displays");
+            if (displaysField != null)
+            {
+                var displays = displaysField.Value.Contains(',')
+                    ? displaysField.Value.Split(',').Select(d => d.Trim()).ToList()
+                    : displaysField.Value.Split(' ').Select(d => d.Trim()).Where(d => !string.IsNullOrEmpty(d)).ToList();
+
+                uploadModel.ConcourseAEast = displays.Contains("ConcourseAEast") || displays.Contains("Concourse A East");
+                uploadModel.ConcourseAWest = displays.Contains("ConcourseAWest") || displays.Contains("Concourse A West");
+                uploadModel.ConcourseBEast = displays.Contains("ConcourseBEast") || displays.Contains("Concourse B East");
+                uploadModel.ConcourseBWest = displays.Contains("ConcourseBWest") || displays.Contains("Concourse B West");
+            }
+
+            var startDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartDate");
+            if (startDateField != null && DateTime.TryParse(startDateField.Value, out DateTime startDate))
+                uploadModel.StartDate = startDate;
+
+            var endDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndDate");
+            if (endDateField != null && DateTime.TryParse(endDateField.Value, out DateTime endDate))
+                uploadModel.EndDate = endDate;
+
+            var startTimeField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime");
+            if (startTimeField != null && TimeSpan.TryParse(startTimeField.Value, out TimeSpan startTime))
+                uploadModel.StartTime = startTime.ToString(@"hh\:mm");
+
+            var endTimeField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime");
+            if (endTimeField != null && TimeSpan.TryParse(endTimeField.Value, out TimeSpan endTime))
+                uploadModel.EndTime = endTime.ToString(@"hh\:mm");
+        }
+
+        modalDisplay = "block";
+        modalClass = "show";
+        showBackdrop = true;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        modalDisplay = "none";
+        modalClass = "";
+        showBackdrop = false;
+        uploadError = null;
+        isUploading = false;
+        StateHasChanged();
+    }
+
+    private void OnInputFileChange(InputFileChangeEventArgs e)
+    {
+        uploadModel.File = e.File;
+        uploadError = null;
+    }
+
+    private async Task HandleValidSubmit()
+    {
+        if (!uploadModel.ConcourseAEast && !uploadModel.ConcourseAWest &&
+            !uploadModel.ConcourseBEast && !uploadModel.ConcourseBWest)
+        {
+            uploadError = "Please select at least one display.";
+            return;
+        }
+
+        if (mediaFile == null && uploadModel.File == null)
+        {
+            uploadError = "Please select a file to upload.";
+            return;
+        }
+
+        isUploading = true;
+        uploadError = null;
+        StateHasChanged();
+
+        try
+        {
+            if (mediaFile == null)
+                await UploadNewFile();
+            else
+                await UpdateExistingFile();
+
+            await OnAssetSubmit.InvokeAsync();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            uploadError = $"Error: {ex.Message}";
+        }
+        finally
+        {
+            isUploading = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task UploadNewFile()
+    {
+        if (uploadModel.File == null || baseDirectory == null) return;
+
+        var uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", locationId.ToString());
+        Directory.CreateDirectory(uploadDirectory);
+
+        var filePath = Path.Combine(uploadDirectory, uploadModel.File.Name);
+
+        using var stream = uploadModel.File.OpenReadStream(maxAllowedSize: 100 * 1024 * 1024);
+        using var fileStream = new FileStream(filePath, FileMode.Create);
+        await stream.CopyToAsync(fileStream);
+
+        await CreateMetadataFile(filePath);
+    }
+
+    private async Task UpdateExistingFile()
+    {
+        if (mediaFile?.DiskPath == null) return;
+        await CreateMetadataFile(mediaFile.DiskPath);
+    }
+
+    private async Task CreateMetadataFile(string filePath)
+    {
+        var displays = new List<string>();
+        if (uploadModel.ConcourseAEast) displays.Add("ConcourseAEast");
+        if (uploadModel.ConcourseAWest) displays.Add("ConcourseAWest");
+        if (uploadModel.ConcourseBEast) displays.Add("ConcourseBEast");
+        if (uploadModel.ConcourseBWest) displays.Add("ConcourseBWest");
+
+        var metadataXml = "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<usermetadata>\n" +
+            $"    <field name=\"Location\" datatype=\"ovx_string\" value=\"{locationId}\" />\n" +
+            $"    <field name=\"ContentType\" datatype=\"ovx_string\" value=\"{uploadModel.ContentType}\" />\n" +
+            $"    <field name=\"Displays\" datatype=\"ovx_string\" value=\"{string.Join(" ", displays)}\" />\n" +
+            $"    <field name=\"FileName\" datatype=\"ovx_string\" value=\"{Path.GetFileName(filePath)}\" />\n" +
+            (uploadModel.StartDate.HasValue ? $"    <field name=\"StartDate\" datatype=\"ovx_string\" value=\"{uploadModel.StartDate.Value:yyyy-MM-dd}\" />\n" : "") +
+            (uploadModel.EndDate.HasValue ? $"    <field name=\"EndDate\" datatype=\"ovx_string\" value=\"{uploadModel.EndDate.Value:yyyy-MM-dd}\" />\n" : "") +
+            (!string.IsNullOrEmpty(uploadModel.StartTime) ? $"    <field name=\"StartTime\" datatype=\"ovx_string\" value=\"{uploadModel.StartTime}\" />\n" : "") +
+            (!string.IsNullOrEmpty(uploadModel.EndTime) ? $"    <field name=\"EndTime\" datatype=\"ovx_string\" value=\"{uploadModel.EndTime}\" />\n" : "") +
+            "</usermetadata>";
+
+        await File.WriteAllTextAsync(filePath + ".metadata", metadataXml);
+    }
+
+    private class UploadModel
+    {
+        public IBrowserFile? File { get; set; }
+        public string ContentType { get; set; } = "Background";
+        public bool ConcourseAEast { get; set; } = true;
+        public bool ConcourseAWest { get; set; } = true;
+        public bool ConcourseBEast { get; set; } = true;
+        public bool ConcourseBWest { get; set; } = true;
+        public DateTime? StartDate { get; set; }
+        public DateTime? EndDate { get; set; }
+        public string? StartTime { get; set; }
+        public string? EndTime { get; set; }
+    }
+}

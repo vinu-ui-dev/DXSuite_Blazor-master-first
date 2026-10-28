@@ -1,0 +1,107 @@
+@using DXSuite.Shared.Services.Identity
+
+@*
+    Edits one metadata key's values as a set, never as a comma-joined string: every store writes one
+    row per value. A stored value missing from the registry's option list still renders, marked, so the
+    control never shows a value as empty while targeting still evaluates it.
+*@
+<div class="dx-mvi-container">
+    @if (!IsKnownType)
+    {
+        <div class="dx-text-red" style="font-size:0.8rem; margin-bottom:4px;">Unknown field type "@FieldType". Editing as text.</div>
+    }
+
+    @if (EffectiveType == "list")
+    {
+        var current = Values.FirstOrDefault() ?? "";
+        <select class="dx-form-control" value="@current" @onchange="OnSelectChanged">
+            <option value="">Select</option>
+            @foreach (var opt in Options)
+            {
+                <option value="@opt">@opt</option>
+            }
+            @if (IsOffList(current))
+            {
+                <option value="@current">@current (not in list)</option>
+            }
+        </select>
+    }
+    else if (EffectiveType == "multi-select")
+    {
+        <div class="dx-mvi-multi-select">
+            @foreach (var opt in Options)
+            {
+                var isChecked = Values.Contains(opt, StringComparer.OrdinalIgnoreCase);
+                <label class="dx-mvi-check-label">
+                    <input type="checkbox" class="dx-checkbox" checked="@isChecked"
+                           @onchange="@((ChangeEventArgs e) => ToggleMultiSelect(opt, (bool)(e.Value ?? false)))" />
+                    @opt
+                </label>
+            }
+            @foreach (var offList in Values.Where(IsOffList).ToList())
+            {
+                <label class="dx-mvi-check-label dx-text-muted" style="font-style:italic;">
+                    <input type="checkbox" class="dx-checkbox" checked
+                           @onchange="@((ChangeEventArgs e) => ToggleMultiSelect(offList, (bool)(e.Value ?? false)))" />
+                    @offList (not in list)
+                </label>
+            }
+        </div>
+    }
+    else
+    {
+        <input type="@(EffectiveType == "int" ? "number" : "text")" class="dx-form-control"
+               value="@(Values.FirstOrDefault() ?? "")" @onchange="OnInputChanged"
+               placeholder="@(Placeholder ?? (EffectiveType == "int" ? "Enter number..." : "Enter value..."))" />
+    }
+</div>
+
+<style>
+    .dx-mvi-container { display: block; width: 100%; }
+    .dx-mvi-container > input,
+    .dx-mvi-container > select { height: var(--dx-meta-input-height, 38px); }
+    .dx-mvi-multi-select { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 4px 0; }
+    .dx-mvi-check-label { display: flex; align-items: center; gap: 4px; font-size: 0.85rem; cursor: pointer; margin: 0; }
+</style>
+
+@code {
+    [Parameter] public string FieldType { get; set; } = "string";
+
+    /// <summary>The key's current values. Single-valued types use the first.</summary>
+    [Parameter] public IReadOnlyList<string> Values { get; set; } = [];
+
+    [Parameter] public EventCallback<List<string>> ValuesChanged { get; set; }
+    [Parameter] public List<string> Options { get; set; } = new();
+    [Parameter] public string? Placeholder { get; set; }
+
+    /// <summary>
+    /// Holds at most one value whatever the key's type, so a multi-select key renders as a single
+    /// select against the same options. Devices are single-valued: one screen, one place.
+    /// </summary>
+    [Parameter] public bool SingleValue { get; set; }
+
+    private bool IsKnownType => MetadataFieldTypes.IsKnown(FieldType);
+
+    private string EffectiveType =>
+        !IsKnownType ? "string"
+        : SingleValue && FieldType == "multi-select" ? "list"
+        : FieldType;
+
+    private bool IsOffList(string value) =>
+        !string.IsNullOrEmpty(value) && !Options.Contains(value, StringComparer.OrdinalIgnoreCase);
+
+    private Task OnInputChanged(ChangeEventArgs e) => SetSingle(e.Value?.ToString());
+
+    private Task OnSelectChanged(ChangeEventArgs e) => SetSingle(e.Value?.ToString());
+
+    private Task SetSingle(string? value) =>
+        ValuesChanged.InvokeAsync(MetadataValueSet.Normalize([value]));
+
+    private Task ToggleMultiSelect(string option, bool isChecked)
+    {
+        var next = Values.Where(v => !string.Equals(v, option, StringComparison.OrdinalIgnoreCase)).ToList();
+        if (isChecked)
+            next.Add(option);
+        return ValuesChanged.InvokeAsync(MetadataValueSet.Normalize(next));
+    }
+}

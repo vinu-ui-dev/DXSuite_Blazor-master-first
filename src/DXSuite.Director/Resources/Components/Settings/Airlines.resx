@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_SearchAirline">
+    <value>Search Airline</value>
+  </data>
+  <data name="Placeholder_StartTyping">
+    <value>Start typing...</value>
+  </data>
+  <data name="Label_AirlineCode">
+    <value>Airline Code</value>
+  </data>
+  <data name="Label_SearchLocations">
+    <value>Search Locations</value>
+  </data>
+  <data name="Label_AssignedLocations">
+    <value>Assigned Locations</value>
+  </data>
+  <data name="Label_WayfindingPin">
+    <value>Wayfinding Pin</value>
+  </data>
+  <data name="Label_UpdatePin">
+    <value>Update Pin</value>
+  </data>
+  <data name="Placeholder_EnterPin">
+    <value>Enter 4-digit pin</value>
+  </data>
+  <data name="Message_ErrorSavingLocation">
+    <value>An error occurred while saving the location.</value>
+  </data>
+  <data name="Message_BothRequired">
+    <value>Both an airline and a location must be selected.</value>
+  </data>
+  <data name="Message_ErrorRemovingLocation">
+    <value>An error occurred while removing the location.</value>
+  </data>
+  <data name="Message_PinMustBeFourDigits">
+    <value>Pin must be exactly four numeric digits.</value>
+  </data>
+</root>

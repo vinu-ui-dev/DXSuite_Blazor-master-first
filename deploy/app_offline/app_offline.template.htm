@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<!--
+  Maintenance page served by IIS/ANCM for every request while the app is offline.
+  Activate by copying this file to app_offline.htm in the deployed site root
+  (Take-SiteOffline.ps1); remove it to restart the app (Bring-SiteOnline.ps1).
+  It is published beside the binaries as app_offline.template.htm — shipping it
+  under the live name would take every fresh deployment offline.
+
+  Self-contained by design: while the app is offline, every same-origin request
+  returns this same file with HTTP 503, so it must reference no external scripts,
+  styles, or images.
+
+  Append ?ao-preview=display or ?ao-preview=app to force either rendering when
+  verifying the page manually.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- JS-disabled fallback: keep reloading so the real app returns without interaction -->
+<meta http-equiv="refresh" content="60">
+<title>DXSuite &mdash; Maintenance</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #000; }
+  body { display: flex; align-items: center; justify-content: center; font-family: system-ui, sans-serif; }
+  #card { display: none; color: #cbd5e1; text-align: center; max-width: 34rem; padding: 2rem; }
+  #card h1 { color: #f1f5f9; font-size: 1.5rem; margin: 0 0 .75rem; font-weight: 600; letter-spacing: .02em; }
+  #card p { margin: .25rem 0; line-height: 1.5; }
+  #card .sub { color: #64748b; font-size: .875rem; margin-top: 1.25rem; }
+  @keyframes pulse { 50% { opacity: .4; } }
+  #dot { display: inline-block; width: .5rem; height: .5rem; border-radius: 50%; background: #38bdf8; margin-right: .5rem; animation: pulse 2s infinite; }
+</style>
+</head>
+<body>
+  <div id="card">
+    <h1>DXSuite</h1>
+    <p><span id="dot"></span>Scheduled maintenance in progress</p>
+    <p class="sub">This page reloads automatically when the system is back.</p>
+  </div>
+<script>
+(function () {
+  // Display endpoints (video-wall shells, counter shells, mask assets) must stay
+  // visually silent during an outage — no maintenance banner on a public screen.
+  // Everything else gets the maintenance card.
+  var p = location.pathname.toLowerCase();
+  var isDisplay =
+    p.indexOf('/pixera/') === 0 ||
+    p.indexOf('/videowall/') === 0 ||
+    (p.indexOf('/mediaassets/') !== -1 && p.lastIndexOf('.html') === p.length - 5);
+
+  var q = location.search;
+  if (q.indexOf('ao-preview=display') !== -1) isDisplay = true;
+  else if (q.indexOf('ao-preview=app') !== -1) isDisplay = false;
+
+  if (!isDisplay) document.getElementById('card').style.display = 'block';
+
+  // While offline every request returns this page with 503; any other status means
+  // the app is back (200, or a redirect for authenticated pages), so reload into it.
+  // Network errors (IIS itself down or restarting) just wait for the next probe.
+  function probe() {
+    fetch(location.href, { cache: 'no-store' })
+      .then(function (r) { if (r.status !== 503) location.reload(); })
+      .catch(function () {});
+  }
+  setInterval(probe, 10000);
+})();
+</script>
+</body>
+</html>

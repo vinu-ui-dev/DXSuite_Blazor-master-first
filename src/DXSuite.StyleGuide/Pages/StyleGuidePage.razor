@@ -1,0 +1,1168 @@
+@page "/style-guide"
+@rendermode InteractiveServer
+
+<PageTitle>DXSuite Style Guide</PageTitle>
+
+<h1 class="mb-2">DXSuite Style Guide</h1>
+<p class="dx-text-muted mb-4">Living reference for UI components. All examples render live using the shared design system CSS.</p>
+
+<!-- ============================================================ -->
+<!-- COLOR PALETTE -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Color Palette</h2>
+    <p class="dx-text-muted">CSS variables defined in <code>dxsuite.css</code> under <code>:root</code>.</p>
+    <div class="sg-color-grid">
+        <div class="sg-color-swatch" style="background:#0071BC;">
+            <span>Blue (Primary)</span>
+            <code>#0071BC</code>
+            <code>--dx-blue</code>
+        </div>
+        <div class="sg-color-swatch" style="background:#990000;">
+            <span>Red (Danger)</span>
+            <code>#990000</code>
+            <code>--dx-red</code>
+        </div>
+        <div class="sg-color-swatch" style="background:#39B54A;">
+            <span>Green (Success)</span>
+            <code>#39B54A</code>
+            <code>--dx-green</code>
+        </div>
+        <div class="sg-color-swatch" style="background:#FD8204;">
+            <span>Orange (Accent)</span>
+            <code>#FD8204</code>
+            <code>--dx-orange</code>
+        </div>
+        <div class="sg-color-swatch" style="background:#BBB;color:#333;">
+            <span>Gray (Neutral)</span>
+            <code>#BBB</code>
+            <code>--dx-gray</code>
+        </div>
+        <div class="sg-color-swatch" style="background:#f0f0f0;color:#333;">
+            <span>Background Alt</span>
+            <code>#f0f0f0</code>
+            <code>--dx-bg-alt</code>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- BUTTONS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Buttons</h2>
+    <p class="dx-text-muted">
+        All buttons use the <code>.dx-btn</code> base class plus a variant.
+        Avoid Bootstrap <code>.btn-primary</code> / <code>.btn-danger</code> — use the DXSuite classes instead.
+    </p>
+
+    <h4>Solid Variants</h4>
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-blue">Blue (Primary)</button>
+        <button class="dx-btn dx-btn-red">Red (Danger)</button>
+        <button class="dx-btn dx-btn-green">Green (Success)</button>
+        <button class="dx-btn dx-btn-gray">Gray (Neutral)</button>
+    </div>
+    <pre class="sg-code"><code>&lt;button class="dx-btn dx-btn-blue"&gt;Blue (Primary)&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-red"&gt;Red (Danger)&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-green"&gt;Green (Success)&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-gray"&gt;Gray (Neutral)&lt;/button&gt;</code></pre>
+
+    <h4>Outline Variants</h4>
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-outline-blue">Outline Blue</button>
+        <button class="dx-btn dx-btn-outline-red">Outline Red</button>
+    </div>
+    <pre class="sg-code"><code>&lt;button class="dx-btn dx-btn-outline-blue"&gt;Outline Blue&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-outline-red"&gt;Outline Red&lt;/button&gt;</code></pre>
+
+    <h4>Sizes</h4>
+    <div class="sg-example" style="align-items:center;">
+        <button class="dx-btn dx-btn-blue dx-btn-sm">Small</button>
+        <button class="dx-btn dx-btn-blue">Default</button>
+        <button class="dx-btn dx-btn-blue dx-btn-lg">Large</button>
+    </div>
+    <pre class="sg-code"><code>&lt;button class="dx-btn dx-btn-blue dx-btn-sm"&gt;Small&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-blue"&gt;Default&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-blue dx-btn-lg"&gt;Large&lt;/button&gt;</code></pre>
+
+    <h4>With Icons</h4>
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-blue"><i class="bi bi-plus-lg"></i> Add Device</button>
+        <button class="dx-btn dx-btn-red"><i class="bi bi-trash"></i> Delete</button>
+        <button class="dx-btn dx-btn-green"><i class="bi bi-check-lg"></i> Save</button>
+    </div>
+    <pre class="sg-code"><code>&lt;button class="dx-btn dx-btn-blue"&gt;&lt;i class="bi bi-plus-lg"&gt;&lt;/i&gt; Add Device&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-red"&gt;&lt;i class="bi bi-trash"&gt;&lt;/i&gt; Delete&lt;/button&gt;
+&lt;button class="dx-btn dx-btn-green"&gt;&lt;i class="bi bi-check-lg"&gt;&lt;/i&gt; Save&lt;/button&gt;</code></pre>
+
+    <h4>Disabled State</h4>
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-blue" disabled>Disabled Blue</button>
+        <button class="dx-btn dx-btn-red" disabled>Disabled Red</button>
+    </div>
+    <pre class="sg-code"><code>&lt;button class="dx-btn dx-btn-blue" disabled&gt;Disabled Blue&lt;/button&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- BADGES & STATUS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Badges &amp; Status Indicators</h2>
+    <p class="dx-text-muted">Badges for status labels, counts, and inline indicators.</p>
+
+    <h4>Status Badges</h4>
+    <div class="sg-example">
+        <span class="dx-badge dx-badge-green">Healthy</span>
+        <span class="dx-badge dx-badge-yellow">Degraded</span>
+        <span class="dx-badge dx-badge-red">Failed</span>
+        <span class="dx-badge dx-badge-gray">Unknown</span>
+        <span class="dx-badge dx-badge-blue">Info</span>
+        <span class="dx-badge dx-badge-orange">Warning</span>
+    </div>
+    <pre class="sg-code"><code>&lt;span class="dx-badge dx-badge-green"&gt;Healthy&lt;/span&gt;
+&lt;span class="dx-badge dx-badge-yellow"&gt;Degraded&lt;/span&gt;
+&lt;span class="dx-badge dx-badge-red"&gt;Failed&lt;/span&gt;
+&lt;span class="dx-badge dx-badge-gray"&gt;Unknown&lt;/span&gt;
+&lt;span class="dx-badge dx-badge-blue"&gt;Info&lt;/span&gt;
+&lt;span class="dx-badge dx-badge-orange"&gt;Warning&lt;/span&gt;</code></pre>
+
+    <h4>Pill Badge (Counts)</h4>
+    <div class="sg-example">
+        <span>Devices <span class="dx-badge-pill">42</span></span>
+        <span>Locations <span class="dx-badge-pill">7</span></span>
+    </div>
+    <pre class="sg-code"><code>Devices &lt;span class="dx-badge-pill"&gt;42&lt;/span&gt;</code></pre>
+
+    <h4>Status Dots</h4>
+    <div class="sg-example" style="align-items:center;">
+        <span><span class="dx-status-dot dx-status-dot-green"></span> Online</span>
+        <span><span class="dx-status-dot dx-status-dot-red"></span> Offline</span>
+        <span><span class="dx-status-dot dx-status-dot-yellow"></span> Degraded</span>
+        <span><span class="dx-status-dot dx-status-dot-orange"></span> Powered Off</span>
+        <span><span class="dx-status-dot dx-status-dot-gray"></span> Unknown</span>
+    </div>
+    <pre class="sg-code"><code>&lt;span class="dx-status-dot dx-status-dot-green"&gt;&lt;/span&gt; Online
+&lt;span class="dx-status-dot dx-status-dot-red"&gt;&lt;/span&gt; Offline</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- CARDS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Cards</h2>
+    <p class="dx-text-muted">Container pattern for grouped content. Use accent variants for status-linked cards.</p>
+
+    <div class="sg-example" style="flex-direction:column;gap:16px;">
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:16px;">
+            <div class="dx-card">
+                <div class="dx-card-header">Default Card</div>
+                <div class="dx-card-body">Standard card with header, body, and footer sections.</div>
+                <div class="dx-card-footer">
+                    <button class="dx-btn dx-btn-blue dx-btn-sm">Action</button>
+                </div>
+            </div>
+            <div class="dx-card dx-card-accent-green">
+                <div class="dx-card-body">
+                    <strong>Connected</strong>
+                    <p class="dx-text-muted" style="margin:4px 0 0;">Green left-accent for healthy/connected state.</p>
+                </div>
+            </div>
+            <div class="dx-card dx-card-accent-red">
+                <div class="dx-card-body">
+                    <strong>Disconnected</strong>
+                    <p class="dx-text-muted" style="margin:4px 0 0;">Red left-accent for error/disconnected state.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-card"&gt;
+    &lt;div class="dx-card-header"&gt;Title&lt;/div&gt;
+    &lt;div class="dx-card-body"&gt;Content&lt;/div&gt;
+    &lt;div class="dx-card-footer"&gt;Footer&lt;/div&gt;
+&lt;/div&gt;
+
+&lt;!-- Accent variants: dx-card-accent-green, dx-card-accent-red, dx-card-accent-orange --&gt;
+&lt;div class="dx-card dx-card-accent-green"&gt;...&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- ASSET CARDS (Playlist / Media) -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Asset Cards</h2>
+    <p class="dx-text-muted">Media asset cards used in Playlist, Card, and other location type views. Supports drag-and-drop reordering.</p>
+
+    <h4>Section Layout</h4>
+    <div class="dx-section" style="margin-bottom:16px;">
+        <div class="dx-section-header">
+            <h3 class="dx-section-title">Example Section</h3>
+            <div style="display:flex; gap:8px;">
+                <button class="dx-btn dx-btn-blue">Action</button>
+            </div>
+        </div>
+        <div class="dx-asset-container">
+            <div class="dx-asset-card" style="pointer-events:auto;">
+                <div class="dx-play-order">1</div>
+                <div class="dx-drag-handle" style="opacity:1;">⋮⋮</div>
+                <div class="dx-asset-preview">
+                    <h3>Sample Media Asset</h3>
+                    <div style="height:100px; background:#eee; display:flex; align-items:center; justify-content:center; color:#999;">Preview</div>
+                </div>
+                <div class="dx-asset-info">
+                    <div style="display:flex; gap:4px; margin-bottom:4px;">
+                        <span class="dx-day-badge">Mon</span>
+                        <span class="dx-day-badge">Tue</span>
+                        <span class="dx-day-badge">Wed</span>
+                    </div>
+                    <div class="dx-metadata-divider">METADATA</div>
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Hotel: 12345</div>
+                </div>
+            </div>
+            <div class="dx-asset-card" style="pointer-events:auto;">
+                <div class="dx-play-order">2</div>
+                <div class="dx-asset-preview">
+                    <h3>Another Asset</h3>
+                    <div style="height:100px; background:#eee; display:flex; align-items:center; justify-content:center; color:#999;">Preview</div>
+                </div>
+                <div class="dx-asset-info">
+                    <span class="dx-text-muted" style="font-size:0.8rem;">No schedule</span>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <h4>Key Classes</h4>
+    <pre class="sg-code"><code>.dx-section             — Container with background and padding
+.dx-section-header      — Flex header with title and action buttons
+.dx-section-title       — Section heading (uppercase, bold)
+.dx-asset-container     — Wrapping grid of asset cards (gray background)
+.dx-asset-card          — Individual media card (300px, draggable)
+.dx-play-order          — Circular play order badge (top-left)
+.dx-drag-handle         — Drag grip icon (top-right, appears on hover)
+.dx-asset-preview       — Card image/preview area
+.dx-asset-info          — Card metadata/schedule area
+.dx-day-badge           — Day-of-week pill badge
+.dx-metadata-divider    — Section divider within card
+.dx-readonly-badge      — "VIEW ONLY" overlay badge
+.dx-no-media            — Empty state message
+.dx-filter-btn          — Content filter dropdown trigger
+.dx-filter-menu         — Content filter dropdown menu</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- TABLES -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Tables (CSS Grid)</h2>
+    <p class="dx-text-muted">
+        Use the CSS Grid table pattern (<code>.dx-table</code>) for data tables.
+        Define column widths via <code>grid-template-columns</code> on both header and rows.
+        Avoid Bootstrap <code>.table</code> classes for data grids.
+    </p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 2fr 1fr 120px 100px;">
+                <div>Name</div>
+                <div>IP Address</div>
+                <div>Platform</div>
+                <div>Status</div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 120px 100px;">
+                <div>Lobby Display</div>
+                <div>192.168.1.10</div>
+                <div><span class="dx-badge dx-badge-blue">Engage</span></div>
+                <div><span class="dx-badge dx-badge-green">Healthy</span></div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 120px 100px;">
+                <div>Conference Room A</div>
+                <div>192.168.1.11</div>
+                <div><span class="dx-badge dx-badge-orange">Ink</span></div>
+                <div><span class="dx-badge dx-badge-yellow">Degraded</span></div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 120px 100px;">
+                <div>Wayfinding Kiosk</div>
+                <div>192.168.1.12</div>
+                <div><span class="dx-badge dx-badge-blue">Engage</span></div>
+                <div><span class="dx-badge dx-badge-red">Failed</span></div>
+            </div>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-table"&gt;
+    &lt;div class="dx-table-header" style="grid-template-columns: 2fr 1fr 120px 100px;"&gt;
+        &lt;div&gt;Name&lt;/div&gt;
+        &lt;div&gt;IP Address&lt;/div&gt;
+        &lt;div&gt;Platform&lt;/div&gt;
+        &lt;div&gt;Status&lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class="dx-table-row" style="grid-template-columns: 2fr 1fr 120px 100px;"&gt;
+        &lt;div&gt;Lobby Display&lt;/div&gt;
+        &lt;div&gt;192.168.1.10&lt;/div&gt;
+        &lt;div&gt;&lt;span class="dx-badge dx-badge-blue"&gt;Engage&lt;/span&gt;&lt;/div&gt;
+        &lt;div&gt;&lt;span class="dx-badge dx-badge-green"&gt;Healthy&lt;/span&gt;&lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+
+    <h4 style="margin-top:24px;">Grouped Rows, Inline Edits and Phone Collapse</h4>
+    <p class="dx-text-muted">
+        A <code>.dx-table-group</code> band heads each group of rows; it spans the full width, so it needs no
+        <code>grid-template-columns</code>. Selects inside a row use <code>.dx-form-control-sm</code>, and a note under one uses
+        <code>.dx-form-hint</code>. Mark a row edited but not saved with an orange <em>Unsaved</em> badge, and a saved change
+        with a blue <em>Overridden</em> badge. Add <code>.dx-collapse</code> so each row becomes a card on phones:
+        <code>.dx-collapse-header</code> hides the header, <code>.dx-col-break</code> starts a new line and
+        <code>.dx-col-label</code> names a cell once the header is gone, and <code>.dx-cell-actions</code> spaces badges and buttons that share a cell. Keep columns flexible (<code>minmax</code>) and never set
+        <code>min-width:max-content</code>, so the table fits without horizontal scroll. Resize the window to see the collapse.
+    </p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-table dx-collapse">
+            <div class="dx-table-header dx-collapse-header" style="grid-template-columns: minmax(140px, 1.2fr) 90px minmax(150px, 1fr) 160px;">
+                <div>Issue type</div>
+                <div>Severity</div>
+                <div>Level</div>
+                <div></div>
+            </div>
+            <div class="dx-table-group">Engage player</div>
+            <div class="dx-table-row dx-collapse-row" style="grid-template-columns: minmax(140px, 1.2fr) 90px minmax(150px, 1fr) 160px;">
+                <div class="dx-col-primary">Web content status</div>
+                <div class="dx-text-muted">Warning</div>
+                <div class="dx-col-break">
+                    <label class="dx-col-label">Level</label>
+                    <select class="dx-form-control dx-form-control-sm" aria-label="Level">
+                        <option>Default (Warning, 2)</option>
+                        <option selected>Error, 3</option>
+                    </select>
+                </div>
+                <div class="dx-col-actions dx-cell-actions"><span class="dx-badge dx-badge-orange">Unsaved</span></div>
+            </div>
+            <div class="dx-table-group">Director</div>
+            <div class="dx-table-row dx-collapse-row" style="grid-template-columns: minmax(140px, 1.2fr) 90px minmax(150px, 1fr) 160px;">
+                <div class="dx-col-primary">URL missing</div>
+                <div class="dx-text-muted">Error</div>
+                <div class="dx-col-break">
+                    <label class="dx-col-label">Level</label>
+                    <select class="dx-form-control dx-form-control-sm" aria-label="Level">
+                        <option selected>Warning, 2</option>
+                    </select>
+                    <div class="dx-form-hint dx-text-orange"><i class="bi bi-exclamation-triangle"></i> A note about this choice</div>
+                </div>
+                <div class="dx-col-actions dx-cell-actions">
+                    <span class="dx-badge dx-badge-blue">Overridden</span>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm">Reset</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-table dx-collapse"&gt;
+    &lt;div class="dx-table-header dx-collapse-header" style="grid-template-columns: minmax(140px, 1.2fr) 90px minmax(150px, 1fr) 160px;"&gt;...&lt;/div&gt;
+    &lt;div class="dx-table-group"&gt;Director&lt;/div&gt;
+    &lt;div class="dx-table-row dx-collapse-row" style="grid-template-columns: ...same..."&gt;
+        &lt;div class="dx-col-primary"&gt;URL missing&lt;/div&gt;
+        &lt;div class="dx-text-muted"&gt;Error&lt;/div&gt;
+        &lt;div class="dx-col-break"&gt;
+            &lt;label class="dx-col-label"&gt;Level&lt;/label&gt;
+            &lt;select class="dx-form-control dx-form-control-sm" aria-label="Level"&gt;...&lt;/select&gt;
+            &lt;div class="dx-form-hint dx-text-orange"&gt;&lt;i class="bi bi-exclamation-triangle"&gt;&lt;/i&gt; Note&lt;/div&gt;
+        &lt;/div&gt;
+        &lt;div class="dx-col-actions dx-cell-actions"&gt;
+            &lt;span class="dx-badge dx-badge-blue"&gt;Overridden&lt;/span&gt;
+            &lt;button class="dx-btn dx-btn-outline-blue dx-btn-sm"&gt;Reset&lt;/button&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- TABS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Tabs</h2>
+    <p class="dx-text-muted">Tab navigation with active state. Used in Configuration and multi-section pages.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-tab-nav">
+            @foreach (var tab in demoTabs)
+            {
+                <button class="dx-tab-btn @(activeDemoTab == tab ? "active" : "")"
+                        @onclick="@(() => activeDemoTab = tab)">
+                    @tab
+                </button>
+            }
+        </div>
+        <div class="dx-tab-content">
+            Content for the <strong>@activeDemoTab</strong> tab.
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-tab-nav"&gt;
+    &lt;button class="dx-tab-btn active"&gt;Devices&lt;/button&gt;
+    &lt;button class="dx-tab-btn"&gt;Locations&lt;/button&gt;
+    &lt;button class="dx-tab-btn"&gt;Connectors&lt;/button&gt;
+&lt;/div&gt;
+&lt;div class="dx-tab-content"&gt;
+    Tab content here.
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- FORMS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Forms</h2>
+    <p class="dx-text-muted">Form groups with labels, hints, and validation states.</p>
+
+    <div class="sg-example" style="flex-direction:column;max-width:600px;">
+        <div class="dx-form-row">
+            <div class="dx-form-group">
+                <label class="dx-form-label">Device Name</label>
+                <input type="text" class="dx-form-control" placeholder="e.g. Lobby Display" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">IP Address</label>
+                <input type="text" class="dx-form-control" placeholder="192.168.1.x" />
+            </div>
+        </div>
+        <div class="dx-form-group">
+            <label class="dx-form-label">Platform</label>
+            <select class="dx-form-control">
+                <option value="">Select a platform...</option>
+                <option>Engage</option>
+                <option>Ink</option>
+                <option>Q-SYS Reflect</option>
+            </select>
+            <span class="dx-form-hint">Cloud platform this device is managed by.</span>
+        </div>
+        <div class="dx-form-group">
+            <label class="dx-form-label">Description</label>
+            <textarea class="dx-form-control" rows="3" placeholder="Optional notes..."></textarea>
+        </div>
+        <div class="dx-form-group">
+            <label class="dx-form-label">Invalid Field Example</label>
+            <input type="text" class="dx-form-control invalid" value="bad value" />
+            <span class="dx-form-validation">This field is required.</span>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-form-row"&gt;
+    &lt;div class="dx-form-group"&gt;
+        &lt;label class="dx-form-label"&gt;Device Name&lt;/label&gt;
+        &lt;input type="text" class="dx-form-control" placeholder="..." /&gt;
+    &lt;/div&gt;
+    &lt;div class="dx-form-group"&gt;
+        &lt;label class="dx-form-label"&gt;IP Address&lt;/label&gt;
+        &lt;input type="text" class="dx-form-control" /&gt;
+    &lt;/div&gt;
+&lt;/div&gt;
+
+&lt;div class="dx-form-group"&gt;
+    &lt;label class="dx-form-label"&gt;Platform&lt;/label&gt;
+    &lt;select class="dx-form-control"&gt;...&lt;/select&gt;
+    &lt;span class="dx-form-hint"&gt;Hint text&lt;/span&gt;
+&lt;/div&gt;
+
+&lt;!-- Validation state --&gt;
+&lt;input class="dx-form-control invalid" /&gt;
+&lt;span class="dx-form-validation"&gt;Error message&lt;/span&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- TOGGLE SWITCHES -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Toggle Switches</h2>
+    <p class="dx-text-muted">For boolean settings like enable/disable flags.</p>
+
+    <div class="sg-example" style="align-items:center;">
+        <label style="display:flex;align-items:center;gap:8px;">
+            <label class="dx-toggle">
+                <input type="checkbox" checked="@toggleOn" @onchange="@(() => toggleOn = !toggleOn)" />
+                <span class="dx-toggle-slider"></span>
+            </label>
+            <span>@(toggleOn ? "Enabled" : "Disabled")</span>
+        </label>
+
+        <label style="display:flex;align-items:center;gap:8px;margin-left:24px;">
+            <label class="dx-toggle">
+                <input type="checkbox" />
+                <span class="dx-toggle-slider"></span>
+            </label>
+            <span>Auto-Heal</span>
+        </label>
+    </div>
+    <pre class="sg-code"><code>&lt;label class="dx-toggle"&gt;
+    &lt;input type="checkbox" checked="@@isEnabled"
+           @@onchange="@@(() =&gt; isEnabled = !isEnabled)" /&gt;
+    &lt;span class="dx-toggle-slider"&gt;&lt;/span&gt;
+&lt;/label&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- DROPDOWNS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Dropdowns</h2>
+    <p class="dx-text-muted">Custom dropdown menus triggered by button click.</p>
+
+    <div class="sg-example" style="min-height:200px;align-items:flex-start;">
+        <div class="dx-dropdown">
+            <button class="dx-btn dx-btn-blue" @onclick="@(() => dropdownOpen = !dropdownOpen)">
+                <i class="bi bi-chevron-down"></i> Options
+            </button>
+            @if (dropdownOpen)
+            {
+                <div class="dx-dropdown-menu" style="display:block;">
+                    <div class="dx-dropdown-item">Edit</div>
+                    <div class="dx-dropdown-item">Duplicate</div>
+                    <div class="dx-dropdown-divider"></div>
+                    <div class="dx-dropdown-item" style="color:var(--dx-red);">Delete</div>
+                </div>
+            }
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-dropdown"&gt;
+    &lt;button class="dx-btn dx-btn-blue" @@onclick="ToggleDropdown"&gt;Options&lt;/button&gt;
+    @@if (isOpen)
+    {
+        &lt;div class="dx-dropdown-menu"&gt;
+            &lt;div class="dx-dropdown-item"&gt;Edit&lt;/div&gt;
+            &lt;div class="dx-dropdown-item"&gt;Duplicate&lt;/div&gt;
+            &lt;div class="dx-dropdown-divider"&gt;&lt;/div&gt;
+            &lt;div class="dx-dropdown-item"&gt;Delete&lt;/div&gt;
+        &lt;/div&gt;
+    }
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- MODALS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Modals</h2>
+    <p class="dx-text-muted">Overlay dialogs with blue header. Always use z-index 9999 for consistency.</p>
+
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-blue" @onclick="@(() => modalOpen = true)">Open Modal</button>
+    </div>
+
+    @if (modalOpen)
+    {
+        <div class="dx-modal-overlay" @onclick="@(() => modalOpen = false)">
+            <div class="dx-modal" style="min-width:500px;" @onclick:stopPropagation="true">
+                <div class="dx-modal-header">
+                    <span>Example Modal</span>
+                    <button class="dx-modal-close" @onclick="@(() => modalOpen = false)">&times;</button>
+                </div>
+                <div class="dx-modal-body">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Device Name</label>
+                        <input type="text" class="dx-form-control" placeholder="Enter name..." />
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Location</label>
+                        <select class="dx-form-control">
+                            <option>Corporate HQ</option>
+                            <option>Branch Office</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-gray" @onclick="@(() => modalOpen = false)">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="@(() => modalOpen = false)">Save</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    <pre class="sg-code"><code>&lt;div class="dx-modal-overlay" @@onclick="Close"&gt;
+    &lt;div class="dx-modal" @@onclick:stopPropagation="true"&gt;
+        &lt;div class="dx-modal-header"&gt;
+            &lt;span&gt;Title&lt;/span&gt;
+            &lt;button class="dx-modal-close" @@onclick="Close"&gt;&amp;times;&lt;/button&gt;
+        &lt;/div&gt;
+        &lt;div class="dx-modal-body"&gt;
+            Content here
+        &lt;/div&gt;
+        &lt;div class="dx-modal-footer"&gt;
+            &lt;button class="dx-btn dx-btn-gray"&gt;Cancel&lt;/button&gt;
+            &lt;button class="dx-btn dx-btn-blue"&gt;Save&lt;/button&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- ALERTS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Alerts</h2>
+    <p class="dx-text-muted">Inline messaging for info, success, warning, and error states.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-alert dx-alert-info">
+            <i class="bi bi-info-circle"></i>
+            <span>Informational message — device sync in progress.</span>
+        </div>
+        <div class="dx-alert dx-alert-success">
+            <i class="bi bi-check-circle"></i>
+            <span>Configuration saved successfully.</span>
+        </div>
+        <div class="dx-alert dx-alert-warning">
+            <i class="bi bi-exclamation-triangle"></i>
+            <span>3 devices have stale heartbeats (&gt; 2 minutes).</span>
+        </div>
+        <div class="dx-alert dx-alert-danger">
+            <i class="bi bi-x-circle"></i>
+            <span>Failed to connect to cloud platform. Check connector credentials.</span>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-alert dx-alert-info"&gt;
+    &lt;i class="bi bi-info-circle"&gt;&lt;/i&gt;
+    &lt;span&gt;Message text&lt;/span&gt;
+&lt;/div&gt;
+
+&lt;!-- Variants: dx-alert-info, dx-alert-success, dx-alert-warning, dx-alert-danger --&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- LOADING -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Loading States</h2>
+    <p class="dx-text-muted">Spinners and overlays for async operations.</p>
+
+    <h4>Inline Spinner</h4>
+    <div class="sg-example" style="align-items:center;">
+        <div class="dx-spinner"></div>
+        <span class="dx-text-muted">Loading devices...</span>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-spinner"&gt;&lt;/div&gt;</code></pre>
+
+    <h4>Loading Overlay</h4>
+    <p class="dx-text-muted">Wrap a container in <code>position:relative</code> and add the overlay inside it.</p>
+    <div class="sg-example">
+        <div style="position:relative;width:300px;height:120px;border:1px solid var(--dx-border-color);border-radius:4px;padding:16px;">
+            <p>Content underneath the overlay.</p>
+            <div class="dx-loading-overlay">
+                <div class="dx-spinner"></div>
+            </div>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div style="position:relative;"&gt;
+    &lt;!-- Your content --&gt;
+    &lt;div class="dx-loading-overlay"&gt;
+        &lt;div class="dx-spinner"&gt;&lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></pre>
+
+    <h4>Shared LoadingSpinner Component</h4>
+    <div class="sg-example">
+        <LoadingSpinner />
+    </div>
+    <pre class="sg-code"><code>&lt;LoadingSpinner /&gt;   @* from DXSuite.Shared.Components *@</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- TOAST -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Toast Notifications</h2>
+    <p class="dx-text-muted">Fixed-position notifications that slide in from the bottom-right.</p>
+
+    <div class="sg-example">
+        <button class="dx-btn dx-btn-blue" @onclick="ShowToast">Show Toast</button>
+    </div>
+
+    @if (toastVisible)
+    {
+        <div class="dx-toast">Settings saved successfully.</div>
+    }
+
+    <pre class="sg-code"><code>&lt;div class="dx-toast"&gt;Settings saved successfully.&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- SCROLLBAR -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Scrollbar</h2>
+    <p class="dx-text-muted">Add <code>.dx-scrollable</code> to any scrollable container for styled scrollbars (Webkit browsers).</p>
+
+    <div class="sg-example">
+        <div class="dx-scrollable" style="max-height:120px;overflow-y:auto;width:300px;border:1px solid var(--dx-border-color);border-radius:4px;padding:8px;">
+            @for (int i = 1; i <= 20; i++)
+            {
+                <p style="margin:4px 0;">Scrollable item @i</p>
+            }
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-scrollable" style="max-height:300px;overflow-y:auto;"&gt;
+    ...long content...
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- UTILITIES -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Utility Classes</h2>
+
+    <h4>Text Colors</h4>
+    <div class="sg-example">
+        <span class="dx-text-blue">dx-text-blue</span>
+        <span class="dx-text-green">dx-text-green</span>
+        <span class="dx-text-red">dx-text-red</span>
+        <span class="dx-text-orange">dx-text-orange</span>
+        <span class="dx-text-muted">dx-text-muted</span>
+    </div>
+
+    <h4>Truncation</h4>
+    <div class="sg-example">
+        <div class="dx-truncate" style="width:200px;border:1px solid var(--dx-border-color);padding:4px 8px;border-radius:4px;">
+            This is a very long string that should be truncated with an ellipsis when it overflows.
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-truncate" style="width:200px;"&gt;
+    Long text that truncates...
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- COMPOSITION EXAMPLE -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Composition Example</h2>
+    <p class="dx-text-muted">Combining patterns into a realistic device management view.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;">
+            <h4 style="margin:0;">Devices</h4>
+            <div style="display:flex;gap:8px;">
+                <input type="text" class="dx-form-control" placeholder="Search devices..." style="width:220px;" />
+                <button class="dx-btn dx-btn-blue"><i class="bi bi-plus-lg"></i> Add Device</button>
+            </div>
+        </div>
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 40px 2fr 1fr 120px 120px 100px;">
+                <div></div>
+                <div>Name</div>
+                <div>IP Address</div>
+                <div>Platform</div>
+                <div>Cloud Health</div>
+                <div>Actions</div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 40px 2fr 1fr 120px 120px 100px;">
+                <div><span class="dx-status-dot dx-status-dot-green"></span></div>
+                <div>Lobby Display</div>
+                <div class="dx-text-muted">192.168.1.10</div>
+                <div><span class="dx-badge dx-badge-blue">Engage</span></div>
+                <div><span class="dx-badge dx-badge-green">Healthy</span></div>
+                <div>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm">Edit</button>
+                </div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 40px 2fr 1fr 120px 120px 100px;">
+                <div><span class="dx-status-dot dx-status-dot-yellow"></span></div>
+                <div>Conference Room A</div>
+                <div class="dx-text-muted">192.168.1.11</div>
+                <div><span class="dx-badge dx-badge-orange">Ink</span></div>
+                <div><span class="dx-badge dx-badge-yellow">Degraded</span></div>
+                <div>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm">Edit</button>
+                </div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 40px 2fr 1fr 120px 120px 100px;">
+                <div><span class="dx-status-dot dx-status-dot-red"></span></div>
+                <div>Wayfinding Kiosk</div>
+                <div class="dx-text-muted">192.168.1.12</div>
+                <div><span class="dx-badge dx-badge-blue">Engage</span></div>
+                <div><span class="dx-badge dx-badge-red">Failed</span></div>
+                <div>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm">Edit</button>
+                </div>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ============================================================ -->
+<!-- PAGE SECTIONS -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Page Sections</h2>
+    <p class="dx-text-muted">Standard page header and body wrappers. The header provides a gray title bar; the body wraps main content.</p>
+
+    <div class="sg-example" style="flex-direction:column; padding:0; overflow:hidden;">
+        <div class="dx-page-header">
+            <div class="dx-page-header-flex">
+                <h2>PAGE TITLE</h2>
+            </div>
+        </div>
+        <div class="dx-page-body" style="padding:20px 30px;">
+            <p class="dx-text-muted">Page body content goes here.</p>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;section class="dx-page-header"&gt;
+    &lt;div class="dx-page-header-flex"&gt;
+        &lt;h2&gt;PAGE TITLE&lt;/h2&gt;
+    &lt;/div&gt;
+&lt;/section&gt;
+&lt;section class="dx-page-body"&gt;
+    ...content...
+&lt;/section&gt;</code></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- COLLAPSIBLE GROUP -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Collapsible Group</h2>
+    <p class="dx-text-muted">Expandable/collapsible section with an orange accent border and animated chevron.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-collapsible-group">
+            <div class="dx-collapsible-header" @onclick="ToggleSgGroup">
+                <svg class="dx-collapsible-chevron @(sgGroupCollapsed ? "collapsed" : "")" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="dx-collapsible-title">Region West</span>
+            </div>
+            @if (!sgGroupCollapsed)
+            {
+                <div class="dx-collapsible-content">
+                    <p class="dx-text-muted" style="padding:0 12px;">Child content appears here when expanded.</p>
+                </div>
+            }
+        </div>
+        <div class="dx-collapsible-group">
+            <div class="dx-collapsible-header">
+                <svg class="dx-collapsible-chevron collapsed" width="14" height="14" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M7 10l5 5 5-5" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" />
+                </svg>
+                <span class="dx-collapsible-title">Region East (collapsed)</span>
+            </div>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;div class="dx-collapsible-group"&gt;
+    &lt;div class="dx-collapsible-header"&gt;
+        &lt;svg class="dx-collapsible-chevron"&gt;...&lt;/svg&gt;
+        &lt;span class="dx-collapsible-title"&gt;Group Name&lt;/span&gt;
+    &lt;/div&gt;
+    &lt;div class="dx-collapsible-content"&gt;
+        ...child content...
+    &lt;/div&gt;
+&lt;/div&gt;</code></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- TILE -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Tile</h2>
+    <p class="dx-text-muted">Horizontal image-plus-text card used for location selection and similar navigation targets.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="row">
+            <div class="col-md-12 col-lg-6">
+                <div class="dx-tile" style="cursor:pointer;">
+                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='120' fill='%23999'%3E%3Crect width='160' height='120' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='14' fill='%23999'%3E160×120%3C/text%3E%3C/svg%3E" class="img-fluid" alt="">
+                    <p class="dx-tile-title">Main Lobby</p>
+                </div>
+            </div>
+            <div class="col-md-12 col-lg-6">
+                <div class="dx-tile" style="cursor:pointer;">
+                    <img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='120' fill='%23999'%3E%3Crect width='160' height='120' fill='%23ddd'/%3E%3Ctext x='50%25' y='50%25' dominant-baseline='middle' text-anchor='middle' font-size='14' fill='%23999'%3E160×120%3C/text%3E%3C/svg%3E" class="img-fluid" alt="">
+                    <p class="dx-tile-title">Conference Center</p>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;div class="dx-tile"&gt;
+    &lt;img src="..." class="img-fluid" alt=""&gt;
+    &lt;p class="dx-tile-title"&gt;Location Name&lt;/p&gt;
+&lt;/div&gt;</code></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- SETTINGS LIST -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Settings List</h2>
+    <p class="dx-text-muted">Borderless row layout for preference tables and settings pages. Uses grid columns with label, description, and action areas.</p>
+
+    <div class="sg-example" style="flex-direction:column;">
+        <div class="dx-settings-list">
+            <div class="dx-settings-list-header" style="grid-template-columns: 140px 1fr 60px;">
+                <div>Category</div>
+                <div>Description</div>
+                <div style="text-align:right;">Email</div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 140px 1fr 60px;">
+                <div class="dx-settings-list-label">Approvals</div>
+                <div class="dx-settings-list-desc">Content approval requests, approvals, and rejections</div>
+                <div style="text-align:right;"><input type="checkbox" class="dx-checkbox" checked /></div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 140px 1fr 60px;">
+                <div class="dx-settings-list-label">Schedule Expiring</div>
+                <div class="dx-settings-list-desc">When a scheduled playlist is about to expire</div>
+                <div style="text-align:right;"><input type="checkbox" class="dx-checkbox" /></div>
+            </div>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;div class="dx-settings-list"&gt;
+    &lt;div class="dx-settings-list-header" style="grid-template-columns: 140px 1fr 60px;"&gt;
+        &lt;div&gt;Category&lt;/div&gt;
+        &lt;div&gt;Description&lt;/div&gt;
+        &lt;div&gt;Email&lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class="dx-settings-list-row" style="grid-template-columns: 140px 1fr 60px;"&gt;
+        &lt;div class="dx-settings-list-label"&gt;Label&lt;/div&gt;
+        &lt;div class="dx-settings-list-desc"&gt;Description text&lt;/div&gt;
+        &lt;div&gt;&lt;input type="checkbox" class="dx-checkbox" /&gt;&lt;/div&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- PANEL HEADER -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Panel Header</h2>
+    <p class="dx-text-muted">Gray header bar for list/table panels. Contains a title and optional controls (search, buttons).</p>
+
+    <div class="sg-example" style="flex-direction:column; padding:0; overflow:hidden;">
+        <div class="dx-panel-header">
+            <h4>Device Management</h4>
+            <div class="dx-panel-controls">
+                <input class="dx-search-input" placeholder="Search devices..." />
+                <button class="dx-btn dx-btn-blue dx-btn-sm">All Devices</button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm">Refresh</button>
+            </div>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;div class="dx-panel-header"&gt;
+    &lt;h4&gt;Title&lt;/h4&gt;
+    &lt;div class="dx-panel-controls"&gt;
+        &lt;input class="dx-search-input" placeholder="Search..." /&gt;
+        &lt;button class="dx-btn dx-btn-blue dx-btn-sm"&gt;Action&lt;/button&gt;
+    &lt;/div&gt;
+&lt;/div&gt;</code></div>
+</section>
+
+<!-- ============================================================ -->
+<!-- PANEL LAYOUT -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Panel Layout</h2>
+    <p class="dx-text-muted">
+        The full shape of a configuration tab. <code>.dx-card-fill</code> makes the card fill the tab so only
+        <code>.dx-panel-content</code> scrolls. <code>.dx-panel-hint</code> explains the tab under the header,
+        <code>.dx-panel-alert</code> spaces a <code>.dx-alert</code> between the header and the content, and
+        <code>.dx-panel-footer</code> carries the count. Alerts always lead with an icon.
+    </p>
+
+    <div class="sg-example" style="flex-direction:column; padding:0; overflow:hidden; height:320px;">
+        <div class="dx-card dx-card-fill">
+            <div class="dx-panel-header">
+                <h4>Pulse Reporting</h4>
+                <div class="dx-panel-controls">
+                    <button class="dx-btn dx-btn-gray dx-btn-sm">Discard</button>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm">Save</button>
+                </div>
+            </div>
+            <div class="dx-panel-hint">One or two sentences on what this tab controls.</div>
+            <div class="dx-alert dx-alert-success dx-panel-alert"><i class="bi bi-check-circle"></i><span>Saved 1 issue type.</span></div>
+            <div class="dx-panel-content">
+                <div class="dx-table" style="border:none;">
+                    <div class="dx-table-header" style="grid-template-columns: 1fr 1fr;"><div>Name</div><div>Value</div></div>
+                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr;"><div>First</div><div>1</div></div>
+                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr;"><div>Second</div><div>2</div></div>
+                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr;"><div>Third</div><div>3</div></div>
+                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr;"><div>Fourth</div><div>4</div></div>
+                </div>
+            </div>
+            <div class="dx-panel-footer">4 items</div>
+        </div>
+    </div>
+    <pre class="sg-code"><code>&lt;div class="dx-card dx-card-fill"&gt;
+    &lt;div class="dx-panel-header"&gt;...&lt;/div&gt;
+    &lt;div class="dx-panel-hint"&gt;What this tab controls.&lt;/div&gt;
+    &lt;div class="dx-alert dx-alert-success dx-panel-alert"&gt;&lt;i class="bi bi-check-circle"&gt;&lt;/i&gt;&lt;span&gt;Saved.&lt;/span&gt;&lt;/div&gt;
+    &lt;div class="dx-panel-content"&gt;
+        &lt;div class="dx-table" style="border:none;"&gt;...&lt;/div&gt;
+    &lt;/div&gt;
+    &lt;div class="dx-panel-footer"&gt;4 items&lt;/div&gt;
+&lt;/div&gt;</code></pre>
+</section>
+
+<!-- ============================================================ -->
+<!-- OVERRIDE CONTROL -->
+<!-- ============================================================ -->
+<section class="sg-section">
+    <h2>Override Control</h2>
+    <p class="dx-text-muted">Collapsible asset selection strip used on location pages. Toggle reveals a scrollable grid of asset cards.</p>
+
+    <div class="sg-example" style="flex-direction:column; padding:0; overflow:hidden;">
+        <div class="dx-override-section">
+            <div class="text-center" style="margin-bottom:10px;">
+                <button class="dx-override-toggle" @onclick="ToggleSgOverride">
+                    @(sgOverrideVisible ? "HIDE OVERRIDE CONTROL" : "SHOW OVERRIDE CONTROL")
+                    @(sgOverrideSelected ? " — ASSET SELECTED" : "")
+                </button>
+            </div>
+            <div class="@(!sgOverrideVisible ? "dx-hidden" : "")">
+                <div class="dx-override-grid">
+                    @* Sample image card *@
+                    <div class="dx-override-card-wrapper">
+                        <div class="dx-override-card @(sgOverrideSelected ? "selected" : "")" @onclick="() => sgOverrideSelected = !sgOverrideSelected">
+                            <div class="dx-override-card-preview">
+                                <div class="dx-override-placeholder video">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:32px;height:32px;opacity:0.7;"><path d="M8 5v14l11-7z"/></svg>
+                                    <span>Video</span>
+                                </div>
+                            </div>
+                            <div class="dx-override-card-label">promo-lobby.mp4</div>
+                            @if (sgOverrideSelected)
+                            {
+                                <div class="dx-override-card-badge">SELECTED</div>
+                            }
+                        </div>
+                        <button class="dx-override-card-action">VIEW</button>
+                    </div>
+
+                    @* Sample web card *@
+                    <div class="dx-override-card-wrapper">
+                        <div class="dx-override-card">
+                            <div class="dx-override-card-preview">
+                                <div class="dx-override-placeholder web">
+                                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" style="width:32px;height:32px;opacity:0.7;"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.95-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/></svg>
+                                    <span>Web Content</span>
+                                </div>
+                            </div>
+                            <div class="dx-override-card-label">dashboard-url</div>
+                        </div>
+                        <button class="dx-override-card-action">VIEW</button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="sg-code"><code>&lt;section class="dx-override-section"&gt;
+    &lt;button class="dx-override-toggle"&gt;SHOW OVERRIDE CONTROL&lt;/button&gt;
+    &lt;div class="dx-override-grid"&gt;
+        &lt;div class="dx-override-card-wrapper"&gt;
+            &lt;div class="dx-override-card selected"&gt;
+                &lt;div class="dx-override-card-preview"&gt;...&lt;/div&gt;
+                &lt;div class="dx-override-card-label"&gt;filename.jpg&lt;/div&gt;
+                &lt;div class="dx-override-card-badge"&gt;SELECTED&lt;/div&gt;
+            &lt;/div&gt;
+            &lt;button class="dx-override-card-action"&gt;VIEW&lt;/button&gt;
+        &lt;/div&gt;
+    &lt;/div&gt;
+&lt;/section&gt;</code></div>
+</section>
+
+@code {
+    private string activeDemoTab = "Devices";
+    private string[] demoTabs = ["Devices", "Locations", "Connectors"];
+
+    private bool toggleOn = true;
+    private bool dropdownOpen = false;
+    private bool modalOpen = false;
+    private bool sgGroupCollapsed = false;
+    private bool sgOverrideVisible = false;
+    private bool sgOverrideSelected = false;
+
+    private void ToggleSgOverride() => sgOverrideVisible = !sgOverrideVisible;
+
+    private void ToggleSgGroup() => sgGroupCollapsed = !sgGroupCollapsed;
+    private bool toastVisible = false;
+    private System.Threading.Timer? toastTimer;
+
+    private void ShowToast()
+    {
+        toastVisible = true;
+        toastTimer?.Dispose();
+        toastTimer = new System.Threading.Timer(_ =>
+        {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 3000, System.Threading.Timeout.Infinite);
+    }
+
+    public void Dispose()
+    {
+        toastTimer?.Dispose();
+    }
+}
+
+<style>
+    /* Style guide page layout */
+    .sg-section {
+        margin-bottom: 48px;
+    }
+
+    .sg-section h2 {
+        font-size: 1.5rem;
+        font-weight: 700;
+        border-bottom: 2px solid var(--dx-blue);
+        padding-bottom: 8px;
+        margin-bottom: 16px;
+    }
+
+    .sg-section h4 {
+        font-size: 1.05rem;
+        font-weight: 600;
+        margin: 20px 0 8px;
+        color: var(--dx-text-primary);
+    }
+
+    .sg-example {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        padding: 20px;
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius) var(--dx-border-radius) 0 0;
+        background: #fff;
+    }
+
+    .sg-code {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 16px;
+        border-radius: 0 0 var(--dx-border-radius) var(--dx-border-radius);
+        margin: 0 0 8px;
+        overflow-x: auto;
+        font-size: 0.85rem;
+        line-height: 1.5;
+    }
+
+    .sg-code code {
+        color: #d4d4d4;
+        font-family: 'Cascadia Code', 'Consolas', monospace;
+    }
+
+    .sg-color-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+        gap: 12px;
+    }
+
+    .sg-color-swatch {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+        padding: 20px 12px;
+        border-radius: var(--dx-border-radius);
+        color: #fff;
+        font-size: 0.85rem;
+        font-weight: 600;
+    }
+
+    .sg-color-swatch code {
+        font-weight: 400;
+        opacity: 0.85;
+        color: inherit;
+    }
+</style>

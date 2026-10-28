@@ -1,0 +1,428 @@
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Authorization
+@inject IMetadataDefinitionService MetadataService
+@inject ISessionState SessionState
+@inject ILogger<MetadataTab> Logger
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Metadata Keys</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAdd">+ Add Key</button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (definitions.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No metadata keys defined yet</h5>
+            <p class="dx-text-muted">Add a key to start tagging devices, content, and access rules with metadata.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: minmax(80px,0.8fr) minmax(100px,0.8fr) 100px minmax(140px,1fr) minmax(120px,1fr) 145px;">
+                    <div>Key</div>
+                    <div>Display Name</div>
+                    <div>Type</div>
+                    <div>Options</div>
+                    <div>Description</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var def in definitions)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: minmax(80px,0.8fr) minmax(100px,0.8fr) 100px minmax(140px,1fr) minmax(120px,1fr) 145px;">
+                        <div class="dx-col-primary"><code>@def.MetadataKey</code></div>
+                        <div>@def.DisplayName</div>
+                        <div><span class="dx-type-badge @GetTypeBadgeClass(def.FieldType)">@def.FieldType</span></div>
+                        <div class="dx-truncate dx-text-muted dx-col-hide">@FormatOptions(def.Options)</div>
+                        <div class="dx-text-muted dx-col-hide">@def.Description</div>
+                        <div class="dx-col-actions" style="display:flex; gap:4px;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenEdit(def)">Edit</button>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => DeleteDef(def)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@* Add / Edit modal *@
+@if (showModal)
+{
+    @* The backdrop deliberately does not close this one. A key is several fields' worth of
+       typing, and a stray click outside discards the lot. Leave by the close button or Cancel. *@
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="min-width:min(480px, 92vw);">
+            <div class="dx-modal-header">
+                <span>@(isNew ? "Add Metadata Key" : "Edit Metadata Key")</span>
+                <button class="dx-modal-close" @onclick="CloseModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (modalError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:12px;">@modalError</div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Key</label>
+                    @if (isNew)
+                    {
+                        <input type="text" class="dx-form-control" @bind="editKey" placeholder="e.g. department" />
+                    }
+                    else
+                    {
+                        <input type="text" class="dx-form-control" value="@editKey" disabled />
+                    }
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Display Name</label>
+                    <input type="text" class="dx-form-control" @bind="editDisplayName" placeholder="e.g. Department" />
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Field Type</label>
+                    <select class="dx-form-control" @bind="editFieldType">
+                        <option value="@MetadataFieldTypes.String">String</option>
+                        <option value="@MetadataFieldTypes.Int">Int</option>
+                        <option value="@MetadataFieldTypes.List">List</option>
+                        <option value="@MetadataFieldTypes.MultiSelect">Multi-Select</option>
+                    </select>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Description</label>
+                    <input type="text" class="dx-form-control" @bind="editDescription" placeholder="Optional hint text" />
+                </div>
+
+                @if (editFieldType == "list" || editFieldType == "multi-select")
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Options</label>
+                        @for (int i = 0; i < editOptions.Count; i++)
+                        {
+                            var idx = i;
+                            <div style="display:flex; gap:6px; align-items:center; margin-bottom:4px;">
+                                <input type="text" class="dx-form-control" style="flex:1;"
+                                       value="@editOptions[idx]"
+                                       @onchange="e => editOptions[idx] = e.Value?.ToString() ?? string.Empty" />
+                                <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => editOptions.RemoveAt(idx)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            </div>
+                        }
+                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" style="margin-top:4px;" @onclick="AddEmptyOption">+ Add Option</button>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CloseModal">Cancel</button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDef">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* Confirmations render after the edit modal so they stack above it. *@
+@* Delete confirmation, naming every use of the key *@
+@if (pendingDelete != null)
+{
+    <div class="dx-modal-overlay" @onclick="CancelDelete">
+        <div class="dx-modal" style="max-width:460px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <span>Delete Metadata Key</span>
+                <button class="dx-modal-close" @onclick="CancelDelete">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (deleteError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:12px;">@deleteError</div>
+                }
+                <p>Delete <strong>@pendingDelete.DisplayName</strong> (<code>@pendingDelete.MetadataKey</code>)?</p>
+                @if (pendingDeleteUsage?.IsUsed == true)
+                {
+                    <UsageLines Usage="pendingDeleteUsage" />
+                    <p class="dx-text-muted" style="margin-bottom:0;">
+                        Tags and references keep their values and keep working. The key's display name and
+                        options are removed, and it can no longer be picked.
+                    </p>
+                }
+                else
+                {
+                    <p class="dx-text-muted" style="margin-bottom:0;">Nothing uses this key.</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelDelete">Cancel</button>
+                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="ConfirmDelete">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* Option removal warning, shown when removed options are still stored *@
+@if (pendingOptionUsage != null)
+{
+    <div class="dx-modal-overlay" @onclick="CancelOptionRemoval">
+        <div class="dx-modal" style="max-width:460px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <span>Remove Options</span>
+                <button class="dx-modal-close" @onclick="CancelOptionRemoval">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p>These options are still stored: <strong>@string.Join(", ", pendingRemovedOptions)</strong>.</p>
+                <UsageLines Usage="pendingOptionUsage" />
+                <p class="dx-text-muted" style="margin-bottom:0;">
+                    The stored values are kept and show as not in list until someone changes them.
+                </p>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelOptionRemoval">Cancel</button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="ConfirmOptionRemoval">Save Anyway</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<MetadataDefinitionDto> definitions = new();
+    private bool isLoading = true;
+
+    // Modal state
+    private bool showModal;
+    private bool isNew;
+    private int editId;
+    private string editKey = "";
+    private string editDisplayName = "";
+    private string editFieldType = "string";
+    private string? editDescription;
+
+    private List<string> editOptions = new();
+    private List<string> originalOptions = new();
+    private string? modalError;
+
+    private MetadataDefinitionDto? pendingDelete;
+    private KeyUsageSummary? pendingDeleteUsage;
+    private string? deleteError;
+
+    private KeyUsageSummary? pendingOptionUsage;
+    private List<string> pendingRemovedOptions = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDefinitions();
+    }
+
+    private async Task LoadDefinitions()
+    {
+        isLoading = true;
+        try
+        {
+            definitions = await MetadataService.GetAllDefinitionsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load metadata definitions");
+            definitions = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void OpenAdd()
+    {
+        isNew = true;
+        editId = 0;
+        editKey = "";
+        editDisplayName = "";
+        editFieldType = "string";
+        editDescription = null;
+
+        editOptions = new List<string>();
+        originalOptions = new List<string>();
+        modalError = null;
+        showModal = true;
+    }
+
+    private void OpenEdit(MetadataDefinitionDto def)
+    {
+        isNew = false;
+        editId = def.MetadataDefinitionId;
+        editKey = def.MetadataKey;
+        editDisplayName = def.DisplayName;
+        editFieldType = def.FieldType;
+        editDescription = def.Description;
+
+        editOptions = new List<string>(def.Options);
+        originalOptions = new List<string>(def.Options);
+        modalError = null;
+        showModal = true;
+    }
+
+    private async Task SaveDef()
+    {
+        modalError = null;
+
+        if (!isNew)
+        {
+            var kept = editFieldType is MetadataFieldTypes.List or MetadataFieldTypes.MultiSelect
+                ? editOptions.Select(o => o.Trim())
+                : Enumerable.Empty<string>();
+            var removed = originalOptions.Except(kept, StringComparer.OrdinalIgnoreCase).ToList();
+            if (removed.Count > 0)
+            {
+                try
+                {
+                    var usage = await MetadataService.GetValueUsageAsync(editKey, removed);
+                    if (usage.IsUsed)
+                    {
+                        pendingRemovedOptions = removed;
+                        pendingOptionUsage = usage;
+                        return;
+                    }
+                }
+                catch (Exception ex)
+                {
+                    modalError = ex.Message;
+                    return;
+                }
+            }
+        }
+
+        await SaveDefConfirmed();
+    }
+
+    private void CancelOptionRemoval()
+    {
+        pendingOptionUsage = null;
+        pendingRemovedOptions = new();
+    }
+
+    private async Task ConfirmOptionRemoval()
+    {
+        CancelOptionRemoval();
+        await SaveDefConfirmed();
+    }
+
+    private async Task SaveDefConfirmed()
+    {
+
+        if (string.IsNullOrWhiteSpace(editKey))
+        {
+            modalError = "Key is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(editDisplayName))
+        {
+            modalError = "Display Name is required.";
+            return;
+        }
+
+        var dto = new MetadataDefinitionDto
+        {
+            MetadataDefinitionId = editId,
+            MetadataKey = editKey.Trim(),
+            DisplayName = editDisplayName.Trim(),
+            FieldType = editFieldType,
+            Description = editDescription?.Trim(),
+
+            Options = editOptions.Where(o => !string.IsNullOrWhiteSpace(o)).Select(o => o.Trim()).ToList()
+        };
+
+        try
+        {
+            var editUser = SessionState.UserName ?? "system";
+            if (isNew)
+                await MetadataService.CreateDefinitionAsync(dto, editUser);
+            else
+                await MetadataService.UpdateDefinitionAsync(editId, dto, editUser);
+
+            showModal = false;
+            await LoadDefinitions();
+        }
+        catch (Exception ex)
+        {
+            modalError = ex.Message;
+        }
+    }
+
+    private async Task DeleteDef(MetadataDefinitionDto def)
+    {
+        deleteError = null;
+        pendingDeleteUsage = null;
+        pendingDelete = def;
+        try
+        {
+            pendingDeleteUsage = await MetadataService.GetKeyUsageAsync(def.MetadataKey);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to count usage of metadata key {Key}", def.MetadataKey);
+            deleteError = "Could not count where this key is used.";
+        }
+    }
+
+    private void CancelDelete()
+    {
+        pendingDelete = null;
+        pendingDeleteUsage = null;
+        deleteError = null;
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (pendingDelete == null) return;
+        try
+        {
+            var result = await MetadataService.DeleteDefinitionAsync(pendingDelete.MetadataDefinitionId);
+            if (!result.Success)
+            {
+                deleteError = result.ErrorMessage ?? "Delete failed.";
+                return;
+            }
+            CancelDelete();
+            await LoadDefinitions();
+        }
+        catch (Exception ex)
+        {
+            deleteError = ex.Message;
+        }
+    }
+
+    private void AddEmptyOption() => editOptions.Add(string.Empty);
+
+    private void CloseModal()
+    {
+        showModal = false;
+        modalError = null;
+    }
+
+    private static string GetTypeBadgeClass(string fieldType) => fieldType.ToLower() switch
+    {
+        "string" => "dx-type-string",
+        "int" => "dx-type-int",
+        "list" => "dx-type-list",
+        "multi-select" => "dx-type-multi-select",
+        _ => ""
+    };
+
+    private static string FormatOptions(List<string> options)
+    {
+        if (options.Count == 0) return "—";
+        var preview = string.Join(", ", options.Take(3));
+        return options.Count > 3 ? $"{preview}, +{options.Count - 3} more" : preview;
+    }
+}

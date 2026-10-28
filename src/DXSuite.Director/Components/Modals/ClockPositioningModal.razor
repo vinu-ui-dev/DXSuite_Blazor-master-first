@@ -1,0 +1,25 @@
+@* Stub — full implementation will be migrated from RIADirector *@
+
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5>Clock Positioning</h5>
+                <button class="dx-btn dx-btn-gray" @onclick="Close">×</button>
+            </div>
+            <div class="dx-modal-body">
+                <p class="text-muted">Clock positioning modal — pending full migration.</p>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback<ContentAssignment?> OnClockPositionSaved { get; set; }
+
+    private bool isVisible;
+
+    public Task Open(object? display = null, object? contentAssignment = null) { isVisible = true; StateHasChanged(); return Task.CompletedTask; }
+    public void Close() { isVisible = false; StateHasChanged(); }
+}

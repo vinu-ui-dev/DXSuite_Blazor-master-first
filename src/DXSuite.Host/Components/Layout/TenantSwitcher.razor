@@ -1,0 +1,123 @@
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Multitenancy
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject NavigationManager Navigation
+@inject IConfiguration AppConfig
+
+@* Tenant selection modal, opened from the profile dropdown via Open(). Renders
+   nothing when closed; the caller decides whether the deployment is multi-tenant. *@
+@if (isOpen)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="width: 420px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <span>Switch Tenant</span>
+                <button type="button" class="dx-modal-close" @onclick="Close">&times;</button>
+            </div>
+            <div class="dx-modal-body" style="padding: 8px 0;">
+                @foreach (var membership in SessionState.TenantMemberships)
+                {
+                    <button class="dx-tenant-item @(membership.TenantId == TenantContext.TenantId ? "active" : "")"
+                            @onclick="@(() => SwitchTenant(membership.Subdomain))">
+                        @if (membership.TenantId == TenantContext.TenantId)
+                        {
+                            <i class="bi bi-check2" style="margin-right:8px;"></i>
+                        }
+                        else
+                        {
+                            <i class="bi bi-arrow-right" style="margin-right:8px;"></i>
+                        }
+                        @membership.DisplayName
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private bool isOpen;
+
+    [Parameter(CaptureUnmatchedValues = true)]
+    public Dictionary<string, object>? AdditionalAttributes { get; set; }
+
+    public void Open()
+    {
+        isOpen = true;
+        StateHasChanged();
+    }
+
+    private void Close() => isOpen = false;
+
+    private void SwitchTenant(string subdomain)
+    {
+        isOpen = false;
+        // Full-page navigation to the target tenant's subdomain. Cookies cannot transfer
+        // cross-origin — the destination tenant's auth flow will handle re-authentication.
+        var targetUrl = BuildTenantUrl(subdomain);
+        Navigation.NavigateTo(targetUrl, forceLoad: true);
+    }
+
+    private string BuildTenantUrl(string subdomain)
+    {
+        // Prefer an explicit base domain from config; fall back to extracting it from the current host.
+        var configuredBase = AppConfig["DXSuite:BaseDomain"];
+        if (!string.IsNullOrEmpty(configuredBase))
+            return $"https://{subdomain}.{configuredBase}/";
+
+        try
+        {
+            var uri = new Uri(Navigation.BaseUri);
+            var host = uri.Host; // e.g., "acme.dxsuite.cloud" or "localhost"
+
+            // Preserve non-standard ports (e.g. :8443 in staging environments where IIS
+            // binds on a non-default port). Standard ports are omitted for clean URLs.
+            var isStandardPort = (uri.Scheme == "https" && uri.Port == 443)
+                              || (uri.Scheme == "http"  && uri.Port == 80);
+            var portSuffix = isStandardPort ? "" : $":{uri.Port}";
+
+            var parts = host.Split('.');
+            if (parts.Length > 2)
+            {
+                // Replace the first segment (current subdomain) with the target subdomain.
+                var baseDomain = string.Join('.', parts.Skip(1));
+                return $"{uri.Scheme}://{subdomain}.{baseDomain}{portSuffix}/";
+            }
+            // localhost or bare domain — replace host entirely (dev convenience).
+            return $"{uri.Scheme}://{subdomain}.{host}{portSuffix}/";
+        }
+        catch
+        {
+            // Unreachable in practice — NavigationManager.BaseUri is always a valid absolute URI.
+            return "/";
+        }
+    }
+}
+
+<style>
+    .dx-tenant-item {
+        background: transparent;
+        border: none;
+        color: #333;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        font-size: 0.9rem;
+        min-height: 44px;
+        padding: 10px 20px;
+        text-align: left;
+        transition: background 0.12s;
+        width: 100%;
+    }
+
+    .dx-tenant-item:hover {
+        background: #f5f5f5;
+    }
+
+    .dx-tenant-item.active {
+        background: #f0f4ff;
+        color: var(--dx-blue);
+        font-weight: 500;
+    }
+</style>

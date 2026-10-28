@@ -1,0 +1,278 @@
+@inject IUploadIdentityService UploadIdentity
+@inject ISessionState SessionState
+@inject ILogger<UploadingAsSection> Logger
+
+@*
+    "Uploading as" and the location's participating fields, shared by every asset creation site so the
+    picker, its cardinality and the blocked-upload condition are identical wherever content is made. The
+    candidates are read when the form opens and never refreshed underneath it: the pick is re-checked at
+    write time, and a picker that re-shuffles mid-upload is worse than a clear failure at submit.
+*@
+@if (!isLoaded)
+{
+    return;
+}
+
+@if (candidates.Mode == UploadIdentityMode.NotPermitted)
+{
+    <div class="dx-alert dx-alert-warning">Your access at this location is View only, so there is nothing to upload.</div>
+    return;
+}
+
+@if (!string.IsNullOrEmpty(guardError))
+{
+    <div class="dx-alert dx-alert-danger">@guardError</div>
+}
+
+@if (candidates.Mode == UploadIdentityMode.Scoped)
+{
+    <div class="dx-form-group">
+        <label class="dx-form-label">Uploading as</label>
+        <select class="dx-form-control" value="@PickKey(identity)" disabled="@(candidates.Candidates.Count == 1)" @onchange="OnIdentityChanged">
+            @foreach (var candidate in candidates.Candidates)
+            {
+                <option value="@PickKey(candidate)">@candidate.Label</option>
+            }
+        </select>
+        <div class="dx-form-hint">
+            @(candidates.Candidates.Count == 1
+                ? "You have one upload identity at this location, so there is nothing to choose."
+                : "The values below come from this identity only, and it becomes the owner of the upload.")
+        </div>
+    </div>
+}
+
+@foreach (var field in fields)
+{
+    <div class="dx-form-group">
+        <label class="dx-form-label">@field.Label <span class="dx-type-badge dx-type-@field.FieldType">@field.FieldType</span></label>
+
+        @if (candidates.Mode != UploadIdentityMode.Scoped)
+        {
+            <MetadataValueInput FieldType="@field.FieldType"
+                                Values="@(picks.GetValueOrDefault(field.Key) ?? new List<string>())"
+                                ValuesChanged="@(v => SetPick(field.Key, v))"
+                                Options="@field.Options.ToList()" />
+        }
+        else if (field.IsMulti)
+        {
+            <div style="display:flex; flex-wrap:wrap; gap:6px 12px;">
+                @foreach (var option in field.Options)
+                {
+                    var isChecked = picks.GetValueOrDefault(field.Key)?.Contains(option) == true;
+                    <label style="display:flex; align-items:center; gap:4px; margin:0;">
+                        <input type="checkbox" class="dx-checkbox" checked="@isChecked" disabled="@field.IsDisabled"
+                               @onchange="@(e => ToggleMulti(field.Key, option, (bool)(e.Value ?? false)))" />
+                        @option
+                    </label>
+                }
+            </div>
+        }
+        else
+        {
+            <select class="dx-form-control" disabled="@field.IsDisabled"
+                    value="@(picks.GetValueOrDefault(field.Key)?.FirstOrDefault() ?? "")"
+                    @onchange="@(e => SetPick(field.Key, [e.Value?.ToString() ?? ""]))">
+                @if (field.Options.Count == 0)
+                {
+                    <option value="">No values available</option>
+                }
+                @foreach (var option in field.Options)
+                {
+                    <option value="@option">@option@(option == field.DefaultValue ? " (Default)" : "")</option>
+                }
+            </select>
+        }
+
+        @if (field.Reason != null)
+        {
+            <div class="dx-form-hint @(field.IsBlocking ? "dx-text-red" : "")">@field.Reason</div>
+        }
+    </div>
+}
+
+@if (reach is { Total: > 0 } r)
+{
+    <div class="dx-form-hint @(r.Receiving == 0 ? "dx-text-red" : "")" style="margin-bottom:12px;">
+        @if (r.Receiving == 0)
+        {
+            @($"Reaches 0 of {r.Total} players. Nothing plays this until a player's values match.")
+        }
+        else
+        {
+            @($"Reaches {r.Receiving} of {r.Total} players.")
+        }
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public int LocationId { get; set; }
+
+    /// <summary>Raised when the pick, a value, or the blocked state changes, so the host can re-render its submit button.</summary>
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    /// <summary>A pick to restore when a host resumes an upload after navigating away. Ignored if no longer held.</summary>
+    [Parameter] public UploadCandidate? InitialIdentity { get; set; }
+
+    /// <summary>Values to restore alongside <see cref="InitialIdentity"/>; constrained again at write time.</summary>
+    [Parameter] public IReadOnlyDictionary<string, List<string>>? InitialPicks { get; set; }
+
+    private bool isLoaded;
+    private int loadedLocationId;
+    private bool isLibrary;
+    private UploadFormContext? context;
+    private UploadCandidates candidates = UploadCandidates.Unrestricted;
+    private UploadCandidate? identity;
+    private IReadOnlyDictionary<string, IReadOnlySet<string>> held = new Dictionary<string, IReadOnlySet<string>>();
+    private List<UploadField> fields = new();
+    private Dictionary<string, List<string>> picks = new(MetadataEvaluator.KeyComparer);
+    private MetadataReach? reach;
+    private string? guardError;
+
+    /// <summary>False until the section has loaded; a host must not submit before then.</summary>
+    public bool IsReady => isLoaded;
+
+    /// <summary>The picked group, or null for Myself and for an unrestricted upload.</summary>
+    public int? PickedGroupId => identity?.UserGroupId;
+
+    /// <summary>The picked identity, or null for an unrestricted upload.</summary>
+    public UploadCandidate? PickedIdentity => identity;
+
+    /// <summary>The values picked per participating key, for <see cref="IUploadIdentityService.PrepareAsync"/>.</summary>
+    public IReadOnlyDictionary<string, List<string>> Picks => picks;
+
+    /// <summary>Keys this section owns, which a host's own metadata fields must not also render.</summary>
+    public IReadOnlySet<string> ParticipatingKeys =>
+        (context?.Rules.Select(r => r.Key) ?? []).ToHashSet(MetadataEvaluator.KeyComparer);
+
+    public bool IsBlocked => !isLoaded || candidates.Mode == UploadIdentityMode.NotPermitted || fields.Any(f => f.IsBlocking);
+
+    /// <summary>Why the upload cannot go ahead, for the submit button and footer. Null when it can.</summary>
+    public string? BlockReason =>
+        !isLoaded ? "Loading upload settings."
+        : candidates.Mode == UploadIdentityMode.NotPermitted ? "Your access at this location is View only."
+        : fields.FirstOrDefault(f => f.IsBlocking)?.Reason;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LocationId <= 0 || LocationId == loadedLocationId) return;
+        loadedLocationId = LocationId;
+        identity = InitialIdentity;
+        await LoadAsync(keepPick: InitialIdentity != null);
+
+        if (InitialPicks != null)
+        {
+            foreach (var (key, values) in InitialPicks)
+                if (picks.ContainsKey(key)) picks[key] = values.ToList();
+            await RefreshReachAsync();
+        }
+
+        // The host holds this section by @ref, so it does not re-render when a load finishes. Its own
+        // metadata fields and submit gate read this section's state and would otherwise stay pre-load.
+        await NotifyAsync();
+    }
+
+    /// <summary>
+    /// Called by the host after the write-time guard refused the pick: candidates are read again and the
+    /// picker re-opens on what remains, rather than dead-ending.
+    /// </summary>
+    public async Task ReloadAfterRefusalAsync(string? error)
+    {
+        await LoadAsync(keepPick: true);
+        guardError = error;
+        await NotifyAsync();
+    }
+
+    private async Task LoadAsync(bool keepPick)
+    {
+        var userId = SessionState.User?.UserId ?? 0;
+        guardError = null;
+        try
+        {
+            context = await UploadIdentity.GetFormContextAsync(userId, LocationId);
+            candidates = context.Candidates;
+
+            isLibrary = context.IsLibrary;
+
+            var previousGroup = identity?.UserGroupId;
+            var previousWasMyself = identity?.IsMyself == true;
+            identity = candidates.Mode != UploadIdentityMode.Scoped
+                ? null
+                : (keepPick ? candidates.Candidates.FirstOrDefault(c => c.UserGroupId == previousGroup && c.IsMyself == previousWasMyself) : null)
+                  ?? candidates.Candidates[0];
+
+            await ResolveFieldsAsync(resetPicks: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load upload identities for location {LocationId}", LocationId);
+            candidates = new UploadCandidates(UploadIdentityMode.NotPermitted, []);
+            fields = new();
+        }
+        isLoaded = true;
+    }
+
+    private async Task ResolveFieldsAsync(bool resetPicks)
+    {
+        var userId = SessionState.User?.UserId ?? 0;
+        held = identity != null
+            ? await UploadIdentity.GetHeldValuesAsync(userId, identity)
+            : new Dictionary<string, IReadOnlySet<string>>();
+
+        fields = (context?.Rules ?? [])
+            .Select(rule => UploadFormRules.Resolve(
+                rule,
+                context!.Definitions.GetValueOrDefault(rule.Key),
+                identity,
+                held.GetValueOrDefault(rule.Key),
+                isLibrary))
+            .ToList();
+
+        if (resetPicks)
+            picks = fields.ToDictionary(f => f.Key, f => f.Selected.ToList(), MetadataEvaluator.KeyComparer);
+
+        await RefreshReachAsync();
+    }
+
+    private async Task RefreshReachAsync()
+    {
+        try
+        {
+            reach = isLibrary ? null : await UploadIdentity.GetReachAsync(LocationId, picks);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to compute reach for location {LocationId}", LocationId);
+            reach = null;
+        }
+    }
+
+    private static string PickKey(UploadCandidate? candidate) =>
+        candidate == null ? "" : candidate.UserGroupId?.ToString() ?? "myself";
+
+    private async Task OnIdentityChanged(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        identity = candidates.Candidates.FirstOrDefault(c => PickKey(c) == key) ?? identity;
+        guardError = null;
+        await ResolveFieldsAsync(resetPicks: true);
+        await NotifyAsync();
+    }
+
+    private async Task SetPick(string key, List<string> values)
+    {
+        picks[key] = MetadataValueSet.Normalize(values);
+        await RefreshReachAsync();
+        await NotifyAsync();
+    }
+
+    private Task ToggleMulti(string key, string option, bool isChecked)
+    {
+        var current = picks.GetValueOrDefault(key)?.ToList() ?? new List<string>();
+        current.RemoveAll(v => string.Equals(v, option, StringComparison.OrdinalIgnoreCase));
+        if (isChecked) current.Add(option);
+        return SetPick(key, current);
+    }
+
+    private Task NotifyAsync() => OnChanged.HasDelegate ? OnChanged.InvokeAsync() : Task.CompletedTask;
+}

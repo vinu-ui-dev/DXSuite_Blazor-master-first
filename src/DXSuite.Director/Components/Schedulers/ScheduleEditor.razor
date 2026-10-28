@@ -1,0 +1,620 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using static DXSuite.Director.Models.Types
+@using Microsoft.EntityFrameworkCore
+@inject IJSRuntime JSRuntime
+@inject ISessionState sessionState
+@inject ILogger<ScheduleEditor> Logger
+
+<style>
+    .tc-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1050;
+    }
+
+    .tc-modal-container {
+        background: #fff;
+        border-radius: 8px;
+        width: 90vw;
+        max-width: 1200px;
+        max-height: 90vh;
+        display: flex;
+        flex-direction: column;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+    }
+
+    .tc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background-color: var(--dx-blue);
+        color: #fff;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .tc-header h4 {
+        margin: 0;
+        font-size: 1rem;
+        font-weight: 700;
+        color: #fff;
+    }
+
+    .tc-body {
+        padding: 20px;
+        overflow-y: auto;
+    }
+
+    .se-container {
+        padding: 30px;
+    }
+
+    .se-panel {
+        background-color: #ffffff;
+        border-radius: 4px;
+        border: 1px solid #CCC;
+        padding: 25px;
+        margin-bottom: 25px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+
+    .se-gray-box {
+        background-color: #F2F2F2;
+        border-radius: 4px;
+        padding: 20px;
+    }
+
+    .schedule-builder {
+        background-color: #F2F2F2;
+        border-radius: 4px;
+        padding: 20px;
+        min-height: 150px;
+    }
+
+    /* Nested panels eat most of a phone's width; slim every layer down */
+    @@media (max-width: 768px) {
+        .se-container,
+        .se-panel {
+            padding: 12px;
+        }
+
+        .se-gray-box,
+        .schedule-builder {
+            padding: 10px;
+        }
+    }
+
+    /* Mouse devices add via drag; touch devices use the panel's Add buttons */
+    .drop-hint-tap {
+        display: none;
+    }
+
+    @@media (pointer: coarse) {
+        .drop-hint-drag {
+            display: none;
+        }
+
+        .drop-hint-tap {
+            display: inline;
+        }
+    }
+
+    /* Date/time input with its clear button */
+    .se-input-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+    }
+
+    .se-clear-btn {
+        padding: 6px 10px;
+        font-size: 14px;
+        line-height: 1;
+        flex-shrink: 0;
+    }
+
+    /* Schedule Period: start/end date-time blocks side by side, stacked on phones */
+    .schedule-period-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 25px;
+        max-width: 800px;
+    }
+
+    @@media (max-width: 600px) {
+        .schedule-period-grid {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+<!-- Main Container -->
+<div class="se-container" style="background-color: #CCCCCC; border-radius: 4px;">
+
+    <!-- Asset Library — a pure picker here; uploading and managing assets is
+         done exclusively on the Assets tab, which also avoids stacking the
+         uploader modals under this editor's own modal. -->
+    <div class="se-panel">
+        @* Gesture/series context leads the modal so a user who just dragged on
+           the calendar immediately sees why this editor opened *@
+        @if (!string.IsNullOrEmpty(NoticeText))
+        {
+            <div class="dx-alert dx-alert-info" style="margin-top: 0; margin-bottom: 15px;">@NoticeText</div>
+        }
+
+        <ScheduleAssetPanel Display="Display"
+                            Location="Location"
+                            AssetList="AssetList"
+                            EnableContentApproval="EnableContentApproval"
+                            UploadTypes="UploadTypes"
+                            UserAccess="UserAccess"
+                            ShowUploadButtons="false"
+                            AllowDelete="false"
+                            OnDragStart="OnDragStart"
+                            OnAssetAdd="AddAssetToSchedule" />
+
+
+        <!-- Content Builder -->
+        <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px; margin-top: 20px;">
+            @(DefaultContentMode ? "Default Content" : "Schedule Content")
+        </h4>
+
+        @if (ShowFadeButton)
+        {
+            <div style="display: flex; gap: 15px; margin-bottom: 15px;">
+                <button class="dx-btn dx-btn-blue" style="padding: 10px 20px; font-weight: 600;" @onclick="ToggleFade">
+                    @(Display.EnableFade ? "FADE ON" : "FADE OFF")
+                </button>
+            </div>
+        }
+
+        <div class="schedule-builder @DropClass" style="@(ContentList.Count==0 ? "display:flex; justify-content: center; align-items: center;":"")"
+             ondragover="event.preventDefault();"
+             @ondrop="HandleDrop"
+             @ontouchend="HandleDrop"
+             @ondragenter="HandleDragEnter"
+             @ontouchenter="HandleDragEnter"
+             @ondragleave="HandleDragLeave"
+             @ontouchleave="HandleDragLeave">
+
+            @if(ContentList.Count == 0){
+                <div style="color: #4D4D4D; font-style: italic; text-align: center;">
+                    <span class="drop-hint-drag">Drag assets here to add to @(DefaultContentMode ? "the default content" : "schedule")</span>
+                    <span class="drop-hint-tap">Tap ADD on an asset to add it to @(DefaultContentMode ? "the default content" : "the schedule")</span>
+                </div>
+            }
+            else
+            {
+                <!-- Horizontal layout for all displays -->
+                @if (!SingleAssetsOnly && ContentList.Count > 1)
+                {
+                    <div style="margin-bottom: 10px; color: #4D4D4D; font-size: 13px;">
+                        Loop length: <strong>@FormatRotationLoop()</strong>
+                    </div>
+                }
+                <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+                    @foreach (ContentItem asset in ContentList)
+                    {
+                        <div style="background-color: white; border-radius: 4px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; min-width: 150px;">
+                            <div style="width: 120px; height: 90px; border-radius: 3px; overflow: hidden; margin: 0 auto 10px;">
+                                <AssetPreviewCard Asset="asset.Asset" />
+                            </div>
+
+                            @* Duration only matters when the rotation has more than one item *@
+                            @if (!SingleAssetsOnly && ContentList.Count > 1)
+                            {
+                                <div style="margin-bottom: 10px;">
+                                    @if (asset.IsCustomizingDuration)
+                                    {
+                                        <div style="margin-bottom: 5px;">
+                                            <InputNumber style="width: 80px; padding: 4px 8px; border: 1px solid #CCC; border-radius: 3px;" @bind-Value="asset.Duration" />
+                                        </div>
+                                        <button class="dx-btn dx-btn-blue" style="padding: 4px 12px; font-size: 12px;" @onclick="() => OnToggleDurationCustomization?.Invoke(asset)">Save Duration</button>
+                                    }
+                                    else
+                                    {
+                                        <div style="color: #4D4D4D; margin-bottom: 5px; font-size: 12px;">Duration: <strong>@asset.Duration</strong></div>
+                                        <button class="dx-btn dx-btn-blue" style="padding: 4px 12px; font-size: 12px;" @onclick="() => OnToggleDurationCustomization?.Invoke(asset)">Edit Duration</button>
+                                    }
+                                </div>
+                                <div class="dx-weight-stepper" style="display: flex; justify-content: center; margin-bottom: 10px; gap: 6px;">
+                                    <button type="button" disabled="@(asset.Weight <= 1)" @onclick="() => ChangeItemWeight(asset, -1)">-</button>
+                                    <span style="font-size: 12px; color: #4D4D4D;">Plays: <strong>@asset.Weight</strong></span>
+                                    <button type="button" disabled="@(asset.Weight >= 10)" @onclick="() => ChangeItemWeight(asset, 1)">+</button>
+                                </div>
+                            }
+
+                            <button class="dx-btn dx-btn-red" style="padding: 6px 12px; font-size: 12px;" @onclick="() => OnRemoveListItem?.Invoke(ContentList.IndexOf(asset))">Remove</button>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    <!-- Schedule Configuration -->
+    <div class="se-panel">
+        @if (!DefaultContentMode)
+        {
+            <h4 style="color: #333333; margin-bottom: 20px; font-weight: bold; border-bottom: 2px solid #F2F2F2; padding-bottom: 8px;">
+                Schedule Configuration
+            </h4>
+
+            <!-- Schedule Period Section -->
+            <div style="margin-bottom: 30px;">
+                <h5 style="color: #333333; margin-bottom: 15px; font-weight: bold;">Schedule Period</h5>
+                <div class="schedule-period-grid">
+                    <!-- Start Date/Time -->
+                    <div class="se-gray-box">
+                        <h6 style="color: #39B54A; margin-bottom: 15px; font-weight: bold;">Start</h6>
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Date</label>
+                            <div class="se-input-row">
+                                <input type="date" class="dx-form-control" @bind-value="ScheduleEvent.StartDate"
+                                       style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                                <button type="button" class="dx-btn dx-btn-gray se-clear-btn" title="Clear (no start limit)"
+                                        @onclick="() => ScheduleEvent.StartDate = null">×</button>
+                            </div>
+                            <small style="color: #4D4D4D; font-size: 12px;">Leave blank for no start limit</small>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Time</label>
+                            <div class="se-input-row">
+                                <input type="time" class="dx-form-control" @bind-value="ScheduleEvent.StartTime"
+                                       style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                                <button type="button" class="dx-btn dx-btn-gray se-clear-btn" title="Clear (all day)"
+                                        @onclick="() => ScheduleEvent.StartTime = null">×</button>
+                            </div>
+                            <small style="color: #4D4D4D; font-size: 12px;">Leave blank for all-day</small>
+                        </div>
+                    </div>
+
+                    <!-- End Date/Time -->
+                    <div class="se-gray-box">
+                        <h6 style="color: #990000; margin-bottom: 15px; font-weight: bold;">End</h6>
+                        <div style="margin-bottom: 15px;">
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Date</label>
+                            <div class="se-input-row">
+                                <input type="date" class="dx-form-control" @bind-value="ScheduleEvent.EndDate"
+                                       style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                                <button type="button" class="dx-btn dx-btn-gray se-clear-btn" title="Clear (no end limit)"
+                                        @onclick="() => ScheduleEvent.EndDate = null">×</button>
+                            </div>
+                            <small style="color: #4D4D4D; font-size: 12px;">Leave blank for no end limit</small>
+                        </div>
+                        <div>
+                            <label style="display: block; margin-bottom: 5px; font-weight: bold; color: #333333; font-size: 14px;">Time</label>
+                            <div class="se-input-row">
+                                <input type="time" class="dx-form-control" @bind-value="ScheduleEvent.EndTime"
+                                       style="width: 100%; padding: 8px 12px; border: 1px solid #CCC; border-radius: 4px;" />
+                                <button type="button" class="dx-btn dx-btn-gray se-clear-btn" title="Clear (all day)"
+                                        @onclick="() => ScheduleEvent.EndTime = null">×</button>
+                            </div>
+                            <small style="color: #4D4D4D; font-size: 12px;">Leave blank for all-day</small>
+                        </div>
+                    </div>
+                    <small style="color: #4D4D4D; font-size: 12px;">Times are each player's local time.</small>
+                </div>
+            </div>
+
+            <!-- Active Days Section -->
+            <div style="margin-bottom: 30px;">
+                <h5 style="color: #333333; margin-bottom: 15px; font-weight: bold;">Active Days</h5>
+                <div class="se-gray-box">
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(100px, 1fr)); gap: 15px;">
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Sunday" />
+                            <span style="font-weight: 500; color: #333333;">Sunday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Monday" />
+                            <span style="font-weight: 500; color: #333333;">Monday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Tuesday" />
+                            <span style="font-weight: 500; color: #333333;">Tuesday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Wednesday" />
+                            <span style="font-weight: 500; color: #333333;">Wednesday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Thursday" />
+                            <span style="font-weight: 500; color: #333333;">Thursday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Friday" />
+                            <span style="font-weight: 500; color: #333333;">Friday</span>
+                        </label>
+                        <label style="display: flex; align-items: center; padding: 10px; background-color: #ffffff; border-radius: 4px; cursor: pointer; border: 2px solid transparent; transition: all 0.2s;"
+                               onmouseover="this.style.borderColor='#0071BC'; this.style.backgroundColor='#E6F3FF';"
+                               onmouseout="this.style.borderColor='transparent'; this.style.backgroundColor='#ffffff';">
+                            <InputCheckbox style="accent-color: #0071BC; margin-right: 8px; transform: scale(1.2);" @bind-Value="ScheduleEvent.Saturday" />
+                            <span style="font-weight: 500; color: #333333;">Saturday</span>
+                        </label>
+                    </div>
+                    <small style="display: block; margin-top: 10px; color: #4D4D4D; text-align: center;">
+                        Leave all days unchecked to apply to every day of the week
+                    </small>
+                </div>
+            </div>
+        }
+
+        @if (Display.UseClock)
+        {
+            <!-- Clock Configuration Section -->
+            <div style="margin-bottom: 30px;">
+                <h5 style="color: #333333; margin-bottom: 15px; font-weight: bold;">Clock Configuration</h5>
+                <div class="se-gray-box">
+                    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 15px;">
+                        <InputCheckbox style="height: 25px; width: 25px; accent-color: #0071BC;" @bind-Value="currentContentAssignment.UseClock" @onchange="OnClockToggleChanged" />
+                        <div>
+                            <label style="font-weight: bold; color: #333333; font-size: 16px; margin: 0;">Enable Clock for this Schedule</label>
+                            <div style="font-size: 14px; color: #4D4D4D; margin-top: 2px;">Display a clock overlay on this scheduled content</div>
+                        </div>
+                    </div>
+                    @if (currentContentAssignment.UseClock)
+                    {
+                        <div style="background-color: white; border-radius: 4px; padding: 15px; border-left: 4px solid #0071BC;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <span style="color: #333333; font-weight: bold;">Clock Position & Size</span>
+                                <button class="dx-btn dx-btn-blue" style="padding: 8px 16px; font-size: 14px;" @onclick="OpenClockPositioning">Configure Position</button>
+                            </div>
+                            <div style="color: #4D4D4D; font-size: 12px;">
+                                Position: @((int)currentContentAssignment.ClockX), @((int)currentContentAssignment.ClockY) |
+                                Size: @((int)currentContentAssignment.ClockWidth) x @((int)currentContentAssignment.ClockHeight)
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        <!-- Save Button -->
+        <div style="display: flex; gap: 12px; justify-content: center; padding-top: 20px; border-top: 1px solid #B3B3B3;">
+            @if (ContentList.Count > 0)
+            {
+            }
+            @if (ShowDeleteButton)
+            {
+                <button class="dx-btn dx-btn-red" style="@SaveButtonStyle padding: 12px 24px; font-weight: 600;" @onclick="() => OnDelete.InvokeAsync()">DELETE</button>
+            }
+            <button class="dx-btn dx-btn-blue" style="@SaveButtonStyle padding: 12px 40px; font-weight: 600;" @onclick="HandleSaveClick">@SaveButtonText</button>
+        </div>
+
+        @if (OverlapConflicts.Count > 0)
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-top: 15px; margin-bottom: 0;" id="overlap-alert">
+                Schedule is overlapping and cannot be saved. Adjust the dates, times, or active days so it no longer overlaps.
+            </div>
+        }
+    </div>
+</div>
+
+
+<ClockPositioningModal @ref="clockPositioningModal" OnClockPositionSaved="OnClockDataSaved" />
+
+@if (showTemplateModal && Location != null)
+{
+    <div class="tc-overlay" @onclick="() => showTemplateModal = false">
+        <div class="tc-modal-container" @onclick:stopPropagation="true">
+            <div class="tc-header">
+                <h4>Create Template</h4>
+                <button class="btn-close btn-close-white" @onclick="() => showTemplateModal = false"></button>
+            </div>
+            <div class="tc-body">
+                <TemplateCreator @ref="templateCreator" Location="Location" Display="Display" BackgroundConstraintId="1" ShowCollapsibleHeader="false" OnImageGenerated="OnTemplateImageGenerated" OnAssetCreated="OnAssetCreated" />
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public TblDisplay Display { get; set; } = new();
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public IList<TblAsset> AssetList { get; set; } = new List<TblAsset>();
+    [Parameter] public List<ContentItem> ContentList { get; set; } = new();
+    [Parameter] public TblScheduleEvent ScheduleEvent { get; set; } = new();
+    [Parameter] public ContentAssignment? InitialClockData { get; set; }
+    [Parameter] public double ScaleFactorFull { get; set; }
+    [Parameter] public bool AlignAssetsVertically { get; set; }
+    [Parameter] public string DropClass { get; set; } = "";
+    [Parameter] public string SaveButtonText { get; set; } = "Save";
+    [Parameter] public string SaveButtonStyle { get; set; } = "height:50px; width: auto;";
+    [Parameter] public bool EnableContentApproval { get; set; } = false;
+    [Parameter] public bool SingleAssetsOnly { get; set; } = false;
+    [Parameter] public UploadTypeSettings UploadTypes { get; set; } = new();
+    [Parameter] public ResolvedAccess? UserAccess { get; set; }
+
+    // Default-content picker mode: no uploads, no schedule configuration — the
+    // caller pre-sets ScheduleEvent.DefaultContent and hosts this in a modal.
+    [Parameter] public bool DefaultContentMode { get; set; } = false;
+
+    // Shows DELETE beside Save when hosting an existing entry; the host owns
+    // the confirmation workflow.
+    [Parameter] public bool ShowDeleteButton { get; set; } = false;
+    [Parameter] public EventCallback OnDelete { get; set; }
+
+    // Fade toggle visibility, set per display via the Edit Display modal (off by default)
+    [Parameter] public bool ShowFadeButton { get; set; } = false;
+
+    // Informational notice (series/gesture context) shown under the save row
+    [Parameter] public string? NoticeText { get; set; }
+
+    // Overlap conflicts blocking the save, shown under the save row
+    [Parameter] public IReadOnlyList<string> OverlapConflicts { get; set; } = Array.Empty<string>();
+
+    [Parameter] public Action<TblAsset>? OnDragStart { get; set; }
+    [Parameter] public Action<int>? OnRemoveListItem { get; set; }
+    [Parameter] public Action<ContentItem>? OnToggleDurationCustomization { get; set; }
+    [Parameter] public EventCallback OnSaveScheduleEntry { get; set; }
+    [Parameter] public Action? OnCancel { get; set; }
+    [Parameter] public EventCallback<string> OnTemplateGenerated { get; set; }
+
+    [Parameter] public EventCallback OnDrop { get; set; }
+    [Parameter] public EventCallback OnDragEnter { get; set; }
+    [Parameter] public EventCallback OnDragLeave { get; set; }
+
+    // Clock-related parameters and properties
+    private ContentAssignment currentContentAssignment = new ContentAssignment();
+    private ClockPositioningModal? clockPositioningModal;
+    private TemplateCreator? templateCreator;
+    private bool showTemplateModal;
+
+    protected override void OnInitialized()
+    {
+        // Initialize the current content assignment based on the existing ContentList
+        currentContentAssignment.Content = ContentList;
+        base.OnInitialized();
+    }
+
+    protected override void OnParametersSet()
+    {
+        // Update content assignment when parameters change
+        currentContentAssignment.Content = ContentList;
+
+        // Load initial clock data if provided (for editing existing schedules)
+        if (InitialClockData != null)
+        {
+            currentContentAssignment.UseClock = InitialClockData.UseClock;
+            currentContentAssignment.ClockX = InitialClockData.ClockX;
+            currentContentAssignment.ClockY = InitialClockData.ClockY;
+            currentContentAssignment.ClockWidth = InitialClockData.ClockWidth;
+            currentContentAssignment.ClockHeight = InitialClockData.ClockHeight;
+        }
+
+        base.OnParametersSet();
+    }
+
+    private async Task HandleDrop() => await OnDrop.InvokeAsync();
+
+    // Tap-to-add path for touch devices: stage the asset exactly as a drag would, then drop it
+    private async Task AddAssetToSchedule(TblAsset asset)
+    {
+        OnDragStart?.Invoke(asset);
+        await OnDrop.InvokeAsync();
+    }
+
+    private async Task HandleDragEnter() => await OnDragEnter.InvokeAsync();
+    private async Task HandleDragLeave() => await OnDragLeave.InvokeAsync();
+
+    private async Task OnClockToggleChanged(ChangeEventArgs e)
+    {
+        // Handle clock toggle state change if needed
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ToggleFade()
+    {
+        Display.EnableFade = !Display.EnableFade;
+        StateHasChanged();
+    }
+
+    private async Task OpenClockPositioning()
+    {
+        if (clockPositioningModal != null)
+        {
+            await clockPositioningModal.Open(Display, currentContentAssignment);
+        }
+    }
+
+    private async Task HandleSaveClick()
+    {
+        await OnSaveScheduleEntry.InvokeAsync();
+    }
+
+    private void ChangeItemWeight(ContentItem item, int delta)
+    {
+        item.Weight = Math.Clamp(item.Weight + delta, 1, 10);
+        StateHasChanged();
+    }
+
+    private string FormatRotationLoop()
+    {
+        double seconds = 0;
+        var plays = 0;
+        foreach (var item in ContentList)
+        {
+            var weight = Math.Clamp(item.Weight, 1, 10);
+            // Duration 0 means natural runtime; use the probed asset length for videos
+            var duration = item.Duration > 0 ? item.Duration
+                : (item.Asset?.AssetTypeId == (int)DXSuite.Director.Models.Types.AssetType.Video && item.Asset.Duration > 0
+                    ? item.Asset.Duration : 7);
+            seconds += weight * duration;
+            plays += weight;
+        }
+
+        var span = TimeSpan.FromSeconds(seconds);
+        var text = span.TotalHours >= 1 ? $"{(int)span.TotalHours}h {span.Minutes}m"
+            : span.TotalMinutes >= 1 ? $"{span.Minutes}m {span.Seconds}s"
+            : $"{span.Seconds}s";
+        return $"{text} ({plays} plays)";
+    }
+
+    private async Task OnClockDataSaved(ContentAssignment? updatedAssignment)
+    {
+        if (updatedAssignment != null)
+        {
+            // Update our local content assignment with the clock data
+            currentContentAssignment.UseClock = updatedAssignment.UseClock;
+            currentContentAssignment.ClockX = updatedAssignment.ClockX;
+            currentContentAssignment.ClockY = updatedAssignment.ClockY;
+            currentContentAssignment.ClockWidth = updatedAssignment.ClockWidth;
+            currentContentAssignment.ClockHeight = updatedAssignment.ClockHeight;
+
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    // Public method to get the current content assignment with clock data
+    public ContentAssignment GetContentAssignmentWithClock()
+    {
+        return currentContentAssignment;
+    }
+
+    private void ToggleTemplateCreator()
+    {
+        if (templateCreator != null)
+        {
+            templateCreator.SetExpanded(true);
+        }
+    }
+
+    private async Task OnTemplateImageGenerated(string filePath)
+    {
+        // Notify parent component that a template image was generated
+        await OnTemplateGenerated.InvokeAsync(filePath);
+    }
+
+    private async Task OnAssetCreated(TblAsset newAsset)
+    {
+        // Add the new asset to the local list so it appears immediately
+        if (!AssetList.Any(a => a.AssetId == newAsset.AssetId))
+        {
+            AssetList.Add(newAsset);
+        }
+
+        // Notify parent to refresh if needed
+        await OnTemplateGenerated.InvokeAsync(newAsset.AssetPath);
+
+        await InvokeAsync(StateHasChanged);
+    }
+}

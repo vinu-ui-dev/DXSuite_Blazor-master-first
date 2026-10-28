@@ -1,0 +1,185 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ISessionState SessionState
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">Content Package Environment Labels</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">
+        Manage the list of environment labels available in the ContentPackage export dropdown
+        (e.g. Dev, Pre-Prod, Prod).
+    </p>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="dx-alert @(isError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:600px; margin-bottom:12px;">
+            @statusMessage
+        </div>
+    }
+
+    @* Add / Edit form *@
+    <div class="dx-card" style="max-width:600px; margin-bottom:20px;">
+        <div class="dx-card-body" style="padding:12px 16px;">
+            <div style="display:flex; gap:12px; align-items:end; flex-wrap:wrap;">
+                <div class="dx-form-group" style="flex:1; min-width:200px;">
+                    <label class="dx-form-label" style="font-size:0.8rem;">Label</label>
+                    <input type="text" class="dx-form-control" @bind="editLabel"
+                           placeholder="e.g. Dev" style="max-width:300px;" />
+                </div>
+                <div class="dx-form-group" style="width:100px;">
+                    <label class="dx-form-label" style="font-size:0.8rem;">Sort Order</label>
+                    <input type="number" class="dx-form-control" @bind="editSortOrder" />
+                </div>
+                <div style="display:flex; gap:6px;">
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveLabel"
+                            disabled="@string.IsNullOrWhiteSpace(editLabel)">
+                        @(editingId.HasValue ? "Update" : "Add")
+                    </button>
+                    @if (editingId.HasValue)
+                    {
+                        <button class="dx-btn" @onclick="CancelEdit">Cancel</button>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @* Existing labels *@
+    <div style="max-width:600px;">
+        @if (labels.Count == 0)
+        {
+            <p class="dx-text-muted">No environment labels configured.</p>
+        }
+        else
+        {
+            <div class="dx-settings-list">
+                <div class="dx-settings-list-header" style="grid-template-columns: 1fr 80px 130px;">
+                    <div>Label</div>
+                    <div>Order</div>
+                    <div style="text-align:right;">Actions</div>
+                </div>
+                @foreach (var item in labels)
+                {
+                    <div class="dx-settings-list-row" style="grid-template-columns: 1fr 80px 130px;">
+                        <div class="dx-settings-list-label">@item.Label</div>
+                        <div>@item.SortOrder</div>
+                        <div style="text-align:right; white-space:nowrap;">
+                            <button class="dx-btn dx-btn-sm" @onclick="@(() => StartEdit(item))">Edit</button>
+                            <button class="dx-btn dx-btn-sm" @onclick="@(() => DeleteLabel(item.ContentPackageEnvironmentLabelId))">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<TblContentPackageEnvironmentLabel> labels = new();
+    private string editLabel = "";
+    private int editSortOrder;
+    private int? editingId;
+    private string? statusMessage;
+    private bool isError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadLabels();
+    }
+
+    private async Task LoadLabels()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        labels = await db.TblContentPackageEnvironmentLabels.AsNoTracking()
+            .OrderBy(l => l.SortOrder).ThenBy(l => l.Label)
+            .ToListAsync();
+    }
+
+    private void StartEdit(TblContentPackageEnvironmentLabel item)
+    {
+        editingId = item.ContentPackageEnvironmentLabelId;
+        editLabel = item.Label;
+        editSortOrder = item.SortOrder;
+        statusMessage = null;
+    }
+
+    private void CancelEdit()
+    {
+        editingId = null;
+        editLabel = "";
+        editSortOrder = 0;
+        statusMessage = null;
+    }
+
+    private async Task SaveLabel()
+    {
+        if (string.IsNullOrWhiteSpace(editLabel)) return;
+
+        statusMessage = null;
+        isError = false;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (editingId.HasValue)
+            {
+                var existing = await db.TblContentPackageEnvironmentLabels
+                    .FirstOrDefaultAsync(l => l.ContentPackageEnvironmentLabelId == editingId.Value);
+                if (existing != null)
+                {
+                    existing.Label = editLabel.Trim();
+                    existing.SortOrder = editSortOrder;
+                    await db.SaveChangesAsync();
+                    statusMessage = "Label updated.";
+                }
+            }
+            else
+            {
+                db.TblContentPackageEnvironmentLabels.Add(new TblContentPackageEnvironmentLabel
+                {
+                    Label = editLabel.Trim(),
+                    SortOrder = editSortOrder,
+                    CreatedByUser = SessionState.UserName
+                });
+                await db.SaveChangesAsync();
+                statusMessage = "Label added.";
+            }
+
+            editingId = null;
+            editLabel = "";
+            editSortOrder = 0;
+            await LoadLabels();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Save failed: {ex.Message}";
+            isError = true;
+        }
+    }
+
+    private async Task DeleteLabel(int id)
+    {
+        statusMessage = null;
+        isError = false;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var label = await db.TblContentPackageEnvironmentLabels.FindAsync(id);
+            if (label != null)
+            {
+                db.TblContentPackageEnvironmentLabels.Remove(label);
+                await db.SaveChangesAsync();
+                statusMessage = "Label deleted.";
+            }
+            await LoadLabels();
+        }
+        catch (Exception ex)
+        {
+            statusMessage = $"Delete failed: {ex.Message}";
+            isError = true;
+        }
+    }
+}

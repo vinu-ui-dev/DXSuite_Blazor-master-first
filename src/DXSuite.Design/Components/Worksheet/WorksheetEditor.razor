@@ -1,0 +1,2527 @@
+@using DXSuite.Design.Data
+@using DXSuite.Design.Models
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject NetsuiteEstimatePusher Pusher
+@inject INetsuiteService NetsuiteService
+
+@if (!loaded)
+{
+    <p>Loading worksheet…</p>
+}
+else
+{
+    <WorksheetSummaryHeader Summary="summary" />
+
+    <div class="wse-toolbar">
+        <span style="font-size:.85rem; color:var(--text-muted,#6c757d)">
+            @if (worksheet!.NetsuiteEstimateId is not null && _nsConn?.AccountId is not null)
+            {
+                var nsHost = $"{_nsConn.AccountId.Trim().Replace('_', '-').ToLowerInvariant()}.app.netsuite.com";
+                var nsUrl = $"https://{nsHost}/app/accounting/transactions/estimate.nl?id={worksheet.NetsuiteEstimateId}";
+                var label = worksheet.NetsuiteEstimateTranId ?? worksheet.NetsuiteEstimateId;
+                <text>Estimate: <a href="@nsUrl" target="_blank" rel="noopener" style="color:var(--dx-blue,#0071BC)">@label</a></text>
+            }
+            else if (worksheet!.NetsuiteEstimateId is not null)
+            {
+                <text>Estimate: @(worksheet.NetsuiteEstimateTranId ?? worksheet.NetsuiteEstimateId)</text>
+            }
+            else
+            {
+                <text>Not yet pushed</text>
+            }
+        </span>
+        <div style="display:flex; gap:8px; align-items:center">
+            <div class="wse-default-loc" title="Worksheet default location — used when no per-row location is set">
+                <span class="wse-default-loc-label">Default Loc:</span>
+                <select class="wse-default-loc-select"
+                        value="@(worksheet!.DefaultLocationId ?? "")"
+                        @onchange="OnDefaultLocationChanged">
+                    <option value="">— None —</option>
+                    @if (_cachedLocations is not null)
+                    {
+                        @foreach (var loc in _cachedLocations)
+                        {
+                            <option value="@loc.Id">@loc.Name</option>
+                        }
+                    }
+                    else if (_loadingLocations)
+                    {
+                        <option disabled>Loading…</option>
+                    }
+                </select>
+            </div>
+            <button class="dx-btn dx-btn-outline-gray" @onclick="() => _showSaveConfigModal = true">
+                Save
+            </button>
+            <button class="dx-btn dx-btn-outline-gray" @onclick="OpenLoadConfigModalAsync">
+                Load
+            </button>
+            <button class="dx-btn dx-btn-blue" @onclick="InitiatePushAsync" disabled="@pushing">
+                @(pushing ? "Pushing…" : "Push to NetSuite")
+            </button>
+        </div>
+    </div>
+
+    @if (_persistError is not null)
+    {
+        <div class="ct-msg-error" style="margin-bottom:8px">Auto-save failed: @_persistError</div>
+    }
+
+    @if (saveMsg is not null)
+    {
+        <div class="@(saveSuccess ? "ct-msg-success" : "ct-msg-error")" style="margin-bottom:8px">@saveMsg</div>
+    }
+
+    @if (HiddenColumns.Any())
+    {
+        <div class="wse-labor-add-row">
+            <span class="wse-labor-add-label">Add column:</span>
+            @foreach (var col in HiddenColumns)
+            {
+                var colLocal = col;
+                <button class="wse-labor-add-btn" @onclick="() => AddColumn(colLocal.ColumnId)">+ @col.Name</button>
+            }
+        </div>
+    }
+
+    <div class="wse-section">
+        <LineItemTable
+            LineItems="lineItemRows"
+            ColumnHeaders="visibleColumns"
+            ManualColumnIds="_manualColumnIds"
+            LaborHoursByLineItem="columnHoursByLineItem"
+            ShippingAttributeId="_shippingAttrId"
+            LanDropsAttributeId="_lanDropsAttrId"
+            PowerOutletsAttributeId="_powerOutletsAttrId"
+            PoePowerAttributeId="_poePowerAttrId"
+            GroupDescriptions="_groupDescriptions"
+            OnUpdateQty="UpdateQty"
+            OnUpdateDiscountMargin="UpdateDiscountMargin"
+            OnUpdateSystem="UpdateSystem"
+            OnUpdateShipping="UpdateShipping"
+            OnRemoveItem="RemoveItem"
+            OnAddItem="OnInlineItemSelected"
+            OnAddCatalogItem="OnCatalogItemSelected"
+            OnToggleDisabled="OnToggleDisabled"
+            OnSaveToItem="OnSaveToItem"
+            OnColumnHoursEdited="OnColumnHoursEdited"
+            OnRemoveColumn="RemoveColumn"
+            OnUpdateLocation="UpdateLineItemLocation"
+            WorksheetDefaultLocationId="@worksheet!.DefaultLocationId"
+            WorksheetDefaultLocationName="@worksheet!.DefaultLocationName"
+            CachedLocations="_cachedLocations"
+            OnToggleGroupDescription="OnToggleGroupDescription"
+            OnEditGroupDescription="@(id => { OpenGroupDescModal(id); })"
+            AllCategories="_allCategories"
+            AllCategoryGroups="_allCategoryGroups"
+            OnUpdateCategory="UpdateItemCategory"
+            OnUpdateCategoryGroup="UpdateItemCategoryGroup"
+            OnSaveCategoryToItem="SaveCategoryToItemAsync"
+            OnSaveCatGroupToCategory="SaveCatGroupToCategoryAsync" />
+    </div>
+
+    <MaterialsSection
+        Categories="materialsCatalogCategories"
+        ItemsByCategory="materialsCatalogItemsByCategory"
+        WorksheetRows="worksheetMaterialsRows"
+        CategoryConfigs="materialsCategoryConfigs"
+        OnRowUpserted="OnMaterialsRowUpserted"
+        OnRowDeleted="OnMaterialsRowDeleted"
+        OnConfigChanged="OnMaterialsCategoryConfigChanged"
+        OnUpdateRowLocation="UpdateMaterialsRowLocation"
+        WorksheetDefaultLocationId="@worksheet!.DefaultLocationId"
+        WorksheetDefaultLocationName="@worksheet!.DefaultLocationName"
+        CachedLocations="_cachedLocations"
+        SectionDescription="@(_sectionDescriptions.GetValueOrDefault("Materials"))"
+        OnToggleSectionDescription="@(() => OnToggleSectionDescription("Materials"))"
+        OnEditSectionDescription="@(() => OpenSectionDescModal("Materials"))" />
+
+    <MiscSection Rows="miscRows"
+                 CatalogItems="miscCatalogItems"
+                 NetsuiteService="NetsuiteService"
+                 CustomerId="@Tenant.CustomerCode"
+                 SectionDescription="@(_sectionDescriptions.GetValueOrDefault("Misc"))"
+                 OnAddRow="AddMiscRow"
+                 OnUpdate="UpdateMiscRow"
+                 OnRemove="RemoveMiscRow"
+                 OnCatalogItemCreated="OnMiscCatalogItemCreated"
+                 OnUpdateLocation="UpdateMiscRowLocation"
+                 WorksheetDefaultLocationId="@worksheet!.DefaultLocationId"
+                 WorksheetDefaultLocationName="@worksheet!.DefaultLocationName"
+                 CachedLocations="_cachedLocations"
+                 OnToggleSectionDescription="@(() => OnToggleSectionDescription("Misc"))"
+                 OnEditSectionDescription="@(() => OpenSectionDescModal("Misc"))" />
+
+    <LaborList LaborRows="laborRowViews"
+               ComputedHours="computedLaborHours"
+               ManualLaborTypeIds="manualLaborTypeIds"
+               AddableLaborTypes="addableLaborTypes"
+               OnAddLaborType="OnAddLaborType"
+               OnRemoveRow="OnRemoveLaborRow"
+               OnRemoveBlocked="@(() => { _showLaborRemoveBlockedModal = true; })"
+               OnRevert="RevertLaborOverride"
+               OnUpdateEstimated="UpdateLaborOverride"
+               OnUpdateLocation="UpdateLaborRowLocation"
+               WorksheetDefaultLocationId="@worksheet!.DefaultLocationId"
+               WorksheetDefaultLocationName="@worksheet!.DefaultLocationName"
+               CachedLocations="_cachedLocations"
+               SectionDescription="@(_sectionDescriptions.GetValueOrDefault("Labor"))"
+               OnToggleSectionDescription="@(() => OnToggleSectionDescription("Labor"))"
+               OnEditSectionDescription="@(() => OpenSectionDescModal("Labor"))">
+        <CalculatorContent>
+            <LaborCalculator
+                LaborTypes="allLaborTypes"
+                LaborTypeColumnMap="laborTypeColumnMap"
+                PersonCounts="personCounts"
+                ComputedHours="computedLaborHours"
+                RawColumnHours="_rawColumnHours"
+                LaborRows="laborRowViews"
+                AllColumns="allColumns"
+                OnPersonCountChanged="OnPersonCountChanged"
+                OnSubRateChanged="OnSubRateChanged" />
+        </CalculatorContent>
+    </LaborList>
+
+    <TravelSection Rows="travelRows"
+                   CatalogItems="travelCatalogItems"
+                   NetsuiteService="NetsuiteService"
+                   CustomerId="@Tenant.CustomerCode"
+                   SectionDescription="@(_sectionDescriptions.GetValueOrDefault("Travel"))"
+                   OnAddRow="AddTravelRow"
+                   OnUpdate="UpdateTravelRow"
+                   OnRemove="RemoveTravelRow"
+                   OnCatalogItemCreated="OnTravelCatalogItemCreated"
+                   OnUpdateLocation="UpdateTravelRowLocation"
+                   WorksheetDefaultLocationId="@worksheet!.DefaultLocationId"
+                   WorksheetDefaultLocationName="@worksheet!.DefaultLocationName"
+                   CachedLocations="_cachedLocations"
+                   OnToggleSectionDescription="@(() => OnToggleSectionDescription("Travel"))"
+                   OnEditSectionDescription="@(() => OpenSectionDescModal("Travel"))" />
+
+    <DescriptionRowModal Visible="_descModalVisible"
+                         Title="@_descModalTitle"
+                         InitialDescriptionText="@_descModalText"
+                         InitialLocationId="@_descModalLocationId"
+                         OnSave="OnDescModalSave"
+                         OnClose="@(() => _descModalVisible = false)" />
+
+    @if (_showPushModal && worksheet?.NetsuiteEstimateId is null && worksheet?.Design?.NetsuiteOpportunityId is not null)
+    {
+        <PushEstimateModal
+            OpportunityId="@worksheet.Design.NetsuiteOpportunityId"
+            OnConfirm="DoPushAsync"
+            OnClose="@(() => { _showPushModal = false; pushing = false; })" />
+    }
+
+    @if (_showLaborRemoveBlockedModal)
+    {
+        <div class="dx-modal-overlay" @onclick="@(() => _showLaborRemoveBlockedModal = false)">
+            <div class="dx-modal" style="max-width:420px" @onclick:stopPropagation>
+                <div class="dx-modal-header">
+                    <span>Cannot Remove Labor Row</span>
+                    <button class="dx-modal-close" @onclick="@(() => _showLaborRemoveBlockedModal = false)">&times;</button>
+                </div>
+                <div class="dx-modal-body">
+                    This labor type still has estimated hours. Set the hours to 0 (or revert to calculated)
+                    before removing it from the worksheet.
+                </div>
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-blue" @onclick="@(() => _showLaborRemoveBlockedModal = false)">OK</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Save Config modal ────────────────────────────────────────────────── *@
+    @if (_showSaveConfigModal)
+    {
+        <div class="dx-modal-overlay" @onclick="@(() => _showSaveConfigModal = false)">
+            <div class="dx-modal" style="max-width:440px" @onclick:stopPropagation>
+                <div class="dx-modal-header">
+                    <span>Save Config</span>
+                    <button class="dx-modal-close" @onclick="@(() => _showSaveConfigModal = false)">&times;</button>
+                </div>
+                <div class="dx-modal-body">
+                    <label style="font-size:.85rem; font-weight:600">Config Name</label>
+                    <input type="text" class="dx-input" style="margin-top:4px; width:100%"
+                           placeholder="e.g. Standard Boardroom Setup"
+                           @bind="_saveConfigName" />
+                </div>
+                <div class="dx-modal-footer" style="display:flex; gap:8px; justify-content:flex-end">
+                    <button class="dx-btn dx-btn-outline-gray" @onclick="@(() => _showSaveConfigModal = false)">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveConfigAsync"
+                            disabled="@string.IsNullOrWhiteSpace(_saveConfigName)">Save</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Load Config modal ────────────────────────────────────────────────── *@
+    @if (_showLoadConfigModal)
+    {
+        <div class="dx-modal-overlay" @onclick="@(() => _showLoadConfigModal = false)">
+            <div class="dx-modal" style="max-width:540px" @onclick:stopPropagation>
+                <div class="dx-modal-header">
+                    <span>Load Config</span>
+                    <button class="dx-modal-close" @onclick="@(() => _showLoadConfigModal = false)">&times;</button>
+                </div>
+                <div class="dx-modal-body">
+                    @if (_availableConfigs is null)
+                    {
+                        <p>Loading…</p>
+                    }
+                    else if (_availableConfigs.Count == 0)
+                    {
+                        <p class="ct-empty">No saved configs yet.</p>
+                    }
+                    else
+                    {
+                        <table style="width:100%; font-size:.87rem">
+                            <thead>
+                                <tr style="border-bottom:1px solid #dee2e6">
+                                    <th style="text-align:left; padding:4px 8px">Name</th>
+                                    <th style="text-align:left; padding:4px 8px">Saved</th>
+                                    <th style="width:60px"></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var cfg in _availableConfigs.OrderByDescending(c => c.CreateDate))
+                                {
+                                    var cfgLocal = cfg;
+                                    <tr style="border-bottom:1px solid #f0f0f0">
+                                        <td style="padding:6px 8px">@cfg.Name</td>
+                                        <td style="padding:6px 8px; color:var(--text-muted,#6c757d)">
+                                            @cfg.CreateDate.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                                        </td>
+                                        <td style="padding:4px 8px">
+                                            <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                                    @onclick="() => InitiateLoadConfigAsync(cfgLocal)">Load</button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-outline-gray" @onclick="@(() => _showLoadConfigModal = false)">Close</button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @* ── Config conflict modal ────────────────────────────────────────────── *@
+    <WorksheetConfigConflictModal
+        Visible="_showConfigConflictModal"
+        ConfigName="@_conflictConfigName"
+        MissingItems="_conflictMissingItems"
+        OnLoadAnyway="DoLoadConfigAsync"
+        OnClose="@(() => _showConfigConflictModal = false)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public int WorksheetId { get; set; }
+    [Parameter, EditorRequired] public int DesignId { get; set; }
+
+    // ── State ────────────────────────────────────────────────────────────────
+    private bool loaded;
+    private bool pushing;
+    private bool _showPushModal;
+    private string? saveMsg;
+    private bool saveSuccess;
+    // Non-null when an immediate-persist operation fails; shown as a banner until the next successful persist.
+    private string? _persistError;
+    private Dictionary<int, string> _categoryDict = [];
+    // Full category and group lists — passed to LineItemTable for the Category/Group dropdowns
+    private List<TblDesignCategory> _allCategories = [];
+    private List<TblDesignCategoryGroup> _allCategoryGroups = [];
+    // Maps CategoryId → (GroupId, GroupName) for items that belong to a group
+    private Dictionary<int, (int GroupId, string GroupName)> _categoryGroupDict = [];
+    // Description rows for Labor/Misc/Travel sections, keyed by section name
+    private Dictionary<string, TblDesignWorksheetSectionDescription> _sectionDescriptions = [];
+    // Description rows for CategoryGroup headers, keyed by CategoryGroupId
+    private Dictionary<int, TblDesignWorksheetGroupDescription> _groupDescriptions = [];
+    // Description row modal state
+    private bool _descModalVisible;
+    private string _descModalTitle = "";
+    private string? _descModalText;
+    private string? _descModalLocationId;
+    private string? _descModalSection;   // non-null when editing a section description
+    private int? _descModalGroupId;      // non-null when editing a group description
+
+    private TblDesignWorksheet? worksheet;
+    private TblDesignNetsuiteConnection? _nsConn;
+    private List<TblDesignLaborType> allLaborTypes = [];
+    private List<TblDesignWorksheetLaborRow> laborRows = [];
+    private List<TblDesignWorksheetMiscRow> miscRows = [];
+    private List<TblDesignWorksheetTravelRow> travelRows = [];
+    private List<TblDesignMiscItem> miscCatalogItems = [];
+    private List<TblDesignMiscItem> travelCatalogItems = [];
+
+    // Materials section state
+    private List<TblDesignMaterialsCategory> materialsCatalogCategories = [];
+    private List<TblDesignMaterialsItem> materialsCatalogItems = [];
+    private ILookup<int, TblDesignMaterialsItem> materialsCatalogItemsByCategory =
+        Enumerable.Empty<TblDesignMaterialsItem>().ToLookup(i => i.CategoryId);
+    private List<TblDesignWorksheetMaterialsRow> worksheetMaterialsRows = [];
+    private Dictionary<int, TblDesignWorksheetMaterialsCategoryConfig> materialsCategoryConfigs = [];
+    private int? _materialDescModalCategoryId; // tracks which category's description is being edited
+
+    private List<LineItemRow> lineItemRows = [];
+    private List<LaborRowView> laborRowViews = [];
+    private List<TblDesignLaborType> addableLaborTypes = [];
+    private bool _showLaborRemoveBlockedModal;
+    private Dictionary<int, decimal> computedLaborHours = [];
+    // NS locations — loaded once per session and passed to all pickers
+    private List<NetsuiteLocation>? _cachedLocations;
+    private bool _loadingLocations;
+
+    // Save Config modal state
+    private bool _showSaveConfigModal;
+    private string _saveConfigName = "";
+
+    // Load Config modal state
+    private bool _showLoadConfigModal;
+    private List<TblDesignWorksheetConfig>? _availableConfigs;
+
+    // Config conflict modal state
+    private bool _showConfigConflictModal;
+    private string _conflictConfigName = "";
+    private List<WorksheetConfigMissingItem> _conflictMissingItems = [];
+    private WorksheetConfigDto? _pendingConfigLoad;
+    private WorksheetSummary summary = EmptySummary;
+
+    // Column-based labor data lookups (replace old LaborAssignment/ItemLabor lookups)
+    private ILookup<int, TblDesignCategoryColumnAssignment> catColumnLookup =
+        Enumerable.Empty<TblDesignCategoryColumnAssignment>().ToLookup(x => 0);
+    private ILookup<int, TblDesignCatalogItemColumn> itemColumnLookup =
+        Enumerable.Empty<TblDesignCatalogItemColumn>().ToLookup(x => 0);
+    /// <summary>Per-design column hour overrides — take precedence over the shared catalog item's hours.</summary>
+    private List<TblDesignWorksheetLineItemColumnHours> _worksheetColumnHourOverrides = [];
+    private Dictionary<int, TblDesignLaborType> laborTypeDict = [];
+
+    private List<TblDesignLaborColumn> allColumns = [];
+    // Maps LaborTypeId → ColumnIds (from TblDesignLaborTypeColumn junction)
+    private Dictionary<int, List<int>> laborTypeColumnMap = [];
+    // Maps LaborTypeId → PersonCount (staff count per labor type for this worksheet)
+    private Dictionary<int, int> personCounts = [];
+    // IDs of labor types that have no column assignments and are not percentage-based
+    private HashSet<int> manualLaborTypeIds = [];
+    // Raw (unallocated) hours per column across all active line items — used to flag unstaffed columns
+    private Dictionary<int, decimal> _rawColumnHours = [];
+
+    private List<TblDesignLaborColumn> visibleColumns = [];
+    // Key: lineItemId → (columnId → per-unit hours)
+    private Dictionary<int, Dictionary<int, decimal>> columnHoursByLineItem = [];
+    // Columns the user has manually pinned as visible regardless of item hours
+    private HashSet<int> _manualColumnIds = [];
+    private int _shippingAttrId;
+    private int _lanDropsAttrId;
+    private int _poePowerAttrId;
+    private int _powerOutletsAttrId;
+
+    private static WorksheetSummary EmptySummary => new(0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0);
+
+    // Columns not currently visible in the table, offered in the "Add column" pill row
+    private List<TblDesignLaborColumn> HiddenColumns =>
+        allColumns
+            .Where(c => !visibleColumns.Any(v => v.ColumnId == c.ColumnId))
+            .OrderBy(c => c.SortOrder)
+            .ToList();
+
+    // ── Records ──────────────────────────────────────────────────────────────
+    public record LineItemRow(
+        int LineItemId,
+        int? CatalogItemId,
+        int? CategoryId,
+        string CategoryName,
+        int? CategoryGroupId,
+        string CategoryGroupName,
+        int? OriginalCategoryId,      // catalog item's CategoryId in DB; unchanged by dropdown edits
+        string SystemName,
+        string Description,
+        string Manufacturer,
+        string ModelName,
+        int Qty,
+        decimal Cost,
+        decimal DiscountPct,
+        decimal MarginPct,
+        decimal DiscCost,
+        decimal SellPrice,
+        IReadOnlyDictionary<int, string> AttributeValues,
+        IReadOnlyDictionary<int, decimal> OriginalColumnHoursPerUnit, // per-unit column hours; for dirty comparison
+        IReadOnlyDictionary<int, string> OriginalAttrValues,           // catalog item's attribute values; for dirty comparison
+        bool PrintInPdf = false,
+        bool IsDisabled = false,
+        string? LocationId = null,
+        string? LocationName = null);
+
+    public record LaborRowView(
+        TblDesignWorksheetLaborRow Entity,
+        TblDesignLaborType LaborType);
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        // Ensure the 6 system labor types exist before loading — one query on subsequent loads, seed only on first
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Tenant guard: worksheet must belong to a design owned by this tenant
+        worksheet = await db.TblDesignWorksheets
+            .Include(w => w.Design)
+            .FirstOrDefaultAsync(w => w.WorksheetId == WorksheetId &&
+                                      w.Design!.CustomerId == Tenant.CustomerCode);
+        if (worksheet is null) return;
+
+        // Load the NS connection so the toolbar can build the estimate deep-link URL.
+        _nsConn = await db.TblDesignNetsuiteConnections
+            .FirstOrDefaultAsync(c => c.CustomerId == Tenant.CustomerCode && c.IsActive);
+
+        var rawLineItems = await db.TblDesignWorksheetLineItems
+            .Where(l => l.WorksheetId == WorksheetId)
+            .Include(l => l.CatalogItem)
+            .OrderBy(l => l.SortOrder)
+            .ToListAsync();
+
+        allLaborTypes = await db.TblDesignLaborTypes
+            .Where(l => l.CustomerId == Tenant.CustomerCode && l.IsActive)
+            .ToListAsync();
+        laborTypeDict = allLaborTypes.ToDictionary(l => l.LaborTypeId);
+
+        laborRows = await db.TblDesignWorksheetLaborRows
+            .Where(l => l.WorksheetId == WorksheetId)
+            .ToListAsync();
+
+        // Seed any missing labor rows — covers worksheets created before certain labor types
+        // existed, or labor types added after the worksheet was first opened.
+        await EnsureLaborRowsAsync(db, laborRows);
+        laborRows = await db.TblDesignWorksheetLaborRows
+            .Where(l => l.WorksheetId == WorksheetId)
+            .ToListAsync();
+
+        miscRows = await db.TblDesignWorksheetMiscRows
+            .Where(r => r.WorksheetId == WorksheetId)
+            .OrderBy(r => r.SortOrder)
+            .ToListAsync();
+
+        travelRows = await db.TblDesignWorksheetTravelRows
+            .Where(r => r.WorksheetId == WorksheetId)
+            .OrderBy(r => r.SortOrder)
+            .ToListAsync();
+
+        miscCatalogItems = await db.TblDesignMiscItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode && !i.IsTravel && i.IsActive)
+            .OrderBy(i => i.SortOrder).ThenBy(i => i.Name)
+            .ToListAsync();
+
+        travelCatalogItems = await db.TblDesignMiscItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode && i.IsTravel && i.IsActive)
+            .OrderBy(i => i.SortOrder).ThenBy(i => i.Name)
+            .ToListAsync();
+
+        materialsCatalogCategories = await db.TblDesignMaterialsCategories
+            .Where(c => c.CustomerId == Tenant.CustomerCode && c.IsActive)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+
+        materialsCatalogItems = await db.TblDesignMaterialsItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode && i.IsActive)
+            .OrderBy(i => i.SortOrder)
+            .ToListAsync();
+        materialsCatalogItemsByCategory = materialsCatalogItems.ToLookup(i => i.CategoryId);
+
+        worksheetMaterialsRows = await db.TblDesignWorksheetMaterialsRows
+            .Where(r => r.WorksheetId == WorksheetId)
+            .ToListAsync();
+
+        materialsCategoryConfigs = await db.TblDesignWorksheetMaterialsCategoryConfigs
+            .Where(c => c.WorksheetId == WorksheetId)
+            .ToDictionaryAsync(c => c.CategoryId);
+
+        var categoryIds = rawLineItems.Select(l => l.CatalogItem?.CategoryId).Where(id => id.HasValue)
+            .Select(id => id!.Value).Distinct().ToList();
+        var catalogItemIds = rawLineItems.Select(l => l.CatalogItemId).Where(id => id.HasValue)
+            .Select(id => id!.Value).Distinct().ToList();
+
+        // Load all columns for this customer (used for table headers and the calculator)
+        allColumns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+        var allColumnIds = allColumns.Select(c => c.ColumnId).ToList();
+
+        // Category column assignments for all categories appearing in this worksheet
+        var catColumnAssignments = await db.TblDesignCategoryColumnAssignments
+            .Where(a => categoryIds.Contains(a.CategoryId))
+            .ToListAsync();
+        catColumnLookup = catColumnAssignments.ToLookup(a => a.CategoryId);
+
+        // Item column overrides for all catalog items in this worksheet
+        var itemColumnOverrides = await db.TblDesignCatalogItemColumns
+            .Where(o => catalogItemIds.Contains(o.ItemId))
+            .ToListAsync();
+        // Load per-design column hour overrides and merge them into the item column lookup.
+        // Worksheet overrides take precedence — they don't modify the shared catalog item.
+        _worksheetColumnHourOverrides = await db.TblDesignWorksheetLineItemColumnHours
+            .Where(h => h.WorksheetId == WorksheetId)
+            .ToListAsync();
+
+        itemColumnLookup = MergeWorksheetColumnHourOverrides(itemColumnOverrides, _worksheetColumnHourOverrides, rawLineItems);
+
+        // Labor type → column junction (which columns each labor type is assigned to)
+        var laborTypeColumns = await db.TblDesignLaborTypeColumns
+            .Where(ltc => ltc.LaborType!.CustomerId == Tenant.CustomerCode)
+            .ToListAsync();
+        laborTypeColumnMap = laborTypeColumns
+            .GroupBy(ltc => ltc.LaborTypeId)
+            .ToDictionary(g => g.Key, g => g.Select(ltc => ltc.ColumnId).ToList());
+
+        // Manual types: no column assignments and not percentage-based
+        manualLaborTypeIds = allLaborTypes
+            .Where(lt => !lt.IsPercentageOfColumns && !laborTypeColumnMap.ContainsKey(lt.LaborTypeId))
+            .Select(lt => lt.LaborTypeId)
+            .ToHashSet();
+
+        // Per-worksheet staff counts come directly from the labor row's PersonCount field
+        personCounts = laborRows.ToDictionary(r => r.LaborTypeId, r => r.PersonCount);
+
+        // Load categories with their group nav; stored as fields so inline item selection can use them
+        var categories = await db.TblDesignCategories
+            .Include(c => c.CategoryGroup)
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder).ThenBy(c => c.Name)
+            .ToListAsync();
+        _allCategories = categories;
+        _allCategoryGroups = await db.TblDesignCategoryGroups
+            .Where(g => g.CustomerId == Tenant.CustomerCode)
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+        _categoryDict = categories.ToDictionary(c => c.CategoryId, c => c.Name);
+        _categoryGroupDict = categories
+            .Where(c => c.CategoryGroupId.HasValue)
+            .ToDictionary(c => c.CategoryId,
+                c => (c.CategoryGroupId!.Value, c.CategoryGroup?.Name ?? "Ungrouped"));
+
+        // Load description row entities for sections and category groups
+        _sectionDescriptions = await db.TblDesignWorksheetSectionDescriptions
+            .Where(d => d.WorksheetId == WorksheetId)
+            .ToDictionaryAsync(d => d.Section);
+        _groupDescriptions = await db.TblDesignWorksheetGroupDescriptions
+            .Where(d => d.WorksheetId == WorksheetId)
+            .ToDictionaryAsync(d => d.CategoryGroupId);
+
+        // Load system attribute IDs so the table knows which columns to render
+        var sysAttrs = await db.TblDesignAttributes
+            .Where(a => a.CustomerId == Tenant.CustomerCode && a.IsSystem)
+            .ToListAsync();
+        _shippingAttrId     = sysAttrs.FirstOrDefault(a => a.Name == "Shipping")?.AttributeId ?? 0;
+        _lanDropsAttrId     = sysAttrs.FirstOrDefault(a => a.Name == "LAN Drops")?.AttributeId ?? 0;
+        _poePowerAttrId     = sysAttrs.FirstOrDefault(a => a.Name == "PoE Power")?.AttributeId ?? 0;
+        _powerOutletsAttrId = sysAttrs.FirstOrDefault(a => a.Name == "Power Outlets")?.AttributeId ?? 0;
+
+        // Load line item attribute values
+        var lineItemIds = rawLineItems.Select(l => l.LineItemId).ToList();
+        var lineItemAttrs = await db.TblDesignWorksheetLineItemAttrs
+            .Where(a => lineItemIds.Contains(a.LineItemId))
+            .ToListAsync();
+        var attrsByLineItem = lineItemAttrs
+            .GroupBy(a => a.LineItemId)
+            .ToDictionary(g => g.Key, g =>
+                (IReadOnlyDictionary<int, string>)g.ToDictionary(a => a.AttributeId, a => a.Value ?? string.Empty));
+
+        lineItemRows = rawLineItems.Select(li =>
+        {
+            var snap = DeserializeSnapshot(li.CatalogItem?.SnapshotJson);
+            var cost = li.CatalogItem?.Cost > 0 ? li.CatalogItem.Cost : snap?.Cost ?? 0;
+            var calc = WorksheetCalculator.ComputeLineItem(cost, li.DiscountPct, li.MarginPct, li.Qty);
+            var attrs = attrsByLineItem.TryGetValue(li.LineItemId, out var a) ? a
+                : (IReadOnlyDictionary<int, string>)new Dictionary<int, string>();
+            var catId = li.CatalogItem?.CategoryId;
+            var catName = catId.HasValue ? _categoryDict.GetValueOrDefault(catId.Value, "Uncategorized") : "Uncategorized";
+            var (derivedGroupId, derivedGroupName) = catId.HasValue && _categoryGroupDict.TryGetValue(catId.Value, out var g)
+                ? (g.GroupId > 0 ? (int?)g.GroupId : null, g.GroupName) : ((int?)null, "");
+            // Per-worksheet override takes precedence over the category's default group.
+            var groupId = li.CategoryGroupIdOverride ?? derivedGroupId;
+            var groupName = groupId.HasValue
+                ? (_allCategoryGroups.FirstOrDefault(gr => gr.CategoryGroupId == groupId.Value)?.Name ?? derivedGroupName)
+                : derivedGroupName;
+            var desc = !string.IsNullOrEmpty(li.CatalogItem?.Description) ? li.CatalogItem.Description
+                : snap?.PurchaseDescription ?? snap?.ItemId ?? "";
+            var mfr = !string.IsNullOrEmpty(li.CatalogItem?.Manufacturer) ? li.CatalogItem.Manufacturer
+                : snap?.Manufacturer ?? "";
+            var model = !string.IsNullOrEmpty(li.CatalogItem?.ModelName) ? li.CatalogItem.ModelName
+                : snap?.ItemId ?? "";
+            // Compute per-unit column hours so the hardware table can display them (method returns per-unit)
+            var perUnitColHours = (IReadOnlyDictionary<int, decimal>)WorksheetCalculator.ComputeItemColumnHours(
+                li.CatalogItemId ?? 0, catId, catColumnLookup, itemColumnLookup, allColumnIds);
+            // Original attr values come from the catalog item's stored attribute values (same as current at load time)
+            var originalAttrs = (IReadOnlyDictionary<int, string>)attrs.ToDictionary(kv => kv.Key, kv => kv.Value);
+            return new LineItemRow(
+                li.LineItemId, li.CatalogItemId, catId, catName, groupId, groupName,
+                catId, // OriginalCategoryId — snapshot of what the catalog item has in DB
+                li.SystemName ?? "", desc, mfr, model,
+                li.Qty, cost, li.DiscountPct, li.MarginPct, calc.DiscCost, calc.SellPrice,
+                attrs, perUnitColHours, originalAttrs, li.PrintInPdf, li.IsDisabled,
+                li.LocationId, li.LocationName);
+        }).ToList();
+
+        Recalculate();
+        loaded = true;
+
+        // Kick off location fetch in the background after initial render — non-blocking.
+        _ = EnsureLocationsLoadedAsync();
+    }
+
+    /// <summary>
+    /// Fetches NS locations once per component lifetime and caches them.
+    /// Called after initial load so it doesn't block the worksheet from rendering.
+    /// </summary>
+    private async Task EnsureLocationsLoadedAsync()
+    {
+        if (_cachedLocations is not null || _loadingLocations) return;
+        _loadingLocations = true;
+        try
+        {
+            _cachedLocations = await NetsuiteService.GetLocationsAsync();
+        }
+        catch
+        {
+            _cachedLocations = [];
+        }
+        finally
+        {
+            _loadingLocations = false;
+        }
+        StateHasChanged();
+    }
+
+    private async Task OnDefaultLocationChanged(ChangeEventArgs e)
+    {
+        var newId = e.Value?.ToString();
+        // Resolve name from the cache
+        var newName = _cachedLocations?.FirstOrDefault(l => l.Id == newId)?.Name;
+        if (worksheet is null) return;
+        worksheet.DefaultLocationId   = string.IsNullOrEmpty(newId) ? null : newId;
+        worksheet.DefaultLocationName = string.IsNullOrEmpty(newId) ? null : newName;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheets.FindAsync(WorksheetId);
+            if (entity is not null)
+            {
+                entity.DefaultLocationId   = worksheet.DefaultLocationId;
+                entity.DefaultLocationName = worksheet.DefaultLocationName;
+                await db.SaveChangesAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            _persistError = ex.Message;
+        }
+    }
+
+    private void Recalculate()
+    {
+        var activeItems = lineItemRows.Where(r => r.CatalogItemId.HasValue && !r.IsDisabled).ToList();
+        var laborInputs = activeItems
+            .Select(r => new LaborHoursInput(r.CatalogItemId!.Value, r.CategoryId, r.Qty))
+            .ToList();
+        // Build ILookup<int, int> (LaborTypeId → ColumnIds) for the calculator
+        var ltColLookup = laborTypeColumnMap
+            .SelectMany(kv => kv.Value.Select(colId => (kv.Key, colId)))
+            .ToLookup(p => p.Key, p => p.colId);
+
+        // Raw column hours must be computed BEFORE labor allocation so we can identify shared
+        // columns and clamp hidden labor types to PersonCount = 1 (see below).
+        var allColIds = allColumns.Select(c => c.ColumnId).ToList();
+        var colsWithHours = new HashSet<int>(_manualColumnIds);
+        _rawColumnHours = [];
+        foreach (var row in activeItems)
+        {
+            var perCol = WorksheetCalculator.ComputeItemColumnHours(
+                row.CatalogItemId!.Value, row.CategoryId, catColumnLookup, itemColumnLookup, allColIds);
+            foreach (var (colId, hrs) in perCol.Where(kv => kv.Value > 0))
+            {
+                colsWithHours.Add(colId);
+                _rawColumnHours[colId] = _rawColumnHours.GetValueOrDefault(colId) + hrs * row.Qty;
+            }
+        }
+        visibleColumns = allColumns.Where(c => colsWithHours.Contains(c.ColumnId))
+            .OrderBy(c => c.SortOrder)
+            .ToList();
+
+        // Shared columns: used by 2+ labor types AND have hardware hours.
+        // Labor types that exclusively own all their columns are hidden from the calculator UI,
+        // so the user has no way to adjust their staff count. Force them to 1 to prevent their
+        // hours from being silently zeroed by a stale PersonCount = 0 in the database.
+        var columnUseCounts = new Dictionary<int, int>();
+        foreach (var (_, colIds) in laborTypeColumnMap)
+            foreach (var colId in colIds)
+                columnUseCounts[colId] = columnUseCounts.GetValueOrDefault(colId) + 1;
+        var sharedColIds = columnUseCounts
+            .Where(kv => kv.Value >= 2 && _rawColumnHours.ContainsKey(kv.Key))
+            .Select(kv => kv.Key)
+            .ToHashSet();
+
+        var effectivePc = new Dictionary<int, int>(personCounts);
+        foreach (var lt in allLaborTypes.Where(l => !l.IsPercentageOfColumns))
+        {
+            if (!laborTypeColumnMap.TryGetValue(lt.LaborTypeId, out var colIds)) continue;
+            if (!colIds.Any(c => sharedColIds.Contains(c)))
+                effectivePc[lt.LaborTypeId] = 1;
+        }
+
+        computedLaborHours = WorksheetCalculator.ComputeLaborHours(
+            laborInputs, catColumnLookup, itemColumnLookup,
+            (IReadOnlyDictionary<int, int>)effectivePc,
+            allLaborTypes, ltColLookup);
+
+        // Effective hours: IsOverridden uses the user's manual EstimatedHours, otherwise computed
+        var effectiveHours = new Dictionary<int, decimal>();
+        foreach (var row in laborRows)
+        {
+            var computed = computedLaborHours.GetValueOrDefault(row.LaborTypeId);
+            row.CalculatedHours = computed;
+            effectiveHours[row.LaborTypeId] = row.IsOverridden ? row.OverrideHours : computed;
+        }
+
+        // Per-item per-unit column hours for the hardware table
+        columnHoursByLineItem = [];
+        foreach (var row in lineItemRows)
+        {
+            var perCol = WorksheetCalculator.ComputeItemColumnHours(
+                row.CatalogItemId ?? 0, row.CategoryId, catColumnLookup, itemColumnLookup, allColIds);
+            columnHoursByLineItem[row.LineItemId] = perCol.Count > 0
+                ? perCol.ToDictionary(kv => kv.Key, kv => kv.Value)
+                : [];
+        }
+
+        // Only show rows that have computed hours or a manual override — rows with zero hours are
+        // hidden by default to reduce clutter. Users can re-add them via the search strip.
+        laborRowViews = laborRows
+            .Select(r => new LaborRowView(r, laborTypeDict.TryGetValue(r.LaborTypeId, out var lt) ? lt : null!))
+            .Where(v => v.LaborType is not null)
+            .Where(v => v.Entity.IsOverridden
+                     || effectiveHours.GetValueOrDefault(v.Entity.LaborTypeId) > 0)
+            .ToList();
+
+        // Addable types: active labor types that don't already have a row in the visible list
+        var visibleLtIds = laborRowViews.Select(v => v.LaborType.LaborTypeId).ToHashSet();
+        addableLaborTypes = allLaborTypes.Where(lt => !visibleLtIds.Contains(lt.LaborTypeId)).ToList();
+
+        var hwItems = lineItemRows.Where(r => !r.IsDisabled).Select(r => (r.Qty, r.DiscCost, r.SellPrice)).ToList();
+        var subRates = (IReadOnlyDictionary<int, (decimal SubCostPerHr, decimal SubPricePerHr)>)
+            laborRows.ToDictionary(r => r.LaborTypeId, r => (r.SubCostPerHr, r.SubPricePerHr));
+        var matItems = worksheetMaterialsRows.Select(r => (r.Qty, r.Cost, r.SellPrice)).ToList();
+
+        // Build travel labor data: one entry per labor type, using effective person counts.
+        // This drives scenario-aware travel multipliers in ComputeSummary.
+        var travelLaborData = allLaborTypes
+            .Select(lt =>
+            {
+                var pc = effectivePc.TryGetValue(lt.LaborTypeId, out var c) ? c : 1;
+                return (lt.IsTravelingRole, lt.SubRole, pc);
+            })
+            .ToList();
+
+        summary = WorksheetCalculator.ComputeSummary(
+            hwItems, effectiveHours, laborTypeDict, subRates, miscRows, travelRows, travelLaborData, matItems);
+    }
+
+    // ── Immediate-persist helpers ────────────────────────────────────────────
+
+    /// <summary>Writes all scalar fields of a line item row to the DB. Called after any in-memory mutation.</summary>
+    private async Task PersistLineItemAsync(int lineItemId)
+    {
+        var r = lineItemRows.FirstOrDefault(lr => lr.LineItemId == lineItemId);
+        if (r is null) return;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetLineItems.FindAsync(r.LineItemId);
+            if (entity is null) return;
+            entity.Qty              = r.Qty;
+            entity.DiscountPct      = r.DiscountPct;
+            entity.MarginPct        = r.MarginPct;
+            entity.SystemName       = r.SystemName;
+            entity.IsDisabled       = r.IsDisabled;
+            entity.PrintInPdf       = r.PrintInPdf;
+            entity.LocationId       = r.LocationId;
+            entity.LocationName     = r.LocationName;
+            // Store override only when the row's group differs from the category's default group.
+            int? catDefault = r.CategoryId.HasValue &&
+                              _categoryGroupDict.TryGetValue(r.CategoryId.Value, out var cg) && cg.GroupId > 0
+                              ? cg.GroupId : null;
+            entity.CategoryGroupIdOverride = r.CategoryGroupId != catDefault ? r.CategoryGroupId : null;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>Upserts (or deletes when empty) a single attribute value row for a line item.</summary>
+    private async Task PersistLineItemAttrAsync(int lineItemId, int attrId, string? value)
+    {
+        if (attrId == 0) return;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.TblDesignWorksheetLineItemAttrs
+                .FirstOrDefaultAsync(a => a.LineItemId == lineItemId && a.AttributeId == attrId);
+            if (string.IsNullOrEmpty(value))
+            {
+                if (existing is not null) db.TblDesignWorksheetLineItemAttrs.Remove(existing);
+            }
+            else if (existing is null)
+            {
+                db.TblDesignWorksheetLineItemAttrs.Add(
+                    new TblDesignWorksheetLineItemAttr { LineItemId = lineItemId, AttributeId = attrId, Value = value });
+            }
+            else { existing.Value = value; }
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>Writes override hours, sub rates, and PrintInPdf for a labor row.</summary>
+    private async Task PersistLaborRowAsync(TblDesignWorksheetLaborRow row)
+    {
+        if (row.LaborRowId == 0) return;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetLaborRows.FindAsync(row.LaborRowId);
+            if (entity is null) return;
+            entity.CalculatedHours = row.CalculatedHours;
+            entity.OverrideHours   = row.OverrideHours;
+            entity.IsOverridden    = row.IsOverridden;
+            entity.SubCostPerHr    = row.SubCostPerHr;
+            entity.SubPricePerHr   = row.SubPricePerHr;
+            entity.PrintInPdf      = row.PrintInPdf;
+            entity.LocationId      = row.LocationId;
+            entity.LocationName    = row.LocationName;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>Writes Qty, Cost, SellPrice, PrintInPdf, and LocationId for a misc row.</summary>
+    private async Task PersistMiscRowAsync(TblDesignWorksheetMiscRow row)
+    {
+        if (row.RowId == 0) return;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetMiscRows.FindAsync(row.RowId);
+            if (entity is null) return;
+            entity.Qty        = row.Qty;
+            entity.Cost       = row.Cost;
+            entity.SellPrice  = row.SellPrice;
+            entity.PrintInPdf = row.PrintInPdf;
+            entity.LocationId = row.LocationId;
+            entity.LocationName = row.LocationName;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>Writes Qty, Cost, SellPrice, IsPerPerson, PrintInPdf, and LocationId for a travel row.</summary>
+    private async Task PersistTravelRowAsync(TblDesignWorksheetTravelRow row)
+    {
+        if (row.RowId == 0) return;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetTravelRows.FindAsync(row.RowId);
+            if (entity is null) return;
+            entity.Qty         = row.Qty;
+            entity.Cost        = row.Cost;
+            entity.SellPrice   = row.SellPrice;
+            entity.IsPerPerson = row.IsPerPerson;
+            entity.PrintInPdf  = row.PrintInPdf;
+            entity.LocationId  = row.LocationId;
+            entity.LocationName = row.LocationName;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    // ── Line item actions ─────────────────────────────────────────────────────
+
+    /// <summary>Handles item selection from the inline search strip; auto-creates a catalog item if needed.</summary>
+    private async Task OnInlineItemSelected(NetsuiteItem item)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var catalogItem = await db.TblDesignCatalogItems
+            .FirstOrDefaultAsync(c => c.CustomerId == Tenant.CustomerCode && c.NetsuiteItemId == item.Id);
+        if (catalogItem is null)
+        {
+            catalogItem = new TblDesignCatalogItem
+            {
+                CustomerId = Tenant.CustomerCode,
+                NetsuiteItemId = item.Id,
+                SnapshotJson = System.Text.Json.JsonSerializer.Serialize(item),
+                LastSyncDate = DateTime.UtcNow,
+                Description = item.PurchaseDescription,
+                Manufacturer = item.Manufacturer,
+                ModelName = item.ItemId,
+                Cost = item.Cost,
+            };
+            db.TblDesignCatalogItems.Add(catalogItem);
+            await db.SaveChangesAsync();
+        }
+        var cost = catalogItem.Cost > 0 ? catalogItem.Cost : item.Cost;
+        // Initial margin derived from NetSuite sell price so the worksheet sell matches catalog pricing by default
+        var initialMargin = item.Rate > cost && cost > 0 ? Math.Round(1m - cost / item.Rate, 4) : 0m;
+        var calc = WorksheetCalculator.ComputeLineItem(cost, 0, initialMargin, 1);
+        var catName = catalogItem.CategoryId.HasValue
+            ? _categoryDict.GetValueOrDefault(catalogItem.CategoryId.Value, "Uncategorized") : "Uncategorized";
+        var (groupId, groupName) = catalogItem.CategoryId.HasValue &&
+            _categoryGroupDict.TryGetValue(catalogItem.CategoryId.Value, out var grp)
+            ? ((int?)grp.GroupId, grp.GroupName) : ((int?)null, "");
+        int? catDefaultGroup = catalogItem.CategoryId.HasValue &&
+            _categoryGroupDict.TryGetValue(catalogItem.CategoryId.Value, out var cgr) && cgr.GroupId > 0
+            ? cgr.GroupId : null;
+
+        // INSERT immediately so the row has a real DB ID from the start.
+        var entity = new TblDesignWorksheetLineItem
+        {
+            WorksheetId   = WorksheetId,
+            CatalogItemId = catalogItem.ItemId,
+            Qty           = 1,
+            DiscountPct   = 0,
+            MarginPct     = initialMargin,
+            SortOrder     = (lineItemRows.Count + 1) * 10,
+            IsDisabled    = false,
+            PrintInPdf    = false,
+            CategoryGroupIdOverride = (int?)groupId != catDefaultGroup ? groupId : null,
+        };
+        db.TblDesignWorksheetLineItems.Add(entity);
+        await db.SaveChangesAsync();
+
+        lineItemRows.Add(new LineItemRow(
+            entity.LineItemId, catalogItem.ItemId, catalogItem.CategoryId, catName, groupId, groupName,
+            catalogItem.CategoryId, // OriginalCategoryId
+            "", item.PurchaseDescription, item.Manufacturer, item.ItemId,
+            1, cost, 0, initialMargin, calc.DiscCost, calc.SellPrice,
+            new Dictionary<int, string>(),
+            new Dictionary<int, decimal>(), // OriginalColumnHoursPerUnit — no catalog history yet
+            new Dictionary<int, string>())); // OriginalAttrValues — no catalog history yet
+        Recalculate();
+    }
+
+    /// <summary>Toggles a row's disabled state, which excludes it from calculations and NetSuite push.</summary>
+    private async Task OnToggleDisabled(int lineItemId)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == lineItemId);
+        if (idx < 0) return;
+        var r = lineItemRows[idx];
+        lineItemRows[idx] = r with { IsDisabled = !r.IsDisabled };
+        Recalculate();
+        await PersistLineItemAsync(lineItemId);
+    }
+
+    private async Task UpdateQty((int LineItemId, int Qty) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        var r = lineItemRows[idx];
+        var calc = WorksheetCalculator.ComputeLineItem(r.Cost, r.DiscountPct, r.MarginPct, args.Qty);
+        lineItemRows[idx] = r with { Qty = args.Qty, DiscCost = calc.DiscCost, SellPrice = calc.SellPrice };
+        Recalculate();
+        await PersistLineItemAsync(args.LineItemId);
+    }
+
+    private async Task UpdateDiscountMargin((int LineItemId, decimal Disc, decimal Margin) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        var r = lineItemRows[idx];
+        var calc = WorksheetCalculator.ComputeLineItem(r.Cost, args.Disc, args.Margin, r.Qty);
+        lineItemRows[idx] = r with { DiscountPct = args.Disc, MarginPct = args.Margin, DiscCost = calc.DiscCost, SellPrice = calc.SellPrice };
+        Recalculate();
+        await PersistLineItemAsync(args.LineItemId);
+    }
+
+    private async Task UpdateSystem((int LineItemId, string System) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        lineItemRows[idx] = lineItemRows[idx] with { SystemName = args.System };
+        await PersistLineItemAsync(args.LineItemId);
+    }
+
+    private async Task UpdateShipping((int LineItemId, string Val) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0 || _shippingAttrId == 0) return;
+        var current = new Dictionary<int, string>(lineItemRows[idx].AttributeValues);
+        if (string.IsNullOrEmpty(args.Val)) current.Remove(_shippingAttrId);
+        else current[_shippingAttrId] = args.Val;
+        lineItemRows[idx] = lineItemRows[idx] with { AttributeValues = current };
+        Recalculate();
+        await PersistLineItemAttrAsync(args.LineItemId, _shippingAttrId, args.Val);
+    }
+
+    private async Task RemoveItem(int lineItemId)
+    {
+        lineItemRows.RemoveAll(r => r.LineItemId == lineItemId);
+        _worksheetColumnHourOverrides.RemoveAll(h => h.LineItemId == lineItemId);
+        Recalculate();
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            // Delete worksheet column hour overrides first (FK uses NoAction, no cascade)
+            var overrides = await db.TblDesignWorksheetLineItemColumnHours
+                .Where(h => h.LineItemId == lineItemId).ToListAsync();
+            db.TblDesignWorksheetLineItemColumnHours.RemoveRange(overrides);
+            var entity = await db.TblDesignWorksheetLineItems.FindAsync(lineItemId);
+            if (entity is not null) db.TblDesignWorksheetLineItems.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task UpdateLineItemLocation((int LineItemId, string? LocationId, string? LocationName) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        lineItemRows[idx] = lineItemRows[idx] with { LocationId = args.LocationId, LocationName = args.LocationName };
+        await PersistLineItemAsync(args.LineItemId);
+    }
+
+    /// <summary>Updates a line item's category (and derives its group from the catalog) then recalculates.</summary>
+    private void UpdateItemCategory((int LineItemId, int? CategoryId) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        var catName = args.CategoryId.HasValue
+            ? _categoryDict.GetValueOrDefault(args.CategoryId.Value, "") : "";
+        var (groupId, groupName) = args.CategoryId.HasValue &&
+            _categoryGroupDict.TryGetValue(args.CategoryId.Value, out var g)
+            ? ((int?)g.GroupId, g.GroupName) : ((int?)null, "");
+        lineItemRows[idx] = lineItemRows[idx] with
+        {
+            CategoryId = args.CategoryId,
+            CategoryName = catName,
+            CategoryGroupId = groupId,
+            CategoryGroupName = groupName ?? "",
+        };
+        Recalculate();
+    }
+
+    /// <summary>
+    /// Updates a line item's CategoryGroupId independently of the category, allowing the user
+    /// to propose a different group assignment for the category entity without changing the category.
+    /// </summary>
+    private async Task UpdateItemCategoryGroup((int LineItemId, int? GroupId) args)
+    {
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx < 0) return;
+        var groupName = args.GroupId.HasValue
+            ? (_allCategoryGroups.FirstOrDefault(g => g.CategoryGroupId == args.GroupId.Value)?.Name ?? "")
+            : "";
+        lineItemRows[idx] = lineItemRows[idx] with
+        {
+            CategoryGroupId = args.GroupId,
+            CategoryGroupName = groupName,
+        };
+        // Persist the override immediately so it survives any LoadAsync calls (e.g. from row-level saves).
+        // Skip attr sync for rows without a real DB ID (shouldn't occur with immediate-persist, but guard defensively).
+        if (args.LineItemId > 0)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetLineItems.FindAsync(args.LineItemId);
+            if (entity is not null)
+            {
+                entity.CategoryGroupIdOverride = args.GroupId;
+                await db.SaveChangesAsync();
+            }
+        }
+    }
+
+    /// <summary>Persists a category change to the catalog item entity.</summary>
+    private async Task SaveCategoryToItemAsync((int LineItemId, int? CategoryId) args)
+    {
+        var li = lineItemRows.FirstOrDefault(r => r.LineItemId == args.LineItemId);
+        if (li?.CatalogItemId is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var item = await db.TblDesignCatalogItems.FindAsync(li.CatalogItemId.Value);
+        if (item is null) return;
+        item.CategoryId = args.CategoryId;
+        await db.SaveChangesAsync();
+        // Update OriginalCategoryId so the row is no longer dirty
+        var idx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (idx >= 0) lineItemRows[idx] = lineItemRows[idx] with { OriginalCategoryId = args.CategoryId };
+    }
+
+    /// <summary>Persists a category group change to the category entity itself.</summary>
+    private async Task SaveCatGroupToCategoryAsync((int LineItemId, int? GroupId) args)
+    {
+        var li = lineItemRows.FirstOrDefault(r => r.LineItemId == args.LineItemId);
+        if (li?.CategoryId is null) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var cat = await db.TblDesignCategories.FindAsync(li.CategoryId.Value);
+        if (cat is null) return;
+        cat.CategoryGroupId = args.GroupId;
+        await db.SaveChangesAsync();
+        // Refresh the in-memory dict so future rows reflect the new group.
+        _categoryGroupDict[li.CategoryId.Value] = args.GroupId.HasValue
+            ? (args.GroupId.Value, _allCategoryGroups.FirstOrDefault(g => g.CategoryGroupId == args.GroupId.Value)?.Name ?? "")
+            : (0, "");
+        // Update the category object in _allCategories so IsCatGroupDirty reflects the change immediately.
+        var catObj = _allCategories.FirstOrDefault(c => c.CategoryId == li.CategoryId.Value);
+        if (catObj is not null) catObj.CategoryGroupId = args.GroupId;
+    }
+
+    private async Task UpdateLaborRowLocation((int LaborRowId, string? LocationId, string? LocationName) args)
+    {
+        var row = laborRows.FirstOrDefault(r => r.LaborRowId == args.LaborRowId);
+        if (row is null) return;
+        row.LocationId   = args.LocationId;
+        row.LocationName = args.LocationName;
+        await PersistLaborRowAsync(row);
+    }
+
+    // ── Labor column visibility ───────────────────────────────────────────────
+
+    private void AddColumn(int columnId)
+    {
+        _manualColumnIds.Add(columnId);
+        Recalculate();
+    }
+
+    private void RemoveColumn(int columnId)
+    {
+        _manualColumnIds.Remove(columnId);
+        Recalculate();
+    }
+
+    // ── Labor actions ────────────────────────────────────────────────────────
+
+    /// <summary>Reverts a labor row override back to the calculated hours.</summary>
+    private async Task RevertLaborOverride(int laborRowId)
+    {
+        var row = laborRows.FirstOrDefault(r => r.LaborRowId == laborRowId);
+        if (row is null) return;
+        row.IsOverridden = false;
+        row.OverrideHours = 0;
+        Recalculate();
+        await PersistLaborRowAsync(row);
+    }
+
+    /// <summary>Sets an explicit estimated hours override on a labor row.</summary>
+    private async Task UpdateLaborOverride((int LaborRowId, decimal Hours) args)
+    {
+        var row = laborRows.FirstOrDefault(r => r.LaborRowId == args.LaborRowId);
+        if (row is null) return;
+        row.IsOverridden = true;
+        row.OverrideHours = args.Hours;
+        Recalculate();
+        await PersistLaborRowAsync(row);
+    }
+
+    /// <summary>Adds a labor type row to this worksheet and shows it in the list.</summary>
+    private async Task OnAddLaborType(TblDesignLaborType lt)
+    {
+        // Row may already exist in DB but was hidden because it had 0 hours.
+        var existing = laborRows.FirstOrDefault(r => r.LaborTypeId == lt.LaborTypeId);
+        if (existing is null)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var row = new TblDesignWorksheetLaborRow
+            {
+                WorksheetId = WorksheetId,
+                LaborTypeId = lt.LaborTypeId,
+                CalculatedHours = 0,
+                IsOverridden = true,    // Mark overridden so the row stays visible even with 0 hrs
+                OverrideHours = 0,
+                PersonCount = 1,
+            };
+            db.TblDesignWorksheetLaborRows.Add(row);
+            await db.SaveChangesAsync();
+            laborRows.Add(row);
+        }
+        else
+        {
+            // Row exists but was hidden — mark as overridden so it stays visible.
+            existing.IsOverridden = true;
+            existing.OverrideHours = existing.CalculatedHours;
+            await PersistLaborRowAsync(existing);
+        }
+        Recalculate();
+    }
+
+    /// <summary>Removes a labor row that has zero hours from this worksheet.</summary>
+    private async Task OnRemoveLaborRow(int laborRowId)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetLaborRows.FindAsync(laborRowId);
+            if (entity is not null)
+            {
+                db.TblDesignWorksheetLaborRows.Remove(entity);
+                await db.SaveChangesAsync();
+            }
+            laborRows.RemoveAll(r => r.LaborRowId == laborRowId);
+            Recalculate();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>Updates staff count for a labor type and triggers recalculation. Zero excludes the type from column pools.</summary>
+    private async Task OnPersonCountChanged((int LaborTypeId, int Count) args)
+    {
+        personCounts[args.LaborTypeId] = Math.Max(0, args.Count);
+
+        // Persist immediately — updates the labor row's PersonCount directly
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var laborRow = await db.TblDesignWorksheetLaborRows
+            .FirstOrDefaultAsync(r => r.WorksheetId == WorksheetId && r.LaborTypeId == args.LaborTypeId);
+        if (laborRow is not null)
+        {
+            laborRow.PersonCount = args.Count;
+            await db.SaveChangesAsync();
+        }
+
+        // Keep in-memory entity in sync so Save doesn't clobber the new count
+        var inMemory = laborRows.FirstOrDefault(r => r.LaborTypeId == args.LaborTypeId);
+        if (inMemory is not null) inMemory.PersonCount = args.Count;
+
+        Recalculate();
+    }
+
+    /// <summary>Updates sub cost/price rates on a labor row and triggers recalculation.</summary>
+    private async Task OnSubRateChanged((int LaborRowId, decimal SubCostPerHr, decimal SubPricePerHr) args)
+    {
+        var row = laborRows.FirstOrDefault(r => r.LaborRowId == args.LaborRowId);
+        if (row is null) return;
+        row.SubCostPerHr = args.SubCostPerHr;
+        row.SubPricePerHr = args.SubPricePerHr;
+        Recalculate();
+        await PersistLaborRowAsync(row);
+    }
+
+    // ── Misc actions ──────────────────────────────────────────────────────────
+
+    private async Task AddMiscRow(TblDesignWorksheetMiscRow row)
+    {
+        row.WorksheetId = WorksheetId;
+        row.SortOrder = (miscRows.Count + 1) * 10;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.TblDesignWorksheetMiscRows.Add(row);
+        await db.SaveChangesAsync(); // row.RowId now has the real DB identity
+        miscRows.Add(row);
+        Recalculate();
+    }
+
+    private async Task UpdateMiscRow(TblDesignWorksheetMiscRow updated)
+    {
+        var idx = miscRows.FindIndex(r => r.RowId == updated.RowId);
+        if (idx >= 0) { miscRows[idx] = updated; Recalculate(); }
+        await PersistMiscRowAsync(updated);
+    }
+
+    private async Task RemoveMiscRow(int rowId)
+    {
+        miscRows.RemoveAll(r => r.RowId == rowId);
+        Recalculate();
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetMiscRows.FindAsync(rowId);
+            if (entity is not null) { db.TblDesignWorksheetMiscRows.Remove(entity); await db.SaveChangesAsync(); }
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task OnMiscCatalogItemCreated(TblDesignMiscItem newItem)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.TblDesignMiscItems.Add(newItem);
+        await db.SaveChangesAsync();
+        miscCatalogItems.Add(newItem);
+    }
+
+    private async Task UpdateMiscRowLocation((int RowId, string? LocationId, string? LocationName) args)
+    {
+        var row = miscRows.FirstOrDefault(r => r.RowId == args.RowId);
+        if (row is null) return;
+        row.LocationId   = args.LocationId;
+        row.LocationName = args.LocationName;
+        await PersistMiscRowAsync(row);
+    }
+
+    // ── Travel actions ────────────────────────────────────────────────────────
+
+    private async Task AddTravelRow(TblDesignWorksheetTravelRow row)
+    {
+        row.WorksheetId = WorksheetId;
+        row.SortOrder = (travelRows.Count + 1) * 10;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.TblDesignWorksheetTravelRows.Add(row);
+        await db.SaveChangesAsync(); // row.RowId now has the real DB identity
+        travelRows.Add(row);
+        Recalculate();
+    }
+
+    private async Task UpdateTravelRow(TblDesignWorksheetTravelRow updated)
+    {
+        var idx = travelRows.FindIndex(r => r.RowId == updated.RowId);
+        if (idx >= 0) { travelRows[idx] = updated; Recalculate(); }
+        await PersistTravelRowAsync(updated);
+    }
+
+    private async Task RemoveTravelRow(int rowId)
+    {
+        travelRows.RemoveAll(r => r.RowId == rowId);
+        Recalculate();
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetTravelRows.FindAsync(rowId);
+            if (entity is not null) { db.TblDesignWorksheetTravelRows.Remove(entity); await db.SaveChangesAsync(); }
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task UpdateTravelRowLocation((int RowId, string? LocationId, string? LocationName) args)
+    {
+        var row = travelRows.FirstOrDefault(r => r.RowId == args.RowId);
+        if (row is null) return;
+        row.LocationId   = args.LocationId;
+        row.LocationName = args.LocationName;
+        await PersistTravelRowAsync(row);
+    }
+
+    private async Task OnTravelCatalogItemCreated(TblDesignMiscItem newItem)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        db.TblDesignMiscItems.Add(newItem);
+        await db.SaveChangesAsync();
+        travelCatalogItems.Add(newItem);
+    }
+
+    // ── Materials actions ─────────────────────────────────────────────────────
+
+    private async Task OnMaterialsRowUpserted(TblDesignWorksheetMaterialsRow row)
+    {
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.TblDesignWorksheetMaterialsRows
+                .FirstOrDefaultAsync(r => r.WorksheetId == WorksheetId && r.ItemId == row.ItemId);
+            if (existing is not null)
+            {
+                existing.Qty = row.Qty;
+                existing.Cost = row.Cost;
+                existing.SellPrice = row.SellPrice;
+                // Update in-memory list
+                var idx = worksheetMaterialsRows.FindIndex(r => r.RowId == existing.RowId);
+                if (idx >= 0) worksheetMaterialsRows[idx] = existing;
+                else worksheetMaterialsRows.Add(existing);
+            }
+            else
+            {
+                row.WorksheetId = WorksheetId;
+                row.SortOrder = (worksheetMaterialsRows.Count + 1) * 10;
+                db.TblDesignWorksheetMaterialsRows.Add(row);
+                await db.SaveChangesAsync(); // get real RowId
+                worksheetMaterialsRows.Add(row);
+                Recalculate();
+                return;
+            }
+            await db.SaveChangesAsync();
+            Recalculate();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task OnMaterialsRowDeleted(int itemId)
+    {
+        var rowId = worksheetMaterialsRows.FirstOrDefault(r => r.ItemId == itemId)?.RowId ?? 0;
+        worksheetMaterialsRows.RemoveAll(r => r.ItemId == itemId);
+        Recalculate();
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetMaterialsRows.FindAsync(rowId);
+            if (entity is not null) { db.TblDesignWorksheetMaterialsRows.Remove(entity); await db.SaveChangesAsync(); }
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task UpdateMaterialsRowLocation((int ItemId, string? LocationId, string? LocationName) args)
+    {
+        var row = worksheetMaterialsRows.FirstOrDefault(r => r.ItemId == args.ItemId);
+        if (row is null) return;
+        row.LocationId   = args.LocationId;
+        row.LocationName = args.LocationName;
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheetMaterialsRows.FindAsync(row.RowId);
+            if (entity is null) return;
+            entity.LocationId   = row.LocationId;
+            entity.LocationName = row.LocationName;
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private async Task OnMaterialsCategoryConfigChanged(TblDesignWorksheetMaterialsCategoryConfig cfg)
+    {
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.TblDesignWorksheetMaterialsCategoryConfigs
+                .FirstOrDefaultAsync(c => c.WorksheetId == WorksheetId && c.CategoryId == cfg.CategoryId);
+            if (existing is not null)
+            {
+                existing.PrintInPdf       = cfg.PrintInPdf;
+                existing.IsDescEnabled    = cfg.IsDescEnabled;
+                existing.DescriptionItemId   = cfg.DescriptionItemId;
+                existing.DescriptionItemName = cfg.DescriptionItemName;
+                existing.Description      = cfg.Description;
+                existing.LocationId       = cfg.LocationId;
+                existing.LocationName     = cfg.LocationName;
+                materialsCategoryConfigs[cfg.CategoryId] = existing;
+            }
+            else
+            {
+                cfg.WorksheetId = WorksheetId;
+                db.TblDesignWorksheetMaterialsCategoryConfigs.Add(cfg);
+                materialsCategoryConfigs[cfg.CategoryId] = cfg;
+            }
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    private void OpenMaterialsDescModal(int categoryId)
+    {
+        _materialDescModalCategoryId = categoryId;
+        materialsCategoryConfigs.TryGetValue(categoryId, out var cfg);
+        var catName = materialsCatalogCategories.FirstOrDefault(c => c.CategoryId == categoryId)?.Name ?? "Category";
+        _descModalTitle    = $"Edit Description Row — {catName}";
+        _descModalText     = cfg?.Description;
+        _descModalLocationId = cfg?.LocationId;
+        _descModalSection  = null;
+        _descModalGroupId  = null;
+        _descModalVisible  = true;
+    }
+
+    // ── Description row modals ────────────────────────────────────────────────
+
+    private void OpenGroupDescModal(int groupId)
+    {
+        _groupDescriptions.TryGetValue(groupId, out var gd);
+        _descModalTitle = "Edit Category Group Description Row";
+        _descModalText     = gd?.Description;
+        _descModalLocationId = gd?.LocationId;
+        _descModalGroupId  = groupId;
+        _descModalSection  = null;
+        _materialDescModalCategoryId = null;
+        _descModalVisible  = true;
+    }
+
+    private void OpenSectionDescModal(string section)
+    {
+        _sectionDescriptions.TryGetValue(section, out var sd);
+        _descModalTitle = $"Edit {section} Section Description Row";
+        _descModalText     = sd?.Description;
+        _descModalLocationId = sd?.LocationId;
+        _descModalSection  = section;
+        _descModalGroupId  = null;
+        _materialDescModalCategoryId = null;
+        _descModalVisible  = true;
+    }
+
+    private async Task OnDescModalSave(DescriptionRowResult result)
+    {
+        _descModalVisible = false;
+        if (_materialDescModalCategoryId.HasValue)
+        {
+            var catId = _materialDescModalCategoryId.Value;
+            _materialDescModalCategoryId = null;
+            if (!materialsCategoryConfigs.TryGetValue(catId, out var cfg))
+            {
+                cfg = new TblDesignWorksheetMaterialsCategoryConfig { CategoryId = catId };
+                materialsCategoryConfigs[catId] = cfg;
+            }
+            cfg.IsDescEnabled = true;
+            cfg.Description   = result.DescriptionText;
+            cfg.LocationId    = result.LocationId;
+            cfg.LocationName  = result.LocationName;
+            await OnMaterialsCategoryConfigChanged(cfg);
+        }
+        else if (_descModalSection is not null)
+        {
+            if (!_sectionDescriptions.TryGetValue(_descModalSection, out var sd))
+            {
+                sd = new TblDesignWorksheetSectionDescription { WorksheetId = WorksheetId, Section = _descModalSection };
+                _sectionDescriptions[_descModalSection] = sd;
+            }
+            sd.IsEnabled   = true;
+            sd.Description = result.DescriptionText;
+            sd.LocationId  = result.LocationId;
+            sd.LocationName = result.LocationName;
+            await UpsertSectionDescriptionAsync(sd);
+        }
+        else if (_descModalGroupId.HasValue)
+        {
+            if (!_groupDescriptions.TryGetValue(_descModalGroupId.Value, out var gd))
+            {
+                gd = new TblDesignWorksheetGroupDescription { WorksheetId = WorksheetId, CategoryGroupId = _descModalGroupId.Value };
+                _groupDescriptions[_descModalGroupId.Value] = gd;
+            }
+            gd.IsEnabled   = true;
+            gd.Description = result.DescriptionText;
+            gd.LocationId  = result.LocationId;
+            gd.LocationName = result.LocationName;
+            await UpsertGroupDescriptionAsync(gd);
+        }
+    }
+
+    private async Task OnToggleGroupDescription(int groupId)
+    {
+        if (!_groupDescriptions.TryGetValue(groupId, out var gd))
+        {
+            gd = new TblDesignWorksheetGroupDescription { WorksheetId = WorksheetId, CategoryGroupId = groupId };
+            _groupDescriptions[groupId] = gd;
+        }
+        gd.IsEnabled = !gd.IsEnabled;
+        await UpsertGroupDescriptionAsync(gd);
+    }
+
+    private async Task OnToggleSectionDescription(string section)
+    {
+        if (!_sectionDescriptions.TryGetValue(section, out var sd))
+        {
+            sd = new TblDesignWorksheetSectionDescription { WorksheetId = WorksheetId, Section = section };
+            _sectionDescriptions[section] = sd;
+        }
+        sd.IsEnabled = !sd.IsEnabled;
+        await UpsertSectionDescriptionAsync(sd);
+    }
+
+    private async Task UpsertSectionDescriptionAsync(TblDesignWorksheetSectionDescription sd)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existing = await db.TblDesignWorksheetSectionDescriptions
+            .FirstOrDefaultAsync(d => d.WorksheetId == WorksheetId && d.Section == sd.Section);
+        if (existing is null)
+            db.TblDesignWorksheetSectionDescriptions.Add(sd);
+        else
+        {
+            existing.IsEnabled    = sd.IsEnabled;
+            existing.Description  = sd.Description;
+            existing.LocationId   = sd.LocationId;
+            existing.LocationName = sd.LocationName;
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private async Task UpsertGroupDescriptionAsync(TblDesignWorksheetGroupDescription gd)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var existing = await db.TblDesignWorksheetGroupDescriptions
+            .FirstOrDefaultAsync(d => d.WorksheetId == WorksheetId && d.CategoryGroupId == gd.CategoryGroupId);
+        if (existing is null)
+            db.TblDesignWorksheetGroupDescriptions.Add(gd);
+        else
+        {
+            existing.IsEnabled    = gd.IsEnabled;
+            existing.Description  = gd.Description;
+            existing.LocationId   = gd.LocationId;
+            existing.LocationName = gd.LocationName;
+        }
+        await db.SaveChangesAsync();
+    }
+
+    // ── Save to catalog item ─────────────────────────────────────────────────
+
+    /// <summary>
+    /// Fires immediately on every column hour cell blur so the labor calculation stays live.
+    /// Persists a per-design override row so the edit survives page refresh without touching the
+    /// shared catalog item. The catalog item is only written when the user confirms with SaveLabor=true.
+    /// </summary>
+    private void OnColumnHoursEdited((int LineItemId, int CatalogItemId, Dictionary<int, decimal> PerUnitHours) args)
+    {
+        var updatedEntries = args.PerUnitHours
+            .Where(kv => kv.Value > 0)
+            .Select(kv => new TblDesignCatalogItemColumn
+                { ItemId = args.CatalogItemId, ColumnId = kv.Key, Hours = kv.Value });
+        var otherEntries = itemColumnLookup.SelectMany(g => g)
+            .Where(o => o.ItemId != args.CatalogItemId);
+        itemColumnLookup = otherEntries.Concat(updatedEntries).ToLookup(o => o.ItemId);
+
+        // Persist worksheet-level overrides asynchronously so they survive refresh
+        _ = PersistWorksheetColumnHourOverridesAsync(args.LineItemId, args.PerUnitHours);
+
+        Recalculate();
+    }
+
+    /// <summary>Upserts the per-design column hour overrides for a single line item.</summary>
+    private async Task PersistWorksheetColumnHourOverridesAsync(int lineItemId, Dictionary<int, decimal> perUnitHours)
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            // Remove all existing overrides for this line item then reinsert the current values.
+            var existing = await db.TblDesignWorksheetLineItemColumnHours
+                .Where(h => h.WorksheetId == WorksheetId && h.LineItemId == lineItemId)
+                .ToListAsync();
+            db.TblDesignWorksheetLineItemColumnHours.RemoveRange(existing);
+            foreach (var (colId, hrs) in perUnitHours.Where(kv => kv.Value > 0))
+                db.TblDesignWorksheetLineItemColumnHours.Add(new TblDesignWorksheetLineItemColumnHours
+                    { WorksheetId = WorksheetId, LineItemId = lineItemId, ColumnId = colId, Hours = hrs });
+            await db.SaveChangesAsync();
+
+            // Keep in-memory list in sync
+            _worksheetColumnHourOverrides.RemoveAll(h => h.LineItemId == lineItemId);
+            _worksheetColumnHourOverrides.AddRange(
+                perUnitHours.Where(kv => kv.Value > 0)
+                    .Select(kv => new TblDesignWorksheetLineItemColumnHours
+                        { WorksheetId = WorksheetId, LineItemId = lineItemId, ColumnId = kv.Key, Hours = kv.Value }));
+        }
+        catch (Exception ex) { _persistError = ex.Message; }
+    }
+
+    /// <summary>
+    /// Merges catalog-level and worksheet-level column hour entries into a single lookup.
+    /// For any (catalogItemId, columnId) pair that has a per-design override, the worksheet value wins.
+    /// </summary>
+    private static ILookup<int, TblDesignCatalogItemColumn> MergeWorksheetColumnHourOverrides(
+        List<TblDesignCatalogItemColumn> catalogOverrides,
+        List<TblDesignWorksheetLineItemColumnHours> worksheetOverrides,
+        List<TblDesignWorksheetLineItem> lineItems)
+    {
+        if (worksheetOverrides.Count == 0)
+            return catalogOverrides.ToLookup(o => o.ItemId);
+
+        // Map lineItemId → catalogItemId so worksheet overrides can be projected as catalog entries
+        var lineItemToCatalog = lineItems
+            .Where(li => li.CatalogItemId.HasValue)
+            .ToDictionary(li => li.LineItemId, li => li.CatalogItemId!.Value);
+
+        // Build synthetic catalog column entries from worksheet overrides
+        var worksheetCatalogEntries = worksheetOverrides
+            .Where(h => lineItemToCatalog.ContainsKey(h.LineItemId))
+            .Select(h => new TblDesignCatalogItemColumn
+                { ItemId = lineItemToCatalog[h.LineItemId], ColumnId = h.ColumnId, Hours = h.Hours })
+            .ToList();
+
+        // Determine which catalogItemIds have worksheet overrides (their catalog entries are fully replaced)
+        var overriddenItemIds = worksheetCatalogEntries.Select(e => e.ItemId).ToHashSet();
+        var baseEntries = catalogOverrides.Where(o => !overriddenItemIds.Contains(o.ItemId));
+
+        return baseEntries.Concat(worksheetCatalogEntries).ToLookup(o => o.ItemId);
+    }
+
+    /// <summary>Persists per-unit column hours and/or attribute values back to the catalog item.</summary>
+    private async Task OnSaveToItem((int LineItemId, bool SaveLabor, bool SaveAttrs,
+        Dictionary<int, decimal> ColumnHoursPerUnit, Dictionary<int, string> AttrValues) args)
+    {
+        var row = lineItemRows.FirstOrDefault(r => r.LineItemId == args.LineItemId);
+        if (row?.CatalogItemId is null) return;
+        var catalogItemId = row.CatalogItemId.Value;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        if (args.SaveLabor)
+        {
+            // Replace column hour overrides on the catalog item
+            var existing = await db.TblDesignCatalogItemColumns
+                .Where(l => l.ItemId == catalogItemId).ToListAsync();
+            db.TblDesignCatalogItemColumns.RemoveRange(existing);
+            foreach (var (colId, hrs) in args.ColumnHoursPerUnit.Where(kv => kv.Value > 0))
+                db.TblDesignCatalogItemColumns.Add(new TblDesignCatalogItemColumn
+                    { ItemId = catalogItemId, ColumnId = colId, Hours = hrs });
+        }
+
+        if (args.SaveAttrs)
+        {
+            // Write to catalog item — these become the new defaults for future worksheet rows
+            var existingCatalog = await db.TblDesignCatalogItemAttributes
+                .Where(a => a.ItemId == catalogItemId).ToListAsync();
+            foreach (var e in existingCatalog) db.TblDesignCatalogItemAttributes.Remove(e);
+            foreach (var (attrId, val) in args.AttrValues.Where(kv => !string.IsNullOrEmpty(kv.Value)))
+                db.TblDesignCatalogItemAttributes.Add(new TblDesignCatalogItemAttribute
+                    { ItemId = catalogItemId, AttributeId = attrId, Value = val });
+
+            // Also sync attribute values to the worksheet line item row in DB.
+            // Temp rows (negative IDs) haven't been persisted yet, so skip them.
+            if (args.LineItemId > 0)
+            {
+                var existingLineAttrs = await db.TblDesignWorksheetLineItemAttrs
+                    .Where(a => a.LineItemId == args.LineItemId).ToListAsync();
+                foreach (var e in existingLineAttrs) db.TblDesignWorksheetLineItemAttrs.Remove(e);
+                foreach (var (attrId, val) in args.AttrValues.Where(kv => !string.IsNullOrEmpty(kv.Value)))
+                    db.TblDesignWorksheetLineItemAttrs.Add(new TblDesignWorksheetLineItemAttr
+                        { LineItemId = args.LineItemId, AttributeId = attrId, Value = val });
+            }
+        }
+
+        await db.SaveChangesAsync();
+
+        // Update in-memory state in place — avoids a full LoadAsync which would re-read the DB and
+        // could clobber concurrent in-memory changes (e.g. a category change not yet committed to DB).
+        var rowIdx = lineItemRows.FindIndex(r => r.LineItemId == args.LineItemId);
+        if (rowIdx >= 0)
+        {
+            var cur = lineItemRows[rowIdx];
+
+            if (args.SaveLabor)
+            {
+                // Rebuild the item column lookup so Recalculate() picks up the new hours immediately.
+                var updatedColEntries = args.ColumnHoursPerUnit
+                    .Where(kv => kv.Value > 0)
+                    .Select(kv => new TblDesignCatalogItemColumn
+                        { ItemId = catalogItemId, ColumnId = kv.Key, Hours = kv.Value });
+                var otherEntries = itemColumnLookup.SelectMany(g => g)
+                    .Where(o => o.ItemId != catalogItemId);
+                itemColumnLookup = otherEntries.Concat(updatedColEntries).ToLookup(o => o.ItemId);
+
+                lineItemRows[rowIdx] = cur with
+                {
+                    OriginalColumnHoursPerUnit = (IReadOnlyDictionary<int, decimal>)args.ColumnHoursPerUnit
+                };
+                cur = lineItemRows[rowIdx];
+            }
+
+            if (args.SaveAttrs)
+            {
+                var savedAttrs = (IReadOnlyDictionary<int, string>)args.AttrValues
+                    .Where(kv => !string.IsNullOrEmpty(kv.Value))
+                    .ToDictionary(kv => kv.Key, kv => kv.Value);
+                lineItemRows[rowIdx] = cur with
+                {
+                    AttributeValues  = savedAttrs,
+                    OriginalAttrValues = savedAttrs,
+                };
+            }
+        }
+
+        if (args.SaveLabor) Recalculate();
+    }
+
+    // ── Catalog item selection ────────────────────────────────────────────────
+
+    /// <summary>Handles item selection from the catalog search results in the inline add strip.</summary>
+    private async Task OnCatalogItemSelected(TblDesignCatalogItem item)
+    {
+        var cost = item.Cost;
+        var snap = DeserializeSnapshot(item.SnapshotJson);
+        if (cost == 0) cost = snap?.Cost ?? 0;
+        var rate = snap?.Rate ?? 0;
+        var initialMargin = rate > cost && cost > 0 ? Math.Round(1m - cost / rate, 4) : 0m;
+        var calc = WorksheetCalculator.ComputeLineItem(cost, 0, initialMargin, 1);
+        var catName = item.CategoryId.HasValue
+            ? _categoryDict.GetValueOrDefault(item.CategoryId.Value, "Uncategorized") : "Uncategorized";
+        var (groupId, groupName) = item.CategoryId.HasValue &&
+            _categoryGroupDict.TryGetValue(item.CategoryId.Value, out var grp)
+            ? ((int?)grp.GroupId, grp.GroupName) : ((int?)null, "");
+        var attrs = item.AttributeValues
+            .Where(v => v.Value is not null)
+            .ToDictionary(v => v.AttributeId, v => v.Value!);
+
+        // Compute per-unit column hours for this item (uses item column overrides + category defaults)
+        var itemColOverridesLookup = item.ColumnOverrides.ToLookup(o => o.ItemId);
+        var allColIds = allColumns.Select(c => c.ColumnId).ToList();
+        var perUnitColHours = WorksheetCalculator.ComputeItemColumnHours(
+            item.ItemId, item.CategoryId, catColumnLookup, itemColOverridesLookup, allColIds);
+
+        int? catDefaultGroup = item.CategoryId.HasValue &&
+            _categoryGroupDict.TryGetValue(item.CategoryId.Value, out var cgr) && cgr.GroupId > 0
+            ? cgr.GroupId : null;
+
+        // INSERT immediately so the row has a real DB ID from the start.
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = new TblDesignWorksheetLineItem
+        {
+            WorksheetId   = WorksheetId,
+            CatalogItemId = item.ItemId,
+            Qty           = 1,
+            DiscountPct   = 0,
+            MarginPct     = initialMargin,
+            SortOrder     = (lineItemRows.Count + 1) * 10,
+            IsDisabled    = false,
+            PrintInPdf    = false,
+            CategoryGroupIdOverride = (int?)groupId != catDefaultGroup ? groupId : null,
+        };
+        db.TblDesignWorksheetLineItems.Add(entity);
+        await db.SaveChangesAsync();
+
+        // Persist any catalog-item attribute values to the new line item row.
+        foreach (var (attrId, val) in attrs.Where(kv => !string.IsNullOrEmpty(kv.Value)))
+            db.TblDesignWorksheetLineItemAttrs.Add(new TblDesignWorksheetLineItemAttr
+                { LineItemId = entity.LineItemId, AttributeId = attrId, Value = val });
+        if (attrs.Count > 0) await db.SaveChangesAsync();
+
+        lineItemRows.Add(new LineItemRow(
+            entity.LineItemId, item.ItemId, item.CategoryId, catName, groupId, groupName,
+            item.CategoryId, // OriginalCategoryId
+            "", item.Description ?? "", item.Manufacturer ?? "", item.ModelName ?? "",
+            1, cost, 0, initialMargin, calc.DiscCost, calc.SellPrice,
+            attrs,
+            perUnitColHours,  // OriginalColumnHoursPerUnit
+            attrs.ToDictionary(kv => kv.Key, kv => kv.Value), // OriginalAttrValues (copy)
+            false)); // PrintInPdf = false for new items
+        Recalculate();
+    }
+
+    // ── Push to NetSuite ─────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Called when the user clicks "Push to NetSuite". Shows the config modal on first push;
+    /// skips it when an estimate ID already exists.
+    /// </summary>
+    private async Task InitiatePushAsync()
+    {
+        if (pushing) return;
+        pushing = true;
+        saveMsg = null;
+
+        // Re-push path: estimate already exists, no modal needed
+        if (!string.IsNullOrEmpty(worksheet?.NetsuiteEstimateId))
+        {
+            await DoPushAsync(null);
+            return;
+        }
+
+        // First push: show the config modal to collect required fields
+        _showPushModal = true;
+        // pushing remains true so the button stays disabled while modal is open
+    }
+
+    /// <summary>
+    /// Executes the actual NetSuite push. Called directly on re-push or by the modal on first push.
+    /// Assembles all line items in the correct push order: hardware (grouped), misc, labor, travel —
+    /// with optional description rows interspersed before each section/group.
+    /// </summary>
+    private async Task DoPushAsync(EstimateConfig? config)
+    {
+        _showPushModal = false;
+        try
+        {
+            // Load the NetSuite item IDs for all active catalog items in this worksheet
+            var catalogItemIds = lineItemRows
+                .Where(r => r.CatalogItemId.HasValue && !r.IsDisabled)
+                .Select(r => r.CatalogItemId!.Value).Distinct().ToList();
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var catalogNsIds = await db.TblDesignCatalogItems
+                .Where(i => catalogItemIds.Contains(i.ItemId))
+                .ToDictionaryAsync(i => i.ItemId, i => i.NetsuiteItemId ?? "");
+
+            var allPushItems = new List<PushLineItem>();
+
+            // ── 1. Hardware — by CategoryGroup (ungrouped items last) ─────────
+            foreach (var grp in lineItemRows
+                .Where(r => !r.IsDisabled)
+                .GroupBy(r => r.CategoryGroupId ?? 0)
+                .OrderBy(g => g.Key == 0 ? int.MaxValue : g.Key))
+            {
+                var groupId = grp.Key;
+                if (groupId != 0 && _groupDescriptions.TryGetValue(groupId, out var gd) &&
+                    gd is { IsEnabled: true, LocationId: not null })
+                {
+                    // "__desc__" is a sentinel; NetsuiteEstimatePusher substitutes the real
+                    // NS description item ID (auto-fetched from the account) at push time.
+                    // ItemRefName carries the group name so NS shows it in the estimate's item column.
+                    var groupName = grp.First().CategoryGroupName;
+                    allPushItems.Add(new PushLineItem("__desc__", 0, 0, 0,
+                        gd.Description, gd.LocationId, PrintInPdf: true,
+                        IsDescriptionItem: true, ItemRefName: groupName));
+                }
+                foreach (var li in grp.OrderBy(r => r.CategoryName).ThenBy(r => r.LineItemId))
+                {
+                    var nsId = catalogNsIds.GetValueOrDefault(li.CatalogItemId ?? 0, "");
+                    if (string.IsNullOrEmpty(nsId)) continue;
+                    var effectiveLoc = li.LocationId ?? worksheet!.DefaultLocationId;
+                    allPushItems.Add(new PushLineItem(
+                        nsId, li.Qty, li.DiscCost, li.SellPrice,
+                        li.Description, effectiveLoc, li.PrintInPdf));
+                }
+            }
+
+            // Helper: prepend description row then add section items.
+            // ItemRefName carries the human-readable section name so NS shows it in the item column.
+            void AddSection(string section, string sectionLabel, IEnumerable<PushLineItem> items)
+            {
+                if (_sectionDescriptions.TryGetValue(section, out var sd) &&
+                    sd is { IsEnabled: true, LocationId: not null })
+                {
+                    allPushItems.Add(new PushLineItem("__desc__", 0, 0, 0,
+                        sd.Description, sd.LocationId, PrintInPdf: true,
+                        IsDescriptionItem: true, ItemRefName: sectionLabel));
+                }
+                allPushItems.AddRange(items);
+            }
+
+            // ── 2. Materials — each item pushes individually, grouped by category ─
+            // Build a lookup of ItemId → catalog item for the items with qty > 0
+            var matItemIds = worksheetMaterialsRows.Select(r => r.ItemId).ToHashSet();
+            var matCatalogLookup = materialsCatalogItems
+                .Where(i => matItemIds.Contains(i.ItemId))
+                .ToDictionary(i => i.ItemId);
+
+            foreach (var cat in materialsCatalogCategories)
+            {
+                var catItems = materialsCatalogItemsByCategory[cat.CategoryId]
+                    .Where(i => matItemIds.Contains(i.ItemId))
+                    .OrderBy(i => i.SortOrder)
+                    .ToList();
+                if (catItems.Count == 0) continue;
+
+                // Optional description row before this category's items
+                materialsCategoryConfigs.TryGetValue(cat.CategoryId, out var cfg);
+                if (cfg is { IsDescEnabled: true, LocationId: not null })
+                {
+                    allPushItems.Add(new PushLineItem("__desc__", 0, 0, 0,
+                        cfg.Description, cfg.LocationId, PrintInPdf: true,
+                        IsDescriptionItem: true, ItemRefName: cat.Name));
+                }
+
+                foreach (var catItem in catItems)
+                {
+                    var row = worksheetMaterialsRows.FirstOrDefault(r => r.ItemId == catItem.ItemId);
+                    if (row is null || row.Qty == 0) continue;
+
+                    // Use the item's own NS item when available; otherwise fall back to the
+                    // category-level NS item and send the item's name as the description override
+                    // so the estimator can identify it on the NS estimate line.
+                    var nsId = catItem.NetsuiteItemId;
+                    var description = catItem.Name;
+                    if (string.IsNullOrEmpty(nsId))
+                    {
+                        if (string.IsNullOrEmpty(cat.NetsuiteItemId)) continue;
+                        nsId = cat.NetsuiteItemId;
+                    }
+
+                    var matEffectiveLoc = row.LocationId ?? worksheet!.DefaultLocationId;
+                    allPushItems.Add(new PushLineItem(
+                        nsId, row.Qty, row.Cost, row.SellPrice,
+                        description, matEffectiveLoc, cfg?.PrintInPdf ?? false));
+                }
+            }
+
+            // ── 3. Misc ───────────────────────────────────────────────────────
+            AddSection("Misc", "Miscellaneous", miscRows
+                .Where(r => !string.IsNullOrEmpty(r.NetsuiteItemId) && r.Qty > 0)
+                .Select(r => new PushLineItem(r.NetsuiteItemId!, r.Qty, r.Cost, r.SellPrice,
+                    r.Name, r.LocationId ?? worksheet!.DefaultLocationId, r.PrintInPdf)));
+
+            // ── 4. Labor ──────────────────────────────────────────────────────
+            // Labor rows with a linked NS item and non-zero estimated hours are pushed
+            // as line items — quantity = hours, cost/rate = per-hour rates.
+            AddSection("Labor", "Labor", laborRowViews
+                .Where(v => !string.IsNullOrEmpty(v.LaborType.NetsuiteItemId))
+                .Select(v =>
+                {
+                    var computed = computedLaborHours.GetValueOrDefault(v.LaborType.LaborTypeId);
+                    var hrs = v.Entity.IsOverridden ? v.Entity.OverrideHours : computed;
+                    return (v, hrs);
+                })
+                .Where(x => x.hrs > 0)
+                .Select(x => new PushLineItem(
+                    x.v.LaborType.NetsuiteItemId!,
+                    x.hrs,
+                    x.v.LaborType.InternalCostPerHr,
+                    x.v.LaborType.InternalPricePerHr,
+                    x.v.LaborType.TypeName,
+                    x.v.Entity.LocationId ?? worksheet!.DefaultLocationId,
+                    x.v.Entity.PrintInPdf)));
+
+            // ── 5. Travel ─────────────────────────────────────────────────────
+            AddSection("Travel", "Travel", travelRows
+                .Where(r => !string.IsNullOrEmpty(r.NetsuiteItemId) && r.Qty > 0)
+                .Select(r => new PushLineItem(r.NetsuiteItemId!, r.Qty, r.Cost, r.SellPrice,
+                    r.Name, r.LocationId ?? worksheet!.DefaultLocationId, r.PrintInPdf)));
+
+            var estimateId = await Pusher.PushAsync(WorksheetId, allPushItems, config);
+            if (worksheet is not null)
+            {
+                worksheet.NetsuiteEstimateId = estimateId;
+                // Re-read tranId from DB since the Pusher persisted it there.
+                await using var db2 = await DbFactory.CreateDbContextAsync();
+                var fresh = await db2.TblDesignWorksheets.FindAsync(WorksheetId);
+                if (fresh?.NetsuiteEstimateTranId is not null)
+                    worksheet.NetsuiteEstimateTranId = fresh.NetsuiteEstimateTranId;
+            }
+            saveMsg = worksheet?.NetsuiteEstimateTranId is not null
+                ? $"Pushed to NetSuite. Estimate: {worksheet.NetsuiteEstimateTranId}"
+                : $"Pushed to NetSuite. Estimate ID: {estimateId}";
+            saveSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            saveMsg = $"Push failed: {ex.Message}";
+            saveSuccess = false;
+        }
+        finally { pushing = false; }
+    }
+
+    /// <summary>
+    /// Ensures a WorksheetLaborRow exists for every active labor type on this worksheet.
+    /// Covers worksheets created before certain labor types existed, or types added later.
+    /// </summary>
+    private async Task EnsureLaborRowsAsync(DesignDbContext db, List<TblDesignWorksheetLaborRow> existing)
+    {
+        var existingTypeIds = existing.Select(r => r.LaborTypeId).ToHashSet();
+        var added = false;
+        foreach (var lt in allLaborTypes)
+        {
+            if (!existingTypeIds.Contains(lt.LaborTypeId))
+            {
+                db.TblDesignWorksheetLaborRows.Add(new TblDesignWorksheetLaborRow
+                {
+                    WorksheetId     = WorksheetId,
+                    LaborTypeId     = lt.LaborTypeId,
+                    CalculatedHours = 0,
+                    OverrideHours   = 0,
+                    IsOverridden    = false,
+                });
+                added = true;
+            }
+        }
+        if (added) await db.SaveChangesAsync();
+    }
+
+    /// <summary>
+    /// Ensures a LaborCalculatorRow exists for every (active labor type with column assignment) × column pair.
+    /// Runs once per worksheet when new columns or labor types are introduced.
+    /// </summary>
+    private async Task EnsureCalculatorRowsAsync(
+        DesignDbContext db,
+        List<TblDesignWorksheetLaborCalculatorRow> existing,
+        Dictionary<int, List<int>> ltColMap)
+    {
+        var existingSet = existing.Select(r => (r.LaborTypeId, r.ColumnId)).ToHashSet();
+        var added = false;
+        foreach (var lt in allLaborTypes.Where(l => !l.IsPercentageOfColumns))
+        {
+            if (!ltColMap.TryGetValue(lt.LaborTypeId, out var colIds)) continue;
+            foreach (var colId in colIds)
+            {
+                if (!existingSet.Contains((lt.LaborTypeId, colId)))
+                {
+                    db.TblDesignWorksheetLaborCalculatorRows.Add(new TblDesignWorksheetLaborCalculatorRow
+                    {
+                        WorksheetId = WorksheetId,
+                        LaborTypeId = lt.LaborTypeId,
+                        ColumnId = colId,
+                        PersonCount = 1,
+                    });
+                    added = true;
+                }
+            }
+        }
+        if (added) await db.SaveChangesAsync();
+    }
+
+    private static NetsuiteItem? DeserializeSnapshot(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<NetsuiteItem>(json); }
+        catch { return null; }
+    }
+
+    // ── Config save / load ────────────────────────────────────────────────────
+
+    private async Task SaveConfigAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_saveConfigName)) return;
+        _showSaveConfigModal = false;
+
+        var dto = new WorksheetConfigDto
+        {
+            Version = 1,
+            LineItems = lineItemRows.Select(li => new ConfigLineItemDto
+            {
+                CatalogItemId = li.CatalogItemId ?? 0,
+                Qty           = li.Qty,
+                Disc          = li.DiscountPct,
+                Margin        = li.MarginPct,
+                SystemName    = li.SystemName,
+                PrintInPdf    = li.PrintInPdf,
+                LocationId    = li.LocationId,
+                LocationName  = li.LocationName,
+                // Capture any worksheet-level column hour overrides for this line item
+                ColumnHours   = _worksheetColumnHourOverrides
+                    .Where(h => h.LineItemId == li.LineItemId)
+                    .ToDictionary(h => h.ColumnId.ToString(), h => h.Hours),
+            }).Where(d => d.CatalogItemId != 0).ToList(),
+            LaborRows = laborRows.Select(r => new ConfigLaborRowDto
+            {
+                LaborTypeId   = r.LaborTypeId,
+                IsOverridden  = r.IsOverridden,
+                OverrideHours = r.OverrideHours,
+                SubCostPerHr  = r.SubCostPerHr,
+                SubPricePerHr = r.SubPricePerHr,
+                PrintInPdf    = r.PrintInPdf,
+                LocationId    = r.LocationId,
+                LocationName  = r.LocationName,
+            }).ToList(),
+            MiscRows = miscRows.Select(r => new ConfigMiscRowDto
+            {
+                MiscItemId     = r.MiscItemId,
+                NetsuiteItemId = r.NetsuiteItemId,
+                Name           = r.Name,
+                Description    = r.Description,
+                Qty            = r.Qty,
+                Cost           = r.Cost,
+                SellPrice      = r.SellPrice,
+                PrintInPdf     = r.PrintInPdf,
+                LocationId     = r.LocationId,
+                LocationName   = r.LocationName,
+            }).ToList(),
+            TravelRows = travelRows.Select(r => new ConfigMiscRowDto
+            {
+                MiscItemId     = r.MiscItemId,
+                NetsuiteItemId = r.NetsuiteItemId,
+                Name           = r.Name,
+                Description    = r.Description,
+                Qty            = r.Qty,
+                Cost           = r.Cost,
+                SellPrice      = r.SellPrice,
+                PrintInPdf     = r.PrintInPdf,
+                LocationId     = r.LocationId,
+                LocationName   = r.LocationName,
+            }).ToList(),
+            MaterialsRows = worksheetMaterialsRows.Select(r => new ConfigMaterialsRowDto
+            {
+                ItemId      = r.ItemId,
+                Qty         = r.Qty,
+                Cost        = r.Cost,
+                SellPrice   = r.SellPrice,
+                LocationId  = r.LocationId,
+                LocationName= r.LocationName,
+            }).ToList(),
+            PersonCounts = laborRows.ToDictionary(r => r.LaborTypeId, r => r.PersonCount),
+        };
+
+        var json = System.Text.Json.JsonSerializer.Serialize(dto);
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.TblDesignWorksheetConfigs.Add(new TblDesignWorksheetConfig
+            {
+                CustomerId = Tenant.CustomerCode,
+                Name       = _saveConfigName.Trim(),
+                CreatedBy  = string.Empty,
+                ConfigJson = json,
+            });
+            await db.SaveChangesAsync();
+            saveMsg     = $"Config \"{_saveConfigName.Trim()}\" saved.";
+            saveSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            saveMsg     = $"Failed to save config: {ex.Message}";
+            saveSuccess = false;
+        }
+        _saveConfigName = "";
+    }
+
+    private async Task OpenLoadConfigModalAsync()
+    {
+        _showLoadConfigModal = true;
+        if (_availableConfigs is null)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            _availableConfigs = await db.TblDesignWorksheetConfigs
+                .Where(c => c.CustomerId == Tenant.CustomerCode)
+                .OrderByDescending(c => c.CreateDate)
+                .ToListAsync();
+        }
+    }
+
+    private async Task InitiateLoadConfigAsync(TblDesignWorksheetConfig config)
+    {
+        _showLoadConfigModal = false;
+        WorksheetConfigDto? dto;
+        try { dto = System.Text.Json.JsonSerializer.Deserialize<WorksheetConfigDto>(config.ConfigJson); }
+        catch { saveMsg = "Config JSON is invalid."; saveSuccess = false; return; }
+        if (dto is null) return;
+
+        // Cross-reference: find any catalog item IDs no longer in this customer's catalog
+        var allCatalogItemIds = await GetLiveCatalogItemIdsAsync();
+        var allMiscItemIds    = GetLiveMiscItemIds();
+        var allLaborTypeIds   = allLaborTypes.Select(lt => lt.LaborTypeId).ToHashSet();
+        var allMaterialsItemIds = materialsCatalogItems.Select(i => i.ItemId).ToHashSet();
+
+        var missing = new List<WorksheetConfigMissingItem>();
+        foreach (var li in dto.LineItems)
+            if (!allCatalogItemIds.Contains(li.CatalogItemId))
+                missing.Add(new("Hardware", $"Catalog item #{li.CatalogItemId}"));
+        foreach (var lr in dto.LaborRows)
+            if (!allLaborTypeIds.Contains(lr.LaborTypeId))
+                missing.Add(new("Labor", $"Labor type #{lr.LaborTypeId}"));
+        foreach (var mr in dto.MiscRows)
+            if (mr.MiscItemId.HasValue && !allMiscItemIds.Contains(mr.MiscItemId.Value))
+                missing.Add(new("Misc", mr.Name));
+        foreach (var tr in dto.TravelRows)
+            if (tr.MiscItemId.HasValue && !allMiscItemIds.Contains(tr.MiscItemId.Value))
+                missing.Add(new("Travel", tr.Name));
+        foreach (var mat in dto.MaterialsRows)
+            if (!allMaterialsItemIds.Contains(mat.ItemId))
+                missing.Add(new("Materials", $"Materials item #{mat.ItemId}"));
+
+        _pendingConfigLoad = dto;
+        if (missing.Count > 0)
+        {
+            _conflictConfigName  = config.Name;
+            _conflictMissingItems = missing;
+            _showConfigConflictModal = true;
+        }
+        else
+        {
+            await DoLoadConfigAsync();
+        }
+    }
+
+    private async Task DoLoadConfigAsync()
+    {
+        _showConfigConflictModal = false;
+        if (_pendingConfigLoad is null) return;
+        var dto = _pendingConfigLoad;
+        _pendingConfigLoad = null;
+
+        // Build live-catalog lookup sets for filtering
+        var allCatalogItemIds   = await GetLiveCatalogItemIdsAsync();
+        var allMiscItemIds      = GetLiveMiscItemIds();
+        var allLaborTypeIds     = allLaborTypes.Select(lt => lt.LaborTypeId).ToHashSet();
+        var allMaterialsItemIds = materialsCatalogItems.Select(i => i.ItemId).ToHashSet();
+
+        try
+        {
+            _persistError = null;
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // ── Clear existing worksheet rows ──────────────────────────────
+            var existingLineItems = await db.TblDesignWorksheetLineItems
+                .Where(l => l.WorksheetId == WorksheetId).ToListAsync();
+            // Delete column hour overrides first (NoAction FK; must go before line item delete)
+            var existingOverrides = await db.TblDesignWorksheetLineItemColumnHours
+                .Where(h => h.WorksheetId == WorksheetId).ToListAsync();
+            db.TblDesignWorksheetLineItemColumnHours.RemoveRange(existingOverrides);
+            await db.SaveChangesAsync();
+            db.TblDesignWorksheetLineItems.RemoveRange(existingLineItems);
+
+            var existingMisc   = await db.TblDesignWorksheetMiscRows  .Where(r => r.WorksheetId == WorksheetId).ToListAsync();
+            var existingTravel = await db.TblDesignWorksheetTravelRows .Where(r => r.WorksheetId == WorksheetId).ToListAsync();
+            var existingMats   = await db.TblDesignWorksheetMaterialsRows.Where(r => r.WorksheetId == WorksheetId).ToListAsync();
+            db.TblDesignWorksheetMiscRows    .RemoveRange(existingMisc);
+            db.TblDesignWorksheetTravelRows  .RemoveRange(existingTravel);
+            db.TblDesignWorksheetMaterialsRows.RemoveRange(existingMats);
+            await db.SaveChangesAsync();
+
+            // ── Insert loaded rows (skipping missing catalog references) ──
+            int sortOrder = 10;
+            var newColumnHourOverrides = new List<TblDesignWorksheetLineItemColumnHours>();
+
+            foreach (var li in dto.LineItems.Where(l => allCatalogItemIds.Contains(l.CatalogItemId)))
+            {
+                var entity = new TblDesignWorksheetLineItem
+                {
+                    WorksheetId   = WorksheetId,
+                    CatalogItemId = li.CatalogItemId,
+                    Qty           = li.Qty,
+                    DiscountPct   = li.Disc,
+                    MarginPct     = li.Margin,
+                    SystemName    = li.SystemName,
+                    SortOrder     = sortOrder,
+                    PrintInPdf    = li.PrintInPdf,
+                    LocationId    = li.LocationId,
+                    LocationName  = li.LocationName,
+                };
+                db.TblDesignWorksheetLineItems.Add(entity);
+                await db.SaveChangesAsync(); // get real LineItemId
+
+                foreach (var (colIdStr, hrs) in li.ColumnHours)
+                {
+                    if (int.TryParse(colIdStr, out var colId))
+                        newColumnHourOverrides.Add(new TblDesignWorksheetLineItemColumnHours
+                        {
+                            WorksheetId = WorksheetId,
+                            LineItemId  = entity.LineItemId,
+                            ColumnId    = colId,
+                            Hours       = hrs,
+                        });
+                }
+                sortOrder += 10;
+            }
+            if (newColumnHourOverrides.Count > 0)
+            {
+                db.TblDesignWorksheetLineItemColumnHours.AddRange(newColumnHourOverrides);
+                await db.SaveChangesAsync();
+            }
+
+            // Labor rows — update existing (always present from pre-seed), don't insert new ones
+            var existingLaborRows = await db.TblDesignWorksheetLaborRows
+                .Where(r => r.WorksheetId == WorksheetId).ToListAsync();
+            var lrByType = existingLaborRows.ToDictionary(r => r.LaborTypeId);
+            foreach (var lr in dto.LaborRows.Where(r => allLaborTypeIds.Contains(r.LaborTypeId)))
+            {
+                if (lrByType.TryGetValue(lr.LaborTypeId, out var entity))
+                {
+                    entity.IsOverridden  = lr.IsOverridden;
+                    entity.OverrideHours = lr.OverrideHours;
+                    entity.SubCostPerHr  = lr.SubCostPerHr;
+                    entity.SubPricePerHr = lr.SubPricePerHr;
+                    entity.PrintInPdf    = lr.PrintInPdf;
+                    entity.LocationId    = lr.LocationId;
+                    entity.LocationName  = lr.LocationName;
+                }
+            }
+            // Restore PersonCounts via PersonCount field on LaborRow
+            foreach (var (ltId, count) in dto.PersonCounts)
+                if (lrByType.TryGetValue(ltId, out var entity))
+                    entity.PersonCount = count;
+            await db.SaveChangesAsync();
+
+            // Misc rows
+            int mSort = 10;
+            foreach (var mr in dto.MiscRows.Where(r => !r.MiscItemId.HasValue || allMiscItemIds.Contains(r.MiscItemId.Value)))
+            {
+                db.TblDesignWorksheetMiscRows.Add(new TblDesignWorksheetMiscRow
+                {
+                    WorksheetId    = WorksheetId,
+                    MiscItemId     = mr.MiscItemId,
+                    NetsuiteItemId = mr.NetsuiteItemId,
+                    Name           = mr.Name,
+                    Description    = mr.Description,
+                    Qty            = mr.Qty,
+                    Cost           = mr.Cost,
+                    SellPrice      = mr.SellPrice,
+                    SortOrder      = mSort,
+                    PrintInPdf     = mr.PrintInPdf,
+                    LocationId     = mr.LocationId,
+                    LocationName   = mr.LocationName,
+                });
+                mSort += 10;
+            }
+
+            // Travel rows
+            int tSort = 10;
+            foreach (var tr in dto.TravelRows.Where(r => !r.MiscItemId.HasValue || allMiscItemIds.Contains(r.MiscItemId.Value)))
+            {
+                db.TblDesignWorksheetTravelRows.Add(new TblDesignWorksheetTravelRow
+                {
+                    WorksheetId    = WorksheetId,
+                    MiscItemId     = tr.MiscItemId,
+                    NetsuiteItemId = tr.NetsuiteItemId,
+                    Name           = tr.Name,
+                    Description    = tr.Description,
+                    Qty            = tr.Qty,
+                    Cost           = tr.Cost,
+                    SellPrice      = tr.SellPrice,
+                    SortOrder      = tSort,
+                    PrintInPdf     = tr.PrintInPdf,
+                    LocationId     = tr.LocationId,
+                    LocationName   = tr.LocationName,
+                });
+                tSort += 10;
+            }
+
+            // Materials rows
+            foreach (var mat in dto.MaterialsRows.Where(r => allMaterialsItemIds.Contains(r.ItemId)))
+            {
+                db.TblDesignWorksheetMaterialsRows.Add(new TblDesignWorksheetMaterialsRow
+                {
+                    WorksheetId = WorksheetId,
+                    ItemId      = mat.ItemId,
+                    Qty         = mat.Qty,
+                    Cost        = mat.Cost,
+                    SellPrice   = mat.SellPrice,
+                    LocationId  = mat.LocationId,
+                    LocationName= mat.LocationName,
+                });
+            }
+            await db.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            _persistError = $"Config load failed: {ex.Message}";
+            return;
+        }
+
+        // Reload everything fresh from DB
+        await LoadAsync();
+        saveMsg     = "Config loaded.";
+        saveSuccess = true;
+    }
+
+    private async Task<HashSet<int>> GetLiveCatalogItemIdsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        return (await db.TblDesignCatalogItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode)
+            .Select(i => i.ItemId)
+            .ToListAsync()).ToHashSet();
+    }
+
+    private HashSet<int> GetLiveMiscItemIds() =>
+        miscCatalogItems.Select(i => i.MiscItemId)
+            .Concat(travelCatalogItems.Select(i => i.MiscItemId))
+            .ToHashSet();
+}
+
+<style>
+    .wse-toolbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; padding: 10px 0; border-bottom: 1px solid var(--border, #dee2e6); }
+    .wse-section { margin-bottom: 24px; }
+
+    .wse-default-loc { display: flex; align-items: center; gap: 6px; }
+    .wse-default-loc-label { font-size: .78rem; color: var(--text-muted, #6c757d); white-space: nowrap; }
+    .wse-default-loc-select { font-size: .82rem; padding: 3px 6px; border: 1px solid #d0d5db; border-radius: 4px; background: #fff; max-width: 180px; }
+
+    .wse-labor-add-row {
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 6px;
+        margin-bottom: 8px;
+    }
+
+    .wse-labor-add-label {
+        font-size: .72rem;
+        color: var(--text-muted, #6c757d);
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: .05em;
+        white-space: nowrap;
+    }
+
+    .wse-labor-add-btn {
+        font-size: .75rem;
+        padding: 2px 8px;
+        border: 1px dashed var(--dx-blue, #0071BC);
+        border-radius: 12px;
+        background: #fff;
+        color: var(--dx-blue, #0071BC);
+        cursor: pointer;
+        white-space: nowrap;
+        transition: background .1s, color .1s;
+    }
+
+    .wse-labor-add-btn:hover {
+        background: var(--dx-blue, #0071BC);
+        color: #fff;
+    }
+</style>

@@ -1,0 +1,483 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+
+<div class="dx-modal-overlay" @onclick="Close">
+    <div class="dx-modal" style="min-width:640px" @onclick:stopPropagation>
+        <div class="dx-modal-header">
+            <span>@(ItemId.HasValue ? "Edit Catalog Item" : "Add Item from NetSuite")</span>
+            <button class="dx-modal-close" @onclick="Close">&times;</button>
+        </div>
+
+        @if (!loaded)
+        {
+            <div class="dx-modal-body"><div class="dx-spinner"></div></div>
+        }
+        else
+        {
+            <div class="dx-modal-body" style="max-height:72vh; overflow-y:auto;">
+                <!-- NetSuite item selection -->
+                @if (selectedItem is null)
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label" style="display:flex;justify-content:space-between;align-items:center">
+                            <span>Search NetSuite Items</span>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    style="font-size:.73rem;padding:2px 9px"
+                                    @onclick="() => _showCreateModal = true">
+                                + Create New Item in NetSuite
+                            </button>
+                        </label>
+                        <div class="ct-search-wrap">
+                            <input class="dx-form-control" @oninput="OnSearchInput"
+                                   value="@searchTerm"
+                                   placeholder="Type at least 2 characters…" />
+                            @if (searching)
+                            {
+                                <div style="font-size:.8rem; color:var(--text-muted,#6c757d); margin-top:4px">Searching…</div>
+                            }
+                            @if (searchResults is not null && searchResults.Count > 0)
+                            {
+                                <div class="ct-search-results">
+                                    @foreach (var r in searchResults)
+                                    {
+                                        <div class="ct-search-result" @onclick="() => SelectItem(r)">
+                                            <div class="ct-search-result-name">@ItemDisplayName(r)</div>
+                                            <div class="ct-search-result-sub">@(string.IsNullOrEmpty(r.Manufacturer) ? r.ItemId : $"{r.Manufacturer} · {r.ItemId}") · Cost: @($"${r.Cost:N2}") · Price: @($"${r.Rate:N2}")</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                            else if (searchResults is not null && searchResults.Count == 0 && !searching)
+                            {
+                                <div style="font-size:.8rem; color:var(--text-muted,#6c757d); margin-top:4px">No results found.</div>
+                            }
+                            @if (searchError is not null)
+                            {
+                                <div class="dx-alert dx-alert-danger" style="margin-top:6px">@searchError</div>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="ct-selected-chip">
+                        <div>
+                            <div class="ct-selected-chip-name">@ItemDisplayName(selectedItem)</div>
+                            <div class="ct-selected-chip-sub">@(string.IsNullOrEmpty(selectedItem.Manufacturer) ? selectedItem.ItemId : $"{selectedItem.Manufacturer} · {selectedItem.ItemId}") · Cost: @($"${selectedItem.Cost:N2}") · Price: @($"${selectedItem.Rate:N2}")</div>
+                        </div>
+                        @if (!ItemId.HasValue)
+                        {
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="ClearSelection">Change</button>
+                        }
+                    </div>
+                }
+
+                <!-- Category picker -->
+                @if (selectedItem is not null)
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Category</label>
+                        <select class="dx-form-control" value="@selectedCategoryId" @onchange="OnCategoryChange">
+                            <option value="0">— None —</option>
+                            @foreach (var cat in categories)
+                            {
+                                <option value="@cat.CategoryId">@cat.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Labor column overrides — all defined columns; category default hours shown as reference -->
+                    @if (allColumns.Count > 0)
+                    {
+                        <div class="ct-section-label">Labor <span style="font-weight:400;text-transform:none;font-size:.8rem">(leave blank to use category default)</span></div>
+                        <div class="dx-table" style="margin-bottom:12px">
+                            <div class="dx-table-header" style="grid-template-columns: 1fr 110px 100px; position:sticky; top:0; z-index:2;">
+                                <div>Column</div>
+                                <div>Cat. Default</div>
+                                <div>Override</div>
+                            </div>
+                            @foreach (var col in allColumns)
+                            {
+                                var colId = col.ColumnId;
+                                var catDefault = categoryColumnAssignments.TryGetValue(colId, out var d) ? d : (decimal?)null;
+                                <div class="dx-table-row" style="grid-template-columns: 1fr 110px 100px;">
+                                    <div>@col.Name</div>
+                                    <div style="color:var(--text-muted,#6c757d)">
+                                        @(catDefault.HasValue ? $"{catDefault:0.##} hrs" : "—")
+                                    </div>
+                                    <div>
+                                        <input type="number" step="0.25" min="0" class="dx-form-control"
+                                               style="padding:2px 6px; height:28px;"
+                                               placeholder="—"
+                                               value="@(columnOverrides.TryGetValue(colId, out var h) && h > 0 ? h.ToString() : "")"
+                                               @onchange="e => OnColumnOverride(colId, e.Value?.ToString())" />
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    <!-- Attribute values -->
+                    @if (categoryAttributes.Count > 0)
+                    {
+                        <div class="ct-section-label">Attribute Values</div>
+                        <div class="dx-table" style="margin-bottom:12px">
+                            <div class="dx-table-header" style="grid-template-columns: minmax(120px,1fr) minmax(140px,1.5fr); position:sticky; top:0; z-index:2;">
+                                <div>Attribute</div>
+                                <div>Value</div>
+                            </div>
+                            @foreach (var catAttr in categoryAttributes)
+                            {
+                                var attr = catAttr.Attribute!;
+                                var attrId = attr.AttributeId;
+                                <div class="dx-table-row" style="grid-template-columns: minmax(120px,1fr) minmax(140px,1.5fr);">
+                                    <div>
+                                        @attr.Name
+                                        @if (attr.IsGlobal) { <span class="dx-badge dx-badge-blue" style="margin-left:4px">Global</span> }
+                                    </div>
+                                    <div>
+                                        @if (attr.AttributeType == AttributeType.Text)
+                                        {
+                                            <input class="dx-form-control" style="padding:2px 6px; height:28px;"
+                                                   value="@(attrValues.TryGetValue(attrId, out var v) ? v : "")"
+                                                   @onchange="e => attrValues[attrId] = e.Value?.ToString() ?? string.Empty" />
+                                        }
+                                        else if (attr.AttributeType == AttributeType.Number)
+                                        {
+                                            // Stored as string; step="any" accepts decimals (e.g. 12.5).
+                                            <input type="number" step="any" class="dx-form-control" style="padding:2px 6px; height:28px;"
+                                                   value="@(attrValues.TryGetValue(attrId, out var v) ? v : "")"
+                                                   @onchange="e => attrValues[attrId] = e.Value?.ToString() ?? string.Empty" />
+                                        }
+                                        else if (attr.AttributeType == AttributeType.Dollars)
+                                        {
+                                            // Currency value stored as a plain decimal string.
+                                            <div style="display:flex; align-items:center; gap:4px;">
+                                                <span style="font-size:.82rem; color:var(--text-muted,#6c757d)">$</span>
+                                                <input type="number" step="0.01" min="0" class="dx-form-control" style="padding:2px 6px; height:28px;"
+                                                       value="@(attrValues.TryGetValue(attrId, out var v) ? v : "")"
+                                                       @onchange="e => attrValues[attrId] = e.Value?.ToString() ?? string.Empty" />
+                                            </div>
+                                        }
+                                        else if (attr.AttributeType == AttributeType.List)
+                                        {
+                                            <select class="dx-form-control" style="padding:2px 6px; height:28px;"
+                                                    value="@(attrValues.TryGetValue(attrId, out var v) ? v : "")"
+                                                    @onchange="e => attrValues[attrId] = e.Value?.ToString() ?? string.Empty">
+                                                <option value="">—</option>
+                                                @foreach (var opt in attr.Options.OrderBy(o => o.SortOrder))
+                                                {
+                                                    <option value="@opt.OptionValue">@opt.OptionValue</option>
+                                                }
+                                            </select>
+                                        }
+                                        else
+                                        {
+                                            <div style="display:flex; flex-wrap:wrap; gap:4px 12px; padding:2px 0;">
+                                                @foreach (var opt in attr.Options.OrderBy(o => o.SortOrder))
+                                                {
+                                                    var optVal = opt.OptionValue;
+                                                    var currentVals = GetMultiValues(attrId);
+                                                    <label style="display:flex; align-items:center; gap:4px; font-size:.8rem;">
+                                                        <input type="checkbox" checked="@currentVals.Contains(optVal)"
+                                                               @onchange="e => OnMultiCheck(attrId, optVal, (bool)(e.Value ?? false))" />
+                                                        @optVal
+                                                    </label>
+                                                }
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+
+                @if (saveError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@saveError</div>
+                }
+            </div>
+
+            @if (selectedItem is not null)
+            {
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@saving">
+                        @(saving ? "Saving…" : "Save")
+                    </button>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@if (_showCreateModal)
+{
+    <CreateNetsuiteItemModal OnCreated="OnItemCreatedInNetsuite"
+                             OnClose="() => _showCreateModal = false" />
+}
+
+@code {
+    [Parameter] public int? ItemId { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnClose { get; set; }
+
+    private bool loaded;
+    private bool saving;
+    private string? saveError;
+    private bool _showCreateModal;
+
+    // Search
+    private string searchTerm = "";
+    private List<NetsuiteItem>? searchResults;
+    private bool searching;
+    private string? searchError;
+    private CancellationTokenSource? _debounceCts;
+
+    // Selection
+    private NetsuiteItem? selectedItem;
+    private int selectedCategoryId;
+
+    // Category data loaded after category pick
+    private List<TblDesignCategory> categories = [];
+    private List<TblDesignLaborColumn> allColumns = [];
+    // Key = ColumnId → DefaultHours from category assignment (reference display)
+    private Dictionary<int, decimal> categoryColumnAssignments = [];
+    private List<TblDesignCategoryAttribute> categoryAttributes = [];
+
+    // Override maps: key = ColumnId / AttributeId
+    private Dictionary<int, decimal> columnOverrides = [];
+    private Dictionary<int, string> attrValues = [];
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        categories = await db.TblDesignCategories
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.Name)
+            .ToListAsync();
+
+        allColumns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+
+        if (ItemId.HasValue)
+        {
+            var item = await db.TblDesignCatalogItems
+                .Include(i => i.ColumnOverrides)
+                .Include(i => i.AttributeValues)
+                .FirstOrDefaultAsync(i => i.ItemId == ItemId.Value);
+
+            if (item is not null)
+            {
+                selectedCategoryId = item.CategoryId ?? 0;
+                if (!string.IsNullOrEmpty(item.SnapshotJson))
+                    selectedItem = System.Text.Json.JsonSerializer.Deserialize<NetsuiteItem>(item.SnapshotJson);
+
+                columnOverrides = item.ColumnOverrides.ToDictionary(l => l.ColumnId, l => l.Hours);
+                attrValues = item.AttributeValues
+                    .Where(v => v.Value is not null)
+                    .ToDictionary(v => v.AttributeId, v => v.Value!);
+
+                if (selectedCategoryId != 0)
+                    await LoadCategoryDataAsync(selectedCategoryId, db);
+            }
+        }
+
+        loaded = true;
+    }
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var cts = _debounceCts;
+
+        if (searchTerm.Length < 2) { searchResults = null; return; }
+        searching = true; searchError = null;
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            searchResults = await NetsuiteService.SearchItemsAsync(searchTerm, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { searchError = $"Search failed: {ex.Message}"; searchResults = null; }
+        finally { searching = false; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectItem(NetsuiteItem item)
+    {
+        selectedItem = item;
+        searchResults = null;
+        searchTerm = "";
+    }
+
+    private void ClearSelection()
+    {
+        selectedItem = null;
+        categoryColumnAssignments = [];
+        categoryAttributes = [];
+        columnOverrides = [];
+        attrValues = [];
+        selectedCategoryId = 0;
+    }
+
+    private async Task OnCategoryChange(ChangeEventArgs e)
+    {
+        selectedCategoryId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+        columnOverrides = [];
+        attrValues = [];
+        await using var db = await DbFactory.CreateDbContextAsync();
+        if (selectedCategoryId != 0)
+        {
+            await LoadCategoryDataAsync(selectedCategoryId, db);
+        }
+        else
+        {
+            categoryColumnAssignments = [];
+            // Still show global attributes even with no category selected.
+            categoryAttributes = (await db.TblDesignAttributes
+                .Where(a => a.CustomerId == Tenant.CustomerCode && a.IsGlobal)
+                .Include(a => a.Options)
+                .OrderBy(a => a.Name)
+                .ToListAsync())
+                .Select(a => new TblDesignCategoryAttribute { AttributeId = a.AttributeId, SortOrder = 0, Attribute = a })
+                .ToList();
+        }
+    }
+
+    private async Task LoadCategoryDataAsync(int categoryId, DesignDbContext db)
+    {
+        // Load category column default hours for reference display in the override table
+        var assignments = await db.TblDesignCategoryColumnAssignments
+            .Where(a => a.CategoryId == categoryId)
+            .ToListAsync();
+        categoryColumnAssignments = assignments.ToDictionary(a => a.ColumnId, a => a.DefaultHours);
+
+        var categorySpecific = await db.TblDesignCategoryAttributes
+            .Where(a => a.CategoryId == categoryId)
+            .Include(a => a.Attribute)
+            .ThenInclude(a => a!.Options)
+            .OrderBy(a => a.SortOrder)
+            .ToListAsync();
+
+        // Global attributes always apply regardless of category assignment.
+        // Exclude any already present in the category-specific list to avoid duplicates.
+        var assignedIds = categorySpecific.Select(a => a.AttributeId).ToHashSet();
+        var globalAttrs = await db.TblDesignAttributes
+            .Where(a => a.CustomerId == Tenant.CustomerCode && a.IsGlobal && !assignedIds.Contains(a.AttributeId))
+            .Include(a => a.Options)
+            .OrderBy(a => a.Name)
+            .ToListAsync();
+
+        var globalCategoryAttrs = globalAttrs.Select(a => new TblDesignCategoryAttribute
+        {
+            CategoryId = categoryId,
+            AttributeId = a.AttributeId,
+            SortOrder = int.MaxValue,
+            Attribute = a,
+        }).ToList();
+
+        categoryAttributes = [.. categorySpecific, .. globalCategoryAttrs];
+    }
+
+    private void OnColumnOverride(int columnId, string? val)
+    {
+        if (decimal.TryParse(val, out var d) && d > 0)
+            columnOverrides[columnId] = d;
+        else
+            columnOverrides.Remove(columnId);
+    }
+
+    private HashSet<string> GetMultiValues(int attrId)
+    {
+        if (!attrValues.TryGetValue(attrId, out var raw) || string.IsNullOrEmpty(raw))
+            return [];
+        return raw.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(s => s.Trim()).ToHashSet();
+    }
+
+    private void OnMultiCheck(int attrId, string optVal, bool isChecked)
+    {
+        var vals = GetMultiValues(attrId);
+        if (isChecked) vals.Add(optVal); else vals.Remove(optVal);
+        attrValues[attrId] = string.Join(",", vals);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (selectedItem is null) { saveError = "Select a NetSuite item first."; return; }
+        saving = true; saveError = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            TblDesignCatalogItem entity;
+
+            if (ItemId.HasValue)
+            {
+                entity = (await db.TblDesignCatalogItems
+                    .Include(i => i.AttributeValues)
+                    .FirstOrDefaultAsync(i => i.ItemId == ItemId.Value))!;
+                if (entity is null) { saveError = "Item not found."; return; }
+            }
+            else
+            {
+                entity = new TblDesignCatalogItem { CustomerId = Tenant.CustomerCode };
+                db.TblDesignCatalogItems.Add(entity);
+            }
+
+            entity.NetsuiteItemId = selectedItem.Id;
+            entity.CategoryId = selectedCategoryId == 0 ? null : selectedCategoryId;
+            entity.SnapshotJson = System.Text.Json.JsonSerializer.Serialize(selectedItem);
+            entity.LastSyncDate = DateTime.UtcNow;
+            // Denormalized for worksheet display — avoids deserializing snapshot on every load.
+            entity.Description  = selectedItem.PurchaseDescription;
+            entity.Manufacturer = selectedItem.Manufacturer;
+            entity.ModelName    = selectedItem.ItemId;
+            entity.Cost         = selectedItem.Cost;
+
+            await db.SaveChangesAsync();
+
+            // Sync column labor overrides (delete+reinsert; only non-zero hours are stored)
+            var existingColumnOverrides = await db.TblDesignCatalogItemColumns
+                .Where(l => l.ItemId == entity.ItemId)
+                .ToListAsync();
+            db.TblDesignCatalogItemColumns.RemoveRange(existingColumnOverrides);
+            foreach (var (colId, hrs) in columnOverrides.Where(kv => kv.Value > 0))
+                db.TblDesignCatalogItemColumns.Add(new TblDesignCatalogItemColumn
+                    { ItemId = entity.ItemId, ColumnId = colId, Hours = hrs });
+
+            // Sync attribute values
+            var existingAttr = await db.TblDesignCatalogItemAttributes
+                .Where(v => v.ItemId == entity.ItemId)
+                .ToListAsync();
+            foreach (var ev in existingAttr) db.TblDesignCatalogItemAttributes.Remove(ev);
+            foreach (var (attrId, val) in attrValues.Where(kv => !string.IsNullOrEmpty(kv.Value)))
+                db.TblDesignCatalogItemAttributes.Add(new TblDesignCatalogItemAttribute
+                    { ItemId = entity.ItemId, AttributeId = attrId, Value = val });
+
+            await db.SaveChangesAsync();
+            await OnClose.InvokeAsync();
+        }
+        catch (Exception ex) { saveError = $"Save failed: {ex.Message}"; }
+        finally { saving = false; }
+    }
+
+    private async Task OnItemCreatedInNetsuite(CreatedItemInfo info)
+    {
+        // Catalog item was already persisted by CreateNetsuiteItemModal.
+        // Close this modal so the parent catalog list refreshes.
+        _showCreateModal = false;
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task Close() => await OnClose.InvokeAsync();
+
+    private static string ItemDisplayName(NetsuiteItem item) =>
+        !string.IsNullOrEmpty(item.PurchaseDescription) ? item.PurchaseDescription
+        : !string.IsNullOrEmpty(item.ItemId) ? item.ItemId
+        : item.Id;
+}

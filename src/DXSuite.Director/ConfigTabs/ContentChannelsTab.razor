@@ -1,0 +1,1263 @@
+@using System.Threading
+@using Newtonsoft.Json.Linq
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject IDeviceMetadataService DeviceMetadataService
+@inject IMetadataDefinitionService MetadataDefinitionService
+@implements IDisposable
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Content Channels</h4>
+        <div class="dx-panel-controls">
+            <input @bind="searchFilter" @bind:event="oninput"
+                   class="dx-search-input" placeholder="Search channels..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadChannels">Refresh</button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (FilteredChannels?.Any() == true)
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table dx-collapse" style="min-width:max-content;">
+                <div class="dx-table-header dx-collapse-header" style="@ChannelGridStyle">
+                    <div role="button" @onclick="@(() => SetSort("deviceId"))">Device ID @SortCaret("deviceId")</div>
+                    <div role="button" @onclick="@(() => SetSort("manufacturer"))">Manufacturer @SortCaret("manufacturer")</div>
+                    <div role="button" @onclick="@(() => SetSort("model"))">Model @SortCaret("model")</div>
+                    <div role="button" @onclick="@(() => SetSort("name"))">Name @SortCaret("name")</div>
+                    <div role="button" @onclick="@(() => SetSort("description"))">Description @SortCaret("description")</div>
+                    <div role="button" @onclick="@(() => SetSort("type"))">Type @SortCaret("type")</div>
+                    <div role="button" @onclick="@(() => SetSort("server"))">Server @SortCaret("server")</div>
+                    <div role="button" @onclick="@(() => SetSort("location"))">Location @SortCaret("location")</div>
+                    <div role="button" @onclick="@(() => SetSort("display"))">Display @SortCaret("display")</div>
+                    <div></div>
+                </div>
+                @foreach (var ch in FilteredChannels)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="@ChannelGridStyle">
+                        <div class="dx-truncate" style="font-size:0.85rem;">@(ch.DeviceId ?? "—")</div>
+                        <div class="dx-truncate dx-col-hide" style="font-size:0.85rem; color:var(--dx-text-muted);">
+                            @(ch.Manufacturer ?? "—")
+                        </div>
+                        <div class="dx-truncate dx-col-hide" style="font-size:0.85rem; color:var(--dx-text-muted);">
+                            @(ch.Model ?? "—")
+                        </div>
+                        @RenderNameCell(ch)
+                        <div class="dx-truncate dx-col-hide" style="font-size:0.85rem; color:var(--dx-text-muted);">
+                            @(ch.Description ?? "—")
+                        </div>
+                        <div>
+                            <span class="dx-badge @(ch.SourceType switch {
+                                "engage"          => "dx-badge-blue",
+                                "ink-folder"      => "dx-badge-green",
+                                "pixera-folder"   => "dx-badge-blue",
+                                "pixera-timeline" => "dx-badge-blue",
+                                _                 => "dx-badge-gray"
+                            })">
+                                @(ch.SourceType switch {
+                                    "engage"          => "Engage",
+                                    "ink-folder"      => "Ink Folder",
+                                    "pixera-folder"   => "Pixera",
+                                    "pixera-timeline" => "Pixera Timeline",
+                                    _                 => ch.SourceType
+                                })
+                            </span>
+                        </div>
+                        <div class="dx-truncate dx-col-hide" style="font-size:0.85rem; color:var(--dx-text-muted);">
+                            @(ch.ConnectorName ?? "—")
+                        </div>
+                        @RenderLocationCell(ch)
+                        @RenderDisplayCell(ch)
+                        <div style="text-align:center;">
+                            @if (ch.SourceType == "pixera-folder")
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                        @onclick="@(async () => await ShowPixeraSettingsModal(ch))">Settings</button>
+                            }
+                            else if (ch.SourceType == "pixera-timeline")
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                        @onclick="@(async () => await ShowTimelineSettingsModal(ch))">Settings</button>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                        @onclick="@(async () => await ShowMetadataModal(ch))">Metadata</button>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="dx-text-muted" style="padding:8px 20px; font-size:0.85rem;">
+            Showing @FilteredChannels.Count() of @(channels?.Count ?? 0) channels
+        </div>
+    }
+    else
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No channels found</h5>
+            <p class="dx-text-muted">
+                Content channels appear here automatically for registered Engage devices and synced Ink folders.
+            </p>
+        </div>
+    }
+</div>
+
+@if (toastVisible)
+{
+    <div class="dx-toast">@toastMessage</div>
+}
+
+@* Pixera channel settings modal — layer assignment and transport mode *@
+@if (showPixeraSettingsModal && selectedSettingsChannel != null)
+{
+    <div class="dx-modal-overlay" @onclick="ClosePixeraSettingsModal">
+        <div class="dx-modal" style="width:min(520px, 92vw);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Pixera Settings — @selectedSettingsChannel.Name</h4>
+                <button class="dx-modal-close" @onclick="ClosePixeraSettingsModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (settingsError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@settingsError</div>
+                }
+                @if (settingsSuccess != null)
+                {
+                    <div class="dx-alert dx-alert-success" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@settingsSuccess</div>
+                }
+
+                <div class="dx-form-group" style="margin-bottom:14px;">
+                    <label class="dx-form-label">Composition Layers</label>
+                    @for (int li = 0; li < pixeraLayerPaths.Count; li++)
+                    {
+                        var idx = li;
+                        <div style="display:flex; gap:6px; margin-bottom:6px;">
+                            <select class="dx-form-control" style="flex:1;"
+                                    value="@pixeraLayerPaths[idx]"
+                                    @onchange="@(e => OnLayerPathChanged(idx, e))">
+                                <option value="">— None —</option>
+                                @{
+                                    var grouped = availableLayers.GroupBy(l => l.ConnectorName).OrderBy(g => g.Key);
+                                    foreach (var group in grouped)
+                                    {
+                                        <optgroup label="@group.Key">
+                                        @foreach (var layer in group.OrderBy(l => l.Name))
+                                        {
+                                            <option value="@layer.ExternalId">@layer.Name</option>
+                                        }
+                                        </optgroup>
+                                    }
+                                }
+                            </select>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" style="flex-shrink:0;"
+                                    @onclick="@(() => RemoveLayerPath(idx))">×</button>
+                        </div>
+                    }
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="AddLayerPath">+ Add Layer</button>
+                    <span class="dx-form-hint" style="display:block; margin-top:4px;">Pixera composition layers this channel's active asset is pushed to. Add multiple layers to keep a wide wall in sync.</span>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Send Transport Commands</label>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                        <label class="dx-toggle">
+                            <input type="checkbox" @bind="pixeraTransportEnabled" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span class="dx-form-hint" style="margin:0;">@(pixeraTransportEnabled ? "Enabled" : "Disabled")</span>
+                    </div>
+                </div>
+
+                @if (pixeraTransportEnabled)
+                {
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Transport Mode</label>
+                            <input type="number" class="dx-form-control" @bind="pixeraTransportMode" min="0" max="10" />
+                            <span class="dx-form-hint">1 = Play, 2 = Pause, 3 = Stop</span>
+                        </div>
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Loop Playback</label>
+                            <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                                <label class="dx-toggle">
+                                    <input type="checkbox" @bind="pixeraTransportLoop" />
+                                    <span class="dx-toggle-slider"></span>
+                                </label>
+                                <span class="dx-form-hint" style="margin:0;">@(pixeraTransportLoop ? "Enabled" : "Disabled")</span>
+                            </div>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-blue" @onclick="SavePixeraSettings" disabled="@settingsSaving">
+                    @(settingsSaving ? "SAVING..." : "SAVE")
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="ClosePixeraSettingsModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@* Pixera timeline settings modal — timeline watchdog enable/disable *@
+@if (showTimelineSettingsModal && selectedTimelineChannel != null)
+{
+    <div class="dx-modal-overlay" @onclick="CloseTimelineSettingsModal">
+        <div class="dx-modal" style="width:min(480px, 92vw);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Timeline Settings — @selectedTimelineChannel.Name</h4>
+                <button class="dx-modal-close" @onclick="CloseTimelineSettingsModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (timelineSettingsError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@timelineSettingsError</div>
+                }
+                @if (timelineSettingsSuccess != null)
+                {
+                    <div class="dx-alert dx-alert-success" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@timelineSettingsSuccess</div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Timeline Control</label>
+                    <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
+                        <label class="dx-toggle">
+                            <input type="checkbox" @bind="timelineControlEnabled" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span class="dx-form-hint" style="margin:0;">@(timelineControlEnabled ? "Enabled" : "Disabled")</span>
+                    </div>
+                    <span class="dx-form-hint" style="display:block; margin-top:4px;">
+                        When enabled, Director starts this timeline (Play) whenever it is found not
+                        playing — e.g. after a Pixera reboot. Disable before intentionally pausing or
+                        stopping the timeline for maintenance; otherwise the watchdog restarts it
+                        within about 30 seconds.
+                    </span>
+                </div>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-blue" @onclick="SaveTimelineSettings" disabled="@timelineSettingsSaving">
+                    @(timelineSettingsSaving ? "SAVING..." : "SAVE")
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="CloseTimelineSettingsModal">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showMetadataModal && selectedMetadataChannel != null)
+{
+    <div class="dx-modal-overlay" @onclick="CloseMetadataModal">
+        <div class="dx-modal" style="width:min(520px, 92vw);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Metadata — @selectedMetadataChannel.Name</h4>
+                <button class="dx-modal-close" @onclick="CloseMetadataModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p class="dx-text-muted" style="font-size:0.85rem;">
+                    Key/value pairs appended as URL parameters when this channel loads web content.
+                </p>
+
+                @if (metadataError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@metadataError</div>
+                }
+                @if (metadataSuccess != null)
+                {
+                    <div class="dx-alert dx-alert-success" style="margin-bottom:10px; padding:6px 10px; font-size:0.85rem;">@metadataSuccess</div>
+                }
+
+                @* Existing metadata rows *@
+                @if (engageMetadataRecords.Count > 0 || inkMetadataRecords.Count > 0)
+                {
+                    <div class="dx-table" style="margin-bottom:12px;">
+                        <div class="dx-table-header" style="grid-template-columns: 1fr 1fr 80px;">
+                            <div>Key</div>
+                            <div>Value</div>
+                            <div></div>
+                        </div>
+                        @if (selectedMetadataChannel.SourceType == "engage")
+                        {
+                            @foreach (var rec in engageMetadataRecords)
+                            {
+                                var def = metadataDefs.FirstOrDefault(d => d.MetadataKey == rec.MetadataKey);
+                                <div class="dx-table-row" style="grid-template-columns: 1fr 1fr 80px;">
+                                    <div>
+                                        <div style="font-weight:500;">@(def?.DisplayName ?? rec.MetadataKey)</div>
+                                        <div style="font-size:0.75rem; color:var(--dx-text-muted);"><code>@rec.MetadataKey</code></div>
+                                    </div>
+                                    <div class="dx-truncate" style="align-self:center;">@rec.MetadataValue</div>
+                                    <div style="display:flex; justify-content:center; align-self:center;">
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                @onclick="@(() => DeleteEngageMetadata(rec))">Delete</button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                        else
+                        {
+                            @foreach (var rec in inkMetadataRecords)
+                            {
+                                <div class="dx-table-row" style="grid-template-columns: 1fr 1fr 80px;">
+                                    <div style="font-weight:500; align-self:center;">@rec.MetadataKey</div>
+                                    <div class="dx-truncate" style="align-self:center;">@rec.MetadataValue</div>
+                                    <div style="display:flex; justify-content:center; align-self:center;">
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                @onclick="@(() => DeleteInkMetadata(rec))">Delete</button>
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                }
+                else
+                {
+                    <p class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
+                        No metadata configured for this channel.
+                    </p>
+                }
+
+                @* Add new row — definition-driven for Engage, free-text for Ink Folder *@
+                @if (selectedMetadataChannel.SourceType == "engage" && metadataDefs.Count > 0)
+                {
+                    <div style="display:flex; gap:8px; align-items:flex-end; --dx-meta-input-height:34px;">
+                        <div style="flex:1;">
+                            <div style="font-size:0.8rem; font-weight:500; margin-bottom:4px;">Key</div>
+                            <select class="dx-form-control" style="height:var(--dx-meta-input-height);"
+                                    value="@metadataAddKey"
+                                    @onchange="OnMetadataKeyChanged">
+                                <option value="">— Select key —</option>
+                                @foreach (var def in metadataDefs)
+                                {
+                                    <option value="@def.MetadataKey">@def.DisplayName (@def.MetadataKey)</option>
+                                }
+                            </select>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:0.8rem; font-weight:500; margin-bottom:4px;">Value</div>
+                            <MetadataValueInput FieldType="@metadataAddFieldType"
+                                                Values="@(string.IsNullOrEmpty(metadataAddValue) ? [] : [metadataAddValue])"
+                                                ValuesChanged="v => metadataAddValue = v.FirstOrDefault() ?? string.Empty"
+                                                Options="@metadataAddOptions"
+                                                SingleValue="true" />
+                        </div>
+                        <div>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    style="height:var(--dx-meta-input-height); white-space:nowrap;"
+                                    @onclick="AddEngageMetadata"
+                                    disabled="@metadataSaving">+ Add</button>
+                        </div>
+                    </div>
+                }
+                else if (selectedMetadataChannel.SourceType == "engage" && metadataDefs.Count == 0)
+                {
+                    <p class="dx-text-muted" style="font-size:0.85rem; margin-top:8px;">
+                        No metadata keys are defined. Add keys in the <strong>Metadata</strong> tab first.
+                    </p>
+                }
+                else if (selectedMetadataChannel.SourceType == "ink-folder")
+                {
+                    <div style="display:flex; gap:8px; align-items:flex-end; --dx-meta-input-height:34px;">
+                        <div style="flex:1;">
+                            <div style="font-size:0.8rem; font-weight:500; margin-bottom:4px;">Key</div>
+                            <input class="dx-form-control" style="height:var(--dx-meta-input-height);"
+                                   placeholder="e.g. locale"
+                                   @bind="metadataAddKey" />
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:0.8rem; font-weight:500; margin-bottom:4px;">Value</div>
+                            <input class="dx-form-control" style="height:var(--dx-meta-input-height);"
+                                   @bind="metadataAddValue" />
+                        </div>
+                        <div>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    style="height:var(--dx-meta-input-height); white-space:nowrap;"
+                                    @onclick="AddInkMetadata"
+                                    disabled="@metadataSaving">+ Add</button>
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseMetadataModal">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private List<ChannelRow>? channels;
+    private string searchFilter = "";
+    private bool isLoading = true;
+
+    // Name is read-only in this view; editing happens in Device Management
+
+    // Dropdowns
+    private List<TblLocation>? allLocations;
+    private List<TblDisplay>? allDisplays;
+
+    // Toast
+    private bool toastVisible;
+    private string toastMessage = "";
+    private Timer? toastTimer;
+
+    // Pixera Settings modal
+    private bool showPixeraSettingsModal;
+    private ChannelRow? selectedSettingsChannel;
+    private List<LayerOption> availableLayers = new();
+    private List<string> pixeraLayerPaths = new();
+    private int pixeraTransportMode = 1;
+    private bool pixeraTransportLoop = true;
+
+    // Timeline settings modal state
+    private bool showTimelineSettingsModal;
+    private ChannelRow? selectedTimelineChannel;
+    private bool timelineControlEnabled;
+    private string? timelineSettingsError;
+    private string? timelineSettingsSuccess;
+    private bool timelineSettingsSaving;
+    private bool pixeraTransportEnabled = true;
+    private bool settingsSaving;
+    private string? settingsError;
+    private string? settingsSuccess;
+
+    // Metadata modal
+    private bool showMetadataModal;
+    private ChannelRow? selectedMetadataChannel;
+    private List<MetadataDefinitionDto> metadataDefs = new();
+    private List<TblDeviceMetadata> engageMetadataRecords = new();
+    private List<TblContentChannelMetadata> inkMetadataRecords = new();
+    private string metadataAddKey = "";
+    private string metadataAddValue = "";
+    private string metadataAddFieldType = "string";
+    private List<string> metadataAddOptions = new();
+    private string? metadataError;
+    private string? metadataSuccess;
+    private bool metadataSaving;
+
+    private const string ChannelGridStyle =
+        "grid-template-columns: 150px 120px 130px 200px 220px 130px 150px 200px 200px 100px;";
+
+    private string sortColumn = "name";
+    private bool sortAsc = true;
+
+    private void SetSort(string col)
+    {
+        if (sortColumn == col)
+            sortAsc = !sortAsc;
+        else
+        {
+            sortColumn = col;
+            sortAsc = true;
+        }
+    }
+
+    private string SortCaret(string col) =>
+        sortColumn != col ? "" : sortAsc ? "▲" : "▼";
+
+    private IEnumerable<ChannelRow> FilteredChannels
+    {
+        get
+        {
+            if (channels == null) return Enumerable.Empty<ChannelRow>();
+            // pixera-layer rows exist in DB for the Settings modal dropdown but are not displayed here
+            var visible = channels.Where(c => c.SourceType != "pixera-layer");
+
+            if (!string.IsNullOrWhiteSpace(searchFilter))
+            {
+                var term = searchFilter.Trim();
+                visible = visible.Where(c =>
+                    c.Name.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                    (c.DeviceId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (c.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (c.ExternalName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            Func<ChannelRow, string?> key = sortColumn switch
+            {
+                "deviceId"     => c => c.DeviceId,
+                "manufacturer" => c => c.Manufacturer,
+                "model"        => c => c.Model,
+                "description"  => c => c.Description,
+                "type"         => c => c.SourceType,
+                "server"       => c => c.ConnectorName,
+                "location"     => c => c.LocationName,
+                "display"      => c => c.DisplayName,
+                _              => c => c.Name,
+            };
+
+            // Rows missing the sorted field sort last either way, so a blank column never
+            // buries the populated rows when the direction flips.
+            var populated = visible.Where(c => !string.IsNullOrEmpty(key(c)));
+            var blank = visible.Where(c => string.IsNullOrEmpty(key(c))).OrderBy(c => c.Name);
+
+            var sorted = sortAsc
+                ? populated.OrderBy(key, StringComparer.OrdinalIgnoreCase)
+                : populated.OrderByDescending(key, StringComparer.OrdinalIgnoreCase);
+
+            return sorted.Concat(blank);
+        }
+    }
+
+    protected override async Task OnInitializedAsync() => await LoadChannels();
+
+    private async Task LoadChannels()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            allLocations = await db.TblLocations
+                .AsNoTracking()
+                .Include(l => l.LocationType)
+                .OrderBy(l => l.LocationName)
+                .ToListAsync();
+
+            allDisplays = await db.TblDisplays
+                .AsNoTracking()
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+
+            var existing = await db.TblContentChannels
+                .AsNoTracking()
+                .Include(c => c.Location)
+                .Include(c => c.Display)
+                .Include(c => c.Device)
+                .ToListAsync();
+
+            // Build connector name lookup for the Server column
+            var connectorIds = existing
+                .Where(c => c.ConnectorId.HasValue)
+                .Select(c => c.ConnectorId!.Value)
+                .Distinct()
+                .ToList();
+            var connectorNameMap = connectorIds.Count > 0
+                ? await db.TblCloudPlatformConnectors
+                    .AsNoTracking()
+                    .Where(c => connectorIds.Contains(c.ConnectorId))
+                    .ToDictionaryAsync(c => c.ConnectorId, c => c.DisplayName)
+                : new Dictionary<int, string>();
+
+            var existingDeviceIds = existing
+                .Where(c => c.DeviceId != null)
+                .Select(c => c.DeviceId!)
+                .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+            // Auto-create TblContentChannel records for any Engage TblDevice that doesn't have one
+            var orphanedDevices = await db.TblDevices
+                .AsNoTracking()
+                .Where(d => !d.DeviceId.StartsWith("inkf-") &&
+                            !existingDeviceIds.Contains(d.DeviceId))
+                .ToListAsync();
+
+            if (orphanedDevices.Count > 0)
+            {
+                await using var writeDb = await DbFactory.CreateDbContextAsync();
+                foreach (var dev in orphanedDevices)
+                {
+                    writeDb.TblContentChannels.Add(new TblContentChannel
+                    {
+                        Name       = dev.Name ?? dev.DeviceId,
+                        Description = dev.Description,
+                        LocationId = dev.LocationId,
+                        DisplayId  = dev.DisplayId,
+                        SourceType = "engage",
+                        DeviceId   = dev.DeviceId,
+                        CreateDate = DateTime.UtcNow,
+                    });
+                }
+                await writeDb.SaveChangesAsync();
+
+                existing = await db.TblContentChannels
+                    .AsNoTracking()
+                    .Include(c => c.Location)
+                    .Include(c => c.Display)
+                    .Include(c => c.Device)
+                    .ToListAsync();
+            }
+
+            // Name and Description are read from the device rather than from the channel's own
+            // columns, which are a snapshot taken when the channel was created and never refreshed.
+            // Device Management edits tblDevice, so the snapshot drifts and an operator cannot tell
+            // which device a row is. Channels with no device (Ink, Pixera) keep their own values.
+            channels = existing.Select(c => new ChannelRow
+            {
+                ChannelId     = c.ChannelId,
+                Name          = c.Device != null ? (c.Device.Name ?? c.Device.DeviceId) : c.Name,
+                Description   = c.Device != null ? c.Device.Description : c.Description,
+                Manufacturer  = c.Device?.Manufacturer,
+                Model         = c.Device?.Model,
+                SourceType    = c.SourceType,
+                DeviceId      = c.DeviceId,
+                LocationId    = c.LocationId,
+                LocationName  = c.Location?.LocationName,
+                DisplayId     = c.DisplayId,
+                DisplayName   = c.Display?.DisplayName,
+                ExternalId    = c.ExternalId,
+                ExternalName  = c.ExternalName,
+                ConnectorId   = c.ConnectorId,
+                ConnectorName = c.ConnectorId.HasValue &&
+                                connectorNameMap.TryGetValue(c.ConnectorId.Value, out var cn) ? cn : null,
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading content channels: {ex.Message}");
+            channels = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // ── Name cell (read-only — editing happens in Device Management) ────────
+
+    private RenderFragment RenderNameCell(ChannelRow ch) => __builder =>
+    {
+        <div class="dx-truncate dx-col-primary">@ch.Name</div>
+    };
+
+    // ── Location / Display dropdowns ────────────────────────────────────────
+
+    private RenderFragment RenderLocationCell(ChannelRow ch) => __builder =>
+    {
+        @* Timeline channels carry no content — location/display assignment does not apply *@
+        @if (ch.SourceType == "pixera-timeline")
+        {
+            <div class="dx-col-break" style="padding: 0 8px;">
+                <span class="dx-text-muted" style="font-size:0.85rem;">—</span>
+            </div>
+            return;
+        }
+        <div class="dx-col-break" style="padding: 0 8px;">
+            <select class="dx-form-control dx-cell-select"
+                    value="@ch.LocationId?.ToString()"
+                    @onchange="async e => await OnLocationChanged(ch, e)">
+                <option value="">— None —</option>
+                @if (allLocations != null)
+                {
+                    @foreach (var loc in allLocations)
+                    {
+                        <option value="@loc.LocationId">@loc.LocationName</option>
+                    }
+                }
+            </select>
+        </div>
+    };
+
+    private RenderFragment RenderDisplayCell(ChannelRow ch) => __builder =>
+    {
+        <div class="dx-col-break" style="padding: 0 8px;">
+            @if (ch.SourceType == "pixera-timeline")
+            {
+                <span class="dx-text-muted" style="font-size:0.85rem;">—</span>
+            }
+            else if (ch.LocationId.HasValue && IsLinkedToDisplay(ch.LocationId))
+            {
+                <select class="dx-form-control dx-cell-select"
+                        value="@ch.DisplayId?.ToString()"
+                        @onchange="async e => await OnDisplayChanged(ch, e)">
+                    <option value="">— None —</option>
+                    @foreach (var disp in GetDisplaysForLocation(ch.LocationId.Value))
+                    {
+                        <option value="@disp.DisplayId">@disp.DisplayName</option>
+                    }
+                </select>
+            }
+            else
+            {
+                <span class="dx-text-muted" style="font-size:0.85rem;">—</span>
+            }
+        </div>
+    };
+
+    private bool IsLinkedToDisplay(int? locationId)
+    {
+        if (!locationId.HasValue) return false;
+        var loc = allLocations?.FirstOrDefault(l => l.LocationId == locationId.Value);
+        return loc?.LocationType?.LinkedToDisplay == true;
+    }
+
+    private List<TblDisplay> GetDisplaysForLocation(int locationId) =>
+        allDisplays?.Where(d => d.LocationId == locationId).ToList() ?? new();
+
+    private async Task OnLocationChanged(ChannelRow ch, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        int? newLocationId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var channel = await db.TblContentChannels.FindAsync(ch.ChannelId);
+            if (channel != null)
+            {
+                channel.LocationId = newLocationId;
+                channel.DisplayId  = null;
+
+                // Write-through: TblDevice.LocationId drives SignageController and access control
+                if (channel.DeviceId != null)
+                {
+                    var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == channel.DeviceId);
+                    if (device != null)
+                    {
+                        device.LocationId = newLocationId;
+                        device.DisplayId  = null;
+                    }
+                }
+
+                await db.SaveChangesAsync();
+            }
+
+            ch.LocationId  = newLocationId;
+            ch.LocationName = allLocations?.FirstOrDefault(l => l.LocationId == newLocationId)?.LocationName;
+            ch.DisplayId   = null;
+            ch.DisplayName = null;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving location for channel {ch.ChannelId}: {ex.Message}");
+        }
+    }
+
+    private async Task OnDisplayChanged(ChannelRow ch, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        int? newDisplayId = string.IsNullOrEmpty(raw) ? null : int.Parse(raw);
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var channel = await db.TblContentChannels.FindAsync(ch.ChannelId);
+            if (channel != null)
+            {
+                channel.DisplayId = newDisplayId;
+
+                if (channel.DeviceId != null)
+                {
+                    var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == channel.DeviceId);
+                    if (device != null)
+                        device.DisplayId = newDisplayId;
+                }
+
+                await db.SaveChangesAsync();
+            }
+
+            ch.DisplayId  = newDisplayId;
+            ch.DisplayName = allDisplays?.FirstOrDefault(d => d.DisplayId == newDisplayId)?.DisplayName;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving display for channel {ch.ChannelId}: {ex.Message}");
+        }
+    }
+
+    // ── Pixera Settings modal ───────────────────────────────────────────────
+
+    private void OnLayerPathChanged(int index, ChangeEventArgs e)
+    {
+        if (index < pixeraLayerPaths.Count)
+            pixeraLayerPaths[index] = e.Value?.ToString() ?? "";
+    }
+
+    private void AddLayerPath() => pixeraLayerPaths.Add("");
+
+    private void RemoveLayerPath(int index)
+    {
+        if (index >= 0 && index < pixeraLayerPaths.Count)
+            pixeraLayerPaths.RemoveAt(index);
+    }
+
+    private async Task ShowPixeraSettingsModal(ChannelRow ch)
+    {
+        selectedSettingsChannel = ch;
+        settingsError = null;
+        settingsSuccess = null;
+        showPixeraSettingsModal = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            // Load all layer channels to populate the dropdown grouped by connector
+            var layerChannels = await db.TblContentChannels
+                .AsNoTracking()
+                .Where(c => c.SourceType == "pixera-layer")
+                .OrderBy(c => c.ConnectorId).ThenBy(c => c.Name)
+                .ToListAsync();
+
+            var connectorIdSet = layerChannels
+                .Where(l => l.ConnectorId.HasValue)
+                .Select(l => l.ConnectorId!.Value)
+                .Distinct()
+                .ToList();
+            var connectorNames = connectorIdSet.Count > 0
+                ? await db.TblCloudPlatformConnectors
+                    .AsNoTracking()
+                    .Where(c => connectorIdSet.Contains(c.ConnectorId))
+                    .ToDictionaryAsync(c => c.ConnectorId, c => c.DisplayName)
+                : new Dictionary<int, string>();
+
+            availableLayers = layerChannels.Select(l => new LayerOption
+            {
+                ExternalId    = l.ExternalId ?? "",
+                Name          = l.Name,
+                ConnectorId   = l.ConnectorId ?? 0,
+                ConnectorName = l.ConnectorId.HasValue &&
+                                connectorNames.TryGetValue(l.ConnectorId.Value, out var n) ? n : "Unknown"
+            }).ToList();
+
+            // Read current settings from the channel's ExtendedData
+            var channel = await db.TblContentChannels.FindAsync(ch.ChannelId);
+            var settings = ParsePixeraLayerSettings(channel?.ExtendedData);
+            pixeraLayerPaths       = settings?.AssignedLayerPaths ?? new();
+            pixeraTransportMode    = settings?.TransportMode ?? 1;
+            pixeraTransportLoop    = settings?.TransportLoop ?? true;
+            pixeraTransportEnabled = settings?.TransportEnabled ?? true;
+        }
+        catch (Exception ex)
+        {
+            settingsError = $"Failed to load settings: {ex.Message}";
+        }
+
+        StateHasChanged();
+    }
+
+    // ── Timeline settings modal ─────────────────────────────────────────────
+
+    private async Task ShowTimelineSettingsModal(ChannelRow ch)
+    {
+        selectedTimelineChannel = ch;
+        timelineSettingsError = null;
+        timelineSettingsSuccess = null;
+        showTimelineSettingsModal = true;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var channel = await db.TblContentChannels.FindAsync(ch.ChannelId);
+            timelineControlEnabled = ParseTimelineControlEnabled(channel?.ExtendedData);
+        }
+        catch (Exception ex)
+        {
+            timelineSettingsError = $"Failed to load settings: {ex.Message}";
+        }
+
+        StateHasChanged();
+    }
+
+    private void CloseTimelineSettingsModal()
+    {
+        showTimelineSettingsModal = false;
+        selectedTimelineChannel = null;
+        timelineSettingsError = null;
+        timelineSettingsSuccess = null;
+        StateHasChanged();
+    }
+
+    private async Task SaveTimelineSettings()
+    {
+        if (selectedTimelineChannel == null) return;
+        timelineSettingsError = null;
+        timelineSettingsSuccess = null;
+        timelineSettingsSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var channel = await db.TblContentChannels.FindAsync(selectedTimelineChannel.ChannelId);
+            if (channel == null) { timelineSettingsError = "Channel not found."; return; }
+
+            JObject root;
+            try
+            {
+                root = string.IsNullOrEmpty(channel.ExtendedData)
+                    ? new JObject()
+                    : JObject.Parse(channel.ExtendedData);
+            }
+            catch { root = new JObject(); }
+
+            root["pixeraTimelineSettings"] = new JObject
+            {
+                ["controlEnabled"] = timelineControlEnabled,
+            };
+            channel.ExtendedData = root.ToString(Newtonsoft.Json.Formatting.None);
+            await db.SaveChangesAsync();
+
+            timelineSettingsSuccess = "Settings saved.";
+        }
+        catch (Exception ex)
+        {
+            timelineSettingsError = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            timelineSettingsSaving = false;
+        }
+
+        StateHasChanged();
+    }
+
+    // Timeline control defaults to DISABLED: newly imported timelines must be
+    // explicitly opted in before the watchdog will touch their transport.
+    private static bool ParseTimelineControlEnabled(string? extendedData)
+    {
+        if (string.IsNullOrEmpty(extendedData)) return false;
+        try
+        {
+            var root = JObject.Parse(extendedData);
+            return (root["pixeraTimelineSettings"] as JObject)?["controlEnabled"]?.Value<bool>() ?? false;
+        }
+        catch { return false; }
+    }
+
+    private void ClosePixeraSettingsModal()
+    {
+        showPixeraSettingsModal = false;
+        selectedSettingsChannel = null;
+        availableLayers = new();
+        pixeraLayerPaths = new();
+        settingsError = null;
+        settingsSuccess = null;
+        StateHasChanged();
+    }
+
+    private async Task SavePixeraSettings()
+    {
+        if (selectedSettingsChannel == null) return;
+        settingsError = null;
+        settingsSuccess = null;
+        settingsSaving = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var channel = await db.TblContentChannels.FindAsync(selectedSettingsChannel.ChannelId);
+            if (channel == null) { settingsError = "Channel not found."; return; }
+
+            // Merge layer settings into ExtendedData, preserving pixeraHandleMap and any other fields
+            channel.ExtendedData = MergePixeraLayerSettings(
+                channel.ExtendedData, pixeraLayerPaths, pixeraTransportMode, pixeraTransportLoop,
+                pixeraTransportEnabled);
+            await db.SaveChangesAsync();
+
+            settingsSuccess = "Settings saved.";
+        }
+        catch (Exception ex)
+        {
+            settingsError = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            settingsSaving = false;
+        }
+
+        StateHasChanged();
+    }
+
+    private static PixeraLayerSettingsData? ParsePixeraLayerSettings(string? extendedData)
+    {
+        if (string.IsNullOrEmpty(extendedData)) return null;
+        try
+        {
+            var root = JObject.Parse(extendedData);
+            var s = root["pixeraLayerSettings"] as JObject;
+            if (s == null) return null;
+
+            // Support both the new list format (assignedLayerPaths) and the old single-path format
+            // (assignedLayerPath) so existing channel records migrate transparently on next save.
+            List<string> paths;
+            if (s["assignedLayerPaths"] is JArray arr)
+                paths = arr.Select(t => t.ToString()).Where(p => !string.IsNullOrEmpty(p)).ToList();
+            else
+            {
+                var single = s["assignedLayerPath"]?.ToString();
+                paths = string.IsNullOrEmpty(single) ? [] : [single];
+            }
+
+            return new PixeraLayerSettingsData
+            {
+                AssignedLayerPaths = paths,
+                TransportMode      = s["transportMode"]?.Value<int>() ?? 1,
+                TransportLoop      = s["transportLoop"]?.Value<bool>() ?? true,
+                TransportEnabled   = s["transportEnabled"]?.Value<bool>() ?? true,
+            };
+        }
+        catch { return null; }
+    }
+
+    private static string MergePixeraLayerSettings(
+        string? existingExtendedData, List<string> assignedLayerPaths, int transportMode, bool transportLoop,
+        bool transportEnabled)
+    {
+        JObject root;
+        try
+        {
+            root = string.IsNullOrEmpty(existingExtendedData)
+                ? new JObject()
+                : JObject.Parse(existingExtendedData);
+        }
+        catch { root = new JObject(); }
+
+        // Omit lastSyncedAt so PixeraLayerSyncService picks up the change immediately.
+        // Filter out blank entries the user may have left in the list.
+        var filtered = assignedLayerPaths.Where(p => !string.IsNullOrEmpty(p)).ToList();
+        root["pixeraLayerSettings"] = new JObject
+        {
+            ["assignedLayerPaths"] = new JArray(filtered),
+            ["transportMode"]      = transportMode,
+            ["transportLoop"]      = transportLoop,
+            ["transportEnabled"]   = transportEnabled,
+        };
+
+        return root.ToString(Newtonsoft.Json.Formatting.None);
+    }
+
+    // ── Metadata modal ──────────────────────────────────────────────────────
+
+    private async Task ShowMetadataModal(ChannelRow ch)
+    {
+        selectedMetadataChannel = ch;
+        metadataError = null;
+        metadataSuccess = null;
+        metadataAddKey = "";
+        metadataAddValue = "";
+        metadataAddFieldType = "string";
+        metadataAddOptions = new();
+        engageMetadataRecords = new();
+        inkMetadataRecords = new();
+        showMetadataModal = true;
+        StateHasChanged();
+
+        try
+        {
+            if (ch.SourceType == "engage" && ch.DeviceId != null)
+            {
+                metadataDefs = await MetadataDefinitionService.GetAllDefinitionsAsync();
+                engageMetadataRecords = await DeviceMetadataService.GetMetadataRecordsAsync(ch.DeviceId);
+            }
+            else if (ch.SourceType == "ink-folder")
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                inkMetadataRecords = await db.TblContentChannelMetadata
+                    .AsNoTracking()
+                    .Where(m => m.ChannelId == ch.ChannelId)
+                    .OrderBy(m => m.MetadataKey)
+                    .ToListAsync();
+            }
+        }
+        catch (Exception ex)
+        {
+            metadataError = $"Failed to load metadata: {ex.Message}";
+        }
+
+        StateHasChanged();
+    }
+
+    private void CloseMetadataModal()
+    {
+        showMetadataModal = false;
+        selectedMetadataChannel = null;
+        engageMetadataRecords = new();
+        inkMetadataRecords = new();
+        metadataError = null;
+        metadataSuccess = null;
+        StateHasChanged();
+    }
+
+    private void OnMetadataKeyChanged(ChangeEventArgs e)
+    {
+        metadataAddKey = e.Value?.ToString() ?? "";
+        metadataSuccess = null;
+        metadataError = null;
+        var def = metadataDefs.FirstOrDefault(d => d.MetadataKey == metadataAddKey);
+        if (def != null)
+        {
+            metadataAddFieldType = def.FieldType;
+            metadataAddOptions = def.Options;
+        }
+        else
+        {
+            metadataAddFieldType = "string";
+            metadataAddOptions = new();
+        }
+        metadataAddValue = "";
+    }
+
+    private async Task AddEngageMetadata()
+    {
+        metadataError = null;
+        metadataSuccess = null;
+        if (string.IsNullOrWhiteSpace(metadataAddKey)) { metadataError = "Please select a key."; return; }
+        if (string.IsNullOrWhiteSpace(metadataAddValue)) { metadataError = "Please enter a value."; return; }
+        if (selectedMetadataChannel?.DeviceId == null) return;
+
+        metadataSaving = true;
+        StateHasChanged();
+        try
+        {
+            await DeviceMetadataService.SetMetadataAsync(selectedMetadataChannel.DeviceId, metadataAddKey, metadataAddValue);
+            engageMetadataRecords = await DeviceMetadataService.GetMetadataRecordsAsync(selectedMetadataChannel.DeviceId);
+            metadataAddKey = "";
+            metadataAddValue = "";
+            metadataAddFieldType = "string";
+            metadataAddOptions = new();
+            metadataSuccess = "Metadata saved.";
+        }
+        catch (Exception ex) { metadataError = ex.Message; }
+        finally { metadataSaving = false; }
+        StateHasChanged();
+    }
+
+    private async Task DeleteEngageMetadata(TblDeviceMetadata record)
+    {
+        metadataError = null;
+        metadataSuccess = null;
+        try
+        {
+            await DeviceMetadataService.DeleteMetadataByIdAsync(record.DeviceMetadataId);
+            if (selectedMetadataChannel?.DeviceId != null)
+                engageMetadataRecords = await DeviceMetadataService.GetMetadataRecordsAsync(selectedMetadataChannel.DeviceId);
+            metadataSuccess = $"'{record.MetadataKey}' removed.";
+        }
+        catch (Exception ex) { metadataError = ex.Message; }
+        StateHasChanged();
+    }
+
+    private async Task AddInkMetadata()
+    {
+        metadataError = null;
+        metadataSuccess = null;
+        if (string.IsNullOrWhiteSpace(metadataAddKey)) { metadataError = "Please enter a key."; return; }
+        if (string.IsNullOrWhiteSpace(metadataAddValue)) { metadataError = "Please enter a value."; return; }
+        if (selectedMetadataChannel == null) return;
+
+        metadataSaving = true;
+        StateHasChanged();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.TblContentChannelMetadata
+                .FirstOrDefaultAsync(m => m.ChannelId == selectedMetadataChannel.ChannelId &&
+                                          m.MetadataKey == metadataAddKey);
+            if (existing != null)
+            {
+                existing.MetadataValue = metadataAddValue.Trim();
+            }
+            else
+            {
+                db.TblContentChannelMetadata.Add(new TblContentChannelMetadata
+                {
+                    ChannelId     = selectedMetadataChannel.ChannelId,
+                    MetadataKey   = metadataAddKey.Trim(),
+                    MetadataValue = metadataAddValue.Trim(),
+                    CreateDate    = DateTime.UtcNow,
+                });
+            }
+            await db.SaveChangesAsync();
+
+            inkMetadataRecords = await db.TblContentChannelMetadata
+                .AsNoTracking()
+                .Where(m => m.ChannelId == selectedMetadataChannel.ChannelId)
+                .OrderBy(m => m.MetadataKey)
+                .ToListAsync();
+
+            metadataAddKey = "";
+            metadataAddValue = "";
+            metadataSuccess = "Metadata saved.";
+        }
+        catch (Exception ex) { metadataError = ex.Message; }
+        finally { metadataSaving = false; }
+        StateHasChanged();
+    }
+
+    private async Task DeleteInkMetadata(TblContentChannelMetadata record)
+    {
+        metadataError = null;
+        metadataSuccess = null;
+        if (selectedMetadataChannel == null) return;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblContentChannelMetadata.FindAsync(record.MetadataId);
+            if (entity != null) db.TblContentChannelMetadata.Remove(entity);
+            await db.SaveChangesAsync();
+
+            inkMetadataRecords = await db.TblContentChannelMetadata
+                .AsNoTracking()
+                .Where(m => m.ChannelId == selectedMetadataChannel.ChannelId)
+                .OrderBy(m => m.MetadataKey)
+                .ToListAsync();
+
+            metadataSuccess = $"'{record.MetadataKey}' removed.";
+        }
+        catch (Exception ex) { metadataError = ex.Message; }
+        StateHasChanged();
+    }
+
+    // ── Utilities ───────────────────────────────────────────────────────────
+
+    private void ShowToast(string message)
+    {
+        toastMessage = message;
+        toastVisible = true;
+        toastTimer?.Dispose();
+        toastTimer = new Timer(_ =>
+        {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 3000, Timeout.Infinite);
+    }
+
+    public void Dispose() => toastTimer?.Dispose();
+
+    private class ChannelRow
+    {
+        public int     ChannelId     { get; set; }
+        public string  Name          { get; set; } = "";
+        public string? Description   { get; set; }
+        public string? Manufacturer  { get; set; }
+        public string? Model         { get; set; }
+        public string  SourceType    { get; set; } = "";
+        public string? DeviceId      { get; set; }
+        public int?    LocationId    { get; set; }
+        public string? LocationName  { get; set; }
+        public int?    DisplayId     { get; set; }
+        public string? DisplayName   { get; set; }
+        public string? ExternalId    { get; set; }
+        public string? ExternalName  { get; set; }
+        public int?    ConnectorId   { get; set; }
+        public string? ConnectorName { get; set; }
+    }
+
+    private class LayerOption
+    {
+        public string ExternalId    { get; set; } = "";
+        public string Name          { get; set; } = "";
+        public int    ConnectorId   { get; set; }
+        public string ConnectorName { get; set; } = "";
+    }
+
+    private class PixeraLayerSettingsData
+    {
+        public List<string> AssignedLayerPaths { get; set; } = new();
+        public int          TransportMode      { get; set; } = 1;
+        public bool         TransportLoop      { get; set; } = true;
+        public bool         TransportEnabled   { get; set; } = true;
+    }
+}

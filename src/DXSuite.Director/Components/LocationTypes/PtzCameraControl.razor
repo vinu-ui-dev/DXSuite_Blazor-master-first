@@ -1,0 +1,519 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.PtzCameras
+@using DXSuite.Director.Models
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@inject PtzCameraFactory CameraFactory
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ILogger<PtzCameraControl> Logger
+
+<div class="ptz-camera-control">
+    @if (_cameraConfig == null)
+    {
+        <div class="alert alert-warning">
+            <strong>Configuration Required</strong>
+            <p>This location requires camera configuration in ExtendedData. Please configure the camera settings.</p>
+        </div>
+    }
+    else
+    {
+        <!-- Header -->
+        <div class="camera-header">
+            <div class="header-left">
+                <div class="camera-title">
+                    <svg class="camera-icon" viewBox="0 0 24 24" fill="currentColor">
+                        <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                    </svg>
+                    <div>
+                        <h2>@_cameraConfig.Manufacturer @_cameraConfig.Model</h2>
+                        <div class="connection-badge @(_isConnected ? "connected" : "disconnected")">
+                            <span class="pulse-dot"></span>
+                            @(_isConnected ? "Connected" : "Disconnected") • @_cameraConfig.IpAddress
+                        </div>
+                    </div>
+                </div>
+            </div>
+            @if (!string.IsNullOrEmpty(_statusMessage))
+            {
+                <div class="status-toast @(_lastCommandSuccess ? "success" : "error")">
+                    @_statusMessage
+                </div>
+            }
+        </div>
+
+        <!-- Main Layout -->
+        <div class="camera-layout">
+            <!-- Camera Feed Preview -->
+            <div class="camera-preview">
+                <div class="preview-container">
+                    @if (!string.IsNullOrEmpty(_cameraConfig.RtspUrl))
+                    {
+                        <img src="/api/camera/stream/@Location.LocationId"
+                             class="camera-stream"
+                             alt="Camera Live Feed"
+                             @onerror="HandleStreamError" />
+                        <div class="preview-overlay">
+                            <div class="preview-label">LIVE</div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="no-stream">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                                <path d="M3 3L21 21" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+                            </svg>
+                            <p>No Stream Available</p>
+                            <span>Configure RTSP URL in camera settings</span>
+                        </div>
+                    }
+                </div>
+            </div>
+
+            <!-- Control Panel -->
+            <div class="control-panel">
+                <!-- PTZ Controls -->
+                <div class="control-card">
+                    <div class="card-header">
+                        <h3>PTZ Control</h3>
+                        <span class="card-subtitle">Hold buttons to move</span>
+                    </div>
+
+                    <div class="ptz-grid">
+                        <!-- Directional Pad -->
+                        <div class="directional-pad">
+                            <button class="ptz-btn up"
+                                    @onmousedown="() => StartPanTilt(0, 1)"
+                                    @onmouseup="StopMovement"
+                                    @onmouseleave="StopMovement"
+                                    @ontouchstart="() => StartPanTilt(0, 1)"
+                                    @ontouchend="StopMovement">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 14l5-5 5 5z"/></svg>
+                            </button>
+                            <div class="center-row">
+                                <button class="ptz-btn left"
+                                        @onmousedown="() => StartPanTilt(-1, 0)"
+                                        @onmouseup="StopMovement"
+                                        @onmouseleave="StopMovement"
+                                        @ontouchstart="() => StartPanTilt(-1, 0)"
+                                        @ontouchend="StopMovement">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M14 7l-5 5 5 5z"/></svg>
+                                </button>
+                                <button class="ptz-btn home" @onclick="RecallHome">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 20v-6h4v6h5v-8h3L12 3 2 12h3v8z"/></svg>
+                                </button>
+                                <button class="ptz-btn right"
+                                        @onmousedown="() => StartPanTilt(1, 0)"
+                                        @onmouseup="StopMovement"
+                                        @onmouseleave="StopMovement"
+                                        @ontouchstart="() => StartPanTilt(1, 0)"
+                                        @ontouchend="StopMovement">
+                                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M10 17l5-5-5-5z"/></svg>
+                                </button>
+                            </div>
+                            <button class="ptz-btn down"
+                                    @onmousedown="() => StartPanTilt(0, -1)"
+                                    @onmouseup="StopMovement"
+                                    @onmouseleave="StopMovement"
+                                    @ontouchstart="() => StartPanTilt(0, -1)"
+                                    @ontouchend="StopMovement">
+                                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
+                            </button>
+                        </div>
+
+                        <!-- Zoom Controls -->
+                        <div class="zoom-controls">
+                            <button class="zoom-btn zoom-in"
+                                    @onmousedown="() => StartZoom(1)"
+                                    @onmouseup="StopZoom"
+                                    @onmouseleave="StopZoom"
+                                    @ontouchstart="() => StartZoom(1)"
+                                    @ontouchend="StopZoom">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                                    <path d="M12 10h-2v2H9v-2H7V9h2V7h1v2h2v1z"/>
+                                </svg>
+                                <span>IN</span>
+                            </button>
+                            <button class="zoom-btn zoom-out"
+                                    @onmousedown="() => StartZoom(-1)"
+                                    @onmouseup="StopZoom"
+                                    @onmouseleave="StopZoom"
+                                    @ontouchstart="() => StartZoom(-1)"
+                                    @ontouchend="StopZoom">
+                                <svg viewBox="0 0 24 24" fill="currentColor">
+                                    <path d="M15.5 14h-.79l-.28-.27C15.41 12.59 16 11.11 16 9.5 16 5.91 13.09 3 9.5 3S3 5.91 3 9.5 5.91 16 9.5 16c1.61 0 3.09-.59 4.23-1.57l.27.28v.79l5 4.99L20.49 19l-4.99-5zm-6 0C7.01 14 5 11.99 5 9.5S7.01 5 9.5 5 14 7.01 14 9.5 11.99 14 9.5 14z"/>
+                                    <path d="M7 9h5v1H7z"/>
+                                </svg>
+                                <span>OUT</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Speed Controls -->
+                    <div class="speed-section">
+                        <div class="speed-control">
+                            <div class="speed-label">
+                                <span>Pan/Tilt Speed</span>
+                                <span class="speed-value">@_controlSettings.PanSpeed</span>
+                            </div>
+                            <input type="range" min="1" max="24"
+                                   @bind="_controlSettings.PanSpeed"
+                                   @bind:event="oninput"
+                                   @onchange="SaveControlSettings"
+                                   class="speed-slider" />
+                        </div>
+                        <div class="speed-control">
+                            <div class="speed-label">
+                                <span>Zoom Speed</span>
+                                <span class="speed-value">@_controlSettings.ZoomSpeed</span>
+                            </div>
+                            <input type="range" min="0" max="7"
+                                   @bind="_controlSettings.ZoomSpeed"
+                                   @bind:event="oninput"
+                                   @onchange="SaveControlSettings"
+                                   class="speed-slider" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Presets -->
+                <div class="control-card presets-card">
+                    <div class="card-header">
+                        <h3>Camera Presets</h3>
+                        <button class="btn-add" @onclick="ShowAddPresetModal">
+                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                            Add
+                        </button>
+                    </div>
+
+                    @if (_cameraConfig.Presets.Any())
+                    {
+                        <div class="presets-grid">
+                            @foreach (var preset in _cameraConfig.Presets.OrderBy(p => p.PresetNumber))
+                            {
+                                <div class="preset-card">
+                                    <div class="preset-header">
+                                        <div class="preset-number">@preset.PresetNumber</div>
+                                        <div class="preset-info">
+                                            <div class="preset-name">@preset.PresetName</div>
+                                            @if (!string.IsNullOrEmpty(preset.Description))
+                                            {
+                                                <div class="preset-desc">@preset.Description</div>
+                                            }
+                                        </div>
+                                    </div>
+                                    <div class="preset-actions">
+                                        <button class="action-btn recall" @onclick="() => RecallPreset(preset.PresetNumber)" title="Recall">
+                                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 5V1L7 6l5 5V7c3.31 0 6 2.69 6 6s-2.69 6-6 6-6-2.69-6-6H4c0 4.42 3.58 8 8 8s8-3.58 8-8-3.58-8-8-8z"/></svg>
+                                        </button>
+                                        <button class="action-btn save" @onclick="() => UpdatePreset(preset.PresetNumber)" title="Update">
+                                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/></svg>
+                                        </button>
+                                        <button class="action-btn delete" @onclick="() => DeletePreset(preset.PresetNumber)" title="Delete">
+                                            <svg viewBox="0 0 24 24" fill="currentColor"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/></svg>
+                                        </button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="empty-state">
+                            <svg viewBox="0 0 24 24" fill="currentColor">
+                                <path d="M20 6h-2.18c.11-.31.18-.65.18-1 0-1.66-1.34-3-3-3-1.05 0-1.96.54-2.5 1.35l-.5.67-.5-.68C10.96 2.54 10.05 2 9 2 7.34 2 6 3.34 6 5c0 .35.07.69.18 1H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-5-2c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zM9 4c.55 0 1 .45 1 1s-.45 1-1 1-1-.45-1-1 .45-1 1-1zm11 15H4v-2h16v2zm0-5H4V8h5.08L7 10.83 8.62 12 11 8.76l1-1.36 1 1.36L15.38 12 17 10.83 14.92 8H20v6z"/>
+                            </svg>
+                            <p>No presets configured</p>
+                            <span>Add a preset to save camera positions</span>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+</div>
+
+<!-- Add Preset Modal -->
+@if (_showAddPresetModal)
+{
+    <div class="modal-overlay" @onclick="HideAddPresetModal">
+        <div class="modal-card" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h3>Add Camera Preset</h3>
+                <button class="modal-close" @onclick="HideAddPresetModal">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+                </button>
+            </div>
+            <div class="modal-body">
+                <div class="form-field">
+                    <label>Preset Number</label>
+                    <input type="number" min="1" max="100" @bind="_newPresetNumber" />
+                    <span class="field-hint">Between 1 and 100</span>
+                </div>
+                <div class="form-field">
+                    <label>Preset Name</label>
+                    <input type="text" @bind="_newPresetName" placeholder="e.g., Podium, Stage Center" />
+                </div>
+                <div class="form-field">
+                    <label>Description <span class="optional">(optional)</span></label>
+                    <input type="text" @bind="_newPresetDescription" placeholder="e.g., Wide angle of stage area" />
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="HideAddPresetModal">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="AddPreset">Save Preset</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter]
+    public TblLocation Location { get; set; } = null!;
+
+    private CameraConfiguration? _cameraConfig;
+    private ControlSettings _controlSettings = new();
+    private IPtzCameraClient? _cameraClient;
+    private bool _isConnected = false;
+    private string _statusMessage = string.Empty;
+    private bool _lastCommandSuccess = false;
+
+    // Add Preset Modal
+    private bool _showAddPresetModal = false;
+    private int _newPresetNumber = 1;
+    private string _newPresetName = string.Empty;
+    private string _newPresetDescription = string.Empty;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadConfiguration();
+
+        if (_cameraConfig != null)
+        {
+            try
+            {
+                _cameraClient = CameraFactory.CreateClient(_cameraConfig.Manufacturer);
+                _isConnected = await _cameraClient.TestConnectionAsync(_cameraConfig.IpAddress);
+
+                if (_isConnected)
+                {
+                    SetStatus("Camera online", true);
+                }
+                else
+                {
+                    SetStatus("Unable to connect to camera", false);
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to initialize camera client");
+                SetStatus($"Error: {ex.Message}", false);
+            }
+        }
+    }
+
+    private async Task LoadConfiguration()
+    {
+        if (string.IsNullOrEmpty(Location.ExtendedData))
+        {
+            Logger.LogWarning("Location {LocationId} has no ExtendedData", Location.LocationId);
+            return;
+        }
+
+        try
+        {
+            var extendedData = JsonSerializer.Deserialize<PtzCameraExtendedData>(Location.ExtendedData);
+            if (extendedData != null)
+            {
+                _cameraConfig = extendedData.CameraConfig;
+                _controlSettings = extendedData.ControlSettings ?? new ControlSettings();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to parse ExtendedData for location {LocationId}", Location.LocationId);
+        }
+    }
+
+    private async Task SaveConfiguration()
+    {
+        if (_cameraConfig == null) return;
+
+        try
+        {
+            var extendedData = new PtzCameraExtendedData
+            {
+                CameraConfig = _cameraConfig,
+                ControlSettings = _controlSettings
+            };
+
+            var json = JsonSerializer.Serialize(extendedData);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var location = await db.TblLocations.FindAsync(Location.LocationId);
+            if (location != null)
+            {
+                location.ExtendedData = json;
+                await db.SaveChangesAsync();
+                Location.ExtendedData = json;
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save configuration");
+            SetStatus("Failed to save configuration", false);
+        }
+    }
+
+    private async Task StartPanTilt(int panDirection, int tiltDirection)
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+
+        CameraCommandResult result;
+
+        if (panDirection != 0 && tiltDirection == 0)
+        {
+            var direction = panDirection > 0 ? PanDirection.Right : PanDirection.Left;
+            result = await _cameraClient.PanAsync(_cameraConfig.IpAddress, _controlSettings.PanSpeed, direction);
+        }
+        else if (tiltDirection != 0 && panDirection == 0)
+        {
+            var direction = tiltDirection > 0 ? TiltDirection.Up : TiltDirection.Down;
+            result = await _cameraClient.TiltAsync(_cameraConfig.IpAddress, _controlSettings.TiltSpeed, direction);
+        }
+        else
+        {
+            result = await _cameraClient.StopMovementAsync(_cameraConfig.IpAddress);
+        }
+
+        if (!result.Success)
+        {
+            SetStatus($"Error: {result.ErrorMessage}", false);
+        }
+    }
+
+    private async Task StopMovement()
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+        await _cameraClient.StopMovementAsync(_cameraConfig.IpAddress);
+    }
+
+    private async Task StartZoom(int direction)
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+
+        var zoomDirection = direction > 0 ? ZoomDirection.In : ZoomDirection.Out;
+        var result = await _cameraClient.ZoomAsync(_cameraConfig.IpAddress, _controlSettings.ZoomSpeed, zoomDirection);
+
+        if (!result.Success)
+        {
+            SetStatus($"Error: {result.ErrorMessage}", false);
+        }
+    }
+
+    private async Task StopZoom()
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+        await _cameraClient.ZoomAsync(_cameraConfig.IpAddress, _controlSettings.ZoomSpeed, ZoomDirection.Stop);
+    }
+
+    private async Task RecallPreset(int presetNumber)
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+
+        var result = await _cameraClient.RecallPresetAsync(_cameraConfig.IpAddress, presetNumber);
+        SetStatus(result.Success ? $"Recalled preset {presetNumber}" : $"Error: {result.ErrorMessage}", result.Success);
+    }
+
+    private async Task RecallHome()
+    {
+        await RecallPreset(1);
+    }
+
+    private async Task UpdatePreset(int presetNumber)
+    {
+        if (_cameraClient == null || _cameraConfig == null) return;
+
+        var result = await _cameraClient.SavePresetAsync(_cameraConfig.IpAddress, presetNumber);
+        SetStatus(result.Success ? $"Updated preset {presetNumber}" : $"Error: {result.ErrorMessage}", result.Success);
+    }
+
+    private async Task DeletePreset(int presetNumber)
+    {
+        if (_cameraConfig == null) return;
+
+        var preset = _cameraConfig.Presets.FirstOrDefault(p => p.PresetNumber == presetNumber);
+        if (preset != null)
+        {
+            _cameraConfig.Presets.Remove(preset);
+            await SaveConfiguration();
+            SetStatus($"Deleted preset {presetNumber}", true);
+        }
+    }
+
+    private void ShowAddPresetModal()
+    {
+        _newPresetNumber = _cameraConfig?.Presets.Any() == true
+            ? _cameraConfig.Presets.Max(p => p.PresetNumber) + 1
+            : 1;
+        _newPresetName = string.Empty;
+        _newPresetDescription = string.Empty;
+        _showAddPresetModal = true;
+    }
+
+    private void HideAddPresetModal()
+    {
+        _showAddPresetModal = false;
+    }
+
+    private async Task AddPreset()
+    {
+        if (_cameraConfig == null || string.IsNullOrWhiteSpace(_newPresetName)) return;
+
+        if (_cameraConfig.Presets.Any(p => p.PresetNumber == _newPresetNumber))
+        {
+            SetStatus("Preset number already exists", false);
+            return;
+        }
+
+        if (_cameraClient != null)
+        {
+            var result = await _cameraClient.SavePresetAsync(_cameraConfig.IpAddress, _newPresetNumber);
+            if (!result.Success)
+            {
+                SetStatus($"Failed to save preset position: {result.ErrorMessage}", false);
+                return;
+            }
+        }
+
+        _cameraConfig.Presets.Add(new CameraPreset
+        {
+            PresetNumber = _newPresetNumber,
+            PresetName = _newPresetName,
+            Description = _newPresetDescription
+        });
+
+        await SaveConfiguration();
+        SetStatus($"Added preset {_newPresetNumber}", true);
+        HideAddPresetModal();
+    }
+
+    private async Task SaveControlSettings()
+    {
+        await SaveConfiguration();
+    }
+
+    private void SetStatus(string message, bool success)
+    {
+        _statusMessage = message;
+        _lastCommandSuccess = success;
+        StateHasChanged();
+    }
+
+    private void HandleStreamError()
+    {
+        Logger.LogWarning("Camera stream failed to load for location {LocationId}", Location.LocationId);
+        SetStatus("Camera stream unavailable", false);
+    }
+}

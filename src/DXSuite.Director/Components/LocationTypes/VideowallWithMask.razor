@@ -1,0 +1,147 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory;
+@inject NavigationManager navMan;
+@inject IDisplayOverrideService displayOverrides
+@rendermode InteractiveServer
+
+
+@if(Location != null){
+    <section class="body">
+        <div style="display: flex; gap: 10px; padding-bottom: 10px;">
+            @if (contentDisplay != null)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("/schedule/" + contentDisplay.DisplayId.ToString()))">
+                    EDIT CONTENT LAYER
+                </button>
+            }
+            @if (maskDisplay != null)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("/schedule/" + maskDisplay.DisplayId.ToString()))">
+                    EDIT MASK LAYER
+                </button>
+            }
+            <button class="dx-btn dx-btn-blue" @onclick="@(ExpandImage)">
+                @(imageIsExpanded ? "SHRINK IMAGE" : "EXPAND IMAGE")
+            </button>
+        </div>
+        @if (contentDisplay != null)
+        {
+            <div class="scroll-container">
+                <div class="image-container" style="@((contentDisplay.DisplayHeight != 0.0)? "height:" + (contentDisplay.DisplayHeight * scaleFactor).ToString() + "px;":"") @((contentDisplay.DisplayWidth != 0)? "width:" + (contentDisplay.DisplayWidth * scaleFactor).ToString() + "px;":"")">
+                    <div style="position:absolute; display:inline-block;">
+                        @if (displays != null)
+                        {
+                            @if (contentDisplay != null)
+                            {
+                                <div id="ticketCounterBackwall" class="flex-column">
+                                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="contentDisplay" ScaleFactor="scaleFactor"></DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    <div style="position:absolute; display:inline-block; @((Location.DisplayAnchorTop != 0.0)? "top:" + (Location.DisplayAnchorTop * scaleFactor).ToString() + "px;":"") @((Location.DisplayAnchorLeft != 0.0)? "left:" + (0).ToString() + "px;":"")">
+                        @if (displays != null)
+                        {
+                            @if (maskDisplay != null)
+                            {
+                                <div id="ticketCounterBackwall" class="flex-column">
+                                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="maskDisplay" ScaleFactor="scaleFactor"></DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+    public IList<TblAsset>? assets { get; set; }
+    public IList<TblDisplay>? displays { get; set; }
+
+    public TblDisplay? contentDisplay { get; set; }
+    public TblDisplay? maskDisplay { get; set; }
+
+    public double scaleFactor { get; set; } = 0.2;
+    public bool imageIsExpanded = false;
+
+    //For Future Use: background-size:1920px 1080px; background-repeat:no-repeat;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                await RefreshData(dataContext);
+            }
+
+        }
+    }
+
+    private async Task RefreshData(IDirectorDBContext dataContext)
+    {
+        if (Location != null)
+        {
+            assets = await dataContext.TblAssets.Where(x => x.LocationId == Location.LocationId).Include(d => d.AssetGroup).Include(e => e.AssetType).Include(f => f.Constraint).ToListAsync();
+            displays = await dataContext.TblDisplays.Where(x => x.LocationId == Location.LocationId).Include(d => d.OverrideAsset).Include(e => e.TblScheduleEvents).Include(f => f.Constraint).ToListAsync();
+
+            if (displays != null)
+            {
+                contentDisplay = displays.FirstOrDefault(x => x.DisplayTypeId == (int)Types.DisplayType.BackwallDisplay);
+                maskDisplay = displays.FirstOrDefault(x => x.DisplayTypeId == (int)Types.DisplayType.BackwallMask);
+            }
+        }
+    }
+
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset != null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+                {
+                    await RefreshData(dataContext);
+                }
+            }
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            if (await displayOverrides.ReturnToScheduleAsync(displayId))
+            {
+                await RefreshData(dataContext);
+            }
+        }
+    }
+
+    private void ExpandImage()
+    {
+        imageIsExpanded = !imageIsExpanded;
+        if(imageIsExpanded)
+        {
+            scaleFactor = 1.0;
+        }
+        else
+        {
+            scaleFactor = 0.2;
+        }
+    }
+
+}

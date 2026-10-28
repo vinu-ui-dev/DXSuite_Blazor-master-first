@@ -1,0 +1,109 @@
+@using DXSuite.Design.Models
+@inject INetsuiteService NetsuiteService
+
+@if (Visible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseForm">
+        <div class="dx-modal" style="min-width:480px; max-width:600px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>@Title</span>
+                <button class="dx-modal-close" @onclick="CloseForm">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+
+                @* ── Description textarea ──────────────────────────────────────── *@
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Description</label>
+                    <textarea class="dx-form-control" rows="5" style="resize:vertical"
+                              @bind="_descriptionText"
+                              placeholder="Text to display in the NetSuite estimate. Each line becomes a separate line in the PDF." />
+                </div>
+
+                @* ── Location selector ─────────────────────────────────────────── *@
+                <div class="dx-form-group">
+                    <label class="dx-form-label">
+                        Location <span style="color:var(--dx-red,#dc3545)">*</span>
+                    </label>
+                    @if (_locations is null)
+                    {
+                        <div style="font-size:.8rem; color:var(--dx-text-muted,#6c757d)">Loading…</div>
+                    }
+                    else
+                    {
+                        <select class="dx-form-control" @bind="_selectedLocationId">
+                            <option value="">— Select location —</option>
+                            @foreach (var loc in _locations)
+                            {
+                                <option value="@loc.Id">@loc.Name</option>
+                            }
+                        </select>
+                    }
+                </div>
+
+                @if (_error is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@_error</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseForm">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@_saving">
+                    @(_saving ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public string Title { get; set; } = "Edit Description Row";
+    [Parameter] public string? InitialDescriptionText { get; set; }
+    [Parameter] public string? InitialLocationId { get; set; }
+    [Parameter] public EventCallback<DescriptionRowResult> OnSave { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private string _descriptionText = "";
+    private string _selectedLocationId = "";
+    private List<NetsuiteLocation>? _locations;
+
+    private string? _error;
+    private bool _saving;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Visible && _locations is null)
+            _locations = await NetsuiteService.GetLocationsAsync();
+
+        if (Visible)
+        {
+            _descriptionText = InitialDescriptionText ?? "";
+            _selectedLocationId = InitialLocationId ?? "";
+            _error = null;
+        }
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrEmpty(_selectedLocationId)) { _error = "Select a location."; return; }
+
+        var locationName = _locations?.FirstOrDefault(l => l.Id == _selectedLocationId)?.Name ?? _selectedLocationId;
+
+        _saving = true;
+        try
+        {
+            await OnSave.InvokeAsync(new DescriptionRowResult(
+                string.IsNullOrWhiteSpace(_descriptionText) ? null : _descriptionText,
+                _selectedLocationId,
+                locationName));
+        }
+        finally { _saving = false; }
+    }
+
+    private async Task CloseForm()
+    {
+        _error = null;
+        await OnClose.InvokeAsync();
+    }
+}

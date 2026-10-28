@@ -1,0 +1,124 @@
+@using DXSuite.Shared.Services
+@inject ILanguageProvider languageProvider
+
+<div class="dropdown">
+    <!-- Dropdown Button with Stylized Arrow -->
+
+    <button class="dx-btn dx-btn-blue"
+            @onclick="ShowLanguages">
+        @(!string.IsNullOrWhiteSpace(selectedLanguageName) ? selectedLanguageName : "Language")
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"
+             style="transition: transform 0.2s ease; transform: @(showLanguages ? "rotate(180deg)" : "rotate(0deg)")">
+            <path d="M7 10l5 5 5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+        </svg>
+    </button>
+
+    <!-- Dropdown Menu -->
+    @if (showLanguages)
+    {
+        <div class="dropdown-menu show language-dropdown-menu">
+            <!-- Search Input Field at the Top -->
+            <div class="px-3 pb-2">
+                <input type="text" class="dx-form-control language-search-input"
+                       @bind="languageSearchTerm" @oninput="OnLanguageSearchInput"
+                       placeholder="Search languages..." />
+            </div>
+
+            <!-- Clear Selection Button -->
+            <div class="px-3 pb-2 text-center">
+                <button class="btn btn-sm btn-outline-secondary clear-language-btn" @onclick="ClearSelectedLanguage">
+                    Clear Selection
+                </button>
+            </div>
+
+            <!-- Language List (Filtered) -->
+            <div class="language-dropdown-list">
+                @foreach (var language in filteredLanguages)
+                {
+                    <button class="dropdown-item language-dropdown-item"
+                            @onclick="() => SelectLanguage(language)">
+                        <span class="scrolling-text">
+                            @if (language.LanguageName.Length > 30)
+                            {
+                                <span class="leading-space"></span>
+
+                                @language.LanguageName
+                            }
+                            else
+                            {
+                                @language.LanguageName
+                            }
+                        </span>
+                    </button>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+
+@code {
+    [Parameter] public string? SelectedLanguageCode { get; set; }
+    [Parameter] public EventCallback<string> SelectedLanguageCodeChanged { get; set; }
+
+    private List<LanguageInfo> allLanguages = new();
+    private List<LanguageInfo> filteredLanguages = new();
+    private LanguageInfo? selectedLanguage = null;
+    private string languageSearchTerm = "";
+    private string selectedLanguageName = "";
+    private bool showLanguages = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var languages = await languageProvider.GetLanguagesAsync();
+        allLanguages = languages.OrderBy(x => x.LanguageName).ToList();
+        filteredLanguages = allLanguages;
+    }
+
+    private async void SelectLanguage(LanguageInfo language)
+    {
+        selectedLanguage = language;
+        selectedLanguageName = language.LanguageName;
+        SelectedLanguageCode = language.LanguageCode;
+        showLanguages = false;
+
+        languageSearchTerm = "";
+        filteredLanguages = allLanguages;
+
+        await SelectedLanguageCodeChanged.InvokeAsync(SelectedLanguageCode);
+    }
+
+    private void OnLanguageSearchInput(ChangeEventArgs e)
+    {
+        languageSearchTerm = e.Value?.ToString() ?? "";
+        showLanguages = true;
+
+        if (languageSearchTerm.Length >= 1)
+        {
+            filteredLanguages = allLanguages
+                .Where(c => c.LanguageName.Contains(languageSearchTerm, StringComparison.OrdinalIgnoreCase)).ToList();
+        }
+        else
+        {
+            filteredLanguages = allLanguages;
+        }
+    }
+
+    private void ShowLanguages()
+    {
+        showLanguages = !showLanguages;
+    }
+
+    private async void ClearSelectedLanguage()
+    {
+        selectedLanguage = null;
+        selectedLanguageName = "";
+        SelectedLanguageCode = "";
+        showLanguages = false;
+
+        languageSearchTerm = "";
+        filteredLanguages = allLanguages;
+
+        await SelectedLanguageCodeChanged.InvokeAsync(SelectedLanguageCode);
+    }
+}

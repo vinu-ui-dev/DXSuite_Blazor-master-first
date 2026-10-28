@@ -1,0 +1,947 @@
+@using DXSuite.Sentinel.Entities
+@using DXSuite.Connectors.Services.Itsm
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@inject ISentinelDBContext sentinelDb
+@inject JsmDiscoveryService jsmDiscovery
+@inject ILogger<SentinelItsmTab> Logger
+@inject ItsmCredentialProtector credentialProtector
+
+<div class="tab-panel">
+    <div class="panel-header">
+        <h3>ITSM Connections</h3>
+        <button class="dx-btn dx-btn-blue" @onclick="StartAddItsmConnection">ADD CONNECTION</button>
+    </div>
+    <div class="panel-content">
+        @if (showItsmForm)
+        {
+            <div class="sentinel-inline-form">
+                <h4>@(editingItsm?.ConnectionId > 0 ? "Edit Connection" : "New Connection")</h4>
+
+                @* --- Step 0: Adapter Type Selection --- *@
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Adapter Type</label>
+                        <select class="dx-form-control" @bind="adapterType" @bind:after="OnAdapterTypeChanged">
+                            <option value="JiraSM">Jira Service Management</option>
+                            <option value="rest-generic">REST Generic</option>
+                        </select>
+                    </div>
+                </div>
+
+                @if (adapterType == "JiraSM")
+                {
+                    @* --- JSM Step 1: Credentials --- *@
+                    <div class="wizard-step">
+                        <div class="step-header">
+                            <span class="step-number">1</span>
+                            <span class="step-title">Credentials</span>
+                            @if (connectionTested == true)
+                            {
+                                <span class="step-badge badge-green">Connected</span>
+                            }
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label>Jira Cloud URL</label>
+                                <input class="dx-form-control" placeholder="https://yourcompany.atlassian.net" @bind="jsmUrl" />
+                            </div>
+                            <div class="form-group">
+                                <label>Email</label>
+                                <input class="dx-form-control" placeholder="user@company.com" @bind="jsmEmail" />
+                            </div>
+                            <div class="form-group">
+                                <label>API Token</label>
+                                <input type="password" class="dx-form-control" @bind="jsmApiToken" />
+                            </div>
+                        </div>
+                        <div class="form-actions">
+                            <button class="dx-btn dx-btn-blue" @onclick="TestJsmConnection" disabled="@isTesting">
+                                @(isTesting ? "TESTING..." : "TEST CONNECTION")
+                            </button>
+                            @if (connectionTested == true)
+                            {
+                                <button class="dx-btn dx-btn-blue" @onclick="FetchServiceDesks" disabled="@isFetchingDesks">
+                                    @(isFetchingDesks ? "FETCHING..." : "FETCH SERVICE DESKS")
+                                </button>
+                            }
+                        </div>
+                        @if (connectionTested == false)
+                        {
+                            <div class="form-message error">Connection failed. Check your URL, email, and API token.</div>
+                        }
+                    </div>
+
+                    @* --- JSM Step 2: Service Desk Selection --- *@
+                    @if (serviceDesks != null && serviceDesks.Count > 0)
+                    {
+                        <div class="wizard-step">
+                            <div class="step-header">
+                                <span class="step-number">2</span>
+                                <span class="step-title">Service Desk</span>
+                                @if (!string.IsNullOrEmpty(selectedDeskId))
+                                {
+                                    <span class="step-badge badge-green">Selected</span>
+                                }
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label>Select Service Desk</label>
+                                    <select class="dx-form-control" @bind="selectedDeskId" @bind:after="OnServiceDeskChanged">
+                                        <option value="">— Select a service desk —</option>
+                                        @foreach (var desk in serviceDesks)
+                                        {
+                                            <option value="@desk.Id">@desk.ProjectName (@desk.ProjectKey)</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                            @if (isFetchingRequestTypes)
+                            {
+                                <div class="form-message">Fetching request types...</div>
+                            }
+                        </div>
+                    }
+
+                    @* --- JSM Step 3: Request Types + Save --- *@
+                    @if (requestTypes != null && requestTypes.Count > 0)
+                    {
+                        <div class="wizard-step">
+                            <div class="step-header">
+                                <span class="step-number">3</span>
+                                <span class="step-title">Request Types & Settings</span>
+                            </div>
+
+                            <div class="request-types-list">
+                                <div class="rt-header">
+                                    <div class="rt-col-name">Name</div>
+                                    <div class="rt-col-desc">Description</div>
+                                    <div class="rt-col-help">Help Text</div>
+                                    <div class="rt-col-default">Default</div>
+                                </div>
+                                @foreach (var rt in requestTypes)
+                                {
+                                    <div class="rt-row @(rt.Id == defaultRequestTypeId ? "rt-selected" : "")">
+                                        <div class="rt-col-name">@rt.Name</div>
+                                        <div class="rt-col-desc">@(string.IsNullOrEmpty(rt.Description) ? "—" : rt.Description)</div>
+                                        <div class="rt-col-help">@(string.IsNullOrEmpty(rt.HelpText) ? "—" : rt.HelpText)</div>
+                                        <div class="rt-col-default">
+                                            <input type="radio" name="defaultRt" checked="@(rt.Id == defaultRequestTypeId)" @onchange="@(() => defaultRequestTypeId = rt.Id)" />
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="form-row" style="margin-top: 16px;">
+                                <div class="form-group" style="flex: 0 0 auto; min-width: auto;">
+                                    <label>
+                                        <input type="checkbox" class="dx-checkbox" @bind="jsmIsActive" /> Active
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="form-actions">
+                                <button class="dx-btn dx-btn-blue" @onclick="SaveJsmConnection">SAVE</button>
+                                <button class="dx-btn dx-btn-gray" @onclick="CancelItsmForm">CANCEL</button>
+                            </div>
+                        </div>
+                    }
+                }
+                else
+                {
+                    @* --- REST Generic: simple form --- *@
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Server</label>
+                            <input class="dx-form-control" @bind="editingItsm!.Server" />
+                        </div>
+                        <div class="form-group">
+                            <label>Token</label>
+                            <input class="dx-form-control" @bind="editingItsm!.Token" />
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Config JSON</label>
+                        <textarea class="dx-form-control" rows="4" @bind="editingItsm!.ConfigJson"></textarea>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" class="dx-checkbox" @bind="editingItsm!.IsActive" /> Active
+                        </label>
+                    </div>
+                    <div class="form-actions">
+                        <button class="dx-btn dx-btn-blue" @onclick="SaveRestGenericConnection">SAVE</button>
+                        <button class="dx-btn dx-btn-gray" @onclick="CancelItsmForm">CANCEL</button>
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(itsmMessage))
+                {
+                    <div class="form-message @(itsmMessageIsError ? "error" : "success")">@itsmMessage</div>
+                }
+            </div>
+        }
+
+        @if (itsmConnections != null && itsmConnections.Any())
+        {
+            <div class="connections-cards">
+                @foreach (var conn in itsmConnections)
+                {
+                    var jsmCfg = TryParseJsmConfig(conn.ConfigJson);
+
+                    <div class="connection-card">
+                        <div class="card-header-row">
+                            <span class="card-adapter-type">@FormatAdapterType(conn.AdapterType)</span>
+                            <span class="active-badge @(conn.IsActive ? "badge-green" : "badge-gray")">@(conn.IsActive ? "Active" : "Inactive")</span>
+                        </div>
+                        <div class="card-detail"><strong>Server:</strong> @conn.Server</div>
+                        <div class="card-detail"><strong>Email:</strong> @conn.UserName</div>
+
+                        @if (jsmCfg != null && !string.IsNullOrEmpty(jsmCfg.ServiceDeskId))
+                        {
+                            <div class="card-detail">
+                                <strong>Service Desk:</strong> @jsmCfg.ServiceDeskName
+                                <span class="project-key-badge">@jsmCfg.ProjectKey</span>
+                            </div>
+                            <div class="card-detail">
+                                <strong>Request Types:</strong> @jsmCfg.RequestTypes.Count available
+                            </div>
+                            @if (!string.IsNullOrEmpty(jsmCfg.DefaultRequestTypeId))
+                            {
+                                var defaultRt = jsmCfg.RequestTypes.FirstOrDefault(r => r.Id == jsmCfg.DefaultRequestTypeId);
+                                if (defaultRt != null)
+                                {
+                                    <div class="card-detail"><strong>Default:</strong> @defaultRt.Name</div>
+                                }
+                            }
+                        }
+
+                        <div class="card-actions">
+                            <button class="action-link" @onclick="@(() => TestSavedConnection(conn))">Test</button>
+                            <button class="action-link" @onclick="@(() => EditItsmConnection(conn))">Edit</button>
+                            <button class="action-link danger" @onclick="@(() => DeleteItsmConnection(conn))">Delete</button>
+                        </div>
+                        @if (testResultConnId == conn.ConnectionId && testResultMessage != null)
+                        {
+                            <div class="form-message @(testResultSuccess ? "success" : "error")">@testResultMessage</div>
+                        }
+                    </div>
+                }
+            </div>
+        }
+        else if (!showItsmForm)
+        {
+            <div class="no-devices">
+                <h4>No ITSM connections configured</h4>
+                <p>Add an ITSM connection to enable automated ticket creation.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    // --- Shared state ---
+    private List<ItsmConnection>? itsmConnections;
+    private ItsmConnection? editingItsm;
+    private bool showItsmForm = false;
+    private string? itsmMessage;
+    private bool itsmMessageIsError = false;
+    private string adapterType = "JiraSM";
+
+    // --- JSM wizard state ---
+    private string jsmUrl = string.Empty;
+    private string jsmEmail = string.Empty;
+    private string jsmApiToken = string.Empty;
+    private bool? connectionTested;
+    private bool isTesting = false;
+    private bool isFetchingDesks = false;
+    private bool isFetchingRequestTypes = false;
+    private bool jsmIsActive = true;
+
+    private List<JsmServiceDesk>? serviceDesks;
+    private string selectedDeskId = string.Empty;
+    private List<JsmRequestType>? requestTypes;
+    private string? defaultRequestTypeId;
+
+    // --- Saved connection test state ---
+    private int? testResultConnId;
+    private string? testResultMessage;
+    private bool testResultSuccess;
+
+    // --- Editing tracking ---
+    private int editingConnectionId;
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        PropertyNameCaseInsensitive = true
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            itsmConnections = await sentinelDb.ItsmConnections
+                .AsNoTracking()
+                .OrderBy(c => c.Priority)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading ITSM connections");
+        }
+    }
+
+    private void StartAddItsmConnection()
+    {
+        editingConnectionId = 0;
+        editingItsm = new ItsmConnection
+        {
+            CustomerId = "RAD",
+            AdapterType = "JiraSM",
+            Priority = 1,
+            IsActive = true,
+            CreateDate = DateTime.UtcNow
+        };
+        adapterType = "JiraSM";
+        ResetJsmWizard();
+        showItsmForm = true;
+        itsmMessage = null;
+    }
+
+    private void EditItsmConnection(ItsmConnection conn)
+    {
+        editingConnectionId = conn.ConnectionId;
+        editingItsm = new ItsmConnection
+        {
+            ConnectionId = conn.ConnectionId,
+            CustomerId = conn.CustomerId,
+            AdapterType = conn.AdapterType,
+            Server = conn.Server,
+            UserName = conn.UserName,
+            Password = conn.AdapterType == "rest-generic" ? credentialProtector.Decrypt(conn.Password) : conn.Password,
+            Token = conn.Token,
+            Priority = conn.Priority,
+            IsActive = conn.IsActive,
+            ConfigJson = conn.ConfigJson,
+            CreateDate = conn.CreateDate
+        };
+        adapterType = conn.AdapterType;
+
+        if (adapterType == "JiraSM")
+        {
+            jsmUrl = conn.Server ?? string.Empty;
+            jsmEmail = conn.UserName ?? string.Empty;
+            jsmApiToken = credentialProtector.Decrypt(conn.Token) ?? string.Empty;
+            jsmIsActive = conn.IsActive;
+
+            var jsmCfg = TryParseJsmConfig(conn.ConfigJson);
+            if (jsmCfg != null)
+            {
+                selectedDeskId = jsmCfg.ServiceDeskId;
+                requestTypes = jsmCfg.RequestTypes;
+                defaultRequestTypeId = jsmCfg.DefaultRequestTypeId;
+                // Pre-populate service desks with the saved one so the dropdown shows it
+                serviceDesks = new List<JsmServiceDesk>
+                {
+                    new JsmServiceDesk
+                    {
+                        Id = jsmCfg.ServiceDeskId,
+                        ProjectName = jsmCfg.ServiceDeskName,
+                        ProjectKey = jsmCfg.ProjectKey
+                    }
+                };
+                connectionTested = true;
+            }
+            else
+            {
+                ResetJsmWizard();
+            }
+        }
+
+        showItsmForm = true;
+        itsmMessage = null;
+    }
+
+    private void OnAdapterTypeChanged()
+    {
+        if (editingItsm != null)
+            editingItsm.AdapterType = adapterType;
+        ResetJsmWizard();
+    }
+
+    // --- JSM Wizard Actions ---
+
+    private async Task TestJsmConnection()
+    {
+        if (string.IsNullOrWhiteSpace(jsmUrl) || string.IsNullOrWhiteSpace(jsmEmail) || string.IsNullOrWhiteSpace(jsmApiToken))
+        {
+            itsmMessage = "Please fill in URL, email, and API token.";
+            itsmMessageIsError = true;
+            return;
+        }
+
+        isTesting = true;
+        itsmMessage = null;
+        connectionTested = null;
+        serviceDesks = null;
+        requestTypes = null;
+        selectedDeskId = string.Empty;
+
+        try
+        {
+            connectionTested = await jsmDiscovery.TestConnectionAsync(jsmUrl, jsmEmail, jsmApiToken);
+        }
+        finally
+        {
+            isTesting = false;
+        }
+    }
+
+    private async Task FetchServiceDesks()
+    {
+        isFetchingDesks = true;
+        serviceDesks = null;
+        requestTypes = null;
+        selectedDeskId = string.Empty;
+        itsmMessage = null;
+
+        try
+        {
+            serviceDesks = await jsmDiscovery.GetServiceDesksAsync(jsmUrl, jsmEmail, jsmApiToken);
+            if (serviceDesks.Count == 0)
+            {
+                itsmMessage = "No service desks found. Ensure the API token has JSM permissions.";
+                itsmMessageIsError = true;
+            }
+        }
+        finally
+        {
+            isFetchingDesks = false;
+        }
+    }
+
+    private async Task OnServiceDeskChanged()
+    {
+        requestTypes = null;
+        defaultRequestTypeId = null;
+
+        if (string.IsNullOrEmpty(selectedDeskId))
+            return;
+
+        isFetchingRequestTypes = true;
+        try
+        {
+            requestTypes = await jsmDiscovery.GetRequestTypesAsync(jsmUrl, jsmEmail, jsmApiToken, selectedDeskId);
+            if (requestTypes.Count > 0)
+                defaultRequestTypeId = requestTypes[0].Id;
+        }
+        finally
+        {
+            isFetchingRequestTypes = false;
+        }
+    }
+
+    private async Task SaveJsmConnection()
+    {
+        if (string.IsNullOrEmpty(selectedDeskId) || serviceDesks == null)
+        {
+            itsmMessage = "Please select a service desk.";
+            itsmMessageIsError = true;
+            return;
+        }
+
+        var selectedDesk = serviceDesks.FirstOrDefault(d => d.Id == selectedDeskId);
+        var jsmConfig = new JsmConnectionConfig
+        {
+            ServiceDeskId = selectedDeskId,
+            ServiceDeskName = selectedDesk?.ProjectName ?? string.Empty,
+            ProjectKey = selectedDesk?.ProjectKey ?? string.Empty,
+            RequestTypes = requestTypes ?? new(),
+            DefaultRequestTypeId = defaultRequestTypeId
+        };
+
+        var configJson = JsonSerializer.Serialize(jsmConfig, JsonOptions);
+
+        try
+        {
+            if (editingConnectionId > 0)
+            {
+                var existing = await sentinelDb.ItsmConnections.FindAsync(editingConnectionId);
+                if (existing != null)
+                {
+                    existing.AdapterType = "JiraSM";
+                    existing.Server = jsmUrl;
+                    existing.UserName = jsmEmail;
+                    existing.Token = credentialProtector.Encrypt(jsmApiToken);
+                    existing.Priority = 1;
+                    existing.IsActive = jsmIsActive;
+                    existing.ConfigJson = configJson;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                var newConn = new ItsmConnection
+                {
+                    CustomerId = "RAD",
+                    AdapterType = "JiraSM",
+                    Server = jsmUrl,
+                    UserName = jsmEmail,
+                    Token = credentialProtector.Encrypt(jsmApiToken),
+                    Priority = 1,
+                    IsActive = jsmIsActive,
+                    ConfigJson = configJson,
+                    CreateDate = DateTime.UtcNow
+                };
+                sentinelDb.ItsmConnections.Add(newConn);
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            showItsmForm = false;
+            itsmMessage = "Connection saved successfully.";
+            itsmMessageIsError = false;
+
+            itsmConnections = await sentinelDb.ItsmConnections
+                .AsNoTracking()
+                .OrderBy(c => c.Priority)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            itsmMessage = $"Error saving connection: {ex.Message}";
+            itsmMessageIsError = true;
+        }
+    }
+
+    private async Task SaveRestGenericConnection()
+    {
+        if (editingItsm == null) return;
+
+        try
+        {
+            if (editingItsm.ConnectionId > 0)
+            {
+                var existing = await sentinelDb.ItsmConnections.FindAsync(editingItsm.ConnectionId);
+                if (existing != null)
+                {
+                    existing.AdapterType = editingItsm.AdapterType;
+                    existing.Server = editingItsm.Server;
+                    existing.UserName = editingItsm.UserName;
+                    existing.Password = credentialProtector.Encrypt(editingItsm.Password);
+                    existing.Token = editingItsm.Token;
+                    existing.Priority = editingItsm.Priority;
+                    existing.IsActive = editingItsm.IsActive;
+                    existing.ConfigJson = editingItsm.ConfigJson;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                editingItsm.Password = credentialProtector.Encrypt(editingItsm.Password);
+                sentinelDb.ItsmConnections.Add(editingItsm);
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            showItsmForm = false;
+            itsmMessage = "Connection saved successfully.";
+            itsmMessageIsError = false;
+
+            itsmConnections = await sentinelDb.ItsmConnections
+                .AsNoTracking()
+                .OrderBy(c => c.Priority)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            itsmMessage = $"Error saving connection: {ex.Message}";
+            itsmMessageIsError = true;
+        }
+    }
+
+    private async Task TestSavedConnection(ItsmConnection conn)
+    {
+        testResultConnId = conn.ConnectionId;
+        testResultMessage = "Testing...";
+        testResultSuccess = false;
+
+        try
+        {
+            var result = await jsmDiscovery.TestConnectionAsync(
+                conn.Server ?? string.Empty,
+                conn.UserName ?? string.Empty,
+                credentialProtector.Decrypt(conn.Token) ?? string.Empty);
+
+            testResultMessage = result ? "Connection successful" : "Connection failed";
+            testResultSuccess = result;
+        }
+        catch (Exception ex)
+        {
+            testResultMessage = $"Test failed: {ex.Message}";
+            testResultSuccess = false;
+        }
+    }
+
+    private async Task DeleteItsmConnection(ItsmConnection conn)
+    {
+        try
+        {
+            var existing = await sentinelDb.ItsmConnections.FindAsync(conn.ConnectionId);
+            if (existing != null)
+            {
+                sentinelDb.ItsmConnections.Remove(existing);
+                await sentinelDb.SaveChangesAsync();
+            }
+
+            itsmConnections = await sentinelDb.ItsmConnections
+                .AsNoTracking()
+                .OrderBy(c => c.Priority)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            itsmMessage = $"Error deleting connection: {ex.Message}";
+            itsmMessageIsError = true;
+        }
+    }
+
+    private void CancelItsmForm()
+    {
+        showItsmForm = false;
+        editingItsm = null;
+        itsmMessage = null;
+        ResetJsmWizard();
+    }
+
+    private void ResetJsmWizard()
+    {
+        jsmUrl = string.Empty;
+        jsmEmail = string.Empty;
+        jsmApiToken = string.Empty;
+        connectionTested = null;
+        serviceDesks = null;
+        requestTypes = null;
+        selectedDeskId = string.Empty;
+        defaultRequestTypeId = null;
+        jsmIsActive = true;
+    }
+
+    private static JsmConnectionConfig? TryParseJsmConfig(string? configJson)
+    {
+        if (string.IsNullOrWhiteSpace(configJson))
+            return null;
+        try
+        {
+            return JsonSerializer.Deserialize<JsmConnectionConfig>(configJson, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+                PropertyNameCaseInsensitive = true
+            });
+        }
+        catch { return null; }
+    }
+
+    private static string FormatAdapterType(string adapterType) => adapterType switch
+    {
+        "JiraSM" => "Jira Service Management",
+        "rest-generic" => "REST Generic",
+        _ => adapterType
+    };
+}
+
+<style>
+    .panel-header {
+        background-color: #CCCCCC;
+        color: #333333;
+        padding: 16px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        flex-wrap: wrap;
+        gap: 12px;
+    }
+
+    .panel-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+    }
+
+    .panel-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+        color: #333333;
+    }
+
+    .sentinel-inline-form {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .sentinel-inline-form h4 {
+        margin: 0 0 16px 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+        color: #333;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .form-group {
+        flex: 1;
+        min-width: 200px;
+        margin-bottom: 8px;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 4px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .form-group .dx-form-control {
+        font-size: 14px;
+        margin-top: 0;
+    }
+
+    .form-group textarea.dx-form-control {
+        font-family: monospace;
+        font-size: 13px;
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .form-message {
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .form-message.success {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    .form-message.error {
+        background: #ffebee;
+        color: #c62828;
+    }
+
+    /* --- Wizard Steps --- */
+
+    .wizard-step {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 16px;
+        margin-bottom: 16px;
+        background: #fff;
+    }
+
+    .step-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        margin-bottom: 14px;
+    }
+
+    .step-number {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: #0071BC;
+        color: white;
+        font-size: 13px;
+        font-weight: 700;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .step-title {
+        font-family: "BAHNSCHRIFT";
+        font-size: 15px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .step-badge {
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-family: "BAHNSCHRIFT";
+        margin-left: auto;
+    }
+
+    /* --- Request Types List --- */
+
+    .request-types-list {
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        overflow: hidden;
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .rt-header {
+        display: grid;
+        grid-template-columns: 1.2fr 2fr 2fr 60px;
+        gap: 8px;
+        padding: 8px 12px;
+        background: #4D4D4D;
+        color: white;
+        font-family: "BAHNSCHRIFT";
+        font-size: 12px;
+        text-transform: uppercase;
+    }
+
+    .rt-row {
+        display: grid;
+        grid-template-columns: 1.2fr 2fr 2fr 60px;
+        gap: 8px;
+        padding: 8px 12px;
+        border-bottom: 1px solid #f0f0f0;
+        font-size: 13px;
+        align-items: center;
+    }
+
+    .rt-row:last-child {
+        border-bottom: none;
+    }
+
+    .rt-row:hover {
+        background: #f8f9fa;
+    }
+
+    .rt-selected {
+        background: #e3f2fd;
+    }
+
+    .rt-col-desc, .rt-col-help {
+        color: #666;
+        font-size: 12px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* --- Connection Cards --- */
+
+    .connections-cards {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .connection-card {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 16px;
+        background: #fff;
+    }
+
+    .card-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 10px;
+    }
+
+    .card-adapter-type {
+        font-family: "BAHNSCHRIFT";
+        font-size: 15px;
+        font-weight: 600;
+        color: #333;
+    }
+
+    .card-detail {
+        font-size: 13px;
+        color: #555;
+        margin-bottom: 4px;
+    }
+
+    .card-detail strong {
+        color: #333;
+    }
+
+    .project-key-badge {
+        display: inline-block;
+        padding: 1px 8px;
+        margin-left: 6px;
+        border-radius: 10px;
+        background: #e3f2fd;
+        color: #0071BC;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .card-actions {
+        margin-top: 10px;
+        padding-top: 10px;
+        border-top: 1px solid #f0f0f0;
+    }
+
+    /* --- Shared --- */
+
+    .active-badge {
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .badge-green { background: #e8f5e9; color: #2e7d32; }
+    .badge-gray { background: #f5f5f5; color: #616161; }
+
+    .action-link {
+        color: #0071BC;
+        text-decoration: none;
+        font-size: 13px;
+        font-family: "BAHNSCHRIFT";
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+        margin-right: 12px;
+    }
+
+    .action-link:hover {
+        text-decoration: underline;
+    }
+
+    .action-link.danger {
+        color: #c62828;
+    }
+
+    .no-devices {
+        text-align: center;
+        padding: 40px 20px;
+        color: #666;
+    }
+
+    .no-devices h4 {
+        margin-bottom: 8px;
+    }
+</style>

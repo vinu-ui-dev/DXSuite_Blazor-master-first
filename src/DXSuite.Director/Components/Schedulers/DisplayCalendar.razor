@@ -1,0 +1,663 @@
+@using DXSuite.Director.Entities
+@using Newtonsoft.Json
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+@* Outlook-style week/month calendar over TblScheduleEvent recurrence rules.
+   Entries are expanded into per-day occurrences for the visible range; an
+   overnight window (StartTime > EndTime) renders as two same-day segments,
+   matching the runtime evaluation in DisplayItem.GetActiveEvent. All gestures
+   land in the host page's editor modal — nothing is saved from here. *@
+
+<style>
+    .dcal-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 12px;
+    }
+
+    .dcal-toolbar-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .dcal-range-label {
+        font-weight: 700;
+        color: #333333;
+        font-size: 16px;
+        min-width: 190px;
+        text-align: center;
+    }
+
+    .dcal-view-btn {
+        padding: 8px 18px;
+    }
+
+    .dcal-view-btn.active {
+        pointer-events: none;
+        opacity: 0.75;
+    }
+
+    /* ── Week view ──
+       Header and all-day rows live INSIDE the scroll container as sticky rows
+       so they share its scrollbar-adjusted width and stay column-aligned. */
+    .dcal-week-header {
+        display: grid;
+        grid-template-columns: 60px repeat(7, minmax(0, 1fr));
+        border-bottom: 2px solid #B3B3B3;
+        position: sticky;
+        top: 0;
+        z-index: 30;
+        background: #ffffff;
+        height: 46px;
+    }
+
+    .dcal-week-header-cell {
+        padding: 4px;
+        text-align: center;
+        font-weight: 700;
+        color: #333333;
+        font-size: 13px;
+        line-height: 1.4;
+    }
+
+    .dcal-week-header-cell.today {
+        color: var(--dx-blue);
+    }
+
+    .dcal-allday-row {
+        display: grid;
+        grid-template-columns: 60px repeat(7, minmax(0, 1fr));
+        border-bottom: 1px solid #CCC;
+        min-height: 28px;
+        position: sticky;
+        top: 46px;
+        z-index: 29;
+        background: #ffffff;
+    }
+
+    .dcal-allday-label {
+        font-size: 10px;
+        color: #4D4D4D;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+    }
+
+    .dcal-allday-cell {
+        border-left: 1px solid #E6E6E6;
+        padding: 2px;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .dcal-allday-chip {
+        border-radius: 3px;
+        color: white;
+        font-size: 10px;
+        font-weight: 600;
+        padding: 3px 6px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dcal-scroll {
+        /* Track the viewport so the calendar fits without page scrolling */
+        height: clamp(360px, calc(100vh - 400px), 640px);
+        overflow-y: auto;
+        border: 1px solid #CCC;
+        position: relative;
+        background: #ffffff;
+    }
+
+    .dcal-grid {
+        display: grid;
+        grid-template-columns: 60px repeat(7, minmax(0, 1fr));
+        height: 1440px;
+    }
+
+    .dcal-gutter {
+        position: relative;
+    }
+
+    .dcal-gutter-hour {
+        position: absolute;
+        right: 6px;
+        transform: translateY(-50%);
+        font-size: 10px;
+        color: #4D4D4D;
+    }
+
+    .dcal-day-col {
+        position: relative;
+        border-left: 1px solid #E6E6E6;
+        background-image: repeating-linear-gradient(
+            to bottom,
+            transparent 0px,
+            transparent 59px,
+            #EFEFEF 59px,
+            #EFEFEF 60px);
+        touch-action: none;
+    }
+
+    .dcal-day-col.today {
+        background-color: color-mix(in srgb, var(--dx-blue) 4%, white);
+    }
+
+    .dcal-occ {
+        position: absolute;
+        border-radius: 3px;
+        color: white;
+        font-size: 10px;
+        padding: 3px 5px;
+        overflow: hidden;
+        cursor: grab;
+        user-select: none;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.25);
+        touch-action: none;
+    }
+
+    .dcal-occ-title {
+        font-weight: 700;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dcal-occ-conflict {
+        outline: 2px solid var(--dx-red);
+        outline-offset: -2px;
+    }
+
+    .dcal-occ-resize {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 7px;
+        cursor: ns-resize;
+    }
+
+    .dcal-conflict-note {
+        margin-top: 8px;
+        font-size: 12px;
+        color: var(--dx-red);
+        font-weight: 600;
+    }
+
+    /* ── Month view ── */
+    .dcal-month-grid {
+        display: grid;
+        grid-template-columns: repeat(7, 1fr);
+        border-left: 1px solid #CCC;
+        border-top: 1px solid #CCC;
+    }
+
+    .dcal-month-dow {
+        padding: 6px 4px;
+        text-align: center;
+        font-weight: 700;
+        font-size: 12px;
+        color: #333333;
+        background: #F2F2F2;
+        border-right: 1px solid #CCC;
+        border-bottom: 1px solid #CCC;
+    }
+
+    .dcal-month-cell {
+        min-height: 96px;
+        border-right: 1px solid #CCC;
+        border-bottom: 1px solid #CCC;
+        padding: 3px;
+        cursor: pointer;
+        background: #ffffff;
+        display: flex;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .dcal-month-cell.outside {
+        background: #FAFAFA;
+        color: #999;
+    }
+
+    .dcal-month-cell:hover {
+        background: color-mix(in srgb, var(--dx-blue) 6%, white);
+    }
+
+    .dcal-month-daynum {
+        font-size: 11px;
+        font-weight: 700;
+        color: #4D4D4D;
+        text-align: right;
+        padding-right: 3px;
+    }
+
+    .dcal-month-cell.today-cell .dcal-month-daynum {
+        color: var(--dx-blue);
+    }
+
+    .dcal-month-chip {
+        border-radius: 3px;
+        color: white;
+        font-size: 10px;
+        padding: 2px 5px;
+        cursor: pointer;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .dcal-month-more {
+        font-size: 10px;
+        color: var(--dx-blue);
+        font-weight: 600;
+        padding-left: 3px;
+    }
+</style>
+
+<div class="dcal-toolbar">
+    <div class="dcal-toolbar-group">
+        @ToolbarLead
+        <button class="dx-btn dx-btn-blue dcal-view-btn" @onclick="GoPrev">‹</button>
+        <span class="dcal-range-label">@GetRangeLabel()</span>
+        <button class="dx-btn dx-btn-blue dcal-view-btn" @onclick="GoNext">›</button>
+        <button class="dx-btn dx-btn-gray dcal-view-btn" @onclick="GoToday">Today</button>
+    </div>
+    <div class="dcal-toolbar-group">
+        <button class="dx-btn dx-btn-blue dcal-view-btn @(viewMode == "week" ? "active" : "")" @onclick='() => SetView("week")'>Week</button>
+        <button class="dx-btn dx-btn-blue dcal-view-btn @(viewMode == "month" ? "active" : "")" @onclick='() => SetView("month")'>Month</button>
+        @ToolbarTrail
+    </div>
+</div>
+
+@if (viewMode == "week")
+{
+    var weekDays = Enumerable.Range(0, 7).Select(i => WeekStart.AddDays(i)).ToList();
+    var occByDay = weekDays.ToDictionary(d => d, d => ExpandDay(d));
+
+    <div class="dcal-scroll" @ref="scrollContainer">
+        <div class="dcal-week-header">
+            <div class="dcal-week-header-cell"></div>
+            @foreach (var day in weekDays)
+            {
+                <div class="dcal-week-header-cell @(day == DateOnly.FromDateTime(DateTime.Today) ? "today" : "")">
+                    @day.ToString("ddd")<br />@day.ToString("MMM d")
+                </div>
+            }
+        </div>
+
+        <div class="dcal-allday-row">
+            <div class="dcal-allday-label">All day</div>
+            @foreach (var day in weekDays)
+            {
+                <div class="dcal-allday-cell" title="Click to create an all-day entry"
+                     @onclick="() => OnAllDaySlotCreated.InvokeAsync(day)">
+                    @foreach (var occ in occByDay[day].Where(o => o.AllDay))
+                    {
+                        <div class="dcal-allday-chip @(occ.Conflicts ? "dcal-occ-conflict" : "")"
+                             style="background-color: @GetEventColor(occ.Event.ScheduleEventId);"
+                             title="@GetOccTitle(occ)"
+                             @onclick="() => ActivateOccurrence(occ.Event.ScheduleEventId, day)"
+                             @onclick:stopPropagation="true">
+                            @GetOccLabel(occ)
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+
+        <div class="dcal-grid" @ref="weekGrid">
+            <div class="dcal-gutter">
+                @for (int h = 1; h < 24; h++)
+                {
+                    <div class="dcal-gutter-hour" style="top:@(h * 60)px;">@FormatHour(h)</div>
+                }
+            </div>
+            @for (int i = 0; i < 7; i++)
+            {
+                var day = weekDays[i];
+                <div class="dcal-day-col @(day == DateOnly.FromDateTime(DateTime.Today) ? "today" : "")" data-day-col data-day-index="@i">
+                    @foreach (var occ in occByDay[day].Where(o => !o.AllDay))
+                    {
+                        var widthPct = 100.0 / occ.LaneCount;
+                        var leftPct = widthPct * occ.Lane;
+                        <div class="dcal-occ @(occ.Conflicts ? "dcal-occ-conflict" : "")"
+                             data-occ-event-id="@occ.Event.ScheduleEventId"
+                             style="top:@(occ.StartMinutes)px; height:@(Math.Max(15, occ.EndMinutes - occ.StartMinutes))px; left:calc(@leftPct% + 2px); width:calc(@widthPct% - 4px); background-color:@GetEventColor(occ.Event.ScheduleEventId);"
+                             title="@GetOccTitle(occ)">
+                            <div class="dcal-occ-title">@GetOccLabel(occ)</div>
+                            <div data-resize-handle class="dcal-occ-resize"></div>
+                        </div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+
+    @if (occByDay.Values.Any(list => list.Any(o => o.Conflicts)))
+    {
+        <div class="dcal-conflict-note">⚠ Entries outlined in red overlap another schedule entry.</div>
+    }
+}
+else
+{
+    var monthStart = new DateOnly(anchorDate.Year, anchorDate.Month, 1);
+    var gridStart = monthStart.AddDays(-(int)monthStart.DayOfWeek);
+    var today = DateOnly.FromDateTime(DateTime.Today);
+
+    <div class="dcal-month-grid">
+        @foreach (var dow in new[] { "Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat" })
+        {
+            <div class="dcal-month-dow">@dow</div>
+        }
+        @for (int i = 0; i < 42; i++)
+        {
+            var day = gridStart.AddDays(i);
+            var occs = ExpandDay(day);
+            var isOutside = day.Month != anchorDate.Month;
+            <div class="dcal-month-cell @(isOutside ? "outside" : "") @(day == today ? "today-cell" : "")"
+                 @onclick="() => MonthCellClicked(day)">
+                <div class="dcal-month-daynum">@day.Day</div>
+                @foreach (var occ in occs.Take(3))
+                {
+                    <div class="dcal-month-chip @(occ.Conflicts ? "dcal-occ-conflict" : "")"
+                         style="background-color: @GetEventColor(occ.Event.ScheduleEventId);"
+                         title="@GetOccTitle(occ)"
+                         @onclick="() => ActivateOccurrence(occ.Event.ScheduleEventId, day)"
+                         @onclick:stopPropagation="true">
+                        @GetOccLabel(occ)
+                    </div>
+                }
+                @if (occs.Count > 3)
+                {
+                    <div class="dcal-month-more">+@(occs.Count - 3) more</div>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public IEnumerable<TblScheduleEvent> Events { get; set; } = Enumerable.Empty<TblScheduleEvent>();
+
+    // Host-supplied toolbar content so page buttons share the calendar's single
+    // toolbar row (e.g. New Schedule Entry on the left, view toggle on the right)
+    [Parameter] public RenderFragment? ToolbarLead { get; set; }
+    [Parameter] public RenderFragment? ToolbarTrail { get; set; }
+
+    public record CalendarSlot(DateOnly Day, int StartMinutes, int EndMinutes);
+    public record CalendarMove(int ScheduleEventId, DateOnly SourceDay, DateOnly TargetDay, int NewStartMinutes);
+    public record CalendarResize(int ScheduleEventId, DateOnly Day, int NewEndMinutes);
+    public record CalendarActivate(int ScheduleEventId, DateOnly Day);
+
+    [Parameter] public EventCallback<CalendarSlot> OnSlotCreated { get; set; }
+    [Parameter] public EventCallback<DateOnly> OnAllDaySlotCreated { get; set; }
+    [Parameter] public EventCallback<CalendarMove> OnEventMoved { get; set; }
+    [Parameter] public EventCallback<CalendarResize> OnEventResized { get; set; }
+    [Parameter] public EventCallback<CalendarActivate> OnEventActivated { get; set; }
+
+    private string viewMode = "week";
+    private DateOnly anchorDate = DateOnly.FromDateTime(DateTime.Today);
+
+    private DateOnly WeekStart => anchorDate.AddDays(-(int)anchorDate.DayOfWeek);
+
+    private ElementReference weekGrid;
+    private ElementReference scrollContainer;
+    private DotNetObjectReference<DisplayCalendar>? objRef;
+    private bool scrolledOnce;
+
+    // Fixed palette so each entry keeps a stable, distinguishable color
+    private static readonly string[] Palette =
+    {
+        "#0071BC", "#39B54A", "#F7941E", "#7B4FA6", "#00A99D", "#C1272D", "#5C7A99", "#A67C00"
+    };
+
+    private string GetEventColor(int scheduleEventId)
+        => Palette[Math.Abs(scheduleEventId) % Palette.Length];
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (viewMode == "week")
+        {
+            objRef ??= DotNetObjectReference.Create(this);
+            await JSRuntime.InvokeVoidAsync("displayCalendarInterop.refresh", objRef, weekGrid);
+
+            if (!scrolledOnce)
+            {
+                scrolledOnce = true;
+                // Open the view at ~6 AM rather than midnight (offset includes the
+                // sticky header + all-day rows that precede the grid)
+                await JSRuntime.InvokeVoidAsync("dxScrollElementTo", scrollContainer, 420);
+            }
+        }
+    }
+
+    public void Dispose()
+    {
+        objRef?.Dispose();
+    }
+
+    // ── Navigation ──
+
+    private void SetView(string mode)
+    {
+        viewMode = mode;
+        scrolledOnce = false;
+    }
+
+    private void GoPrev() => anchorDate = viewMode == "week" ? anchorDate.AddDays(-7) : anchorDate.AddMonths(-1);
+    private void GoNext() => anchorDate = viewMode == "week" ? anchorDate.AddDays(7) : anchorDate.AddMonths(1);
+    private void GoToday() => anchorDate = DateOnly.FromDateTime(DateTime.Today);
+
+    private string GetRangeLabel()
+    {
+        if (viewMode == "month") return anchorDate.ToString("MMMM yyyy");
+        var end = WeekStart.AddDays(6);
+        return WeekStart.Month == end.Month
+            ? $"{WeekStart:MMM d} – {end.Day}, {end:yyyy}"
+            : $"{WeekStart:MMM d} – {end:MMM d}, {end:yyyy}";
+    }
+
+    private static string FormatHour(int h)
+        => h == 12 ? "12 PM" : h < 12 ? $"{h} AM" : $"{h - 12} PM";
+
+    // ── Occurrence expansion ──
+
+    public class Occurrence
+    {
+        public required TblScheduleEvent Event { get; init; }
+        public int StartMinutes { get; init; }
+        public int EndMinutes { get; init; }
+        public bool AllDay { get; init; }
+        public int Lane { get; set; }
+        public int LaneCount { get; set; } = 1;
+        public bool Conflicts { get; set; }
+    }
+
+    private List<Occurrence> ExpandDay(DateOnly day)
+    {
+        var result = new List<Occurrence>();
+
+        foreach (var ev in Events.Where(e => !e.DefaultContent))
+        {
+            if (ev.StartDate != null && day < DateOnly.FromDateTime(ev.StartDate.Value)) continue;
+            if (ev.EndDate != null && day > DateOnly.FromDateTime(ev.EndDate.Value)) continue;
+
+            bool anyDay = !(ev.Sunday || ev.Monday || ev.Tuesday || ev.Wednesday || ev.Thursday || ev.Friday || ev.Saturday);
+            if (!anyDay)
+            {
+                bool match = day.DayOfWeek switch
+                {
+                    DayOfWeek.Sunday    => ev.Sunday,
+                    DayOfWeek.Monday    => ev.Monday,
+                    DayOfWeek.Tuesday   => ev.Tuesday,
+                    DayOfWeek.Wednesday => ev.Wednesday,
+                    DayOfWeek.Thursday  => ev.Thursday,
+                    DayOfWeek.Friday    => ev.Friday,
+                    DayOfWeek.Saturday  => ev.Saturday,
+                    _                   => false
+                };
+                if (!match) continue;
+            }
+
+            if (ev.StartTime == null && ev.EndTime == null)
+            {
+                result.Add(new Occurrence { Event = ev, AllDay = true, StartMinutes = 0, EndMinutes = 1440 });
+                continue;
+            }
+
+            var s = ev.StartTime != null ? (int)ev.StartTime.Value.ToTimeSpan().TotalMinutes : 0;
+            var e = ev.EndTime != null ? (int)ev.EndTime.Value.ToTimeSpan().TotalMinutes : 1440;
+
+            if (ev.StartTime != null && ev.EndTime != null && s > e)
+            {
+                // Overnight window — the runtime treats it as two same-day segments
+                result.Add(new Occurrence { Event = ev, StartMinutes = 0, EndMinutes = e });
+                result.Add(new Occurrence { Event = ev, StartMinutes = s, EndMinutes = 1440 });
+            }
+            else
+            {
+                result.Add(new Occurrence { Event = ev, StartMinutes = s, EndMinutes = Math.Max(e, s + 15) });
+            }
+        }
+
+        AssignLanes(result);
+        MarkConflicts(result);
+        return result;
+    }
+
+    // Greedy interval lane assignment so overlapping blocks render side by side
+    private static void AssignLanes(List<Occurrence> occs)
+    {
+        var timed = occs.Where(o => !o.AllDay).OrderBy(o => o.StartMinutes).ThenBy(o => o.EndMinutes).ToList();
+        var laneEnds = new List<int>();
+        var clusters = new List<List<Occurrence>>();
+        List<Occurrence>? cluster = null;
+        int clusterEnd = -1;
+
+        foreach (var occ in timed)
+        {
+            if (cluster == null || occ.StartMinutes >= clusterEnd)
+            {
+                cluster = new List<Occurrence>();
+                clusters.Add(cluster);
+                laneEnds.Clear();
+                clusterEnd = occ.EndMinutes;
+            }
+            else
+            {
+                clusterEnd = Math.Max(clusterEnd, occ.EndMinutes);
+            }
+
+            int lane = laneEnds.FindIndex(end => end <= occ.StartMinutes);
+            if (lane == -1)
+            {
+                lane = laneEnds.Count;
+                laneEnds.Add(occ.EndMinutes);
+            }
+            else
+            {
+                laneEnds[lane] = occ.EndMinutes;
+            }
+            occ.Lane = lane;
+            cluster.Add(occ);
+        }
+
+        foreach (var c in clusters)
+        {
+            var count = c.Max(o => o.Lane) + 1;
+            foreach (var o in c) o.LaneCount = count;
+        }
+    }
+
+    // Cross-entry overlaps within the same day get the red warning outline
+    private static void MarkConflicts(List<Occurrence> occs)
+    {
+        for (int i = 0; i < occs.Count; i++)
+        {
+            for (int j = i + 1; j < occs.Count; j++)
+            {
+                var a = occs[i];
+                var b = occs[j];
+                if (a.Event.ScheduleEventId == b.Event.ScheduleEventId) continue;
+                bool overlap = a.AllDay || b.AllDay ||
+                               (b.StartMinutes < a.EndMinutes && b.EndMinutes > a.StartMinutes);
+                if (overlap)
+                {
+                    a.Conflicts = true;
+                    b.Conflicts = true;
+                }
+            }
+        }
+    }
+
+    private string GetOccLabel(Occurrence occ)
+    {
+        if (occ.AllDay) return $"All day · {GetContentLabel(occ.Event)}";
+        var start = TimeOnly.MinValue.AddMinutes(occ.StartMinutes);
+        return $"{start:h\\:mm tt} {GetContentLabel(occ.Event)}";
+    }
+
+    private string GetOccTitle(Occurrence occ)
+    {
+        var start = TimeOnly.MinValue.AddMinutes(occ.StartMinutes);
+        var end = TimeOnly.MinValue.AddMinutes(Math.Min(occ.EndMinutes, 1439));
+        var window = occ.AllDay ? "All day" : $"{start:h\\:mm tt} – {end:h\\:mm tt}";
+        var conflict = occ.Conflicts ? " · overlaps another entry" : "";
+        return $"{window} · {GetContentLabel(occ.Event)}{conflict}";
+    }
+
+    private string GetContentLabel(TblScheduleEvent ev)
+    {
+        try
+        {
+            var ca = JsonConvert.DeserializeObject<ContentAssignment>(ev.ContentAssignment);
+            var count = ca?.Content?.Count ?? 0;
+            return $"{count} item{(count != 1 ? "s" : "")}";
+        }
+        catch
+        {
+            return "schedule entry";
+        }
+    }
+
+    // ── Gesture entry points ──
+
+    private async Task ActivateOccurrence(int scheduleEventId, DateOnly day)
+        => await OnEventActivated.InvokeAsync(new CalendarActivate(scheduleEventId, day));
+
+    private async Task MonthCellClicked(DateOnly day)
+        => await OnSlotCreated.InvokeAsync(new CalendarSlot(day, 9 * 60, 10 * 60));
+
+    [JSInvokable("OnSlotCreated")]
+    public async Task OnSlotCreatedInvokable(int dayIndex, int startMinutes, int endMinutes)
+        => await OnSlotCreated.InvokeAsync(new CalendarSlot(WeekStart.AddDays(dayIndex), startMinutes, endMinutes));
+
+    [JSInvokable("OnOccurrenceMoved")]
+    public async Task OnOccurrenceMovedInvokable(int scheduleEventId, int sourceDayIndex, int targetDayIndex, int newStartMinutes)
+        => await OnEventMoved.InvokeAsync(new CalendarMove(
+            scheduleEventId,
+            WeekStart.AddDays(sourceDayIndex),
+            WeekStart.AddDays(targetDayIndex),
+            newStartMinutes));
+
+    [JSInvokable("OnOccurrenceResized")]
+    public async Task OnOccurrenceResizedInvokable(int scheduleEventId, int dayIndex, int newEndMinutes)
+        => await OnEventResized.InvokeAsync(new CalendarResize(scheduleEventId, WeekStart.AddDays(dayIndex), newEndMinutes));
+
+    [JSInvokable("OnOccurrenceActivated")]
+    public async Task OnOccurrenceActivatedInvokable(int scheduleEventId, int dayIndex)
+        => await OnEventActivated.InvokeAsync(new CalendarActivate(
+            scheduleEventId,
+            dayIndex >= 0 ? WeekStart.AddDays(dayIndex) : anchorDate));
+}

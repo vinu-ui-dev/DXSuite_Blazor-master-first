@@ -1,0 +1,200 @@
+@page "/platform/tenant-admin/elevations"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject IPlatformElevationService? ElevationService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Elevation Queue</h2>
+        <a href="/platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
+    </div>
+    <p class="dx-text-muted">
+        Approve or reject operator access requests for <strong>@TenantContext.TenantId</strong>.
+        Your approval does not activate the elevation — a second platform operator must also approve.
+    </p>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (pending.Count == 0)
+    {
+        <p class="dx-text-muted">No pending elevation requests.</p>
+    }
+    else
+    {
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 1.5fr 100px 100px 2fr 130px 130px 140px;">
+                <div>Operator</div>
+                <div>Role</div>
+                <div>Ticket</div>
+                <div>Reason</div>
+                <div>Requested</div>
+                <div>Expires</div>
+                <div>Actions</div>
+            </div>
+            @foreach (var e in pending)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 1.5fr 100px 100px 2fr 130px 130px 140px;">
+                    <div>@(e.PlatformUser?.DisplayName ?? e.PlatformUser?.PrimaryEmail ?? e.PlatformUserId.ToString("N")[..8])</div>
+                    <div><span class="dx-badge @RoleBadge(e.RoleName)">@e.RoleName</span></div>
+                    <div>@(e.TicketRef ?? "—")</div>
+                    <div class="dx-truncate" title="@e.Reason">@e.Reason</div>
+                    <div>@e.IssuedAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                    <div>@e.ExpiresAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                    <div>
+                        <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                @onclick="@(() => Approve(e.ElevationId))"
+                                disabled="@(acting == e.ElevationId)"
+                                style="margin-right:.25rem;">Approve</button>
+                        <button class="dx-btn dx-btn-red dx-btn-sm"
+                                @onclick="@(() => StartReject(e.ElevationId))"
+                                disabled="@(acting == e.ElevationId)">Reject</button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (rejectingId.HasValue)
+    {
+        <div class="dx-modal-overlay" @onclick="CancelReject">
+            <div class="dx-modal" @onclick:stopPropagation="true" style="max-width:420px;">
+                <div class="dx-modal-header">
+                    <span>Reject Elevation</span>
+                </div>
+                <div class="dx-modal-body">
+                    <div class="dx-form-group">
+                        <label>Reason for rejection</label>
+                        <textarea class="dx-form-control" rows="3" @bind="rejectReason"></textarea>
+                    </div>
+                    @if (actionError != null)
+                    {
+                        <div class="dx-alert dx-alert-danger">@actionError</div>
+                    }
+                </div>
+                <div class="dx-modal-footer">
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelReject">Cancel</button>
+                    <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="ConfirmReject"
+                            disabled="@(acting.HasValue)" style="margin-left:.5rem;">
+                        @(acting.HasValue ? "Working…" : "Confirm Reject")
+                    </button>
+                </div>
+            </div>
+        </div>
+    }
+
+    @if (actionError != null && !rejectingId.HasValue)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@actionError</div>
+    }
+    @if (actionSuccess != null)
+    {
+        <div class="dx-alert dx-alert-success" style="margin-top:12px;">@actionSuccess</div>
+    }
+</div>
+
+@code {
+    private List<TblPlatformElevation> pending = new();
+    private bool loading = true;
+    private Guid? acting;
+    private string? actionError;
+    private string? actionSuccess;
+    private Guid? rejectingId;
+    private string rejectReason = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsTenantAdmin || !SessionState.PlatformUserId.HasValue)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        await LoadPending();
+        loading = false;
+    }
+
+    private async Task LoadPending()
+    {
+        if (ElevationService == null || !SessionState.PlatformUserId.HasValue) return;
+        pending = await ElevationService.GetPendingElevationsForTenantAsync(
+            TenantContext.TenantId, SessionState.PlatformUserId.Value);
+    }
+
+    private async Task Approve(Guid elevationId)
+    {
+        if (ElevationService == null || !SessionState.PlatformUserId.HasValue) return;
+        actionError = null; actionSuccess = null;
+        acting = elevationId;
+        try
+        {
+            await ElevationService.ApproveTenantElevationAsync(elevationId, SessionState.PlatformUserId.Value);
+            actionSuccess = "Elevation approved. A platform operator must still provide the second approval.";
+            await LoadPending();
+        }
+        catch (Exception ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            acting = null;
+        }
+    }
+
+    private void StartReject(Guid elevationId)
+    {
+        rejectingId = elevationId;
+        rejectReason = "";
+        actionError = null;
+    }
+
+    private void CancelReject()
+    {
+        rejectingId = null;
+        rejectReason = "";
+    }
+
+    private async Task ConfirmReject()
+    {
+        if (!rejectingId.HasValue || ElevationService == null || !SessionState.PlatformUserId.HasValue) return;
+
+        if (string.IsNullOrWhiteSpace(rejectReason))
+        {
+            actionError = "A reason is required to reject an elevation.";
+            return;
+        }
+
+        acting = rejectingId;
+        try
+        {
+            await ElevationService.RejectTenantElevationAsync(
+                rejectingId.Value, SessionState.PlatformUserId.Value, rejectReason);
+            actionSuccess = "Elevation rejected.";
+            rejectingId = null;
+            rejectReason = "";
+            await LoadPending();
+        }
+        catch (Exception ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            acting = null;
+        }
+    }
+
+    private static string RoleBadge(string role) => role switch
+    {
+        PlatformRoles.TenantSupportWrite => "dx-badge-yellow",
+        _ => "dx-badge-blue"
+    };
+}

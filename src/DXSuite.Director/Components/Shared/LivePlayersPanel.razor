@@ -1,0 +1,289 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models.BrightSign
+@using DXSuite.Director.Services
+@implements IDisposable
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject NowPlayingStore nowPlayingStore
+@inject IDeviceCommandService deviceCommands
+@inject ITenantContext tenantContext
+@inject ILogger<LivePlayersPanel> Logger
+@rendermode InteractiveServer
+
+<div class="dx-section" style="margin-top: 20px;">
+    <div class="dx-section-header">
+        <h3 class="dx-section-title">LIVE PLAYERS</h3>
+    </div>
+
+    @if (devices.Count == 0)
+    {
+        <p class="dx-text-muted" style="padding: 12px 4px; font-style: italic;">
+            No players are assigned to this content.
+        </p>
+    }
+    else
+    {
+        <div class="lpv-list">
+            @foreach (var device in devices)
+            {
+                var state = nowPlayingStore.TryGet(tenantContext.TenantId, device.DeviceId);
+                var online = device.Heartbeat > DateTime.UtcNow.AddMinutes(-10);
+                var screenshot = screenshots.GetValueOrDefault(device.DeviceId);
+                <div class="lpv-row">
+                    <div class="lpv-device">
+                        <span class="lpv-dot @(online ? "lpv-dot-online" : "lpv-dot-offline")"
+                              title="@(online ? "Online" : "Offline")"></span>
+                        <span class="lpv-device-name" title="@device.DeviceId">@(device.Description ?? device.DeviceId)</span>
+                    </div>
+                    <div class="lpv-now">
+                        @if (state != null)
+                        {
+                            var thumb = ResolveThumbnail(state.Asset);
+                            <span class="cpv-thumb">
+                                @if (!string.IsNullOrEmpty(thumb))
+                                {
+                                    <img src="@thumb" alt="" loading="lazy" />
+                                }
+                                else
+                                {
+                                    <span class="cpv-thumb-web">@(IsWebUrl(state.Asset.Url) ? "WEB" : "▶")</span>
+                                }
+                            </span>
+                            <div class="lpv-now-detail">
+                                <span class="lpv-now-name" title="@state.Asset.Name">@state.Asset.Name</span>
+                                <span class="lpv-now-meta">
+                                    Item @(state.Asset.Index + 1) of @state.Asset.Total ·
+                                    reported @DescribeAge(state.ReportedAtUtc)
+                                    @(state.Source == "socket" ? "" : " (heartbeat)")
+                                </span>
+                                @{
+                                    var progress = ComputeProgress(state);
+                                }
+                                @if (progress.HasValue)
+                                {
+                                    <div class="lpv-progress">
+                                        <div class="lpv-progress-fill" style="width:@(progress.Value)%"></div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <span class="dx-text-muted" style="font-size: 0.8rem; font-style: italic;">
+                                Not reported. Playback reporting needs applet 1.2.0 or later.
+                            </span>
+                        }
+                    </div>
+                    <div class="lpv-actions">
+                        @if (screenshot != null)
+                        {
+                            <a href="@($"{screenshot.Path}?t={screenshot.CapturedAt?.Ticks ?? 0}")" target="_blank" title="Open last screenshot">
+                                <img class="lpv-screenshot" src="@($"{screenshot.Path}?t={screenshot.CapturedAt?.Ticks ?? 0}")" alt="Last screenshot" />
+                            </a>
+                        }
+                        <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                disabled="@(!online || pendingCaptures.ContainsKey(device.DeviceId))"
+                                @onclick="() => RequestScreenshot(device.DeviceId)">
+                            @(pendingCaptures.ContainsKey(device.DeviceId) ? "Requested" : "Screenshot")
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter] public int? LocationId { get; set; }
+    [Parameter] public int? DisplayId { get; set; }
+
+    /// <summary>
+    /// Progress bars and freshness labels drift with wall-clock time and cost nothing to redraw,
+    /// so the panel re-renders on this cadence.
+    /// </summary>
+    private static readonly TimeSpan RenderInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>
+    /// The heartbeat pip and the last screenshot are columns on a device row, so re-rendering
+    /// cannot change them: the row has to be read again. Without this the pip turns red on every
+    /// player ten minutes after the page opens, however healthy they are, because the comparison
+    /// re-evaluates DateTime.UtcNow against a Heartbeat loaded once; and a screenshot the operator
+    /// asked for never appears, because it lands in ExtendedData on a row nothing re-reads.
+    /// </summary>
+    private static readonly TimeSpan ReloadInterval = TimeSpan.FromSeconds(15);
+
+    /// <summary>
+    /// A player that never answers a capture must not leave its own button disabled forever. The
+    /// request itself is fire-and-forget; the device picks it up on its next sync.
+    /// </summary>
+    private static readonly TimeSpan CaptureRequestTimeout = TimeSpan.FromMinutes(3);
+
+    private List<TblDevice> devices = new();
+
+    /// <summary>
+    /// ExtendedData parsed once per reload rather than once per device per render, which at the
+    /// render cadence above was deserializing every player's JSON blob every two seconds.
+    /// </summary>
+    private Dictionary<string, ScreenshotData?> screenshots = new();
+
+    /// <summary>What each pending capture had to beat, so a stale image cannot clear its own request.</summary>
+    private readonly Dictionary<string, PendingCapture> pendingCaptures = new();
+
+    private System.Threading.Timer? refreshTimer;
+    private DateTime lastReloadUtc = DateTime.UtcNow;
+    private int reloading;
+
+    private sealed record PendingCapture(DateTime? PreviousCapturedAt, DateTime RequestedAtUtc);
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevicesAsync();
+        nowPlayingStore.Changed += OnNowPlayingChanged;
+
+        refreshTimer = new System.Threading.Timer(_ => _ = InvokeAsync(TickAsync), null,
+            RenderInterval, RenderInterval);
+    }
+
+    /// <summary>
+    /// Two cadences on one timer: redraw every tick, re-read the device rows occasionally.
+    /// </summary>
+    private async Task TickAsync()
+    {
+        if (DateTime.UtcNow - lastReloadUtc >= ReloadInterval
+            && System.Threading.Interlocked.Exchange(ref reloading, 1) == 0)
+        {
+            try
+            {
+                await LoadDevicesAsync();
+                lastReloadUtc = DateTime.UtcNow;
+            }
+            finally
+            {
+                System.Threading.Interlocked.Exchange(ref reloading, 0);
+            }
+        }
+
+        SettlePendingCaptures();
+        StateHasChanged();
+    }
+
+    private async Task LoadDevicesAsync()
+    {
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            devices = DisplayId.HasValue
+                ? await db.TblDevices.AsNoTracking().Where(d => d.DisplayId == DisplayId.Value).OrderBy(d => d.Description).ToListAsync()
+                : await db.TblDevices.AsNoTracking().Where(d => d.LocationId == LocationId && d.DisplayId == null).OrderBy(d => d.Description).ToListAsync();
+
+            screenshots = devices.ToDictionary(d => d.DeviceId, GetScreenshot);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load devices for live player view");
+            devices = new();
+            screenshots = new();
+        }
+    }
+
+    /// <summary>
+    /// Clears a capture request once something newer than the image it was asked against has
+    /// landed, or once it has waited long enough to call it lost.
+    /// </summary>
+    private void SettlePendingCaptures()
+    {
+        if (pendingCaptures.Count == 0) return;
+
+        foreach (var deviceId in pendingCaptures.Keys.ToList())
+        {
+            var pending = pendingCaptures[deviceId];
+            var captured = screenshots.GetValueOrDefault(deviceId)?.CapturedAt;
+
+            var arrived = captured.HasValue
+                && (!pending.PreviousCapturedAt.HasValue || captured > pending.PreviousCapturedAt);
+
+            if (arrived || DateTime.UtcNow - pending.RequestedAtUtc > CaptureRequestTimeout)
+                pendingCaptures.Remove(deviceId);
+        }
+    }
+
+    private void OnNowPlayingChanged(string tenantId, string deviceId)
+    {
+        if (tenantId != tenantContext.TenantId) return;
+        if (!devices.Any(d => d.DeviceId == deviceId)) return;
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private async Task RequestScreenshot(string deviceId)
+    {
+        try
+        {
+            await deviceCommands.QueueScreenshotAsync(deviceId, "live-view");
+            pendingCaptures[deviceId] = new PendingCapture(
+                screenshots.GetValueOrDefault(deviceId)?.CapturedAt, DateTime.UtcNow);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to queue screenshot for {DeviceId}", deviceId);
+        }
+    }
+
+    private ScreenshotData? GetScreenshot(TblDevice device)
+    {
+        try
+        {
+            return System.Text.Json.JsonSerializer.Deserialize<DeviceExtendedData>(device.ExtendedData ?? "{}")?.Screenshot;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private string? ResolveThumbnail(CurrentAssetInfo asset)
+    {
+        if (string.IsNullOrEmpty(asset.Url)) return null;
+        if (IsWebUrl(asset.Url) && !asset.Url.Contains("/MediaAssets/", StringComparison.OrdinalIgnoreCase)) return null;
+
+        // Player URLs point at this server's /MediaAssets path; re-derive the local
+        // web path so images render directly and videos use their thumbnail PNG
+        var index = asset.Url.IndexOf("/MediaAssets/", StringComparison.OrdinalIgnoreCase);
+        if (index < 0) return null;
+        var webPath = asset.Url[index..];
+
+        var extension = System.IO.Path.GetExtension(webPath).ToLowerInvariant();
+        if (extension is ".mp4" or ".webm" or ".mov" or ".avi" or ".mkv" or ".m4v" or ".wmv")
+        {
+            var directory = System.IO.Path.GetDirectoryName(webPath)!.Replace('\\', '/');
+            return $"{directory}/Thumbnails/{System.IO.Path.GetFileNameWithoutExtension(webPath)}.png";
+        }
+        return Uri.UnescapeDataString(webPath);
+    }
+
+    private static bool IsWebUrl(string? url) =>
+        url != null && (url.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || url.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+    private static double? ComputeProgress(NowPlayingState state)
+    {
+        if (state.Asset.StartedAtUtc == null || state.Asset.DurationSeconds is not > 0) return null;
+        var elapsed = (DateTime.UtcNow - state.Asset.StartedAtUtc.Value).TotalSeconds;
+        return Math.Clamp(elapsed / state.Asset.DurationSeconds.Value * 100, 0, 100);
+    }
+
+    private static string DescribeAge(DateTime reportedAtUtc)
+    {
+        var age = DateTime.UtcNow - reportedAtUtc;
+        if (age.TotalSeconds < 10) return "just now";
+        if (age.TotalMinutes < 1) return $"{(int)age.TotalSeconds}s ago";
+        if (age.TotalHours < 1) return $"{(int)age.TotalMinutes}m ago";
+        return $"{(int)age.TotalHours}h ago";
+    }
+
+    public void Dispose()
+    {
+        nowPlayingStore.Changed -= OnNowPlayingChanged;
+        refreshTimer?.Dispose();
+    }
+}

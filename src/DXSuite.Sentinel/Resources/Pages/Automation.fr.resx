@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_Automation">
+    <value>AUTOMATISATION</value>
+  </data>
+  <data name="Tab_ITSM">
+    <value>ITSM</value>
+  </data>
+  <data name="Tab_LLM">
+    <value>Fournisseurs LLM</value>
+  </data>
+  <data name="Tab_GuardrailPolicies">
+    <value>Politiques de garde-fou</value>
+  </data>
+  <data name="Label_SentinelUnavailable">
+    <value>Automatisation indisponible</value>
+  </data>
+  <data name="Label_SentinelUnavailableDescription">
+    <value>Les fonctions d'automatisation n&#xE9;cessitent que Sentinel soit activ&#xE9; et connect&#xE9;. Veuillez v&#xE9;rifier votre configuration Sentinel.</value>
+  </data>
+</root>

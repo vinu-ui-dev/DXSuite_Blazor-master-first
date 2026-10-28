@@ -1,0 +1,85 @@
+@page "/platform/tenant-admin/access-log"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject IPlatformAuditService? AuditService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Vendor Access Log</h2>
+        <a href="/platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
+    </div>
+    <p class="dx-text-muted">
+        All recorded vendor/operator access events for <strong>@TenantContext.TenantId</strong>.
+    </p>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (notices.Count == 0)
+    {
+        <p class="dx-text-muted">No access events recorded.</p>
+    }
+    else
+    {
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 130px 1fr 1fr 2fr 100px;">
+                <div>Time (UTC)</div>
+                <div>Event</div>
+                <div>Operator</div>
+                <div>Resource</div>
+                <div>Ticket</div>
+            </div>
+            @foreach (var n in notices)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 130px 1fr 1fr 2fr 100px;">
+                    <div style="white-space:nowrap;">@n.EventTime.ToString("yyyy-MM-dd HH:mm")</div>
+                    <div>@n.EventType</div>
+                    <div>@(n.OperatorDisplayName ?? "—")</div>
+                    <div class="dx-truncate" title="@n.ResourcePath">@(n.ResourcePath ?? "—")</div>
+                    <div>@(n.TicketRef ?? "—")</div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (error != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@error</div>
+    }
+</div>
+
+@code {
+    private List<TblTenantAccessNotice> notices = new();
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsTenantAdmin)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        try
+        {
+            if (AuditService != null)
+                notices = await AuditService.GetTenantAccessNoticesAsync(TenantContext.TenantId);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

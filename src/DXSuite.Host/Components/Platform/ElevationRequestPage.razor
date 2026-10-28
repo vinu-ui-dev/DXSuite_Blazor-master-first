@@ -1,0 +1,145 @@
+@page "/platform/elevation/request"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantContext TenantContext
+@inject ITenantStore TenantStore
+@inject NavigationManager Navigation
+
+<div class="dx-platform-page">
+    <h2>Request Tenant Elevation</h2>
+    <p class="dx-text-muted">
+        Request time-bound access to a tenant for support purposes.
+        A second operator must approve your request before access is granted.
+    </p>
+
+    @if (!SessionState.IsPlatformOperator)
+    {
+        <div class="dx-alert dx-alert-danger">You do not have permission to request elevations.</div>
+    }
+    else if (submitted)
+    {
+        <div class="dx-alert dx-alert-success">
+            Elevation request submitted. A second operator must approve it before access is granted.
+        </div>
+        <button class="dx-btn dx-btn-secondary" @onclick="Reset">Submit Another</button>
+    }
+    else
+    {
+        @if (errorMessage != null)
+        {
+            <div class="dx-alert dx-alert-danger">@errorMessage</div>
+        }
+
+        <div class="dx-form-group">
+            <label>Target Tenant</label>
+            <select class="dx-form-control" @bind="selectedTenantId">
+                <option value="">— select —</option>
+                @foreach (var t in availableTenants)
+                {
+                    <option value="@t.TenantId">@t.DisplayName (@t.Subdomain)</option>
+                }
+            </select>
+        </div>
+
+        <div class="dx-form-group">
+            <label>Access Level</label>
+            <select class="dx-form-control" @bind="roleName">
+                <option value="@PlatformRoles.TenantSupport">Read Only (TenantSupport)</option>
+                <option value="@PlatformRoles.TenantSupportWrite">Read + Write (TenantSupportWrite)</option>
+            </select>
+        </div>
+
+        <div class="dx-form-group">
+            <label>Duration (hours)</label>
+            <input type="number" class="dx-form-control" min="1" max="8" @bind="durationHours" />
+        </div>
+
+        <div class="dx-form-group">
+            <label>Ticket Reference <span class="dx-text-muted">(optional)</span></label>
+            <input type="text" class="dx-form-control" placeholder="e.g. SUPPORT-1234" @bind="ticketRef" />
+        </div>
+
+        <div class="dx-form-group">
+            <label>Reason <span class="dx-required">*</span></label>
+            <textarea class="dx-form-control" rows="3" placeholder="Describe why access is needed..."
+                      @bind="reason"></textarea>
+        </div>
+
+        <button class="dx-btn dx-btn-blue" @onclick="Submit" disabled="@submitting">
+            @(submitting ? "Submitting..." : "Submit Request")
+        </button>
+    }
+</div>
+
+@code {
+    [Inject] private IPlatformElevationService? ElevationService { get; set; }
+    [Inject] private IPlatformAuditService? AuditService { get; set; }
+
+    private List<DXSuite.Shared.Multitenancy.TenantRecord> availableTenants = new();
+    private string selectedTenantId = "";
+    private string roleName = PlatformRoles.TenantSupport;
+    private int durationHours = 4;
+    private string ticketRef = "";
+    private string reason = "";
+    private bool submitting;
+    private bool submitted;
+    private string? errorMessage;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionState.IsPlatformOperator) return;
+        availableTenants = (await TenantStore.GetAllEnabledAsync()).ToList();
+    }
+
+    private async Task Submit()
+    {
+        errorMessage = null;
+        if (string.IsNullOrWhiteSpace(selectedTenantId)) { errorMessage = "Select a target tenant."; return; }
+        if (string.IsNullOrWhiteSpace(reason))           { errorMessage = "Reason is required."; return; }
+        if (SessionState.PlatformUserId == null)          { errorMessage = "Platform identity not established."; return; }
+        if (ElevationService == null)                     { errorMessage = "Elevation service not available."; return; }
+
+        submitting = true;
+        try
+        {
+            var elevation = await ElevationService.RequestElevationAsync(
+                platformUserId           : SessionState.PlatformUserId.Value,
+                tenantId                 : selectedTenantId,
+                roleName                 : roleName,
+                reason                   : reason,
+                durationMinutes          : durationHours * 60,
+                requestedByPlatformUserId: SessionState.PlatformUserId.Value,
+                ticketRef                : string.IsNullOrWhiteSpace(ticketRef) ? null : ticketRef);
+
+            if (AuditService != null)
+                await AuditService.WriteAsync(
+                    AuditEventType.ElevationRequested,
+                    SessionState.PlatformUserId,
+                    selectedTenantId,
+                    ticketRef: elevation.TicketRef,
+                    reason: elevation.Reason,
+                    elevationId: elevation.ElevationId);
+
+            submitted = true;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = ex.Message;
+        }
+        finally
+        {
+            submitting = false;
+        }
+    }
+
+    private void Reset()
+    {
+        submitted = false;
+        selectedTenantId = "";
+        reason = "";
+        ticketRef = "";
+    }
+}

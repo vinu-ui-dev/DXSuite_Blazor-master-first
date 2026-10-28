@@ -1,0 +1,618 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models.Panels
+@using DXSuite.Director.Services.LocationBundles
+@using DXSuite.Director.Services.Panels
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@using System.Text.RegularExpressions
+@inject IServiceScopeFactory scopeFactory
+@inject ILocationBundleService bundleService
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@inject IJSRuntime JS
+@inject ILogger<PanelsTab> Logger
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>@(editing == null ? "Panels" : (editing.PanelId == 0 ? "New Panel" : editing.PanelName))</h4>
+        <div class="dx-panel-controls">
+            @if (editing == null)
+            {
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="StartCreate">New Panel</button>
+            }
+            else
+            {
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelEdit">Back</button>
+            }
+        </div>
+    </div>
+
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+
+        @if (!string.IsNullOrEmpty(message))
+        {
+            <div class="dx-alert dx-alert-info" style="margin-bottom:12px;">@message</div>
+        }
+        @if (!string.IsNullOrEmpty(error))
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-bottom:12px;">@error</div>
+        }
+
+        @if (!string.IsNullOrEmpty(issuedUrl))
+        {
+            <div class="dx-alert dx-alert-warning" style="margin-bottom:12px;">
+                <strong>Copy this URL now. It is shown once.</strong>
+                <div style="margin-top:8px; display:flex; gap:8px; align-items:center;">
+                    <input class="form-control" readonly value="@issuedUrl" style="font-family:monospace; font-size:0.85em;" />
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CopyIssuedUrl">Copy</button>
+                </div>
+                <div style="margin-top:6px; font-size:0.9em;">
+                    Paste it into the Moxie webzone. The token is not stored in plain text, so it
+                    cannot be shown again. Regenerating issues a new URL and the old one stops working.
+                </div>
+            </div>
+        }
+
+        @if (editing == null)
+        {
+            @if (isLoading)
+            {
+                <div class="dx-spinner"></div>
+            }
+            else if (panels.Count == 0)
+            {
+                <p class="dx-text-muted">
+                    No panels yet. A panel serves a location bundle as an anonymous touch surface and lets
+                    whoever is standing at it assign content to one location's displays.
+                </p>
+            }
+            else
+            {
+                <table class="dx-table">
+                    <thead>
+                        <tr>
+                            <th>Name</th>
+                            <th>Key</th>
+                            <th>Location</th>
+                            <th>Bundle</th>
+                            <th>Screens</th>
+                            <th>Status</th>
+                            <th>Last Seen</th>
+                            <th style="width:220px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var p in panels)
+                        {
+                            <tr>
+                                <td>@p.PanelName</td>
+                                <td><code style="font-size:0.85em;">@p.PanelKey</code></td>
+                                <td>@LocationName(p.LocationId)</td>
+                                <td><code style="font-size:0.85em;">@p.BundleKey@(p.PinnedVersion == null ? "" : $" v{p.PinnedVersion}")</code></td>
+                                <td>@HotspotCount(p)</td>
+                                <td>
+                                    @if (p.IsEnabled)
+                                    {
+                                        <span class="dx-badge dx-badge-green">Enabled</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="dx-badge dx-badge-gray">Disabled</span>
+                                    }
+                                </td>
+                                <td class="dx-text-muted">@(p.LastSeenUtc?.ToString("g") ?? "never")</td>
+                                <td class="text-end" style="white-space:nowrap;">
+                                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => StartEdit(p)">Edit</button>
+                                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => Republish(p)">Republish</button>
+                                    <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => Delete(p)">Delete</button>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+            }
+        }
+        else
+        {
+            <div style="max-width:720px;">
+                <div class="dx-form-row">
+                    <label>Name</label>
+                    <input class="form-control" @bind="editing.PanelName" placeholder="Vertiv Experience Center" />
+                </div>
+
+                <div class="dx-form-row">
+                    <label>URL Key</label>
+                    <input class="form-control" @bind="editing.PanelKey" placeholder="vertiv-experience-center"
+                           disabled="@(editing.PanelId != 0)" />
+                    <div class="dx-text-muted" style="font-size:0.85em;">
+                        Lowercase letters, digits, and hyphens. Becomes part of the panel URL and cannot be
+                        changed once the panel exists.
+                    </div>
+                </div>
+
+                <div class="dx-form-row">
+                    <label>Location</label>
+                    <select class="form-select" value="@editing.LocationId"
+                            @onchange="OnLocationChanged" disabled="@(editing.PanelId != 0)">
+                        <option value="0">Select a location</option>
+                        @foreach (var loc in locations)
+                        {
+                            <option value="@loc.LocationId">@loc.LocationName</option>
+                        }
+                    </select>
+                    <div class="dx-text-muted" style="font-size:0.85em;">
+                        The room whose displays this panel controls. The panel has no authority outside it.
+                    </div>
+                </div>
+
+                <div class="dx-form-row">
+                    <label>Asset Library</label>
+                    <select class="form-select" value="@(editing.AssetLibraryLocationId?.ToString() ?? "")"
+                            @onchange="OnLibraryChanged">
+                        <option value="">Select a library</option>
+                        @foreach (var lib in assetLibraries)
+                        {
+                            <option value="@lib.LocationId">@lib.LocationName</option>
+                        }
+                    </select>
+                    <div class="dx-text-muted" style="font-size:0.85em;">
+                        Shared library every screen on this panel draws from.
+                    </div>
+                </div>
+
+                <div class="dx-form-row">
+                    <label>Bundle</label>
+                    <select class="form-select" value="@editing.BundleKey" @onchange="OnBundleChanged">
+                        <option value="">Select a bundle</option>
+                        @foreach (var b in panelBundles)
+                        {
+                            <option value="@b.Key">@b.Name (@b.Key)</option>
+                        }
+                    </select>
+                    @if (panelBundles.Count == 0)
+                    {
+                        <div class="dx-text-muted" style="font-size:0.85em;">
+                            No uploaded bundle declares panel hotspots. Add a "panel" section with a
+                            "hotspots" list to the bundle manifest and re-upload it.
+                        </div>
+                    }
+                </div>
+
+                <div class="dx-form-row">
+                    <label>Enabled</label>
+                    <input type="checkbox" @bind="editing.IsEnabled" />
+                    <span class="dx-text-muted" style="font-size:0.85em; margin-left:8px;">
+                        Disabling takes the panel offline immediately without changing its URL.
+                    </span>
+                </div>
+
+                @if (currentHotspots.Count > 0)
+                {
+                    <h5 style="margin-top:24px;">Hotspot Mapping</h5>
+                    <p class="dx-text-muted" style="font-size:0.9em;">
+                        Each clickable region in the bundle maps to one display. Mapping is stored by display
+                        id, so renaming a display does not break the panel.
+                    </p>
+                    <table class="dx-table">
+                        <thead>
+                            <tr><th style="width:220px;">Hotspot</th><th>Display</th></tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var hotspot in currentHotspots)
+                            {
+                                <tr>
+                                    <td><code>@hotspot</code></td>
+                                    <td>
+                                        <select class="form-select" value="@(MappedDisplayId(hotspot)?.ToString() ?? "")"
+                                                @onchange="e => SetMapping(hotspot, e.Value?.ToString())">
+                                            <option value="">Unmapped</option>
+                                            @foreach (var d in locationDisplays)
+                                            {
+                                                <option value="@d.DisplayId">@d.DisplayName</option>
+                                            }
+                                        </select>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                    @if (editing.LocationId != 0 && locationDisplays.Count == 0)
+                    {
+                        <div class="dx-text-muted" style="font-size:0.85em;">
+                            This location has no displays yet.
+                        </div>
+                    }
+                }
+
+                <div style="margin-top:24px; display:flex; gap:8px;">
+                    <button class="dx-btn dx-btn-blue" @onclick="Save">Save</button>
+                    @if (editing.PanelId != 0)
+                    {
+                        <button class="dx-btn dx-btn-gray" @onclick="RegenerateToken">Regenerate URL</button>
+                    }
+                    <button class="dx-btn dx-btn-gray" @onclick="CancelEdit">Cancel</button>
+                </div>
+
+                @if (editing.PanelId != 0)
+                {
+                    <p class="dx-text-muted" style="margin-top:12px; font-size:0.85em;">
+                        Regenerating issues a new URL and immediately invalidates the old one. The panel stays
+                        dark until the Moxie layout is updated with the new URL.
+                    </p>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private static readonly Regex KeyPattern = new(@"^[a-z0-9][a-z0-9\-]{1,63}$", RegexOptions.Compiled);
+
+    private List<TblPanel> panels = new();
+    private List<TblLocation> locations = new();
+    private List<TblLocation> assetLibraries = new();
+    private List<TblDisplay> locationDisplays = new();
+    private List<PanelBundleOption> panelBundles = new();
+
+    private TblPanel? editing;
+    private List<PanelHotspotMapping> currentMappings = new();
+    private List<string> currentHotspots = new();
+
+    private bool isLoading = true;
+    private string? message;
+    private string? error;
+    private string? issuedUrl;
+
+    private record PanelBundleOption(string Key, string Name, List<string> Hotspots);
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        isLoading = true;
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        panels = await db.TblPanels.AsNoTracking().OrderBy(p => p.PanelName).ToListAsync();
+        locations = await db.TblLocations.AsNoTracking()
+            .Include(l => l.LocationType)
+            .OrderBy(l => l.LocationName)
+            .ToListAsync();
+
+        // Asset Library locations are recognized by their type's component name rather than by
+        // LocationTypeId, which is identity-generated and differs per environment.
+        assetLibraries = locations
+            .Where(l => LocationTypeConstants.IsAssetLibrary(l.LocationType))
+            .ToList();
+
+        await LoadPanelBundlesAsync();
+
+        isLoading = false;
+    }
+
+    /// <summary>
+    /// Only bundles whose manifest declares panel hotspots can back a panel — without them
+    /// there is nothing to map displays to.
+    /// </summary>
+    private async Task LoadPanelBundlesAsync()
+    {
+        panelBundles = new List<PanelBundleOption>();
+        foreach (var info in await bundleService.GetBundlesAsync())
+        {
+            var manifest = await bundleService.GetManifestAsync(info.Bundle.BundleKey);
+            if (manifest?.Panel?.Hotspots is { Count: > 0 } hotspots)
+                panelBundles.Add(new PanelBundleOption(info.Bundle.BundleKey, info.Bundle.Name, hotspots));
+        }
+    }
+
+    private string LocationName(int locationId) =>
+        locations.FirstOrDefault(l => l.LocationId == locationId)?.LocationName ?? $"Location {locationId}";
+
+    private int HotspotCount(TblPanel p)
+    {
+        if (string.IsNullOrWhiteSpace(p.HotspotMapJson)) return 0;
+        try
+        {
+            return JsonSerializer.Deserialize<List<PanelHotspotMapping>>(p.HotspotMapJson)?.Count ?? 0;
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+    }
+
+    private void StartCreate()
+    {
+        ClearNotices();
+        editing = new TblPanel { IsEnabled = true };
+        currentMappings = new List<PanelHotspotMapping>();
+        currentHotspots = new List<string>();
+        locationDisplays = new List<TblDisplay>();
+    }
+
+    private async Task StartEdit(TblPanel panel)
+    {
+        ClearNotices();
+        editing = new TblPanel
+        {
+            PanelId = panel.PanelId,
+            PanelKey = panel.PanelKey,
+            PanelName = panel.PanelName,
+            LocationId = panel.LocationId,
+            AssetLibraryLocationId = panel.AssetLibraryLocationId,
+            BundleKey = panel.BundleKey,
+            PinnedVersion = panel.PinnedVersion,
+            HotspotMapJson = panel.HotspotMapJson,
+            IsEnabled = panel.IsEnabled
+        };
+
+        currentMappings = ParseMappings(panel.HotspotMapJson);
+        currentHotspots = panelBundles.FirstOrDefault(b => b.Key == panel.BundleKey)?.Hotspots ?? new List<string>();
+        await LoadDisplaysAsync(panel.LocationId);
+    }
+
+    private void CancelEdit()
+    {
+        editing = null;
+        ClearNotices();
+    }
+
+    private void ClearNotices()
+    {
+        message = null;
+        error = null;
+        issuedUrl = null;
+    }
+
+    private async Task OnLocationChanged(ChangeEventArgs e)
+    {
+        if (editing == null) return;
+        editing.LocationId = int.TryParse(e.Value?.ToString(), out var id) ? id : 0;
+
+        // Mappings point at displays in the old location, so they cannot survive the change.
+        currentMappings.Clear();
+        await LoadDisplaysAsync(editing.LocationId);
+    }
+
+    private void OnLibraryChanged(ChangeEventArgs e)
+    {
+        if (editing == null) return;
+        editing.AssetLibraryLocationId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+    }
+
+    private void OnBundleChanged(ChangeEventArgs e)
+    {
+        if (editing == null) return;
+        editing.BundleKey = e.Value?.ToString() ?? string.Empty;
+        currentHotspots = panelBundles.FirstOrDefault(b => b.Key == editing.BundleKey)?.Hotspots ?? new List<string>();
+
+        // Drop mappings for hotspots the newly chosen bundle does not declare.
+        currentMappings = currentMappings.Where(m => currentHotspots.Contains(m.HotspotKey)).ToList();
+    }
+
+    private async Task LoadDisplaysAsync(int locationId)
+    {
+        if (locationId == 0)
+        {
+            locationDisplays = new List<TblDisplay>();
+            return;
+        }
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        locationDisplays = await db.TblDisplays.AsNoTracking()
+            .Where(d => d.LocationId == locationId)
+            .OrderBy(d => d.DisplayName)
+            .ToListAsync();
+    }
+
+    private static List<PanelHotspotMapping> ParseMappings(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json)) return new List<PanelHotspotMapping>();
+        try
+        {
+            return JsonSerializer.Deserialize<List<PanelHotspotMapping>>(json) ?? new List<PanelHotspotMapping>();
+        }
+        catch (JsonException)
+        {
+            return new List<PanelHotspotMapping>();
+        }
+    }
+
+    private int? MappedDisplayId(string hotspotKey) =>
+        currentMappings.FirstOrDefault(m => m.HotspotKey == hotspotKey)?.DisplayId;
+
+    private void SetMapping(string hotspotKey, string? value)
+    {
+        currentMappings.RemoveAll(m => m.HotspotKey == hotspotKey);
+        if (int.TryParse(value, out var displayId) && displayId > 0)
+            currentMappings.Add(new PanelHotspotMapping { HotspotKey = hotspotKey, DisplayId = displayId });
+    }
+
+    private async Task Save()
+    {
+        if (editing == null) return;
+        ClearNotices();
+
+        if (string.IsNullOrWhiteSpace(editing.PanelName))
+        {
+            error = "Name is required.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(editing.PanelKey) || !KeyPattern.IsMatch(editing.PanelKey))
+        {
+            error = "URL key must be 2 to 64 lowercase letters, digits, or hyphens.";
+            return;
+        }
+        if (editing.LocationId == 0)
+        {
+            error = "Select a location.";
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(editing.BundleKey))
+        {
+            error = "Select a bundle.";
+            return;
+        }
+
+        // Order mappings the way the bundle declares its hotspots so the published document's
+        // screen order is stable and predictable rather than reflecting edit order.
+        var ordered = currentHotspots
+            .Select(h => currentMappings.FirstOrDefault(m => m.HotspotKey == h))
+            .Where(m => m != null)
+            .Select(m => m!)
+            .ToList();
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        try
+        {
+            if (editing.PanelId == 0)
+            {
+                if (await db.TblPanels.AnyAsync(p => p.PanelKey == editing.PanelKey))
+                {
+                    error = "A panel with that URL key already exists.";
+                    return;
+                }
+
+                var token = PanelService.GenerateToken();
+                var entity = new TblPanel
+                {
+                    PanelKey = editing.PanelKey,
+                    PanelName = editing.PanelName,
+                    LocationId = editing.LocationId,
+                    AssetLibraryLocationId = editing.AssetLibraryLocationId,
+                    BundleKey = editing.BundleKey,
+                    PinnedVersion = editing.PinnedVersion,
+                    TokenHash = PanelService.HashToken(token),
+                    HotspotMapJson = JsonSerializer.Serialize(ordered),
+                    IsEnabled = editing.IsEnabled,
+                    CreateDate = DateTime.UtcNow,
+                    LastEditUser = sessionState.UserName
+                };
+                db.TblPanels.Add(entity);
+                await db.SaveChangesAsync();
+
+                issuedUrl = BuildPanelUrl(entity.PanelKey, token);
+                message = "Panel created.";
+            }
+            else
+            {
+                var entity = await db.TblPanels.FirstOrDefaultAsync(p => p.PanelId == editing.PanelId);
+                if (entity == null)
+                {
+                    error = "Panel no longer exists.";
+                    return;
+                }
+
+                entity.PanelName = editing.PanelName;
+                entity.AssetLibraryLocationId = editing.AssetLibraryLocationId;
+                entity.BundleKey = editing.BundleKey;
+                entity.PinnedVersion = editing.PinnedVersion;
+                entity.HotspotMapJson = JsonSerializer.Serialize(ordered);
+                entity.IsEnabled = editing.IsEnabled;
+                entity.LastEditDate = DateTime.UtcNow;
+                entity.LastEditUser = sessionState.UserName;
+
+                await db.SaveChangesAsync();
+                message = "Panel saved.";
+            }
+
+            await LoadAsync();
+            editing = null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save panel {PanelKey}", editing.PanelKey);
+            error = "Could not save the panel. See the log for details.";
+        }
+    }
+
+    private async Task RegenerateToken()
+    {
+        if (editing == null || editing.PanelId == 0) return;
+        ClearNotices();
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var entity = await db.TblPanels.FirstOrDefaultAsync(p => p.PanelId == editing.PanelId);
+        if (entity == null)
+        {
+            error = "Panel no longer exists.";
+            return;
+        }
+
+        var token = PanelService.GenerateToken();
+        entity.TokenHash = PanelService.HashToken(token);
+        entity.LastEditDate = DateTime.UtcNow;
+        entity.LastEditUser = sessionState.UserName;
+        await db.SaveChangesAsync();
+
+        issuedUrl = BuildPanelUrl(entity.PanelKey, token);
+        message = "New URL issued. The previous URL no longer works.";
+    }
+
+    private async Task Republish(TblPanel panel)
+    {
+        ClearNotices();
+        using var scope = scopeFactory.CreateScope();
+        var panelService = scope.ServiceProvider.GetRequiredService<IPanelService>();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var entity = await db.TblPanels.AsNoTracking().FirstOrDefaultAsync(p => p.PanelId == panel.PanelId);
+        if (entity == null)
+        {
+            error = "Panel no longer exists.";
+            return;
+        }
+
+        try
+        {
+            await panelService.PublishAsync(entity, navMan.BaseUri.TrimEnd('/'));
+            message = $"Republished {entity.PanelName}.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to republish panel {PanelKey}", entity.PanelKey);
+            error = "Could not republish. See the log for details.";
+        }
+    }
+
+    private async Task Delete(TblPanel panel)
+    {
+        ClearNotices();
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var entity = await db.TblPanels.FirstOrDefaultAsync(p => p.PanelId == panel.PanelId);
+        if (entity == null) return;
+
+        db.TblPanels.Remove(entity);
+        await db.SaveChangesAsync();
+        message = $"Deleted {entity.PanelName}.";
+        await LoadAsync();
+    }
+
+    private string BuildPanelUrl(string panelKey, string token) =>
+        $"{navMan.BaseUri.TrimEnd('/')}/panel/{panelKey}/{token}/";
+
+    private async Task CopyIssuedUrl()
+    {
+        if (string.IsNullOrEmpty(issuedUrl)) return;
+
+        try
+        {
+            await JS.InvokeVoidAsync("navigator.clipboard.writeText", issuedUrl);
+            message = "URL copied to the clipboard.";
+        }
+        catch (JSException)
+        {
+            // Clipboard access is refused on insecure origins. The URL is already visible in a
+            // selectable field, so this is a convenience failure and not worth an error.
+            message = "Could not copy automatically. Select the URL above and copy it.";
+        }
+    }
+}

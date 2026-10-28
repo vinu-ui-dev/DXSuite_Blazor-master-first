@@ -1,0 +1,16 @@
+{
+  "name": "dx-bundle",
+  "version": "1.0.0",
+  "description": "Zip and push DXSuite location bundles to a running instance",
+  "type": "module",
+  "bin": {
+    "dx-bundle": "./dx-bundle.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "chokidar": "^3.6.0"
+  }
+}

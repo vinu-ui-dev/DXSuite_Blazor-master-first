@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_ApiKeyManagement">
+    <value>Gestion des clés API</value>
+  </data>
+  <data name="Label_ApiKeyDescription">
+    <value>Gérez les clés API pour les intégrations externes et l'authentification des appareils.</value>
+  </data>
+  <data name="Header_CreateNewApiKey">
+    <value>Créer une nouvelle clé API</value>
+  </data>
+  <data name="Label_KeyName">
+    <value>Nom de la clé</value>
+  </data>
+  <data name="Placeholder_KeyName">
+    <value>ex. Clé de signalisation production</value>
+  </data>
+  <data name="Label_Permissions">
+    <value>Autorisations</value>
+  </data>
+  <data name="Label_ReadWrite">
+    <value>Lecture et écriture</value>
+  </data>
+  <data name="Label_ReadOnly">
+    <value>Lecture seule</value>
+  </data>
+  <data name="Button_GenerateKey">
+    <value>Générer la clé</value>
+  </data>
+  <data name="Label_NewKeyCreated">
+    <value>Nouvelle clé créée !</value>
+  </data>
+  <data name="Label_CopyKeyWarning">
+    <value>Copiez cette clé maintenant — elle ne sera plus affichée.</value>
+  </data>
+  <data name="Button_Copy">
+    <value>Copier</value>
+  </data>
+  <data name="Header_ExistingApiKeys">
+    <value>Clés API existantes</value>
+  </data>
+  <data name="Column_Name">
+    <value>Nom</value>
+  </data>
+  <data name="Column_Key">
+    <value>Clé</value>
+  </data>
+  <data name="Column_LastUsed">
+    <value>Dernière utilisation</value>
+  </data>
+  <data name="Column_Calls">
+    <value>Appels</value>
+  </data>
+  <data name="Label_Inactive">
+    <value>Inactif</value>
+  </data>
+  <data name="Label_Never">
+    <value>Jamais</value>
+  </data>
+  <data name="Button_Revoke">
+    <value>Révoquer</value>
+  </data>
+  <data name="Button_Activate">
+    <value>Activer</value>
+  </data>
+  <data name="Label_NoApiKeys">
+    <value>Aucune clé API n'a encore été créée.</value>
+  </data>
+</root>

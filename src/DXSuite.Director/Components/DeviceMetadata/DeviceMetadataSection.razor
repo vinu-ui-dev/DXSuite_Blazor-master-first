@@ -1,0 +1,216 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Components
+@using DXSuite.Shared.Services.Identity
+@inject IDeviceMetadataService DeviceMetadataService
+@inject IMetadataDefinitionService MetadataDefinitionService
+@inject ILocationMetadataRuleService LocationMetadataRules
+@inject ILogger<DeviceMetadataSection> Logger
+
+@*
+    Device metadata authoring for any device, not only content channels. A device holds one value per
+    key, so every key edits in single-value mode against the registry's options.
+*@
+<div>
+    <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Metadata</div>
+
+    @if (errorMessage != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-bottom:8px;">@errorMessage</div>
+    }
+
+    @foreach (var warning in MissingTargetedValues())
+    {
+        <div class="dx-alert dx-alert-warning" style="margin-bottom:8px;">@warning</div>
+    }
+
+    @if (isLoading)
+    {
+        <div class="dx-text-muted" style="font-size:0.85rem;">Loading...</div>
+    }
+    else
+    {
+        @if (records.Count > 0)
+        {
+            <div class="dx-table" style="margin-bottom:8px;">
+                <div class="dx-table-header" style="grid-template-columns: minmax(120px,1fr) minmax(120px,1fr) 90px;">
+                    <div>Key</div>
+                    <div>Value</div>
+                    <div></div>
+                </div>
+                @foreach (var record in records)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: minmax(120px,1fr) minmax(120px,1fr) 90px;">
+                        <div>@KeyLabel(record.MetadataKey)</div>
+                        <div class="dx-truncate">@record.MetadataValue</div>
+                        <div>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@isSaving" @onclick="() => Remove(record)">Remove</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:8px;">No metadata on this device.</div>
+        }
+
+        @if (definitions.Count == 0)
+        {
+            <div class="dx-text-muted" style="font-size:0.85rem;">No metadata keys are defined. Add keys in the Metadata tab first.</div>
+        }
+        else
+        {
+            <div style="display:flex; gap:8px; align-items:flex-end; --dx-meta-input-height:34px;">
+                <div style="flex:1;">
+                    <select class="dx-form-control" style="height:var(--dx-meta-input-height);" value="@addKey" @onchange="OnKeyChanged">
+                        <option value="">Select key</option>
+                        @foreach (var def in definitions)
+                        {
+                            <option value="@def.MetadataKey">@def.DisplayName (@def.MetadataKey)</option>
+                        }
+                    </select>
+                </div>
+                <div style="flex:1;">
+                    <MetadataValueInput FieldType="@(AddDefinition?.FieldType ?? MetadataFieldTypes.String)"
+                                        Values="@(string.IsNullOrEmpty(addValue) ? [] : [addValue])"
+                                        ValuesChanged="v => addValue = v.FirstOrDefault() ?? string.Empty"
+                                        Options="@(AddDefinition?.Options ?? new())"
+                                        SingleValue="true" />
+                </div>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" style="height:var(--dx-meta-input-height);"
+                        disabled="@(isSaving || string.IsNullOrEmpty(addKey) || string.IsNullOrWhiteSpace(addValue))"
+                        @onclick="Save">
+                    @(isSaving ? "Saving..." : "Set")
+                </button>
+            </div>
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
+                Setting a key the device already has replaces its value.
+            </div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public string DeviceId { get; set; } = "";
+
+    /// <summary>The device's location, when it has one; its targeting rules drive the missing-value warning.</summary>
+    [Parameter] public int? LocationId { get; set; }
+
+    private List<TblDeviceMetadata> records = new();
+    private List<MetadataDefinitionDto> definitions = new();
+    private LocationTargeting? targeting;
+
+    private string addKey = "";
+    private string addValue = "";
+
+    private bool isLoading = true;
+    private bool isSaving;
+    private string? errorMessage;
+    private string? loadedDeviceId;
+
+    private MetadataDefinitionDto? AddDefinition => definitions.FirstOrDefault(d => d.MetadataKey == addKey);
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (DeviceId == loadedDeviceId) return;
+        loadedDeviceId = DeviceId;
+        await Load();
+    }
+
+    private async Task Load()
+    {
+        isLoading = true;
+        errorMessage = null;
+        try
+        {
+            definitions = await MetadataDefinitionService.GetAllDefinitionsAsync();
+            records = await DeviceMetadataService.GetMetadataRecordsAsync(DeviceId);
+            targeting = LocationId is int locationId ? await LocationMetadataRules.GetTargetingAsync(locationId) : null;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load metadata for device {DeviceId}", DeviceId);
+            errorMessage = "Could not load this device's metadata.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    // A device with no value for a key its location targets by falls into that key's untagged-player
+    // handling without anyone having chosen that, so the editor says so rather than showing a badge.
+    private IEnumerable<string> MissingTargetedValues()
+    {
+        if (targeting is not { Enabled: true }) yield break;
+
+        foreach (var rule in targeting.Rules.Participating)
+        {
+            if (records.Any(r => MetadataEvaluator.KeyComparer.Equals(r.MetadataKey, rule.Key) && !string.IsNullOrWhiteSpace(r.MetadataValue)))
+                continue;
+
+            var consequence = rule.UntaggedPlayers switch
+            {
+                UntaggedPlayerPolicy.UntaggedOnly => "it only receives content with no value for this key",
+                UntaggedPlayerPolicy.None => "it receives nothing from its location",
+                _ => "its content is not filtered by this key"
+            };
+            yield return $"This device's location targets content by {KeyLabel(rule.Key)}, and the device has no value, so {consequence}.";
+        }
+    }
+
+    private string KeyLabel(string key)
+    {
+        var def = definitions.FirstOrDefault(d => MetadataEvaluator.KeyComparer.Equals(d.MetadataKey, key));
+        return def == null ? key : $"{def.DisplayName} ({def.MetadataKey})";
+    }
+
+    private void OnKeyChanged(ChangeEventArgs e)
+    {
+        addKey = e.Value?.ToString() ?? "";
+        addValue = records.FirstOrDefault(r => MetadataEvaluator.KeyComparer.Equals(r.MetadataKey, addKey))?.MetadataValue ?? "";
+    }
+
+    private async Task Save()
+    {
+        isSaving = true;
+        errorMessage = null;
+        try
+        {
+            await DeviceMetadataService.SetMetadataAsync(DeviceId, addKey, addValue);
+            addKey = "";
+            addValue = "";
+            records = await DeviceMetadataService.GetMetadataRecordsAsync(DeviceId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to set metadata {Key} on device {DeviceId}", addKey, DeviceId);
+            errorMessage = ex is ArgumentException ? ex.Message : "Could not save the value.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task Remove(TblDeviceMetadata record)
+    {
+        isSaving = true;
+        errorMessage = null;
+        try
+        {
+            await DeviceMetadataService.DeleteMetadataByIdAsync(record.DeviceMetadataId);
+            records = await DeviceMetadataService.GetMetadataRecordsAsync(DeviceId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to remove metadata {Key} from device {DeviceId}", record.MetadataKey, DeviceId);
+            errorMessage = "Could not remove the value.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

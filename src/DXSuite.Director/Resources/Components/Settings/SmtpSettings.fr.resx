@@ -1,0 +1,76 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_EmailSmtp">
+    <value>Courriel (SMTP)</value>
+  </data>
+  <data name="Label_SmtpDescription">
+    <value>Configurez le serveur de messagerie sortant pour les notifications et les courriels de test.</value>
+  </data>
+  <data name="Label_EnableSmtp">
+    <value>Activer SMTP</value>
+  </data>
+  <data name="Label_SmtpHost">
+    <value>Hôte SMTP</value>
+  </data>
+  <data name="Placeholder_SmtpHost">
+    <value>smtp.exemple.com</value>
+  </data>
+  <data name="Label_Port">
+    <value>Port</value>
+  </data>
+  <data name="Label_UseSslTls">
+    <value>Utiliser SSL/TLS</value>
+  </data>
+  <data name="Label_Username">
+    <value>Nom d'utilisateur</value>
+  </data>
+  <data name="Label_Password">
+    <value>Mot de passe</value>
+  </data>
+  <data name="Placeholder_Optional">
+    <value>(facultatif)</value>
+  </data>
+  <data name="Label_FromAddress">
+    <value>Adresse d'expédition</value>
+  </data>
+  <data name="Placeholder_FromAddress">
+    <value>noreply@exemple.com</value>
+  </data>
+  <data name="Label_FromName">
+    <value>Nom de l'expéditeur</value>
+  </data>
+  <data name="Placeholder_FromName">
+    <value>Director</value>
+  </data>
+  <data name="Label_Saving">
+    <value>Enregistrement...</value>
+  </data>
+  <data name="Button_SendTestEmail">
+    <value>Envoyer un courriel de test</value>
+  </data>
+  <data name="Label_Sending">
+    <value>Envoi...</value>
+  </data>
+  <data name="Placeholder_TestRecipient">
+    <value>Adresse courriel du destinataire</value>
+  </data>
+  <data name="Label_SmtpSaved">
+    <value>Paramètres SMTP enregistrés avec succès.</value>
+  </data>
+</root>

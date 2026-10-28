@@ -1,0 +1,810 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory scopeFactory
+@inject IClusterResolutionService clusterResolution
+@inject IUserGroupLocationDefaultService defaultService
+@inject IPixeraAllocationService _allocationService
+@inject IWallContentBroadcastService wallBroadcast
+@inject DXSuite.Shared.Multitenancy.ITenantContext TenantContext
+@inject IJSRuntime JSRuntime
+@inject NavigationManager navMan
+@inject IDisplayOverrideService displayOverrides
+@implements IDisposable
+@rendermode InteractiveServer
+
+@if (Location != null && parentWall != null)
+{
+    <section class="body">
+        <div class="acv-scroll-container" @ref="scrollContainerRef">
+            @* Outer container is clipped to the cluster's horizontal extent.
+               The inner canvas sits in the full wall coordinate space and is translated
+               so the cluster region is flush with the outer container's left edge. *@
+            <div class="acv-background-outer" style="@GetOuterStyle()">
+              <div style="@GetInnerCanvasStyle()">
+
+                @* Wall context background — full wall dimensions; cropped by outer clip container *@
+                <div class="acv-background-image" style="@GetBackgroundImageStyle()"></div>
+
+                @* Wall background layer(s) — role="background" display groups rendered in full wall
+                   coordinates so the inner canvas crop shows only this cluster's section, mirroring the
+                   main VideoWall. The wall's background lives on these displays, not on the per-airline
+                   BackgroundPath. horizontalImageLoop tiles a single display across the wall width. *@
+                @foreach (var bg in backgroundLayers)
+                {
+                    for (int tile = 0; tile < bg.LoopCount; tile++)
+                    {
+                        var tileLeft = bg.Left + tile * bg.Width;
+                        <div style="position:absolute; top:@(bg.Top)px; left:@(tileLeft)px; z-index:@bg.ZIndex; pointer-events:none;">
+                            @* PreviewMode intentionally omitted so background-layer videos play live
+                               (muted/looping), matching the main VideoWall view. Live playback
+                               software-decodes the full wall video per tile — if that proves too
+                               heavy for deployment, restore PreviewMode="true" to show thumbnails. *@
+                            <DXSuite.Director.Components.DisplayTypes.StandardDisplay
+                                Display="bg.Display" ScaleFactor="@bg.EffectiveScale" />
+                        </div>
+                    }
+                }
+
+                @* Airline cluster background — z-index 1, behind all other layers.
+                   extendToEdges fills the lead-in/trailing space beyond the display bounds. *@
+                @if (!string.IsNullOrEmpty(clusterBackgroundPath))
+                {
+                    @if (IsWebUrl(clusterBackgroundPath) || IsHtmlPath(clusterBackgroundPath))
+                    {
+                        <iframe style="@GetClusterBoundsStyle(1, extendToEdges: true) @LayerRenderMode.OpacityCss(clusterBackgroundOpacity)" src="@clusterBackgroundPath"
+                                scrolling="no" frameborder="0"></iframe>
+                    }
+                    else if (IsVideoPath(clusterBackgroundPath))
+                    {
+                        @* Plays live (muted/looping) so the admin view matches the wall. If live
+                           playback proves too heavy for deployment, drop autoplay/loop and switch
+                           preload back to "metadata" to show a static first frame instead. *@
+                        <video style="@GetClusterBoundsStyle(1, extendToEdges: true) @LayerRenderMode.VideoCss(clusterBackgroundMode) @LayerRenderMode.OpacityCss(clusterBackgroundOpacity)" src="@clusterBackgroundPath"
+                               autoplay loop muted playsinline></video>
+                    }
+                    else
+                    {
+                        <div style="@GetClusterBoundsStyle(1, extendToEdges: true) @GetClusterBgStyle() @LayerRenderMode.OpacityCss(clusterBackgroundOpacity)"></div>
+                    }
+                }
+
+                @* Airline logo zones — z-index 3, above background and mask.
+                   Zone positions are in raw canvas pixels; multiply by cs to get preview coordinates.
+                   The inner canvas is already shifted by -cropLeft, so overflow:hidden on the outer
+                   container automatically clips zones that fall outside this cluster's visible region.
+                   Falls back to the single stored logo path when no allocation zones are available. *@
+                @if (_logoZones is { Count: > 0 } && wallConfig != null)
+                {
+                    var cs = wallConfig.ContentScaleFactor * zoomFactor;
+                    foreach (var zone in _logoZones)
+                    {
+                        if (string.IsNullOrEmpty(zone.LogoPath)) continue;
+                        var zl     = zone.LeftPx   * cs;
+                        var zt     = (wallConfig.ContentTopOffsetPx + zone.TopPx) * cs;
+                        var zw     = zone.WidthPx  * cs;
+                        var zh     = zone.HeightPx * cs;
+                        var zStyle = $"position:absolute; top:{zt}px; left:{zl}px; width:{zw}px; height:{zh}px; z-index:3; border:none; pointer-events:none;";
+                        if (IsWebUrl(zone.LogoPath) || IsHtmlPath(zone.LogoPath))
+                        {
+                            <iframe style="@zStyle" src="@zone.LogoPath" scrolling="no" frameborder="0"></iframe>
+                        }
+                        else
+                        {
+                            <div style="@(zStyle + $" background-image:url('{zone.LogoPath}'); background-size:contain; background-repeat:no-repeat; background-position:center;")"></div>
+                        }
+                    }
+                }
+                else if (!string.IsNullOrEmpty(clusterLogoPath))
+                {
+                    @if (IsWebUrl(clusterLogoPath) || IsHtmlPath(clusterLogoPath))
+                    {
+                        <iframe style="@GetClusterBoundsStyle(3)" src="@clusterLogoPath"
+                                scrolling="no" frameborder="0"></iframe>
+                    }
+                    else
+                    {
+                        <div style="@GetClusterBoundsStyle(3) @GetClusterLogoStyle()"></div>
+                    }
+                }
+
+                @* Counter displays — absolutely positioned at their exact wall coordinates *@
+                <div style="position:absolute; top:0; left:0; z-index:@GetContentZIndex();">
+                    @foreach (var pos in displayPositions)
+                    {
+                        <div style="position:absolute; top:@(pos.Top)px; left:@(pos.Left)px;">
+                            <div class="vw-display-wrapper">
+                                @* First tap on touch reveals the name and action banners; the second tap acts *@
+                                <div class="vw-display-hit" style="position:relative; display:inline-block; vertical-align:top;"
+                                     @onmouseover="(() => hoverDisplayId = pos.Display.DisplayId)"
+                                     @onmouseout="(() => hoverDisplayId = null)"
+                                     @onclick="(() => hoverDisplayId = pos.Display.DisplayId)">
+                                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay
+                                        Display="pos.Display" ScaleFactor="@pos.EffectiveScale" />
+                                    @RenderHoverActions(pos.Display)
+                                </div>
+                                @RenderOverrideBanner(pos.Display)
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                @* Airline mask — z-index 2, above background and below logo and counters.
+                   extendToEdges fills the lead-in/trailing space beyond the display bounds. *@
+                @if (!string.IsNullOrEmpty(clusterMaskPath))
+                {
+                    @if (IsWebUrl(clusterMaskPath) || IsHtmlPath(clusterMaskPath))
+                    {
+                        <iframe style="@GetClusterBoundsStyle(2, extendToEdges: true) @LayerRenderMode.OpacityCss(clusterMaskOpacity)" src="@clusterMaskPath"
+                                scrolling="no" frameborder="0"></iframe>
+                    }
+                    else if (IsVideoPath(clusterMaskPath))
+                    {
+                        <video style="@GetClusterBoundsStyle(2, extendToEdges: true) @LayerRenderMode.VideoCss(clusterMaskMode) @LayerRenderMode.OpacityCss(clusterMaskOpacity)" src="@clusterMaskPath"
+                               autoplay loop muted playsinline></video>
+                    }
+                    else
+                    {
+                        <div style="@GetClusterBoundsStyle(2, extendToEdges: true) @GetClusterMaskStyle() @LayerRenderMode.OpacityCss(clusterMaskOpacity)"></div>
+                    }
+                }
+
+              </div>@* /inner canvas *@
+            </div>@* /acv-background-outer *@
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+
+    private TblLocation? parentWall;
+    private VideoWallConfiguration? wallConfig;
+    private List<DisplayRenderInfo> displayPositions = new();
+    private double zoomFactor  = 1.0;
+    private double cropLeft    = 0;   // Left crop offset in scaled wall pixels
+    private double cropRight   = 0;   // Right crop edge in scaled wall pixels (= container width + cropLeft)
+    private int? hoverDisplayId;
+    private ElementReference scrollContainerRef;
+    private bool jsScaleInitialized = false;
+
+    private string? clusterBackgroundPath;
+    private string  clusterBackgroundMode = "fill-width";
+    private int     clusterBackgroundOpacity = 100;
+    private string? clusterMaskPath;
+    private string  clusterMaskMode       = "fill-width";
+    private int     clusterMaskOpacity    = 100;
+    private string? clusterLogoPath;
+
+    /// <summary>Logo zones from the parent wall allocation filtered to this cluster's airline group.</summary>
+    private IReadOnlyList<LogoZone>? _logoZones;
+
+    /// <summary>
+    /// Wall background-layer displays (groups with Role="background") positioned in full wall
+    /// coordinates. The wall's background is shown on these display entities — not on the per-airline
+    /// BackgroundPath — so the transient must render them (cropped by the inner canvas) to match the
+    /// main wall. Empty when the wall has no background-role group.
+    /// </summary>
+    private List<BackgroundLayerInfo> backgroundLayers = new();
+
+    private Timer? _refreshTimer;
+
+    /// <summary>Per-display render data: display entity, scaled wall coordinates, effective scale.</summary>
+    private record DisplayRenderInfo(TblDisplay Display, double Top, double Left, double EffectiveScale);
+
+    /// <summary>One background-layer display positioned in scaled wall coordinates. Width drives the
+    /// horizontal-image-loop tiling offset; LoopCount tiles the same display across the wall.</summary>
+    private record BackgroundLayerInfo(TblDisplay Display, double Top, double Left, double Width,
+                                       double EffectiveScale, int ZIndex, int LoopCount);
+
+    /// <summary>A parsed span from the cluster key.</summary>
+    private record SpanKey(string GroupName, int StartIndex, int EndIndex);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location?.IsTransientCluster == true && Location.ParentVideoWallLocationId.HasValue)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            parentWall = await db.TblLocations.AsNoTracking()
+                .FirstOrDefaultAsync(l => l.LocationId == Location.ParentVideoWallLocationId.Value);
+
+            if (parentWall != null)
+            {
+                ParseWallConfig();
+                await BuildDisplayPositions(db);
+                await LoadClusterDefaultsAsync();
+                await LoadLogoZonesAsync();
+                await LoadBackgroundLayersAsync(db);
+
+                // Change notices arrive by broadcast; the timer is a slow safety net
+                // for a missed publish, no longer the primary refresh path.
+                _refreshTimer = new Timer(async _ => await RefreshWallContentAsync(), null,
+                    TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+                if (TenantContext.IsPopulated)
+                {
+                    _broadcastSub = wallBroadcast.Subscribe(
+                        TenantContext.TenantId,
+                        Location.ParentVideoWallLocationId.Value,
+                        HandleWallContentChangeAsync);
+                }
+            }
+        }
+    }
+
+    private IDisposable? _broadcastSub;
+
+    // A change notice with an activation instant is held until that instant so every
+    // output of the wall applies the refresh together (synchronized transitions);
+    // without one it applies immediately (standard mode and operator edits).
+    private async Task HandleWallContentChangeAsync(WallContentChange change)
+    {
+        if (change.ActivateAtUtc is DateTime activateAt)
+        {
+            var delay = activateAt - DateTime.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay);
+        }
+        await RefreshWallContentAsync();
+    }
+
+    private async Task RefreshWallContentAsync()
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            await BuildDisplayPositions(db);
+            // Re-resolve the airline's active dayparting state: without this the
+            // background/mask/logo captured at page init stick forever, so a wall
+            // would enter a scheduled state but never fall back to the default.
+            await LoadClusterDefaultsAsync();
+            await LoadLogoZonesAsync();
+            await LoadBackgroundLayersAsync(db);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+        _broadcastSub?.Dispose();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Gate on jsScaleInitialized rather than firstRender: OnInitializedAsync is async,
+        // so the div ref may not resolve until a later render cycle.
+        if (!jsScaleInitialized && wallConfig != null && parentWall?.BackgroundImageHeight > 0)
+        {
+            jsScaleInitialized = true;
+            try
+            {
+                var available = await JSRuntime.InvokeAsync<double>(
+                    "panoramaInterop.getAvailableHeight", scrollContainerRef);
+                if (available <= 0)
+                {
+                    // Element ref not attached yet — retry on a later render.
+                    jsScaleInitialized = false;
+                }
+                else
+                {
+                    // Natural height is the same background/content union as GetCanvasHeight
+                    // (background at BackgroundScaleFactor, content at ContentScaleFactor),
+                    // otherwise the zoom overshoots and the bottom of the wall is pushed out of
+                    // the viewport. GetContentMaxBottom returns current zoom-scaled pixels;
+                    // divide by zoomFactor to get natural units.
+                    var naturalH = Math.Max(
+                        parentWall.BackgroundImageHeight.Value * wallConfig.BackgroundScaleFactor,
+                        GetContentMaxBottom() / zoomFactor);
+                    zoomFactor = available / naturalH;
+                    using var scope = scopeFactory.CreateScope();
+                    var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                    await BuildDisplayPositions(db);
+                    await LoadBackgroundLayersAsync(db);
+                    StateHasChanged();
+                }
+            }
+            catch
+            {
+                // JS interop unavailable (circuit not ready or script still loading).
+                // Retry on a later render — the periodic refresh timer produces one
+                // every 10 s, so a transient failure self-heals instead of leaving
+                // the wall stuck at the unzoomed default scale.
+                jsScaleInitialized = false;
+            }
+        }
+    }
+
+    private void ParseWallConfig()
+    {
+        if (!string.IsNullOrEmpty(parentWall?.ExtendedData))
+        {
+            try
+            {
+                wallConfig = JsonSerializer.Deserialize<VideoWallConfiguration>(parentWall.ExtendedData,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch { }
+        }
+        wallConfig ??= new VideoWallConfiguration();
+    }
+
+    /// <summary>
+    /// Parses Location.ClusterKey into individual spans.
+    /// Single-group format: "{groupName}:{startIndex}-{endIndex}"
+    /// Multi-group format:  "{span1}|{span2}|..."
+    /// </summary>
+    private List<SpanKey> ParseClusterSpans()
+    {
+        var result = new List<SpanKey>();
+        if (Location?.ClusterKey == null || wallConfig == null) return result;
+
+        foreach (var part in Location.ClusterKey.Split('|'))
+        {
+            var colonIdx = part.LastIndexOf(':');
+            if (colonIdx < 0) continue;
+            var groupName  = part[..colonIdx];
+            var rangeParts = part[(colonIdx + 1)..].Split('-');
+            if (rangeParts.Length < 2) continue;
+            if (!int.TryParse(rangeParts[0], out var start) || !int.TryParse(rangeParts[1], out var end)) continue;
+            result.Add(new SpanKey(groupName, start, end));
+        }
+        return result;
+    }
+
+    /// <summary>
+    /// Loads all displays belonging to this cluster and computes their absolute canvas positions
+    /// using the same cyclic gap accumulator as VideoWall.razor. All counter-group displays are
+    /// loaded (not just cluster members) so gap phases are correct for mid-row cluster starts.
+    /// </summary>
+    private async Task BuildDisplayPositions(IDirectorDBContext db)
+    {
+        displayPositions.Clear();
+        if (wallConfig == null) return;
+
+        var spans = ParseClusterSpans();
+        if (spans.Count == 0) return;
+
+        var cs = wallConfig.ContentScaleFactor * zoomFactor;
+
+        // Load every counter-group display for width lookups — required for correct gap accumulation
+        // when a cluster starts mid-group (preceding displays still contribute their widths).
+        var allGroupDisplayIds = wallConfig.Layout.Groups
+            .Where(g => g.AllowAirlineAllocation)
+            .SelectMany(g => g.DisplayIds)
+            .Distinct()
+            .ToList();
+        var allGroupDisplays = await db.TblDisplays.AsNoTracking()
+            .Where(d => allGroupDisplayIds.Contains(d.DisplayId))
+            .ToListAsync();
+        var allDisplayById = allGroupDisplays.ToDictionary(d => d.DisplayId);
+
+        // Load cluster displays with full navigation properties for rendering.
+        var clusterDisplayIds = spans
+            .SelectMany(s =>
+            {
+                var g = wallConfig.Layout.Groups.FirstOrDefault(grp => grp.GroupName == s.GroupName);
+                return g == null ? Enumerable.Empty<int>()
+                    : g.DisplayIds.Skip(s.StartIndex).Take(s.EndIndex - s.StartIndex + 1);
+            })
+            .ToList();
+        var clusterDisplaysFull = await db.TblDisplays
+            .Where(d => clusterDisplayIds.Contains(d.DisplayId))
+            .Include(d => d.OverrideAsset)
+            .Include(e => e.TblScheduleEvents)
+            .Include(f => f.Constraint)
+            .ToListAsync();
+        var clusterDisplayById = clusterDisplaysFull.ToDictionary(d => d.DisplayId);
+
+        foreach (var span in spans)
+        {
+            var group = wallConfig.Layout.Groups.FirstOrDefault(g => g.GroupName == span.GroupName);
+            if (group == null) continue;
+
+            var es = cs * (group.DisplayScale > 0 ? group.DisplayScale : 1.0);
+
+            for (int localIdx = 0; localIdx <= span.EndIndex - span.StartIndex; localIdx++)
+            {
+                var groupIdx = span.StartIndex + localIdx;
+                if (groupIdx >= group.DisplayIds.Count) break;
+
+                var displayId = group.DisplayIds[groupIdx];
+                if (!clusterDisplayById.TryGetValue(displayId, out var display)) continue;
+
+                // Replicates VideoWall.razor cyclic gap accumulation exactly.
+                double accLeft = group.PositionLeft * cs;
+                for (int k = 0; k < groupIdx; k++)
+                {
+                    allDisplayById.TryGetValue(group.DisplayIds[k], out var prevDisp);
+                    double pw = (prevDisp?.DisplayWidth > 0 ? prevDisp.DisplayWidth : 1920) * es;
+                    accLeft += pw + group.GetGapAfter(k) * cs;
+                }
+
+                displayPositions.Add(new DisplayRenderInfo(display,
+                    (wallConfig.ContentTopOffsetPx + group.PositionTop) * cs, accLeft, es));
+            }
+        }
+
+        // Compute horizontal crop bounds.
+        // Walk every counter-group display to find the wall's overall left and right display edges.
+        // The crop extends to the full background-image edge when this cluster holds the wall's
+        // leftmost or rightmost display — preserving the physical context visible at the extremes.
+        var wallMinLeft  = double.MaxValue;
+        var wallMaxRight = double.MinValue;
+        foreach (var grp in wallConfig.Layout.Groups.Where(g => g.AllowAirlineAllocation))
+        {
+            var grpEs  = cs * (grp.DisplayScale > 0 ? grp.DisplayScale : 1.0);
+            double accL = grp.PositionLeft * cs;
+            for (int k = 0; k < grp.DisplayIds.Count; k++)
+            {
+                allDisplayById.TryGetValue(grp.DisplayIds[k], out var d);
+                double dw = (d?.DisplayWidth > 0 ? d.DisplayWidth : 1920) * grpEs;
+                wallMinLeft  = Math.Min(wallMinLeft,  accL);
+                wallMaxRight = Math.Max(wallMaxRight, accL + dw);
+                accL += dw + grp.GetGapAfter(k) * cs;
+            }
+        }
+
+        if (displayPositions.Count == 0)
+        {
+            cropLeft  = 0;
+            cropRight = (parentWall?.BackgroundImageWidth ?? 1920) * cs;
+            return;
+        }
+
+        var fullW        = (parentWall?.BackgroundImageWidth ?? 1920) * cs;
+        var clusterMin   = displayPositions.Min(p => p.Left);
+        var clusterMax   = displayPositions.Max(p => p.Left + (p.Display.DisplayWidth  > 0 ? p.Display.DisplayWidth  : 1920) * p.EffectiveScale);
+
+        // 2 px tolerance for floating-point edge comparison
+        cropLeft  = wallMinLeft  < double.MaxValue && Math.Abs(clusterMin - wallMinLeft)  < 2.0 ? 0     : clusterMin;
+        cropRight = wallMaxRight > double.MinValue && Math.Abs(clusterMax - wallMaxRight) < 2.0 ? fullW : clusterMax;
+    }
+
+    private async Task LoadClusterDefaultsAsync()
+    {
+        if (Location?.OwningUserGroupId == null || parentWall == null) return;
+        var defaults = await defaultService.GetDefaultForGroupAsync(
+            Location.OwningUserGroupId.Value, parentWall.LocationId);
+        clusterBackgroundPath    = defaults.BackgroundPath;
+        clusterBackgroundMode    = defaults.BackgroundMode;
+        clusterBackgroundOpacity = defaults.BackgroundOpacityPct;
+        clusterMaskPath          = defaults.MaskPath;
+        clusterMaskMode          = defaults.MaskMode;
+        clusterMaskOpacity       = defaults.MaskOpacityPct;
+        clusterLogoPath          = defaults.LogoPath;
+    }
+
+    /// <summary>
+    /// Loads the wall's background-layer displays (groups with Role="background") and computes their
+    /// positions in full wall coordinates, replicating the main VideoWall's layer-group math so the
+    /// inner canvas (shifted by -cropLeft, overflow:hidden) crops them to this cluster's section.
+    /// horizontalImageLoop tiles a single display across the wall width.
+    /// </summary>
+    private async Task LoadBackgroundLayersAsync(IDirectorDBContext db)
+    {
+        backgroundLayers.Clear();
+        if (wallConfig == null) return;
+
+        var bgGroups = wallConfig.Layout.Groups
+            .Where(g => !g.AllowAirlineAllocation
+                     && string.Equals(g.Role, "background", StringComparison.OrdinalIgnoreCase))
+            .OrderBy(g => g.ZIndex)
+            .ToList();
+        if (bgGroups.Count == 0) return;
+
+        var cs    = wallConfig.ContentScaleFactor * zoomFactor;
+        var allIds = bgGroups.SelectMany(g => g.DisplayIds).Distinct().ToList();
+        var displays = await db.TblDisplays
+            .Where(d => allIds.Contains(d.DisplayId))
+            .Include(d => d.OverrideAsset)
+            .Include(e => e.TblScheduleEvents)
+            .Include(f => f.Constraint)
+            .ToListAsync();
+        var byId = displays.ToDictionary(d => d.DisplayId);
+
+        foreach (var group in bgGroups)
+        {
+            var es        = cs * (group.DisplayScale > 0 ? group.DisplayScale : 1.0);
+            bool vertical = string.Equals(group.Direction, "vertical", StringComparison.OrdinalIgnoreCase);
+            var loopCount = Math.Max(1, group.HorizontalImageLoop);
+
+            for (int idx = 0; idx < group.DisplayIds.Count; idx++)
+            {
+                if (!byId.TryGetValue(group.DisplayIds[idx], out var display)) continue;
+
+                double dw = (display.DisplayWidth > 0 ? display.DisplayWidth : 1920) * es;
+
+                double top, left;
+                if (vertical)
+                {
+                    double accTop = (wallConfig!.ContentTopOffsetPx + group.PositionTop) * cs;
+                    for (int k = 0; k < idx; k++)
+                    {
+                        byId.TryGetValue(group.DisplayIds[k], out var prev);
+                        double ph = (prev?.DisplayHeight > 0 ? prev.DisplayHeight : 1080) * es;
+                        accTop += ph + group.GetGapAfter(k) * cs;
+                    }
+                    top  = accTop;
+                    left = group.PositionLeft * cs;
+                }
+                else
+                {
+                    double accLeft = group.PositionLeft * cs;
+                    for (int k = 0; k < idx; k++)
+                    {
+                        byId.TryGetValue(group.DisplayIds[k], out var prev);
+                        double pw = (prev?.DisplayWidth > 0 ? prev.DisplayWidth : 1920) * es;
+                        accLeft += pw + group.GetGapAfter(k) * cs;
+                    }
+                    top  = (wallConfig!.ContentTopOffsetPx + group.PositionTop) * cs;
+                    left = accLeft;
+                }
+
+                backgroundLayers.Add(new BackgroundLayerInfo(display, top, left, dw, es, group.ZIndex, loopCount));
+            }
+        }
+    }
+
+    /// <summary>
+    /// Fetches logo zones from the parent wall's current allocation and narrows them to this
+    /// cluster's airline group. Zones are in raw canvas pixels (same space as DisplayCluster.LeftPx);
+    /// each is multiplied by cs when rendered in the inner canvas, which is already shifted by
+    /// -cropLeft so the outer overflow:hidden clips zones outside the visible region automatically.
+    /// </summary>
+    private async Task LoadLogoZonesAsync()
+    {
+        if (parentWall == null || Location?.OwningUserGroupId == null) { _logoZones = null; return; }
+        try
+        {
+            var result = await _allocationService.GetCurrentAllocationAsync(parentWall.LocationId, DateTime.Now);
+            _logoZones = result.LogoZones?
+                .Where(z => z.GroupId == Location.OwningUserGroupId.Value)
+                .ToList();
+        }
+        catch
+        {
+            _logoZones = null;
+        }
+    }
+
+    // Z-index for the counter display overlay.
+    // Clamped to min 10 so background (1), logo (2), and mask (contentZIndex-1) always stack below.
+    private int GetContentZIndex()
+    {
+        var firstSpan = ParseClusterSpans().FirstOrDefault();
+        if (firstSpan == null) return 10;
+        var group = wallConfig?.Layout.Groups.FirstOrDefault(g => g.GroupName == firstSpan.GroupName);
+        return Math.Max(10, group?.ZIndex ?? 10);
+    }
+
+    /// <summary>
+    /// Bottommost content edge (counter displays, background layers, logo zones) in current
+    /// zoom-scaled pixels. Content can extend below the background image's vertical extent, so
+    /// the clip container must span the union of both — mirrors VideoWall's GetContentExtent.
+    /// </summary>
+    private double GetContentMaxBottom()
+    {
+        double maxBottom = 0;
+        foreach (var p in displayPositions)
+            maxBottom = Math.Max(maxBottom, p.Top + (p.Display.DisplayHeight > 0 ? p.Display.DisplayHeight : 1080) * p.EffectiveScale);
+        foreach (var bg in backgroundLayers)
+            maxBottom = Math.Max(maxBottom, bg.Top + (bg.Display.DisplayHeight > 0 ? bg.Display.DisplayHeight : 1080) * bg.EffectiveScale);
+        if (_logoZones != null && wallConfig != null)
+        {
+            var cs = wallConfig.ContentScaleFactor * zoomFactor;
+            foreach (var z in _logoZones)
+                maxBottom = Math.Max(maxBottom, (wallConfig.ContentTopOffsetPx + z.TopPx + z.HeightPx) * cs);
+        }
+        return maxBottom;
+    }
+
+    // Full canvas height: whichever extends further of the background image and the content.
+    // The background image is drawn at BackgroundScaleFactor (see GetBackgroundImageStyle), so its
+    // extent must use that scale — not the content scale — mirroring VideoWall.GetBackgroundExtent.
+    private double GetCanvasHeight()
+    {
+        var bgH = (parentWall!.BackgroundImageHeight ?? 1080) * wallConfig!.BackgroundScaleFactor * zoomFactor;
+        return Math.Max(bgH, GetContentMaxBottom());
+    }
+
+    private string GetOuterStyle()
+    {
+        if (wallConfig == null || parentWall == null)
+            return "position:relative; overflow:hidden; background-color:#1a1a2e;";
+        var w = cropRight - cropLeft;   // cropped width — only the cluster's horizontal extent
+        var h = GetCanvasHeight();
+        return $"position:relative; overflow:hidden; background-color:#1a1a2e; width:{w}px; height:{h}px;";
+    }
+
+    // Inner canvas holds the full wall coordinate space and is translated left so the crop region
+    // is flush with the outer clip container's left edge.
+    private string GetInnerCanvasStyle()
+    {
+        if (wallConfig == null || parentWall == null)
+            return "position:absolute; top:0; left:0;";
+        var cs   = wallConfig.ContentScaleFactor * zoomFactor;
+        var wallW = (parentWall.BackgroundImageWidth ?? 1920) * cs;
+        var wallH = GetCanvasHeight();
+        return $"position:absolute; top:0; left:{-cropLeft}px; width:{wallW}px; height:{wallH}px;";
+    }
+
+    private string GetBackgroundImageStyle()
+    {
+        if (wallConfig == null || string.IsNullOrEmpty(parentWall?.BackgroundImagePath)) return "display:none;";
+        // The background image is scaled by BackgroundScaleFactor, independent of the content scale that
+        // drives crop geometry. When the two scales are tuned so the background's on-screen width matches the
+        // content (the alignment condition), this image lines up with the counters, and the inner canvas's
+        // -cropLeft shift exposes the correct horizontal slice. At equal scales this matches the content scale.
+        var bgScale = wallConfig.BackgroundScaleFactor * zoomFactor;
+        var bgW = (parentWall!.BackgroundImageWidth  ?? 1920) * bgScale;
+        var bgH = (parentWall.BackgroundImageHeight  ?? 1080) * bgScale;
+        // No crop offset needed — the inner canvas div already shifts everything to the right position.
+        return $"position:absolute; top:0; left:0; width:{bgW}px; height:{bgH}px; " +
+               $"background-image:url('{parentWall.BackgroundImagePath}'); background-size:100% 100%; background-repeat:no-repeat;";
+    }
+
+    // Returns absolute-positioned style for a layer element.
+    // Z-index convention: background=1, mask=2, logo=3, counters=GetContentZIndex() (≥10).
+    //
+    // extendToEdges=true (background and mask): bounds use cropLeft/cropRight so the layer
+    // fills the full visible cluster area including the lead-in space before the first display
+    // (when this cluster is leftmost) and the trailing space after the last display (rightmost).
+    // This mirrors PixeraAllocationService's leftPx=0 and right:0 adjustments.
+    //
+    // extendToEdges=false (logo): uses the tight display bounding box only.
+    private string GetClusterBoundsStyle(int zIndex, bool extendToEdges = false)
+    {
+        if (displayPositions.Count == 0)
+            return $"position:absolute; top:0; left:0; width:100%; height:100%; z-index:{zIndex}; border:none; pointer-events:none;";
+
+        var minTop    = displayPositions.Min(p => p.Top);
+        var maxBottom = displayPositions.Max(p => p.Top  + (p.Display.DisplayHeight > 0 ? p.Display.DisplayHeight :  700) * p.EffectiveScale);
+
+        double left, right;
+        if (extendToEdges)
+        {
+            // cropLeft = 0 when this is the leftmost cluster (fills from canvas x=0).
+            // cropRight = fullW when this is the rightmost cluster (fills to canvas right edge).
+            left  = cropLeft;
+            right = cropRight;
+        }
+        else
+        {
+            left  = displayPositions.Min(p => p.Left);
+            right = displayPositions.Max(p => p.Left + (p.Display.DisplayWidth  > 0 ? p.Display.DisplayWidth  : 1920) * p.EffectiveScale);
+        }
+
+        return $"position:absolute; top:{minTop}px; left:{left}px; " +
+               $"width:{right - left}px; height:{maxBottom - minTop}px; " +
+               $"z-index:{zIndex}; border:none; pointer-events:none;";
+    }
+
+    private static bool IsWebUrl(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        (path.StartsWith("http://",  StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+    // HTML files uploaded via the Airline Content page are hosted locally and rendered as iframes.
+    private static bool IsHtmlPath(string? path) =>
+        !string.IsNullOrEmpty(path) && path.EndsWith(".html", StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsVideoPath(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        (path.EndsWith(".mp4",  StringComparison.OrdinalIgnoreCase) ||
+         path.EndsWith(".webm", StringComparison.OrdinalIgnoreCase) ||
+         path.EndsWith(".mov",  StringComparison.OrdinalIgnoreCase));
+
+    private string GetClusterBgStyle() =>
+        LayerRenderMode.ImageCss(clusterBackgroundPath, clusterBackgroundMode);
+
+    private string GetClusterMaskStyle() =>
+        LayerRenderMode.ImageCss(clusterMaskPath, clusterMaskMode);
+
+    private string GetClusterLogoStyle() =>
+        $"background-image:url('{clusterLogoPath}'); background-size:contain; background-repeat:no-repeat; background-position:center;";
+
+    private RenderFragment RenderHoverActions(TblDisplay display) => __builder =>
+    {
+        @* Touch affordance: marks the display as editable on mobile-scale viewports *@
+        <div class="vw-touch-chip" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+            </svg>
+        </div>
+        if (display.DisplayId == hoverDisplayId && SelectedAsset != null)
+        {
+            <div class="vw-hover-overlay" style="border: 2px dashed red;"></div>
+            <div class="vw-top-banner">@(display.DisplayName?.ToUpper())</div>
+            <div class="vw-bottom-banner" @onclick="@(() => OnOverride(display.DisplayId))">OVERRIDE</div>
+        }
+        else if (display.DisplayId == hoverDisplayId)
+        {
+            <div class="vw-hover-overlay" style="border: 2px solid #16FF00;"></div>
+            <div class="vw-top-banner">@(display.DisplayName?.ToUpper())</div>
+            <div class="vw-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT CONTENT</div>
+        }
+    };
+
+    private RenderFragment RenderOverrideBanner(TblDisplay display) => __builder =>
+    {
+        if (display.DisplayMode == (int)Types.DisplayMode.Override)
+        {
+            <div class="vw-override-banner" @onclick="(() => BackToSchedule(display.DisplayId))">CANCEL OVERRIDE</div>
+        }
+    };
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset == null) return;
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+        {
+            await BuildDisplayPositions(db);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        if (await displayOverrides.ReturnToScheduleAsync(displayId))
+        {
+            await BuildDisplayPositions(db);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}
+
+<style>
+    .acv-scroll-container { overflow-x: auto; overflow-y: hidden; }
+    .acv-background-outer { position: relative; overflow: hidden; background-color: #1a1a2e; }
+    .acv-background-image { position: absolute; top: 0; left: 0; }
+
+    /* Hover overlays — mirrors VideoWall.razor */
+    .vw-display-wrapper { display: flex; flex-direction: column; align-items: center; }
+    .vw-hover-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 100; pointer-events: none; }
+    .vw-top-banner { position: absolute; top: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; text-align: center; font-size: 11px; padding: 2px 4px; z-index: 101; pointer-events: none; font-weight: bold; letter-spacing: 0.5px; }
+    .vw-bottom-banner { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,113,188,0.9); color: white; text-align: center; font-size: 11px; padding: 4px; z-index: 101; cursor: pointer; font-weight: bold; }
+
+    /* Mobile-scale only: mark editable displays with a corner chip and hairline
+       outline, and give the action banners a real tap-sized target. Desktop/HD
+       rendering is unchanged. */
+    .vw-touch-chip {
+        display: none;
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        z-index: 102;
+        width: 22px;
+        height: 22px;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.45);
+        color: #fff;
+        border-radius: 4px;
+        pointer-events: none;
+    }
+
+    @@media (max-width: 768px) {
+        .vw-touch-chip { display: flex; }
+
+        .vw-display-hit {
+            outline: 1px dashed rgba(255, 255, 255, 0.55);
+            outline-offset: -1px;
+        }
+
+        .vw-bottom-banner { padding: 10px 4px; }
+    }
+    .vw-bottom-banner:hover { background: rgba(0,90,150,1); }
+    .vw-override-banner { background: #dc3545; color: white; text-align: center; font-size: 11px; padding: 3px 8px; cursor: pointer; margin-top: 2px; border-radius: 3px; font-weight: bold; }
+    .vw-override-banner:hover { background: #c82333; }
+</style>

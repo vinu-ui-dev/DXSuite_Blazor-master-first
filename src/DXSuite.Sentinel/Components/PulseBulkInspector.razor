@@ -1,0 +1,282 @@
+@using DXSuite.Sentinel.Services.Pulse
+@inject PulseLinkService links
+@inject PulseGateway pulse
+@inject ILogger<PulseBulkInspector> Logger
+
+@{
+    var unlinked = Devices.Where(d => d.Device.PulseDeviceId is null).ToList();
+    var linked = Devices.Where(d => d.Device.PulseDeviceId is not null).ToList();
+    var snoozed = linked.Where(d => PulseRow(d) is { Snooze: true }).ToList();
+}
+
+<div style="display:flex; gap:10px; align-items:baseline; flex-wrap:wrap;">
+    <h4 style="margin:0;">@Devices.Count devices</h4>
+    <span class="dx-text-muted">@linked.Count linked · @unlinked.Count not linked</span>
+</div>
+
+@if (results is not null)
+{
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">@resultsTitle</div>
+        <div class="dx-card-body" style="padding:0;">
+            @foreach (var r in results)
+            {
+                <div class="dx-table-row" style="grid-template-columns:minmax(140px, 1fr) 2fr;">
+                    <div><strong>@r.Name</strong></div>
+                    <div><span class="dx-badge @(r.Success ? "dx-badge-green" : "dx-badge-red")" style="font-size:0.72rem; padding:2px 8px;">@(r.Success ? "Done" : "Failed")</span> @r.Message</div>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (unlinked.Count > 0)
+{
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">Add the @unlinked.Count unlinked devices to Pulse</div>
+        <div class="dx-card-body">
+            @if (PulseDevices is null)
+            {
+                <div class="dx-text-muted">Pulse could not be read, so devices cannot be linked or created.</div>
+            }
+            else
+            {
+                @foreach (var d in unlinked)
+                {
+                    var plan = PlanFor(d);
+                    var suggestion = SuggestionFor(d);
+                    var defaultId = PulseLinkService.DefaultDeviceId(d.Device);
+                    var eligible = Eligible(d);
+                    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:6px 0; border-bottom:1px solid #f0f2f5;">
+                        <span style="min-width:160px;"><strong>@d.Device.DisplayName</strong></span>
+                        <select class="dx-form-control dx-form-control-sm" style="width:auto;" disabled="@busy"
+                                value="@plan.ToString()" @onchange="e => SetPlan(d, e.Value?.ToString())">
+                            @if (suggestion is not null)
+                            {
+                                <option value="@PulseBulkAction.Link">Link to @suggestion.Device.DeviceId</option>
+                            }
+                            <option value="@PulseBulkAction.Create">Create as @defaultId</option>
+                            <option value="@PulseBulkAction.Skip">Skip</option>
+                        </select>
+                        @if (plan == PulseBulkAction.Link && suggestion is not null)
+                        {
+                            <span class="dx-badge dx-badge-green" style="font-size:0.72rem; padding:2px 8px;">@suggestion.ReasonText</span>
+                        }
+                        @if (plan == PulseBulkAction.Create)
+                        {
+                            @if (PulseDevices.ContainsKey(defaultId))
+                            {
+                                <span class="dx-badge dx-badge-red" style="font-size:0.72rem; padding:2px 8px;">@defaultId already exists under @CustomerId</span>
+                            }
+                            @if (usages.TryGetValue(defaultId, out var usage) && usage.OtherCustomerIds.Count > 0)
+                            {
+                                <span class="dx-badge dx-badge-orange" style="font-size:0.72rem; padding:2px 8px;" title="tblPulse readings are not kept apart by customer">also under @string.Join(", ", usage.OtherCustomerIds)</span>
+                            }
+                            <label style="display:flex; gap:4px; align-items:center; font-size:0.85rem; opacity:@(eligible ? "1" : "0.5");"
+                                   title="@(eligible ? "Pulse raises a down alert if the heartbeat stops" : "Sentinel cannot vouch for this device, so it is created unmonitored")">
+                                <input type="checkbox" class="dx-checkbox" disabled="@(!eligible || busy)"
+                                       checked="@(eligible && monitor.Contains(d.Device.DeviceInstanceId))"
+                                       @onchange="e => SetMonitor(d, e.Value is true)" />
+                                Monitor
+                            </label>
+                        }
+                    </div>
+                }
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                    <label class="dx-form-label" style="margin:0;">Device type for created devices</label>
+                    <select class="dx-form-control dx-form-control-sm" style="width:auto;" disabled="@busy" @key="deviceTypes" @bind="deviceTypeId">
+                        @if (deviceTypes is null)
+                        {
+                            <option value="1">1 (Pulse device types could not be read)</option>
+                        }
+                        else
+                        {
+                            @foreach (var t in deviceTypes)
+                            {
+                                <option value="@t.DeviceTypeId">@t.Description</option>
+                            }
+                        }
+                    </select>
+                </div>
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px;">
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@busy" @onclick="() => ApplyAsync(unlinked)">Apply</button>
+                    <span class="dx-text-muted" style="font-size:0.8rem;">Rows run in order and each reports its own result. Create uses the default DeviceID; open a single device to change it.</span>
+                </div>
+            }
+        </div>
+    </div>
+}
+
+@if (linked.Count > 0)
+{
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">Snooze the @linked.Count linked devices</div>
+        <div class="dx-card-body">
+            <PulseSnoozePicker Zone="Zone" @bind-UntilUtc="snoozeUntilUtc" Disabled="busy" />
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(busy || snoozeUntilUtc is not { } su || su <= DateTime.UtcNow)"
+                        @onclick="() => SnoozeAsync(linked)">Snooze @linked.Count</button>
+                @if (snoozed.Count > 0)
+                {
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="() => UnsnoozeAsync(snoozed)">Unsnooze @snoozed.Count</button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>A selected device with what the bulk rows need to decide eligibility and suggestions.</summary>
+    public sealed record BulkDevice(DeviceInstance Device, IReadOnlyCollection<DeviceSourceState> Sources);
+
+    [Parameter, EditorRequired] public IReadOnlyList<BulkDevice> Devices { get; set; } = [];
+    [Parameter] public IReadOnlyDictionary<string, PulseDevice>? PulseDevices { get; set; }
+    [Parameter] public IReadOnlyDictionary<string, string> LinkedPulseIds { get; set; } = new Dictionary<string, string>();
+    [Parameter] public string CustomerId { get; set; } = "";
+    [Parameter, EditorRequired] public ViewerTimeZone Zone { get; set; } = ViewerTimeZone.Utc;
+    [Parameter] public EventCallback<string> OnChanged { get; set; }
+
+    private readonly Dictionary<int, PulseBulkAction> plans = new();
+    private readonly HashSet<int> monitor = new();
+    private readonly Dictionary<string, PulseDeviceIdUsage> usages = new(StringComparer.OrdinalIgnoreCase);
+    private string selectionKey = "";
+    private List<PulseDeviceType>? deviceTypes;
+    private int deviceTypeId = 1;
+    private DateTime? snoozeUntilUtc = DateTime.UtcNow.AddHours(1);
+    private bool busy;
+    private List<(string Name, bool Success, string Message)>? results;
+    private string resultsTitle = "";
+
+    protected override async Task OnParametersSetAsync()
+    {
+        var key = string.Join(",", Devices.Select(d => $"{d.Device.DeviceInstanceId}:{d.Device.PulseDeviceId}"));
+        if (key == selectionKey) return;
+        selectionKey = key;
+        plans.Clear();
+        monitor.Clear();
+
+        if (deviceTypes is null && PulseDevices is not null)
+        {
+            var types = await pulse.ReadDeviceTypesAsync();
+            deviceTypes = types.IsSuccess ? types.Value!.ToList() : null;
+            deviceTypeId = deviceTypes is null || deviceTypes.Any(t => t.DeviceTypeId == 1) ? 1 : deviceTypes[0].DeviceTypeId;
+        }
+
+        // The cross-customer mark needs Pulse's answer per proposed DeviceID; the customer's own rows are already loaded.
+        if (PulseDevices is not null)
+        {
+            foreach (var id in Devices.Where(d => d.Device.PulseDeviceId is null)
+                         .Select(d => PulseLinkService.DefaultDeviceId(d.Device))
+                         .Where(id => id.Length > 0 && !usages.ContainsKey(id))
+                         .Distinct(StringComparer.OrdinalIgnoreCase)
+                         .ToList())
+            {
+                var usage = await pulse.CheckDeviceIdAsync(id);
+                if (usage.IsSuccess) usages[id] = usage.Value!;
+            }
+        }
+    }
+
+    private PulseDevice? PulseRow(BulkDevice d) =>
+        d.Device.PulseDeviceId is { } id && PulseDevices is not null && PulseDevices.TryGetValue(id, out var p) ? p : null;
+
+    private PulseSuggestion? SuggestionFor(BulkDevice d)
+    {
+        if (PulseDevices is null) return null;
+        var taken = LinkedPulseIds.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return PulseLinkService.Suggestions(d.Device, PulseDevices.Values, taken).FirstOrDefault();
+    }
+
+    private PulseBulkAction PlanFor(BulkDevice d) =>
+        plans.TryGetValue(d.Device.DeviceInstanceId, out var p) ? p
+        : SuggestionFor(d) is not null ? PulseBulkAction.Link
+        : PulseBulkAction.Create;
+
+    private static bool Eligible(BulkDevice d) =>
+        PulsePublishPlanner.HeartbeatEligibility(d.Sources, DateTime.UtcNow).HeartbeatUtc is not null;
+
+    private void SetPlan(BulkDevice d, string? value)
+    {
+        if (Enum.TryParse<PulseBulkAction>(value, out var action)) plans[d.Device.DeviceInstanceId] = action;
+    }
+
+    private void SetMonitor(BulkDevice d, bool on)
+    {
+        if (on) monitor.Add(d.Device.DeviceInstanceId);
+        else monitor.Remove(d.Device.DeviceInstanceId);
+    }
+
+    private async Task ApplyAsync(IReadOnlyList<BulkDevice> unlinked)
+    {
+        var rows = unlinked.Select(d =>
+        {
+            var action = PlanFor(d);
+            return action switch
+            {
+                PulseBulkAction.Link => new PulseBulkRow(d.Device.DeviceInstanceId, action, SuggestionFor(d)?.Device.DeviceId),
+                PulseBulkAction.Create => new PulseBulkRow(d.Device.DeviceInstanceId, action, Create: new PulseCreateRequest(
+                    PulseLinkService.DefaultDeviceId(d.Device),
+                    d.Device.DisplayName,
+                    deviceTypeId,
+                    Monitor: monitor.Contains(d.Device.DeviceInstanceId) && Eligible(d))),
+                _ => new PulseBulkRow(d.Device.DeviceInstanceId, action),
+            };
+        }).ToList();
+
+        await RunAsync("Apply", async () =>
+        {
+            var applied = await links.BulkApplyAsync(rows);
+            return applied.Select(r => (NameOf(r.DeviceInstanceId), r.Result.Success, r.Result.Message)).ToList();
+        });
+    }
+
+    private Task SnoozeAsync(IReadOnlyList<BulkDevice> linked) =>
+        RunAsync("Snooze", async () =>
+        {
+            var list = new List<(string, bool, string)>();
+            foreach (var d in linked)
+            {
+                var r = await links.SnoozeAsync(d.Device.DeviceInstanceId, snoozeUntilUtc!.Value);
+                list.Add((d.Device.DisplayName, r.Success, r.Message));
+            }
+            return list;
+        });
+
+    private Task UnsnoozeAsync(IReadOnlyList<BulkDevice> snoozed) =>
+        RunAsync("Unsnooze", async () =>
+        {
+            var list = new List<(string, bool, string)>();
+            foreach (var d in snoozed)
+            {
+                var r = await links.UnsnoozeAsync(d.Device.DeviceInstanceId);
+                list.Add((d.Device.DisplayName, r.Success, r.Message));
+            }
+            return list;
+        });
+
+    private async Task RunAsync(string title, Func<Task<List<(string Name, bool Success, string Message)>>> action)
+    {
+        busy = true;
+        results = null;
+        try
+        {
+            results = await action();
+            var failed = results.Count(r => !r.Success);
+            resultsTitle = failed == 0 ? $"{title}: {results.Count} done" : $"{title}: {results.Count - failed} done, {failed} failed";
+            await OnChanged.InvokeAsync(resultsTitle);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Bulk Pulse {Title} failed", title);
+            resultsTitle = $"{title} failed";
+            results = [("All rows", false, ex.Message)];
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private string NameOf(int deviceInstanceId) =>
+        Devices.FirstOrDefault(d => d.Device.DeviceInstanceId == deviceInstanceId)?.Device.DisplayName ?? $"#{deviceInstanceId}";
+}

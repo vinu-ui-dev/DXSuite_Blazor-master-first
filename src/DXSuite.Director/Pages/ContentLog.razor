@@ -1,0 +1,455 @@
+@page "/content-log"
+@using System.Text.Json
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Authorization
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ISessionState sessionState
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject ILogger<ContentLog> Logger
+@rendermode InteractiveServer
+
+<PageTitle>Content Log</PageTitle>
+
+@if (!accessResolved)
+{
+    <div style="display:flex; justify-content:center; padding:48px 0;">
+        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+    </div>
+}
+else if (!hasAccess)
+{
+    <section>
+        <div class="dx-section">
+            <p style="padding: 24px;">You do not have permission to access this page.</p>
+        </div>
+    </section>
+}
+else
+{
+    <section>
+        <div class="dx-section">
+            <div class="dx-section-header">
+                <h3 class="dx-section-title">CONTENT LOG</h3>
+                <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+                    <button class="dx-btn dx-btn-blue" disabled="@(intervals.Count == 0 || isBusy)" @onclick="ExportExcel">EXPORT</button>
+                </div>
+            </div>
+
+            <div class="cpv-toolbar" style="padding: 12px 4px;">
+                <div class="cpv-field">
+                    <label>Content</label>
+                    <select class="dx-form-control" style="min-width: 240px;" value="@selectedBucket" @onchange="OnBucketChanged">
+                        <option value="">Select content</option>
+                        @if (playlistOptions.Count > 0)
+                        {
+                            <optgroup label="Playlists">
+                                @foreach (var option in playlistOptions)
+                                {
+                                    <option value="location:@option.Id">@option.Name</option>
+                                }
+                            </optgroup>
+                        }
+                        @if (displayOptions.Count > 0)
+                        {
+                            <optgroup label="Displays">
+                                @foreach (var option in displayOptions)
+                                {
+                                    <option value="display:@option.Id">@option.Name</option>
+                                }
+                            </optgroup>
+                        }
+                    </select>
+                </div>
+                <div class="cpv-field">
+                    <label>From</label>
+                    <input type="date" class="dx-form-control" @bind="fromDate" />
+                </div>
+                <div class="cpv-field">
+                    <label>To</label>
+                    <input type="date" class="dx-form-control" @bind="toDate" />
+                </div>
+                @if (variants.Count > 1)
+                {
+                    <div class="cpv-field">
+                        <label>Filter variant</label>
+                        <select class="dx-form-control" @bind="selectedVariant">
+                            @foreach (var variant in variants)
+                            {
+                                <option value="@variant">@(variant == "all" ? "Unfiltered" : variant)</option>
+                            }
+                        </select>
+                    </div>
+                }
+                <button class="dx-btn dx-btn-blue" disabled="@(string.IsNullOrEmpty(selectedBucket) || isBusy)" @onclick="BuildReportAsync">APPLY</button>
+            </div>
+
+            @if (isBusy)
+            {
+                <div style="display:flex; justify-content:center; padding:32px 0;">
+                    <div class="dx-spinner"></div>
+                </div>
+            }
+            else if (hasRun && intervals.Count == 0)
+            {
+                <p class="dx-text-muted" style="padding: 16px 4px; font-style: italic;">
+                    No content history recorded for this selection in the chosen range.
+                    History starts accumulating when players request content.
+                </p>
+            }
+            else if (intervals.Count > 0)
+            {
+                <p class="dx-text-muted" style="font-size: 0.8rem; margin: 4px 4px 10px;">
+                    Play counts are estimates from loop math and assume every listed item was active
+                    for the whole interval. Times are shown in this browser's time zone.
+                </p>
+                <div class="dx-table">
+                    <div class="dx-table-header" style="grid-template-columns: 30px 1fr 1fr 95px 60px 85px 160px;">
+                        <div></div>
+                        <div>From</div>
+                        <div>To</div>
+                        <div>Duration</div>
+                        <div style="text-align:center;">Items</div>
+                        <div style="text-align:center;">Plays/loop</div>
+                        <div>Version</div>
+                    </div>
+                    @foreach (var interval in intervals)
+                    {
+                        var key = interval.Row.ContentManifestLogId;
+                        <div class="dx-table-row" style="grid-template-columns: 30px 1fr 1fr 95px 60px 85px 160px; cursor:pointer;"
+                             @onclick="() => ToggleExpanded(key)">
+                            <div>@(expanded.Contains(key) ? "▾" : "▸")</div>
+                            <div>@interval.FromUtc.ToLocalTime().ToString("MM/dd/yyyy h:mm tt")</div>
+                            <div>@(interval.OpenEnded ? "Now" : interval.ToUtc.ToLocalTime().ToString("MM/dd/yyyy h:mm tt"))</div>
+                            <div>@FormatSpan(interval.ToUtc - interval.FromUtc)</div>
+                            <div style="text-align:center;">@interval.Row.ItemCount</div>
+                            <div style="text-align:center;">@interval.Row.PlayCount</div>
+                            <div class="dx-text-muted" style="font-size:0.75rem;">@interval.Row.Version</div>
+                        </div>
+                        @if (expanded.Contains(key))
+                        {
+                            <div style="padding: 4px 12px 12px 42px; background:#fafbfc; border-bottom:1px solid #f0f0f0;">
+                                <div class="dx-table" style="box-shadow:none;">
+                                    <div class="dx-table-header" style="grid-template-columns: 1fr 90px 90px 120px 1fr;">
+                                        <div>Item</div>
+                                        <div style="text-align:center;">Plays/loop</div>
+                                        <div style="text-align:center;">Duration</div>
+                                        <div style="text-align:center;">Est. plays</div>
+                                        <div>Schedule window</div>
+                                    </div>
+                                    @foreach (var item in interval.Items)
+                                    {
+                                        <div class="dx-table-row" style="grid-template-columns: 1fr 90px 90px 120px 1fr;">
+                                            <div class="dx-truncate" title="@item.Name">@item.Name</div>
+                                            <div style="text-align:center;">@item.Plays</div>
+                                            <div style="text-align:center;">@item.DurationSeconds s</div>
+                                            <div style="text-align:center;">@EstimatePlays(interval, item)</div>
+                                            <div class="dx-text-muted" style="font-size:0.78rem;">@DescribeWindow(item)</div>
+                                        </div>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private sealed class BucketOption
+    {
+        public int Id { get; init; }
+        public string Name { get; init; } = "";
+    }
+
+    private sealed class LogInterval
+    {
+        public required TblContentManifestLog Row { get; init; }
+        public required List<ManifestLogItem> Items { get; init; }
+        public DateTime FromUtc { get; set; }
+        public DateTime ToUtc { get; set; }
+        public bool OpenEnded { get; set; }
+        public int LoopSeconds { get; set; }
+    }
+
+    private bool accessResolved;
+    private bool hasAccess;
+    private bool isBusy;
+    private bool hasRun;
+
+    private List<BucketOption> playlistOptions = new();
+    private List<BucketOption> displayOptions = new();
+    private string selectedBucket = "";
+    private DateTime fromDate = DateTime.Today.AddDays(-7);
+    private DateTime toDate = DateTime.Today;
+    private List<string> variants = new() { "all" };
+    private string selectedVariant = "all";
+
+    private List<LogInterval> intervals = new();
+    private readonly HashSet<int> expanded = new();
+
+    private static readonly JsonSerializerOptions JsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageContentLog);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            playlistOptions = await db.TblLocations.AsNoTracking()
+                .Where(l => l.LocationType.LinkedToDisplay == false)
+                .OrderBy(l => l.LocationName)
+                .Select(l => new BucketOption { Id = l.LocationId, Name = l.LocationName })
+                .ToListAsync();
+            displayOptions = await db.TblDisplays.AsNoTracking()
+                .OrderBy(d => d.Location.LocationName).ThenBy(d => d.DisplayName)
+                .Select(d => new BucketOption { Id = d.DisplayId, Name = d.Location.LocationName + " / " + d.DisplayName })
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load content log bucket options");
+        }
+    }
+
+    private async Task OnBucketChanged(ChangeEventArgs e)
+    {
+        selectedBucket = e.Value?.ToString() ?? "";
+        selectedVariant = "all";
+        variants = new List<string> { "all" };
+        intervals = new();
+        hasRun = false;
+
+        if (string.IsNullOrEmpty(selectedBucket)) return;
+        var (bucketType, bucketId) = ParseBucket();
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var found = await db.TblContentManifestLogs.AsNoTracking()
+                .Where(l => l.BucketType == bucketType && l.BucketId == bucketId)
+                .Select(l => l.FilterValue)
+                .Distinct()
+                .ToListAsync();
+            if (found.Count > 0)
+            {
+                variants = found.OrderBy(v => v == "all" ? "" : v).ToList();
+                selectedVariant = variants.Contains("all") ? "all" : variants[0];
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to load content log variants");
+        }
+
+        await BuildReportAsync();
+    }
+
+    private (string BucketType, int BucketId) ParseBucket()
+    {
+        var parts = selectedBucket.Split(':');
+        return (parts[0], int.Parse(parts[1]));
+    }
+
+    private async Task BuildReportAsync()
+    {
+        if (string.IsNullOrEmpty(selectedBucket)) return;
+        isBusy = true;
+        StateHasChanged();
+
+        try
+        {
+            var (bucketType, bucketId) = ParseBucket();
+            var fromUtc = fromDate.Date.ToUniversalTime();
+            var toUtc = toDate.Date.AddDays(1).ToUniversalTime();
+            var nowUtc = DateTime.UtcNow;
+            if (toUtc > nowUtc) toUtc = nowUtc;
+
+            await using var db = await dbFactory.CreateDbContextAsync();
+
+            var rows = await db.TblContentManifestLogs.AsNoTracking()
+                .Where(l => l.BucketType == bucketType && l.BucketId == bucketId
+                         && l.FilterValue == selectedVariant && l.EffectiveFromUtc < toUtc)
+                .OrderBy(l => l.EffectiveFromUtc)
+                .ToListAsync();
+
+            var result = new List<LogInterval>();
+            for (var i = 0; i < rows.Count; i++)
+            {
+                var row = rows[i];
+                var start = row.EffectiveFromUtc;
+                var end = i + 1 < rows.Count ? rows[i + 1].EffectiveFromUtc : toUtc;
+                if (end <= fromUtc) continue;
+
+                var interval = new LogInterval
+                {
+                    Row = row,
+                    Items = ParseItems(row.ItemsJson),
+                    FromUtc = start < fromUtc ? fromUtc : start,
+                    ToUtc = end,
+                    OpenEnded = i + 1 >= rows.Count && toUtc >= nowUtc
+                };
+                result.Add(interval);
+            }
+
+            await EnrichVideoDurationsAsync(db, result);
+            foreach (var interval in result)
+                interval.LoopSeconds = interval.Items.Sum(item => item.Plays * Math.Max(1, item.DurationSeconds));
+
+            // Newest first for reading; the interval math above needed ascending order
+            result.Reverse();
+            intervals = result;
+            expanded.Clear();
+            hasRun = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Content log report build failed");
+            intervals = new();
+            hasRun = true;
+        }
+        finally
+        {
+            isBusy = false;
+            StateHasChanged();
+        }
+    }
+
+    private static List<ManifestLogItem> ParseItems(string json)
+    {
+        try
+        {
+            return JsonSerializer.Deserialize<List<ManifestLogItem>>(json, JsonOptions) ?? new();
+        }
+        catch
+        {
+            return new();
+        }
+    }
+
+    // Manifest durations for videos are the player default, not the real runtime; the
+    // probed length lives on the asset row
+    private static async Task EnrichVideoDurationsAsync(DirectorDbContext db, List<LogInterval> result)
+    {
+        var videoExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        { ".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".wmv" };
+
+        var paths = new HashSet<string>();
+        foreach (var item in result.SelectMany(r => r.Items))
+        {
+            var path = ExtractMediaPath(item.Url);
+            if (path != null && videoExtensions.Contains(System.IO.Path.GetExtension(path)))
+                paths.Add(path);
+        }
+        if (paths.Count == 0) return;
+
+        var durations = await db.TblAssets.AsNoTracking()
+            .Where(a => paths.Contains(a.AssetPath) && a.Duration > 0)
+            .Select(a => new { a.AssetPath, a.Duration })
+            .ToListAsync();
+        var map = durations
+            .GroupBy(a => a.AssetPath)
+            .ToDictionary(g => g.Key, g => g.First().Duration, StringComparer.OrdinalIgnoreCase);
+
+        foreach (var item in result.SelectMany(r => r.Items))
+        {
+            var path = ExtractMediaPath(item.Url);
+            if (path != null && map.TryGetValue(path, out var duration) && duration > 1)
+                item.DurationSeconds = (int)Math.Round(duration);
+        }
+    }
+
+    private static string? ExtractMediaPath(string? url)
+    {
+        if (string.IsNullOrEmpty(url)) return null;
+        var index = url.IndexOf("/MediaAssets/", StringComparison.OrdinalIgnoreCase);
+        return index < 0 ? null : Uri.UnescapeDataString(url[index..]);
+    }
+
+    private string EstimatePlays(LogInterval interval, ManifestLogItem item)
+    {
+        if (interval.LoopSeconds <= 0) return "0";
+        var loops = (interval.ToUtc - interval.FromUtc).TotalSeconds / interval.LoopSeconds;
+        return Math.Round(loops * item.Plays).ToString("N0");
+    }
+
+    private static string DescribeWindow(ManifestLogItem item)
+    {
+        var parts = new List<string>();
+        if (item.StartDate.HasValue || item.EndDate.HasValue)
+            parts.Add($"{item.StartDate?.ToString("MM/dd/yyyy") ?? "Now"} to {item.EndDate?.ToString("MM/dd/yyyy") ?? "Never"}");
+        if (item.StartTime.HasValue || item.EndTime.HasValue)
+            parts.Add($"{FormatTime(item.StartTime) ?? "start"} to {FormatTime(item.EndTime) ?? "end"}");
+        if (!string.IsNullOrEmpty(item.Days))
+            parts.Add(item.Days);
+        return parts.Count == 0 ? "Always" : string.Join(" · ", parts);
+
+        static string? FormatTime(TimeSpan? t) =>
+            t.HasValue ? DateTime.Today.Add(t.Value).ToString("h:mm tt") : null;
+    }
+
+    private static string FormatSpan(TimeSpan span)
+    {
+        if (span.TotalDays >= 1) return $"{(int)span.TotalDays}d {span.Hours}h";
+        if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
+        return $"{(int)span.TotalMinutes}m";
+    }
+
+    private void ToggleExpanded(int id)
+    {
+        if (!expanded.Remove(id)) expanded.Add(id);
+    }
+
+    private async Task ExportExcel()
+    {
+        try
+        {
+            var bucketName = selectedBucket.StartsWith("location:")
+                ? playlistOptions.FirstOrDefault(o => $"location:{o.Id}" == selectedBucket)?.Name
+                : displayOptions.FirstOrDefault(o => $"display:{o.Id}" == selectedBucket)?.Name;
+
+            var exportRows = new List<ContentLogExportRow>();
+            foreach (var interval in intervals)
+            {
+                foreach (var item in interval.Items)
+                {
+                    exportRows.Add(new ContentLogExportRow
+                    {
+                        FromLocal = interval.FromUtc.ToLocalTime(),
+                        ToLocal = interval.OpenEnded ? null : interval.ToUtc.ToLocalTime(),
+                        Version = interval.Row.Version,
+                        ItemName = item.Name ?? "",
+                        PlaysPerLoop = item.Plays,
+                        DurationSeconds = item.DurationSeconds,
+                        EstimatedPlays = EstimatePlays(interval, item),
+                        Window = DescribeWindow(item)
+                    });
+                }
+            }
+
+            var bytes = ContentLogExcelExporter.Build(bucketName ?? selectedBucket, selectedVariant, exportRows);
+
+            var token = Guid.NewGuid();
+            Controllers.ContentLogExportController.PendingExports[token] = new Controllers.ContentLogExportController.PendingExport
+            {
+                Bytes = bytes,
+                FileName = $"content-log-{DateTime.Now:yyyyMMdd-HHmm}.xlsx"
+            };
+            await JS.InvokeVoidAsync("dxDownloadUrl", $"{Navigation.BaseUri}api/content-log/download/{token}");
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Content log export failed");
+        }
+    }
+}

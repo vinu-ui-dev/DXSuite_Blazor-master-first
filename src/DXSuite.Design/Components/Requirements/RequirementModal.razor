@@ -1,0 +1,230 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject IDbContextFactory<IdentityDbContext> IdentityFactory
+@inject ISessionState Session
+
+<div class="dx-modal-overlay">
+    <div class="dx-modal" style="min-width:560px">
+        <div class="dx-modal-header">
+            <span>@(IsEdit ? "Edit Requirement" : "Add Requirement")</span>
+            <button class="dx-modal-close" @onclick="Cancel">&times;</button>
+        </div>
+
+        <div class="dx-modal-body">
+            @if (!Categories.Any())
+            {
+                <div class="dx-alert dx-alert-warning">
+                    This design has no requirement categories. Add one via <strong>Manage Categories</strong> first.
+                </div>
+            }
+            else
+            {
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Category</label>
+                    <select class="dx-form-control" @bind="form.CategoryId">
+                        @foreach (var cat in Categories)
+                        {
+                            <option value="@cat.CategoryId">@cat.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Priority</label>
+                    <select class="dx-form-control" @bind="form.Priority">
+                        <option value="@RequirementPriority.MustHave">Must Have</option>
+                        <option value="@RequirementPriority.ShouldHave">Should Have</option>
+                        <option value="@RequirementPriority.NiceToHave">Nice to Have</option>
+                    </select>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Description</label>
+                    <textarea class="dx-form-control" style="height:80px; resize:vertical"
+                              @bind="form.Description" placeholder="Describe the requirement…"></textarea>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Client Notes</label>
+                    <textarea class="dx-form-control" style="height:60px; resize:vertical"
+                              @bind="form.ClientNotes" placeholder="Optional notes from client…"></textarea>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Assign To</label>
+                    <select class="dx-form-control" @bind="form.AssignedToUserId">
+                        <option value="">— Unassigned —</option>
+                        @foreach (var u in users)
+                        {
+                            <option value="@u.UserId">@(u.FriendlyName ?? u.GivenName ?? u.UserId.ToString())</option>
+                        }
+                    </select>
+                </div>
+            }
+
+            @if (error is not null)
+            {
+                <div class="dx-alert dx-alert-danger">@error</div>
+            }
+        </div>
+
+        <div class="dx-modal-footer" style="@(IsEdit ? "display:flex; justify-content:space-between" : null)">
+            @if (IsEdit)
+            {
+                <button class="dx-btn dx-btn-red" @onclick="DeleteAsync" disabled="@saving">
+                    @(confirmingDelete ? "Confirm delete?" : "Delete")
+                </button>
+            }
+            <div style="display:flex; gap:8px">
+                <button class="dx-btn dx-btn-gray" @onclick="Cancel">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@(saving || !Categories.Any())">
+                    @(saving ? "Saving…" : IsEdit ? "Save Changes" : "Add Requirement")
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int DesignId { get; set; }
+    [Parameter, EditorRequired] public List<TblDesignRequirementCategory> Categories { get; set; } = [];
+    [Parameter] public int? PreselectedCategoryId { get; set; }
+    /// <summary>When set, the modal edits this requirement instead of creating a new one.</summary>
+    [Parameter] public TblDesignRequirement? Requirement { get; set; }
+    [Parameter, EditorRequired] public EventCallback<bool> OnClose { get; set; }
+
+    private bool IsEdit => Requirement is not null;
+
+    private sealed class FormModel
+    {
+        public int CategoryId { get; set; }
+        public RequirementPriority Priority { get; set; } = RequirementPriority.MustHave;
+        public string Description { get; set; } = string.Empty;
+        public string? ClientNotes { get; set; }
+        public string? AssignedToUserId { get; set; }
+    }
+
+    private FormModel form = new();
+    private List<TblUser> users = [];
+    private bool saving;
+    private bool confirmingDelete;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Requirement is not null)
+        {
+            form.CategoryId = Requirement.CategoryId;
+            form.Priority = Requirement.Priority;
+            form.Description = Requirement.Description;
+            form.ClientNotes = Requirement.ClientNotes;
+            form.AssignedToUserId = Requirement.AssignedToUserId;
+        }
+        else
+        {
+            form.CategoryId = PreselectedCategoryId ?? Categories.FirstOrDefault()?.CategoryId ?? 0;
+        }
+
+        await using var db = await IdentityFactory.CreateDbContextAsync();
+        users = await db.TblUsers
+            .Where(u => !u.IsDisabled)
+            .OrderBy(u => u.FriendlyName).ThenBy(u => u.GivenName)
+            .ToListAsync();
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(form.Description))
+        {
+            error = "Description is required.";
+            return;
+        }
+        saving = true; error = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            if (IsEdit)
+            {
+                var entity = await db.TblDesignRequirements.FindAsync(Requirement!.RequirementId);
+                if (entity is null)
+                {
+                    error = "This requirement no longer exists.";
+                    return;
+                }
+
+                // Moving to a different category places the requirement at that category's end
+                if (entity.CategoryId != form.CategoryId)
+                    entity.SortOrder = await NextSortOrderAsync(db, form.CategoryId);
+
+                entity.CategoryId = form.CategoryId;
+                entity.Priority = form.Priority;
+                entity.Description = form.Description.Trim();
+                entity.ClientNotes = string.IsNullOrWhiteSpace(form.ClientNotes) ? null : form.ClientNotes.Trim();
+                entity.AssignedToUserId = string.IsNullOrEmpty(form.AssignedToUserId) ? null : form.AssignedToUserId;
+                entity.LastEditDate = DateTime.UtcNow;
+            }
+            else
+            {
+                db.TblDesignRequirements.Add(new TblDesignRequirement
+                {
+                    DesignId = DesignId,
+                    CategoryId = form.CategoryId,
+                    SortOrder = await NextSortOrderAsync(db, form.CategoryId),
+                    Priority = form.Priority,
+                    Status = RequirementStatus.PendingReview,
+                    Description = form.Description.Trim(),
+                    ClientNotes = string.IsNullOrWhiteSpace(form.ClientNotes) ? null : form.ClientNotes.Trim(),
+                    AssignedToUserId = string.IsNullOrEmpty(form.AssignedToUserId) ? null : form.AssignedToUserId,
+                    CreatedBy = Session.User?.UserId.ToString() ?? string.Empty,
+                    CreateDate = DateTime.UtcNow,
+                    LastEditDate = DateTime.UtcNow,
+                });
+            }
+
+            await db.SaveChangesAsync();
+            await OnClose.InvokeAsync(true);
+        }
+        catch (Exception ex)
+        {
+            error = $"Save failed: {ex.Message}";
+        }
+        finally { saving = false; }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (!confirmingDelete)
+        {
+            confirmingDelete = true;
+            return;
+        }
+        saving = true; error = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignRequirements.FindAsync(Requirement!.RequirementId);
+            if (entity is not null)
+            {
+                db.TblDesignRequirements.Remove(entity); // comments cascade at the DB level
+                await db.SaveChangesAsync();
+            }
+            await OnClose.InvokeAsync(true);
+        }
+        catch (Exception ex)
+        {
+            error = $"Delete failed: {ex.Message}";
+            confirmingDelete = false;
+        }
+        finally { saving = false; }
+    }
+
+    private static async Task<int> NextSortOrderAsync(DesignDbContext db, int categoryId)
+    {
+        var maxSort = await db.TblDesignRequirements
+            .Where(r => r.CategoryId == categoryId)
+            .MaxAsync(r => (int?)r.SortOrder) ?? 0;
+        return maxSort + 10;
+    }
+
+    private Task Cancel() => OnClose.InvokeAsync(false);
+}

@@ -1,0 +1,4 @@
+# Pinned so local doc builds are reproducible across authors and match the
+# toolchain the committed wwwroot/docs HTML was generated with.
+mkdocs==1.6.1
+mkdocs-material==9.7.4

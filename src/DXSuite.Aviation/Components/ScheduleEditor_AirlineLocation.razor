@@ -1,0 +1,11 @@
+@* Stub — implementation moved to DXSuite.Director.Components.Schedulers *@
+@* This file exists only for backward compatibility if referenced from Aviation *@
+
+@code {
+    [Parameter] public object? Location { get; set; }
+    [Parameter] public object? ScheduleEvent { get; set; }
+    [Parameter] public EventCallback OnSaveScheduleEntry { get; set; }
+    [Parameter] public EventCallback OnCancel { get; set; }
+
+    public string? GetSelectedAirlineCode() => null;
+}

@@ -1,0 +1,939 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" minOccurs="0" msdata:Ordinal="1" />
+                <xsd:element name="comment" minOccurs="0" msdata:Ordinal="2" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" msdata:Ordinal="0" />
+              <xsd:attribute name="xml:space" type="xsd:string" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_Loading" xml:space="preserve">
+    <value>Loading...</value>
+  </data>
+  <data name="Label_Unauthorized" xml:space="preserve">
+    <value>Unauthorized</value>
+  </data>
+  <data name="Label_NoPermission" xml:space="preserve">
+    <value>You do not have permission to access this page.</value>
+  </data>
+  <data name="Label_ReturnHome" xml:space="preserve">
+    <value>Return Home</value>
+  </data>
+  <data name="Header_ConfigurationManagement" xml:space="preserve">
+    <value>CONFIGURATION MANAGEMENT</value>
+  </data>
+  <data name="Button_Manage" xml:space="preserve">
+    <value>MANAGE</value>
+  </data>
+  <data name="Tab_Devices" xml:space="preserve">
+    <value>Devices</value>
+  </data>
+  <data name="Tab_Locations" xml:space="preserve">
+    <value>Locations</value>
+  </data>
+  <data name="Tab_PlayerUpdates" xml:space="preserve">
+    <value>Player Updates</value>
+  </data>
+  <data name="Tab_CloudConnectors" xml:space="preserve">
+    <value>Cloud Connectors</value>
+  </data>
+  <data name="Tab_Gateways" xml:space="preserve">
+    <value>Gateways</value>
+  </data>
+  <data name="Tab_UserGroups" xml:space="preserve">
+    <value>User Groups</value>
+  </data>
+  <data name="Tab_DeviceModels" xml:space="preserve">
+    <value>Device Models</value>
+  </data>
+  <data name="Tab_ProbeProfiles" xml:space="preserve">
+    <value>Probe Profiles</value>
+  </data>
+  <data name="Tab_ITSM" xml:space="preserve">
+    <value>ITSM</value>
+  </data>
+  <data name="Tab_LLM" xml:space="preserve">
+    <value>LLM</value>
+  </data>
+  <data name="Tab_GuardrailPolicies" xml:space="preserve">
+    <value>Guardrail Policies</value>
+  </data>
+  <data name="Header_DeviceManagement" xml:space="preserve">
+    <value>Device Management</value>
+  </data>
+  <data name="Placeholder_SearchDevices" xml:space="preserve">
+    <value>Search devices...</value>
+  </data>
+  <data name="Button_Columns" xml:space="preserve">
+    <value>COLUMNS</value>
+  </data>
+  <data name="Button_NewDevices" xml:space="preserve">
+    <value>NEW DEVICES</value>
+  </data>
+  <data name="Button_AllDevices" xml:space="preserve">
+    <value>ALL DEVICES</value>
+  </data>
+  <data name="Button_Refresh" xml:space="preserve">
+    <value>REFRESH</value>
+  </data>
+  <data name="Button_SaveView" xml:space="preserve">
+    <value>SAVE VIEW</value>
+  </data>
+  <data name="Button_ResetView" xml:space="preserve">
+    <value>RESET VIEW</value>
+  </data>
+  <data name="Label_NoDevicesFound" xml:space="preserve">
+    <value>No devices found</value>
+  </data>
+  <data name="Label_NoDevicesRegistered" xml:space="preserve">
+    <value>No devices have been registered with the system yet.</value>
+  </data>
+  <data name="Header_UserGroups" xml:space="preserve">
+    <value>User Groups</value>
+  </data>
+  <data name="Button_AddGroup" xml:space="preserve">
+    <value>ADD GROUP</value>
+  </data>
+  <data name="Label_EditGroup" xml:space="preserve">
+    <value>Edit Group</value>
+  </data>
+  <data name="Label_NewGroup" xml:space="preserve">
+    <value>New Group</value>
+  </data>
+  <data name="Label_GroupName" xml:space="preserve">
+    <value>Group Name</value>
+  </data>
+  <data name="Placeholder_GroupName" xml:space="preserve">
+    <value>e.g. Marketing Approvers</value>
+  </data>
+  <data name="Label_ExternalId" xml:space="preserve">
+    <value>External ID (optional)</value>
+  </data>
+  <data name="Placeholder_ExternalId" xml:space="preserve">
+    <value>AD SID or external reference</value>
+  </data>
+  <data name="Label_Approval" xml:space="preserve">
+    <value>Approval</value>
+  </data>
+  <data name="Label_Access" xml:space="preserve">
+    <value>Access</value>
+  </data>
+  <data name="Label_AdSync" xml:space="preserve">
+    <value>AD Sync</value>
+  </data>
+  <data name="Button_Save" xml:space="preserve">
+    <value>SAVE</value>
+  </data>
+  <data name="Button_Cancel" xml:space="preserve">
+    <value>CANCEL</value>
+  </data>
+  <data name="Label_MembersOf" xml:space="preserve">
+    <value>Members of "{0}"</value>
+  </data>
+  <data name="Label_SelectUserToAdd" xml:space="preserve">
+    <value>— Select user to add —</value>
+  </data>
+  <data name="Button_AddMember" xml:space="preserve">
+    <value>ADD MEMBER</value>
+  </data>
+  <data name="Button_Close" xml:space="preserve">
+    <value>CLOSE</value>
+  </data>
+  <data name="Column_Name" xml:space="preserve">
+    <value>Name</value>
+  </data>
+  <data name="Column_Email" xml:space="preserve">
+    <value>Email</value>
+  </data>
+  <data name="Column_Action" xml:space="preserve">
+    <value>Action</value>
+  </data>
+  <data name="Button_Remove" xml:space="preserve">
+    <value>Remove</value>
+  </data>
+  <data name="Label_NoMembers" xml:space="preserve">
+    <value>No members in this group yet.</value>
+  </data>
+  <data name="Column_GroupName" xml:space="preserve">
+    <value>Group Name</value>
+  </data>
+  <data name="Column_Type" xml:space="preserve">
+    <value>Type</value>
+  </data>
+  <data name="Column_Members" xml:space="preserve">
+    <value>Members</value>
+  </data>
+  <data name="Column_Active" xml:space="preserve">
+    <value>Active</value>
+  </data>
+  <data name="Button_Members" xml:space="preserve">
+    <value>Members</value>
+  </data>
+  <data name="Button_Edit" xml:space="preserve">
+    <value>Edit</value>
+  </data>
+  <data name="Button_Delete" xml:space="preserve">
+    <value>Delete</value>
+  </data>
+  <data name="Label_NoUserGroups" xml:space="preserve">
+    <value>No user groups configured</value>
+  </data>
+  <data name="Label_NoUserGroupsDescription" xml:space="preserve">
+    <value>Create groups to organize users for approval chains and access control.</value>
+  </data>
+  <data name="Header_DeviceModels" xml:space="preserve">
+    <value>Device Models</value>
+  </data>
+  <data name="Button_AddDeviceModel" xml:space="preserve">
+    <value>ADD DEVICE MODEL</value>
+  </data>
+  <data name="Label_EditDeviceModel" xml:space="preserve">
+    <value>Edit Device Model</value>
+  </data>
+  <data name="Label_NewDeviceModel" xml:space="preserve">
+    <value>New Device Model</value>
+  </data>
+  <data name="Label_ScopeAndSource" xml:space="preserve">
+    <value>Scope &amp; Source</value>
+  </data>
+  <data name="Label_Scope" xml:space="preserve">
+    <value>Scope</value>
+  </data>
+  <data name="Label_ScopeMake" xml:space="preserve">
+    <value>Make</value>
+  </data>
+  <data name="Label_ScopeMakeHint" xml:space="preserve">
+    <value>All devices from a manufacturer</value>
+  </data>
+  <data name="Label_ScopeMakeModel" xml:space="preserve">
+    <value>Make + Model</value>
+  </data>
+  <data name="Label_ScopeMakeModelHint" xml:space="preserve">
+    <value>Specific manufacturer + model</value>
+  </data>
+  <data name="Label_CreateFrom" xml:space="preserve">
+    <value>Create From</value>
+  </data>
+  <data name="Label_FromScratch" xml:space="preserve">
+    <value>From Scratch</value>
+  </data>
+  <data name="Label_FromDiscoveredDevices" xml:space="preserve">
+    <value>From Discovered Devices</value>
+  </data>
+  <data name="Label_Select" xml:space="preserve">
+    <value>-- Select --</value>
+  </data>
+  <data name="Label_BasicInfo" xml:space="preserve">
+    <value>Basic Info</value>
+  </data>
+  <data name="Label_Manufacturer" xml:space="preserve">
+    <value>Manufacturer *</value>
+  </data>
+  <data name="Label_Model" xml:space="preserve">
+    <value>Model *</value>
+  </data>
+  <data name="Label_DisplayName" xml:space="preserve">
+    <value>Display Name</value>
+  </data>
+  <data name="Label_Category" xml:space="preserve">
+    <value>Category</value>
+  </data>
+  <data name="Label_Display" xml:space="preserve">
+    <value>Display</value>
+  </data>
+  <data name="Label_MediaPlayer" xml:space="preserve">
+    <value>Media Player</value>
+  </data>
+  <data name="Label_VideoWall" xml:space="preserve">
+    <value>Video Wall</value>
+  </data>
+  <data name="Label_Audio" xml:space="preserve">
+    <value>Audio</value>
+  </data>
+  <data name="Label_Controller" xml:space="preserve">
+    <value>Controller</value>
+  </data>
+  <data name="Label_Other" xml:space="preserve">
+    <value>Other</value>
+  </data>
+  <data name="Label_Communication" xml:space="preserve">
+    <value>Communication</value>
+  </data>
+  <data name="Label_Protocol" xml:space="preserve">
+    <value>Protocol</value>
+  </data>
+  <data name="Label_DefaultPort" xml:space="preserve">
+    <value>Default Port</value>
+  </data>
+  <data name="Label_ConnectionType" xml:space="preserve">
+    <value>Connection Type</value>
+  </data>
+  <data name="Label_OnDemand" xml:space="preserve">
+    <value>On-Demand</value>
+  </data>
+  <data name="Label_Persistent" xml:space="preserve">
+    <value>Persistent</value>
+  </data>
+  <data name="Label_Authentication" xml:space="preserve">
+    <value>Authentication</value>
+  </data>
+  <data name="Label_AuthNone" xml:space="preserve">
+    <value>None</value>
+  </data>
+  <data name="Label_AuthBasic" xml:space="preserve">
+    <value>Basic</value>
+  </data>
+  <data name="Label_AuthBearer" xml:space="preserve">
+    <value>Bearer Token</value>
+  </data>
+  <data name="Label_AuthApiKey" xml:space="preserve">
+    <value>API Key</value>
+  </data>
+  <data name="Label_AuthCustom" xml:space="preserve">
+    <value>Custom</value>
+  </data>
+  <data name="Label_Commands" xml:space="preserve">
+    <value>Commands</value>
+  </data>
+  <data name="Column_AbstractId" xml:space="preserve">
+    <value>Abstract ID</value>
+  </data>
+  <data name="Column_DisplayName" xml:space="preserve">
+    <value>Display Name</value>
+  </data>
+  <data name="Column_Category" xml:space="preserve">
+    <value>Category</value>
+  </data>
+  <data name="Column_Risk" xml:space="preserve">
+    <value>Risk</value>
+  </data>
+  <data name="Column_CommandString" xml:space="preserve">
+    <value>Command String</value>
+  </data>
+  <data name="Column_Timeout" xml:space="preserve">
+    <value>Timeout</value>
+  </data>
+  <data name="Column_Approval" xml:space="preserve">
+    <value>Approval</value>
+  </data>
+  <data name="Button_AddCommand" xml:space="preserve">
+    <value>ADD COMMAND</value>
+  </data>
+  <data name="Label_Saving" xml:space="preserve">
+    <value>SAVING...</value>
+  </data>
+  <data name="Button_AssignDevices" xml:space="preserve">
+    <value>Assign Devices — {0}</value>
+  </data>
+  <data name="Label_ShowingMake" xml:space="preserve">
+    <value>Showing devices where manufacturer matches "{0}"</value>
+  </data>
+  <data name="Label_ShowingMakeModel" xml:space="preserve">
+    <value>Showing devices where manufacturer matches "{0}" and model contains "{1}"</value>
+  </data>
+  <data name="Column_Device" xml:space="preserve">
+    <value>Device</value>
+  </data>
+  <data name="Column_IpAddress" xml:space="preserve">
+    <value>IP Address</value>
+  </data>
+  <data name="Column_CurrentModel" xml:space="preserve">
+    <value>Current Model</value>
+  </data>
+  <data name="Column_Status" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="Button_AssignSelected" xml:space="preserve">
+    <value>ASSIGN SELECTED</value>
+  </data>
+  <data name="Label_NoMatchingDevices" xml:space="preserve">
+    <value>No matching devices found.</value>
+  </data>
+  <data name="Label_NoDeviceModels" xml:space="preserve">
+    <value>No Device Models</value>
+  </data>
+  <data name="Label_NoDeviceModelsDescription" xml:space="preserve">
+    <value>Create a Device Model to define commands and communication protocols for your devices.</value>
+  </data>
+  <data name="Column_Scope" xml:space="preserve">
+    <value>Scope</value>
+  </data>
+  <data name="Column_Manufacturer" xml:space="preserve">
+    <value>Manufacturer</value>
+  </data>
+  <data name="Column_Protocol" xml:space="preserve">
+    <value>Protocol</value>
+  </data>
+  <data name="Column_Commands" xml:space="preserve">
+    <value>Commands</value>
+  </data>
+  <data name="Column_Devices" xml:space="preserve">
+    <value>Devices</value>
+  </data>
+  <data name="Column_Actions" xml:space="preserve">
+    <value>Actions</value>
+  </data>
+  <data name="Label_ScopeMakeBadge" xml:space="preserve">
+    <value>Make</value>
+  </data>
+  <data name="Label_ScopeMakeModelBadge" xml:space="preserve">
+    <value>Make/Model</value>
+  </data>
+  <data name="Button_Assign" xml:space="preserve">
+    <value>Assign</value>
+  </data>
+  <data name="Header_LocationManagement" xml:space="preserve">
+    <value>Location Management</value>
+  </data>
+  <data name="Placeholder_SearchLocations" xml:space="preserve">
+    <value>Search locations...</value>
+  </data>
+  <data name="Button_CreateLayout" xml:space="preserve">
+    <value>CREATE LAYOUT</value>
+  </data>
+  <data name="Column_LocationName" xml:space="preserve">
+    <value>Location Name</value>
+  </data>
+  <data name="Column_LocationType" xml:space="preserve">
+    <value>Type</value>
+  </data>
+  <data name="Column_Access" xml:space="preserve">
+    <value>Access</value>
+  </data>
+  <data name="Label_ManagedCount" xml:space="preserve">
+    <value>Managed</value>
+  </data>
+  <data name="Label_Open" xml:space="preserve">
+    <value>Open</value>
+  </data>
+  <data name="Label_Custom" xml:space="preserve">
+    <value>Custom</value>
+  </data>
+  <data name="Label_NoLocationsFound" xml:space="preserve">
+    <value>No locations found</value>
+  </data>
+  <data name="Modal_ContentHealthDetails" xml:space="preserve">
+    <value>Content Health Details</value>
+  </data>
+  <data name="Label_DeviceId" xml:space="preserve">
+    <value>Device ID:</value>
+  </data>
+  <data name="Modal_ContentUrl" xml:space="preserve">
+    <value>Content URL:</value>
+  </data>
+  <data name="Label_NotMonitored" xml:space="preserve">
+    <value>Not monitored</value>
+  </data>
+  <data name="Modal_LastProofOfLife" xml:space="preserve">
+    <value>Last Proof of Life:</value>
+  </data>
+  <data name="Label_Never" xml:space="preserve">
+    <value>Never</value>
+  </data>
+  <data name="Modal_JsErrors" xml:space="preserve">
+    <value>JS Errors:</value>
+  </data>
+  <data name="Label_NoErrorsDetected" xml:space="preserve">
+    <value>No errors detected</value>
+  </data>
+  <data name="Label_ErrorsDetected" xml:space="preserve">
+    <value>{0} error(s) detected</value>
+  </data>
+  <data name="Modal_ConnectedDisplays" xml:space="preserve">
+    <value>Connected Displays</value>
+  </data>
+  <data name="Modal_LastChanged" xml:space="preserve">
+    <value>Last Changed:</value>
+  </data>
+  <data name="Label_Outputs" xml:space="preserve">
+    <value>Outputs</value>
+  </data>
+  <data name="Label_Disconnected" xml:space="preserve">
+    <value>Disconnected</value>
+  </data>
+  <data name="Label_PoweredOff" xml:space="preserve">
+    <value>Powered Off</value>
+  </data>
+  <data name="Label_Connected" xml:space="preserve">
+    <value>Connected</value>
+  </data>
+  <data name="Label_PowerOn" xml:space="preserve">
+    <value>Power On</value>
+  </data>
+  <data name="Label_PowerOff" xml:space="preserve">
+    <value>Power Off</value>
+  </data>
+  <data name="Label_Resolution" xml:space="preserve">
+    <value>Resolution:</value>
+  </data>
+  <data name="Label_ManufacturerLabel" xml:space="preserve">
+    <value>Manufacturer:</value>
+  </data>
+  <data name="Label_ModelLabel" xml:space="preserve">
+    <value>Model:</value>
+  </data>
+  <data name="Label_SerialLabel" xml:space="preserve">
+    <value>Serial:</value>
+  </data>
+  <data name="Label_NoDisplayData" xml:space="preserve">
+    <value>No display connection data available. This device may not support HDMI monitoring.</value>
+  </data>
+  <data name="Modal_DeviceMetadata" xml:space="preserve">
+    <value>Device Metadata</value>
+  </data>
+  <data name="Modal_DeviceScreenshot" xml:space="preserve">
+    <value>Device Screenshot</value>
+  </data>
+  <data name="Label_Captured" xml:space="preserve">
+    <value>Captured:</value>
+  </data>
+  <data name="Label_Requesting" xml:space="preserve">
+    <value>Requesting...</value>
+  </data>
+  <data name="Button_RequestScreenshot" xml:space="preserve">
+    <value>Request New Screenshot</value>
+  </data>
+  <data name="Modal_ConsoleLogs" xml:space="preserve">
+    <value>Console Logs</value>
+  </data>
+  <data name="Label_LoggingEnabled" xml:space="preserve">
+    <value>Logging Enabled</value>
+  </data>
+  <data name="Label_LoggingDisabled" xml:space="preserve">
+    <value>Logging Disabled</value>
+  </data>
+  <data name="Label_ClearLogs" xml:space="preserve">
+    <value>Clear Logs</value>
+  </data>
+  <data name="Label_NoLogsYet" xml:space="preserve">
+    <value>No logs yet. Logs will appear after the device's next heartbeat.</value>
+  </data>
+  <data name="Label_EnableLogging" xml:space="preserve">
+    <value>Enable logging to start collecting console output from this device.</value>
+  </data>
+  <data name="Modal_DeviceStatusDetails" xml:space="preserve">
+    <value>Device Status Details</value>
+  </data>
+  <data name="Label_DeviceLabel" xml:space="preserve">
+    <value>Device:</value>
+  </data>
+  <data name="Label_IpAddressLabel" xml:space="preserve">
+    <value>IP Address:</value>
+  </data>
+  <data name="Label_PlatformLabel" xml:space="preserve">
+    <value>Platform:</value>
+  </data>
+  <data name="Label_ProfileLabel" xml:space="preserve">
+    <value>Profile:</value>
+  </data>
+  <data name="Label_Default" xml:space="preserve">
+    <value>Default</value>
+  </data>
+  <data name="Label_LastProbe" xml:space="preserve">
+    <value>Last Probe:</value>
+  </data>
+  <data name="Label_TriggerLabel" xml:space="preserve">
+    <value>Trigger:</value>
+  </data>
+  <data name="Label_OverallLabel" xml:space="preserve">
+    <value>Overall:</value>
+  </data>
+  <data name="Label_ProbeSteps" xml:space="preserve">
+    <value>Probe Steps</value>
+  </data>
+  <data name="Column_Number" xml:space="preserve">
+    <value>#</value>
+  </data>
+  <data name="Column_Method" xml:space="preserve">
+    <value>Method</value>
+  </data>
+  <data name="Column_Target" xml:space="preserve">
+    <value>Target</value>
+  </data>
+  <data name="Column_Expected" xml:space="preserve">
+    <value>Expected</value>
+  </data>
+  <data name="Column_Result" xml:space="preserve">
+    <value>Result</value>
+  </data>
+  <data name="Column_Time" xml:space="preserve">
+    <value>Time</value>
+  </data>
+  <data name="Column_Detail" xml:space="preserve">
+    <value>Detail</value>
+  </data>
+  <data name="Label_HealthyHeartbeat" xml:space="preserve">
+    <value>Healthy — last heartbeat {0}</value>
+  </data>
+  <data name="Label_OfflineHeartbeat" xml:space="preserve">
+    <value>Offline — last heartbeat {0}</value>
+  </data>
+  <data name="Label_NoIpForProbing" xml:space="preserve">
+    <value>No IP address available for probing</value>
+  </data>
+  <data name="Label_CloudHealth" xml:space="preserve">
+    <value>Cloud Health:</value>
+  </data>
+  <data name="Label_NoProbeData" xml:space="preserve">
+    <value>No probe data available. Probes run every 60 seconds for devices with known IPs.</value>
+  </data>
+  <data name="Modal_DeviceAgeAssessment" xml:space="preserve">
+    <value>Device Age Assessment</value>
+  </data>
+  <data name="Label_MakeModel" xml:space="preserve">
+    <value>Make / Model:</value>
+  </data>
+  <data name="Label_Serial" xml:space="preserve">
+    <value>Serial:</value>
+  </data>
+  <data name="Label_FirstSeen" xml:space="preserve">
+    <value>First Seen:</value>
+  </data>
+  <data name="Label_CurrentAge" xml:space="preserve">
+    <value>Current Age:</value>
+  </data>
+  <data name="Label_Years" xml:space="preserve">
+    <value>years</value>
+  </data>
+  <data name="Label_Source" xml:space="preserve">
+    <value>Source: {0}</value>
+  </data>
+  <data name="Label_Unknown" xml:space="preserve">
+    <value>Unknown</value>
+  </data>
+  <data name="Label_LlmAgeAssessment" xml:space="preserve">
+    <value>LLM Age Assessment</value>
+  </data>
+  <data name="Button_RunAssessment" xml:space="preserve">
+    <value>Run Assessment</value>
+  </data>
+  <data name="Label_Assessing" xml:space="preserve">
+    <value>Assessing...</value>
+  </data>
+  <data name="Label_Estimated" xml:space="preserve">
+    <value>Estimated:</value>
+  </data>
+  <data name="Label_Confidence" xml:space="preserve">
+    <value>Confidence:</value>
+  </data>
+  <data name="Label_Reasoning" xml:space="preserve">
+    <value>Reasoning:</value>
+  </data>
+  <data name="Button_ApplyAssessment" xml:space="preserve">
+    <value>Apply Assessment</value>
+  </data>
+  <data name="Label_ManualOverride" xml:space="preserve">
+    <value>Manual Override</value>
+  </data>
+  <data name="Button_SetDate" xml:space="preserve">
+    <value>Set Date</value>
+  </data>
+  <data name="Button_ResetToDefault" xml:space="preserve">
+    <value>Reset to Default</value>
+  </data>
+  <data name="Column_ColStatus" xml:space="preserve">
+    <value>Status</value>
+  </data>
+  <data name="Column_ColScreenshot" xml:space="preserve">
+    <value>Screenshot</value>
+  </data>
+  <data name="Column_ColLogs" xml:space="preserve">
+    <value>Logs</value>
+  </data>
+  <data name="Column_ColContentHealth" xml:space="preserve">
+    <value>Content Health</value>
+  </data>
+  <data name="Column_ColConnectedDisplays" xml:space="preserve">
+    <value>Connected Displays</value>
+  </data>
+  <data name="Column_ColAutoHeal" xml:space="preserve">
+    <value>Auto Heal</value>
+  </data>
+  <data name="Column_ColReboot" xml:space="preserve">
+    <value>Reboot</value>
+  </data>
+  <data name="Column_ColPulseMonitoring" xml:space="preserve">
+    <value>Pulse Monitoring</value>
+  </data>
+  <data name="Column_ColMetadata" xml:space="preserve">
+    <value>Metadata</value>
+  </data>
+  <data name="Column_ColDeviceId" xml:space="preserve">
+    <value>Device ID</value>
+  </data>
+  <data name="Column_ColDescription" xml:space="preserve">
+    <value>Description</value>
+  </data>
+  <data name="Column_ColMake" xml:space="preserve">
+    <value>Make</value>
+  </data>
+  <data name="Column_ColModel" xml:space="preserve">
+    <value>Model</value>
+  </data>
+  <data name="Column_ColSerialNumber" xml:space="preserve">
+    <value>Serial Number</value>
+  </data>
+  <data name="Column_ColIpAddress" xml:space="preserve">
+    <value>IP Address</value>
+  </data>
+  <data name="Column_ColLocation" xml:space="preserve">
+    <value>Location</value>
+  </data>
+  <data name="Column_ColDisplay" xml:space="preserve">
+    <value>Display</value>
+  </data>
+  <data name="Column_ColPlatform" xml:space="preserve">
+    <value>Platform</value>
+  </data>
+  <data name="Column_ColBrowser" xml:space="preserve">
+    <value>Browser</value>
+  </data>
+  <data name="Column_ColClientVersion" xml:space="preserve">
+    <value>Client Version</value>
+  </data>
+  <data name="Column_ColUpdateStatus" xml:space="preserve">
+    <value>Update Status</value>
+  </data>
+  <data name="Column_ColLastUpdate" xml:space="preserve">
+    <value>Last Update</value>
+  </data>
+  <data name="Column_ColLastSeen" xml:space="preserve">
+    <value>Last Seen</value>
+  </data>
+  <data name="Column_ColAge" xml:space="preserve">
+    <value>Age</value>
+  </data>
+  <data name="Column_ColCloudHealth" xml:space="preserve">
+    <value>Cloud Health</value>
+  </data>
+  <data name="Column_ColContentDesign" xml:space="preserve">
+    <value>Content/Design</value>
+  </data>
+  <data name="Column_ColSentinelEnabled" xml:space="preserve">
+    <value>Sentinel Enabled</value>
+  </data>
+  <data name="Column_ColGateway" xml:space="preserve">
+    <value>Gateway</value>
+  </data>
+  <data name="Label_ClickToAdd" xml:space="preserve">
+    <value>Click to add</value>
+  </data>
+  <data name="Placeholder_EnterDescription" xml:space="preserve">
+    <value>Enter description...</value>
+  </data>
+  <data name="Label_NoLocation" xml:space="preserve">
+    <value>-- No Location --</value>
+  </data>
+  <data name="Label_NoDisplay" xml:space="preserve">
+    <value>-- No Display --</value>
+  </data>
+  <data name="Label_UpToDate" xml:space="preserve">
+    <value>Up to Date</value>
+  </data>
+  <data name="Label_UpdateAvailable" xml:space="preserve">
+    <value>Update Available</value>
+  </data>
+  <data name="Label_InProgress" xml:space="preserve">
+    <value>In Progress</value>
+  </data>
+  <data name="Label_Failed" xml:space="preserve">
+    <value>Failed</value>
+  </data>
+  <data name="Label_NA" xml:space="preserve">
+    <value>N/A</value>
+  </data>
+  <data name="Label_Enabled" xml:space="preserve">
+    <value>Enabled</value>
+  </data>
+  <data name="Label_Disabled" xml:space="preserve">
+    <value>Disabled</value>
+  </data>
+  <data name="Label_LocalDirector" xml:space="preserve">
+    <value>Local Director</value>
+  </data>
+  <data name="Label_Meta" xml:space="preserve">
+    <value>META</value>
+  </data>
+  <data name="Label_Reboot" xml:space="preserve">
+    <value>REBOOT</value>
+  </data>
+  <data name="Toast_ViewSaved" xml:space="preserve">
+    <value>View saved</value>
+  </data>
+  <data name="Toast_ErrorSavingView" xml:space="preserve">
+    <value>Error saving view</value>
+  </data>
+  <data name="Toast_ScreenshotRequested" xml:space="preserve">
+    <value>Screenshot requested for {0}</value>
+  </data>
+  <data name="Toast_ErrorRequestingScreenshot" xml:space="preserve">
+    <value>Error requesting screenshot</value>
+  </data>
+  <data name="Toast_ConsoleLoggingToggled" xml:space="preserve">
+    <value>Console logging {0} for {1}</value>
+  </data>
+  <data name="Toast_ErrorTogglingLogging" xml:space="preserve">
+    <value>Error toggling console logging</value>
+  </data>
+  <data name="Toast_ConsoleLogsCleared" xml:space="preserve">
+    <value>Console logs cleared</value>
+  </data>
+  <data name="Toast_ErrorClearingLogs" xml:space="preserve">
+    <value>Error clearing console logs</value>
+  </data>
+  <data name="Toast_CecCommandQueued" xml:space="preserve">
+    <value>Command queued. Device will execute on next sync (~30 seconds).</value>
+  </data>
+  <data name="Toast_ErrorLoadingLogs" xml:space="preserve">
+    <value>Error loading console logs</value>
+  </data>
+  <data name="Toast_RebootComplete" xml:space="preserve">
+    <value>Reboot complete — {0} ({1}s)</value>
+  </data>
+  <data name="Toast_RebootFailed" xml:space="preserve">
+    <value>Reboot failed — {0}</value>
+  </data>
+  <data name="Toast_DeviceAgeUpdated" xml:space="preserve">
+    <value>Device age updated ({0})</value>
+  </data>
+  <data name="Toast_DeviceAgeReset" xml:space="preserve">
+    <value>Device age reset to default</value>
+  </data>
+  <data name="Label_Healthy" xml:space="preserve">
+    <value>Healthy</value>
+  </data>
+  <data name="Label_Unresponsive" xml:space="preserve">
+    <value>Unresponsive</value>
+  </data>
+  <data name="Label_NotMonitoredStatus" xml:space="preserve">
+    <value>Not Monitored</value>
+  </data>
+  <data name="Label_Online" xml:space="preserve">
+    <value>Online</value>
+  </data>
+  <data name="Label_NetworkOkClientIssue" xml:space="preserve">
+    <value>Network OK, Client Issue</value>
+  </data>
+  <data name="Label_OnlineDegraded" xml:space="preserve">
+    <value>Online (Degraded)</value>
+  </data>
+  <data name="Label_Unreachable" xml:space="preserve">
+    <value>Unreachable</value>
+  </data>
+  <data name="Label_Offline" xml:space="preserve">
+    <value>Offline</value>
+  </data>
+  <data name="Label_DeviceOfflineContentHealth" xml:space="preserve">
+    <value>Device offline - content health unknown</value>
+  </data>
+  <data name="Label_DeviceOfflineDisplayStatus" xml:space="preserve">
+    <value>Device offline - display status unknown</value>
+  </data>
+  <data name="Label_NoMonitoringData" xml:space="preserve">
+    <value>No monitoring data</value>
+  </data>
+  <data name="Label_DisplaysPoweredOff" xml:space="preserve">
+    <value>{0} display(s) powered off</value>
+  </data>
+  <data name="Label_AllOutputsConnected" xml:space="preserve">
+    <value>All {0} output(s) connected</value>
+  </data>
+  <data name="Label_PartialOutputsConnected" xml:space="preserve">
+    <value>{0} of {1} output(s) connected</value>
+  </data>
+  <data name="Label_AllOutputsDisconnected" xml:space="preserve">
+    <value>All outputs disconnected</value>
+  </data>
+  <data name="Label_DeviceNotInPulse" xml:space="preserve">
+    <value>Device not found in Pulse</value>
+  </data>
+  <data name="Label_AutoHealEnabled" xml:space="preserve">
+    <value>Auto-heal enabled - will attempt TCP power cycle if offline</value>
+  </data>
+  <data name="Label_AutoHealDisabled" xml:space="preserve">
+    <value>Auto-heal disabled</value>
+  </data>
+  <data name="Label_AssignModelToReboot" xml:space="preserve">
+    <value>Assign a Device Model to enable reboot</value>
+  </data>
+  <data name="Label_NoRebootCommand" xml:space="preserve">
+    <value>Device model does not define a reboot command</value>
+  </data>
+  <data name="Label_ClickForDetails" xml:space="preserve">
+    <value>click for details</value>
+  </data>
+  <data name="Label_HeartbeatStaleProbe" xml:space="preserve">
+    <value>Heartbeat stale — click for probe details</value>
+  </data>
+  <data name="Label_OfflineClickDetails" xml:space="preserve">
+    <value>Offline — click for details</value>
+  </data>
+  <data name="Label_OnlineClickDetails" xml:space="preserve">
+    <value>Online — click for details</value>
+  </data>
+  <data name="Label_CloudClickDetails" xml:space="preserve">
+    <value>{0} (cloud) — click for details</value>
+  </data>
+  <data name="Label_HeartbeatStale" xml:space="preserve">
+    <value>Heartbeat stale — last seen {0} UTC</value>
+  </data>
+  <data name="Label_SecondsAgo" xml:space="preserve">
+    <value>{0} seconds ago</value>
+  </data>
+  <data name="Label_MinutesAgo" xml:space="preserve">
+    <value>{0} minutes ago</value>
+  </data>
+  <data name="Label_HoursAgo" xml:space="preserve">
+    <value>{0} hours ago</value>
+  </data>
+  <data name="Label_DaysAgo" xml:space="preserve">
+    <value>{0} days ago</value>
+  </data>
+  <data name="Category_Power" xml:space="preserve">
+    <value>Power</value>
+  </data>
+  <data name="Category_Display" xml:space="preserve">
+    <value>Display</value>
+  </data>
+  <data name="Category_Audio" xml:space="preserve">
+    <value>Audio</value>
+  </data>
+  <data name="Category_System" xml:space="preserve">
+    <value>System</value>
+  </data>
+  <data name="Category_Content" xml:space="preserve">
+    <value>Content</value>
+  </data>
+  <data name="Category_Diagnostics" xml:space="preserve">
+    <value>Diagnostics</value>
+  </data>
+  <data name="Risk_Low" xml:space="preserve">
+    <value>Low</value>
+  </data>
+  <data name="Risk_Medium" xml:space="preserve">
+    <value>Medium</value>
+  </data>
+  <data name="Risk_High" xml:space="preserve">
+    <value>High</value>
+  </data>
+  <data name="Risk_Critical" xml:space="preserve">
+    <value>Critical</value>
+  </data>
+  <data name="Placeholder_FieldName" xml:space="preserve">
+    <value>Field name</value>
+  </data>
+  <data name="Label_Folder" xml:space="preserve">
+    <value>Folder</value>
+  </data>
+</root>

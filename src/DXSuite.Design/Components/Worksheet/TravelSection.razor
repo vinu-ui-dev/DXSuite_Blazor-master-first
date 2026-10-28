@@ -1,0 +1,327 @@
+@using DXSuite.Design.Entities
+@using DXSuite.Design.Models
+
+<div class="ts-wrapper">
+    <div class="ms-header">
+        <h4 class="lit-section-title" style="margin:0">Travel</h4>
+        <div class="ms-desc-controls">
+            <label class="ms-desc-label" title="Include description row before Travel in NetSuite push">
+                <input type="checkbox"
+                       checked="@(SectionDescription?.IsEnabled ?? false)"
+                       @onchange="() => OnToggleSectionDescription.InvokeAsync()" />
+                <span>Desc.</span>
+            </label>
+            <button class="ms-desc-btn" @onclick="() => OnEditSectionDescription.InvokeAsync()"
+                    title="Edit description row">✎</button>
+        </div>
+    </div>
+
+    @if (Rows.Count > 0)
+    {
+        <div style="overflow-x:auto">
+            <table class="lit-table">
+                <thead>
+                    <tr class="lit-header-row">
+                        <th class="lit-th">Name</th>
+                        <th class="lit-th">Description</th>
+                        <th class="lit-th" style="width:84px; text-align:center">Per Person</th>
+                        <th class="lit-th lit-num" style="width:110px">Cost</th>
+                        <th class="lit-th lit-num" style="width:110px">Sell</th>
+                        <th class="lit-th" style="width:84px; text-align:center">Loc</th>
+                        <th class="lit-th" style="width:44px"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var row in Rows.OrderBy(r => r.SortOrder))
+                    {
+                        <tr>
+                            <td class="lit-td">@row.Name</td>
+                            <td class="lit-td" style="font-size:.85rem; color:var(--text-muted,#6c757d)">@row.Description</td>
+                            <td class="lit-td" style="text-align:center">
+                                @if (row.IsPerPerson)
+                                {
+                                    <span class="dx-badge dx-badge-blue" style="font-size:.65rem" title="Cost multiplied by on-site headcount per scenario">Per Person</span>
+                                }
+                                else
+                                {
+                                    <span class="dx-badge dx-badge-gray" style="font-size:.65rem" title="Flat cost — charged once if anyone travels">Flat</span>
+                                }
+                            </td>
+                            <td class="lit-td lit-num" style="padding:2px 4px">
+                                <input type="number" class="lit-input-sm" style="width:88px" min="0" step="0.01"
+                                       value="@row.Cost.ToString("F2")"
+                                       @onchange="e => Update(row, cost: e.Value?.ToString())" />
+                            </td>
+                            <td class="lit-td lit-num" style="padding:2px 4px">
+                                <input type="number" class="lit-input-sm" style="width:88px" min="0" step="0.01"
+                                       value="@row.SellPrice.ToString("F2")"
+                                       @onchange="e => Update(row, sell: e.Value?.ToString())" />
+                            </td>
+                            <td class="lit-td" style="text-align:center; position:relative">
+                                <LocationPickerPopover
+                                    CurrentLocationId="@row.LocationId"
+                                    CurrentLocationName="@row.LocationName"
+                                    DefaultLocationId="@WorksheetDefaultLocationId"
+                                    DefaultLocationName="@WorksheetDefaultLocationName"
+                                    Locations="CachedLocations"
+                                    OnSelect="args => OnUpdateLocation.InvokeAsync((row.RowId, args.Id, args.Name))" />
+                            </td>
+                            <td class="lit-td" style="text-align:center">
+                                <button class="lit-del-btn" title="Remove" @onclick="() => OnRemove.InvokeAsync(row.RowId)">✕</button>
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+                <tfoot>
+                    <tr class="lit-foot-row">
+                        <td class="lit-td" colspan="5" style="font-size:.75rem; color:var(--text-muted,#6c757d)">
+                            Totals vary by scenario — see the summary header above.
+                        </td>
+                        <td class="lit-td" colspan="2"></td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    }
+
+    @* Search strip below the list, matching the hardware section style *@
+    <div class="lit-add-strip">
+        <div class="lit-add-input-wrap">
+            <input type="text"
+                   class="lit-add-input"
+                   placeholder="+ Search to add item…"
+                   value="@_searchText"
+                   @oninput="OnSearchInput"
+                   @onblur="HideDropdown"
+                   autocomplete="off" />
+            @if (_searching)
+            {
+                <span class="lit-add-spinner">⏳</span>
+            }
+            @if (_showDropdown && (_catalogResults is not null || _nsResults is not null))
+            {
+                <div class="ms-dropdown" @onmousedown:preventDefault>
+                    @if (_catalogResults is { Count: > 0 })
+                    {
+                        <div class="ms-dropdown-section">From Catalog</div>
+                        @foreach (var item in _catalogResults)
+                        {
+                            <div class="ms-dropdown-item" @onclick="() => AddFromCatalog(item)">
+                                <div class="ms-dropdown-name">@item.Name</div>
+                                <div class="ms-dropdown-sub">@item.Description</div>
+                            </div>
+                        }
+                    }
+                    @if (_nsResults is { Count: > 0 })
+                    {
+                        <div class="ms-dropdown-section">Import from NetSuite</div>
+                        @foreach (var r in _nsResults)
+                        {
+                            <div class="ms-dropdown-item" @onclick="() => ImportFromNetsuite(r)">
+                                <div class="ms-dropdown-name">@r.ItemId</div>
+                                <div class="ms-dropdown-sub">@r.PurchaseDescription</div>
+                            </div>
+                        }
+                    }
+                    @if ((_catalogResults is null || _catalogResults.Count == 0) &&
+                         (_nsResults is null || _nsResults.Count == 0) &&
+                         !_searching)
+                    {
+                        <div class="ms-dropdown-empty">No results</div>
+                    }
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<style>
+    .ts-wrapper { margin-bottom: 24px; }
+
+    .ms-desc-controls {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .ms-desc-label {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-size: .75rem;
+        color: var(--text-muted, #6c757d);
+        cursor: pointer;
+        user-select: none;
+    }
+
+    .ms-desc-btn {
+        background: none;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px;
+        padding: 1px 6px;
+        font-size: .8rem;
+        cursor: pointer;
+        color: var(--text-muted, #6c757d);
+        line-height: 1.4;
+    }
+
+    .ms-desc-btn:hover:not(:disabled) { border-color: var(--dx-blue, #0071BC); color: var(--dx-blue, #0071BC); }
+    .ms-desc-btn:disabled { opacity: .45; cursor: default; }
+    .ms-desc-label input[type=checkbox] { accent-color: var(--dx-blue, #0071BC); }
+</style>
+
+@code {
+    [Parameter, EditorRequired] public List<TblDesignWorksheetTravelRow> Rows { get; set; } = [];
+    [Parameter, EditorRequired] public List<TblDesignMiscItem> CatalogItems { get; set; } = [];
+    [Parameter, EditorRequired] public INetsuiteService NetsuiteService { get; set; } = null!;
+    [Parameter, EditorRequired] public EventCallback<TblDesignWorksheetTravelRow> OnAddRow { get; set; }
+    [Parameter, EditorRequired] public EventCallback<TblDesignWorksheetTravelRow> OnUpdate { get; set; }
+    [Parameter, EditorRequired] public EventCallback<int> OnRemove { get; set; }
+    [Parameter, EditorRequired] public EventCallback<TblDesignMiscItem> OnCatalogItemCreated { get; set; }
+    [Parameter, EditorRequired] public string CustomerId { get; set; } = "";
+    [Parameter] public TblDesignWorksheetSectionDescription? SectionDescription { get; set; }
+    [Parameter] public EventCallback OnToggleSectionDescription { get; set; }
+    [Parameter] public EventCallback OnEditSectionDescription { get; set; }
+    [Parameter] public EventCallback<(int RowId, string? LocationId, string? LocationName)> OnUpdateLocation { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationId { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationName { get; set; }
+    [Parameter] public List<NetsuiteLocation>? CachedLocations { get; set; }
+
+    private string _searchText = "";
+    private bool _showDropdown;
+    private bool _searching;
+    private List<TblDesignMiscItem>? _catalogResults;
+    private List<NetsuiteItem>? _nsResults;
+    private CancellationTokenSource? _cts;
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        _searchText = e.Value?.ToString() ?? "";
+        _cts?.Cancel();
+        _cts = new CancellationTokenSource();
+        var cts = _cts;
+
+        _catalogResults = null;
+        _nsResults = null;
+        _showDropdown = false;
+
+        if (_searchText.Length < 2) return;
+
+        _catalogResults = CatalogItems
+            .Where(i => i.Name.Contains(_searchText, StringComparison.OrdinalIgnoreCase)
+                     || (i.Description?.Contains(_searchText, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Take(8)
+            .ToList();
+
+        _showDropdown = true;
+        _searching = true;
+
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            _nsResults = await NetsuiteService.SearchItemsAsync(_searchText, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { _nsResults = []; }
+        finally { _searching = false; }
+
+        StateHasChanged();
+    }
+
+    private async Task AddFromCatalog(TblDesignMiscItem catalogItem)
+    {
+        _showDropdown = false;
+        _searchText = "";
+
+        var nextSort = Rows.Count > 0 ? Rows.Max(r => r.SortOrder) + 10 : 10;
+        var row = new TblDesignWorksheetTravelRow
+        {
+            MiscItemId    = catalogItem.MiscItemId,
+            NetsuiteItemId = catalogItem.NetsuiteItemId,
+            Name          = catalogItem.Name,
+            Description   = catalogItem.Description,
+            Qty           = 1,
+            Cost          = catalogItem.DefaultCost,
+            SellPrice     = catalogItem.DefaultSellPrice,
+            IsPerPerson   = catalogItem.IsPerPerson,
+            SortOrder     = nextSort,
+        };
+        await OnAddRow.InvokeAsync(row);
+    }
+
+    private async Task ImportFromNetsuite(NetsuiteItem nsItem)
+    {
+        _showDropdown = false;
+        _searchText = "";
+
+        var newMiscItem = new TblDesignMiscItem
+        {
+            CustomerId = CustomerId,
+            IsTravel = true,
+            NetsuiteItemId = nsItem.Id,
+            Name = nsItem.ItemId,
+            Description = string.IsNullOrEmpty(nsItem.PurchaseDescription) ? null : nsItem.PurchaseDescription,
+            DefaultCost = nsItem.Cost,
+            DefaultSellPrice = nsItem.Rate,
+            IsActive = true,
+            SortOrder = CatalogItems.Count > 0 ? CatalogItems.Max(i => i.SortOrder) + 10 : 10,
+        };
+
+        await OnCatalogItemCreated.InvokeAsync(newMiscItem);
+
+        var nextSort = Rows.Count > 0 ? Rows.Max(r => r.SortOrder) + 10 : 10;
+        var row = new TblDesignWorksheetTravelRow
+        {
+            NetsuiteItemId = nsItem.Id,
+            Name          = nsItem.ItemId,
+            Description   = string.IsNullOrEmpty(nsItem.PurchaseDescription) ? null : nsItem.PurchaseDescription,
+            Qty           = 1,
+            Cost          = nsItem.Cost,
+            SellPrice     = nsItem.Rate,
+            IsPerPerson   = true,   // default: new travel items are per-person; edit in Travel catalog to change
+            SortOrder     = nextSort,
+        };
+        await OnAddRow.InvokeAsync(row);
+    }
+
+    private void Update(TblDesignWorksheetTravelRow row, string? cost = null, string? sell = null)
+    {
+        var updated = new TblDesignWorksheetTravelRow
+        {
+            RowId          = row.RowId,
+            WorksheetId    = row.WorksheetId,
+            MiscItemId     = row.MiscItemId,
+            NetsuiteItemId = row.NetsuiteItemId,
+            Name           = row.Name,
+            Description    = row.Description,
+            SortOrder      = row.SortOrder,
+            PrintInPdf     = row.PrintInPdf,
+            IsPerPerson    = row.IsPerPerson,
+            Qty            = row.Qty,
+            Cost           = cost is not null && decimal.TryParse(cost, out var c) ? Math.Max(0, c) : row.Cost,
+            SellPrice      = sell is not null && decimal.TryParse(sell, out var s) ? Math.Max(0, s) : row.SellPrice,
+        };
+        OnUpdate.InvokeAsync(updated);
+    }
+
+    private void UpdatePdf(TblDesignWorksheetTravelRow row, bool pdf)
+    {
+        var updated = new TblDesignWorksheetTravelRow
+        {
+            RowId = row.RowId,
+            WorksheetId = row.WorksheetId,
+            MiscItemId = row.MiscItemId,
+            NetsuiteItemId = row.NetsuiteItemId,
+            Name = row.Name,
+            Description = row.Description,
+            SortOrder = row.SortOrder,
+            Qty = row.Qty,
+            Cost = row.Cost,
+            SellPrice = row.SellPrice,
+            PrintInPdf = pdf,
+        };
+        OnUpdate.InvokeAsync(updated);
+    }
+
+    private void HideDropdown() { _showDropdown = false; _searchText = ""; }
+}

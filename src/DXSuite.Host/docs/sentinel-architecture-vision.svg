@@ -1,0 +1,88 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 980 640" font-family="Segoe UI, Arial, sans-serif">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <marker id="arrowAmber" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#E8821E"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="980" height="640" fill="#ffffff"/>
+  <text x="490" y="40" text-anchor="middle" font-size="23" font-weight="700" fill="#1a1a1a">Sentinel Architecture — "The W"</text>
+  <text x="490" y="64" text-anchor="middle" font-size="13" fill="#777">Top points (1·3·5) are user-observable · Bottom points (2·4) are the back-end engines</text>
+
+  <!-- W strokes: 1 -> 2 -> 3 -> 4 -> 5 -->
+  <g stroke="#555" stroke-width="2.5" fill="none" marker-end="url(#arrow)">
+    <line x1="150" y1="178" x2="312" y2="352"/>
+    <line x1="320" y1="352" x2="482" y2="178"/>
+    <line x1="490" y1="178" x2="652" y2="352"/>
+    <line x1="660" y1="352" x2="822" y2="178"/>
+  </g>
+  <g font-size="11" fill="#666" font-style="italic" text-anchor="middle">
+    <text x="215" y="280">conditions</text>
+    <text x="408" y="280">configure</text>
+    <text x="555" y="280">thresholds</text>
+    <text x="748" y="280">tickets / comms</text>
+  </g>
+
+  <!-- 4 -> 2 feedback arc (the "gets smarter" loop) -->
+  <path d="M 660 458 Q 490 600 320 458" stroke="#E8821E" stroke-width="2.5" stroke-dasharray="7 5" fill="none" marker-end="url(#arrowAmber)"/>
+  <text x="490" y="592" text-anchor="middle" font-size="12" font-weight="600" fill="#E8821E">4 → 2 feedback: Analyst proposes automations to the Service Engine</text>
+
+  <!-- ===== Top row: observable ===== -->
+  <!-- 1 Endpoints -->
+  <g>
+    <rect x="40" y="114" width="220" height="64" rx="9" fill="#E8F2FB" stroke="#0071BC" stroke-width="2"/>
+    <circle cx="62" cy="136" r="13" fill="#fff" stroke="#0071BC" stroke-width="2"/>
+    <text x="62" y="141" text-anchor="middle" font-size="14" font-weight="700" fill="#0071BC">1</text>
+    <text x="84" y="140" font-size="15" font-weight="700" fill="#1a1a1a">Endpoints</text>
+    <text x="84" y="160" font-size="10.5" fill="#555">IoT · signage PCs · Q-SYS AV · displays</text>
+  </g>
+  <!-- 3 Sentinel UI -->
+  <g>
+    <rect x="380" y="114" width="220" height="64" rx="9" fill="#E8F2FB" stroke="#0071BC" stroke-width="2"/>
+    <circle cx="402" cy="136" r="13" fill="#fff" stroke="#0071BC" stroke-width="2"/>
+    <text x="402" y="141" text-anchor="middle" font-size="14" font-weight="700" fill="#0071BC">3</text>
+    <text x="424" y="140" font-size="15" font-weight="700" fill="#1a1a1a">Sentinel UI</text>
+    <text x="424" y="160" font-size="10.5" fill="#555">configure · author scripts · set thresholds</text>
+  </g>
+  <!-- 5 ITSM -->
+  <g>
+    <rect x="720" y="114" width="220" height="64" rx="9" fill="#E8F2FB" stroke="#0071BC" stroke-width="2"/>
+    <circle cx="742" cy="136" r="13" fill="#fff" stroke="#0071BC" stroke-width="2"/>
+    <text x="742" y="141" text-anchor="middle" font-size="14" font-weight="700" fill="#0071BC">5</text>
+    <text x="764" y="140" font-size="15" font-weight="700" fill="#1a1a1a">ITSM Platform</text>
+    <text x="764" y="160" font-size="10.5" fill="#555">tickets · email · text · call</text>
+  </g>
+
+  <!-- ===== Bottom row: back-end engines ===== -->
+  <!-- 2 Service Logic Engine -->
+  <g>
+    <rect x="210" y="352" width="220" height="80" rx="9" fill="#0071BC" stroke="#005a96" stroke-width="2"/>
+    <circle cx="232" cy="376" r="13" fill="#fff" stroke="#0071BC" stroke-width="2"/>
+    <text x="232" y="381" text-anchor="middle" font-size="14" font-weight="700" fill="#0071BC">2</text>
+    <text x="254" y="380" font-size="14.5" font-weight="700" fill="#ffffff">Service Logic Engine</text>
+    <text x="254" y="399" font-size="10.5" fill="#bfe0f7">automate responses · log on change</text>
+    <text x="254" y="418" font-size="10" font-style="italic" fill="#bfe0f7">fast / reactive loop — acts &amp; logs</text>
+  </g>
+  <!-- 4 Analyst Logic Engine -->
+  <g>
+    <rect x="550" y="352" width="220" height="80" rx="9" fill="#0071BC" stroke="#005a96" stroke-width="2"/>
+    <circle cx="572" cy="376" r="13" fill="#fff" stroke="#0071BC" stroke-width="2"/>
+    <text x="572" y="381" text-anchor="middle" font-size="14" font-weight="700" fill="#0071BC">4</text>
+    <text x="594" y="380" font-size="14.5" font-weight="700" fill="#ffffff">Analyst Logic Engine</text>
+    <text x="594" y="399" font-size="10.5" fill="#bfe0f7">assess logs · LLM advisory · comms</text>
+    <text x="594" y="418" font-size="10" font-style="italic" fill="#bfe0f7">reflective / advisory loop — judges</text>
+  </g>
+
+  <!-- Legend -->
+  <g font-size="11" fill="#555">
+    <rect x="40" y="612" width="16" height="12" rx="2" fill="#E8F2FB" stroke="#0071BC" stroke-width="1.5"/>
+    <text x="62" y="622">observable</text>
+    <rect x="150" y="612" width="16" height="12" rx="2" fill="#0071BC"/>
+    <text x="172" y="622">back-end engine</text>
+    <line x1="280" y1="618" x2="306" y2="618" stroke="#E8821E" stroke-width="2.5" stroke-dasharray="7 5"/>
+    <text x="312" y="622">feedback (proposals)</text>
+  </g>
+</svg>

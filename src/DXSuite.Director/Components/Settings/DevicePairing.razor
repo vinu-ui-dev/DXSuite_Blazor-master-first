@@ -1,0 +1,520 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject IDevicePairingService pairingService
+@inject IDeviceTokenService deviceTokenService
+@inject ISessionState sessionState
+@inject IJSRuntime JSRuntime
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">Device Pairing</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">
+        Approve pairing requests from devices showing a 6-digit code, and manage active device tokens.
+    </p>
+
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="dx-alert dx-alert-success" style="max-width:800px; margin-bottom:12px;">@successMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="dx-alert dx-alert-danger" style="max-width:800px; margin-bottom:12px;">@errorMessage</div>
+    }
+
+    <!-- Approve by Code -->
+    <div class="dx-card" style="max-width:800px; margin-bottom:20px;">
+        <div class="dx-card-header">Approve Device</div>
+        <div class="dx-card-body">
+            <div style="display:flex; align-items:flex-end; justify-content:center; gap:12px; flex-wrap:wrap;">
+                <div class="dx-form-group" style="margin-bottom:0;">
+                    <label class="dx-form-label" style="font-size:0.8rem;">6-Digit Pairing Code</label>
+                    <input type="text" id="pairingCode" class="dx-form-control dp-code-input"
+                           @bind="pairingCodeInput" maxlength="6"
+                           placeholder="e.g. 482917" />
+                </div>
+                <button class="dx-btn dx-btn-blue" @onclick="ApproveByCode"
+                        disabled="@(pairingCodeInput?.Length != 6)">
+                    Approve
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pending Requests -->
+    <div class="dx-card" style="max-width:800px; margin-bottom:20px;">
+        <div class="dx-card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Pending Requests</span>
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadPendingRequests">Refresh</button>
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="table table-hover dp-table dx-collapse mb-0">
+                <thead>
+                    <tr>
+                        <th>Device ID</th>
+                        <th>Manufacturer</th>
+                        <th>Model</th>
+                        <th>Flavour</th>
+                        <th>IP Address</th>
+                        <th>Requested</th>
+                        <th>Expires</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (pendingRequests.Any())
+                    {
+                        @foreach (var req in pendingRequests)
+                        {
+                            var remaining = req.ExpiresAt - DateTime.UtcNow;
+                            <tr>
+                                <td class="dx-col-primary">@(req.DeviceId ?? "—")</td>
+                                <td class="dx-col-hide">@(req.Manufacturer ?? "—")</td>
+                                <td class="dx-col-hide">@(req.Model ?? "—")</td>
+                                <td>
+                                    @if (!string.IsNullOrEmpty(req.Platform))
+                                    {
+                                        <span class="dx-badge dx-badge-blue">@req.Platform</span>
+                                        @if (EnrolledFlavourFor(req.DeviceId) is { } enrolled
+                                             && !string.Equals(enrolled, req.Platform, StringComparison.OrdinalIgnoreCase))
+                                        {
+                                            <span class="dx-badge dx-badge-yellow"
+                                                  title="@($"Approving this overwrites the flavour this device is enrolled with, {enrolled}, and clears its version pins and telemetry.")">
+                                                Overwrites @enrolled
+                                            </span>
+                                        }
+                                    }
+                                    else
+                                    {
+                                        <span style="opacity:0.4;" title="This player declares no flavour">—</span>
+                                    }
+                                </td>
+                                <td class="dx-col-hide">@(req.IpAddress ?? "—")</td>
+                                <td class="dx-col-hide">@req.CreateDate.ToString("HH:mm:ss")</td>
+                                <td>
+                                    @if (remaining.TotalSeconds > 0)
+                                    {
+                                        <span>@((int)remaining.TotalMinutes)m @(remaining.Seconds)s</span>
+                                    }
+                                    else
+                                    {
+                                        <span style="color:var(--dx-red);">Expired</span>
+                                    }
+                                </td>
+                                <td>
+                                    <button class="dx-btn dx-btn-red dx-btn-sm"
+                                            @onclick="() => DenyRequest(req)">
+                                        Deny
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr>
+                            <td colspan="8" class="dp-empty-cell">No pending pairing requests</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Denied Devices (Blocklist) -->
+    <div class="dx-card" style="max-width:800px; margin-bottom:20px;">
+        <div class="dx-card-header" style="display:flex; justify-content:space-between; align-items:center;">
+            <span>Denied Devices</span>
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadDeniedRequests">Refresh</button>
+        </div>
+        <div style="overflow-x:auto;">
+            <table class="table table-hover dp-table dx-collapse mb-0">
+                <thead>
+                    <tr>
+                        <th>Device ID</th>
+                        <th>MAC Address</th>
+                        <th>Manufacturer</th>
+                        <th>Model</th>
+                        <th>Denied</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (deniedRequests.Any())
+                    {
+                        @foreach (var req in deniedRequests)
+                        {
+                            <tr>
+                                <td class="dx-col-primary">@(req.DeviceId ?? "—")</td>
+                                <td class="dx-col-hide">@(req.MacAddress ?? "—")</td>
+                                <td class="dx-col-hide">@(req.Manufacturer ?? "—")</td>
+                                <td class="dx-col-hide">@(req.Model ?? "—")</td>
+                                <td class="dx-col-hide">@(req.ResolvedAt?.ToString("MM/dd/yyyy HH:mm") ?? "—")</td>
+                                <td>
+                                    <button class="dx-btn dx-btn-green dx-btn-sm"
+                                            @onclick="() => UnblockDevice(req)">
+                                        Unblock
+                                    </button>
+                                </td>
+                            </tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr>
+                            <td colspan="6" class="dp-empty-cell">No denied devices</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Active Device Tokens -->
+    <div class="dx-card" style="max-width:800px;">
+        <div class="dx-card-header">Active Device Tokens</div>
+        <div style="overflow-x:auto;">
+            <table class="table table-hover dp-table dx-collapse mb-0">
+                <thead>
+                    <tr>
+                        <th>Token</th>
+                        <th>Device</th>
+                        <th>Status</th>
+                        <th>Last Used</th>
+                        <th>Created</th>
+                        <th>Approved By</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @if (deviceTokens.Any())
+                    {
+                        @foreach (var token in deviceTokens)
+                        {
+                            <tr style="@(!token.IsActive ? "opacity:0.6;" : "")">
+                                <td class="dx-col-primary"><code>@(token.TokenPrefix ?? "—")...</code></td>
+                                <td>@(token.DeviceId ?? "—")</td>
+                                <td>
+                                    @if (token.IsActive)
+                                    {
+                                        <span class="dp-badge dp-badge-active">Active</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="dp-badge dp-badge-revoked">Revoked</span>
+                                    }
+                                </td>
+                                <td class="dx-col-hide">@(token.LastUsedAt?.ToString("MM/dd HH:mm") ?? "Never")</td>
+                                <td class="dx-col-hide">@token.CreateDate.ToString("MM/dd/yyyy")</td>
+                                <td class="dx-col-hide">@(token.ApprovedByUser?.FriendlyName ?? "—")</td>
+                                <td>
+                                    <div style="display:flex; gap:4px;">
+                                        @if (token.IsActive)
+                                        {
+                                            <button class="dx-btn dx-btn-red dx-btn-sm"
+                                                    @onclick="() => RevokeToken(token)">
+                                                Revoke
+                                            </button>
+                                        }
+                                        else
+                                        {
+                                            <button class="dx-btn dx-btn-green dx-btn-sm"
+                                                    @onclick="() => ReactivateToken(token)">
+                                                Reactivate
+                                            </button>
+                                        }
+                                        <button class="dx-btn dx-btn-gray dx-btn-sm"
+                                                @onclick="() => DeleteToken(token)">
+                                            Delete
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    }
+                    else
+                    {
+                        <tr>
+                            <td colspan="7" class="dp-empty-cell">No device tokens</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+@code {
+    private List<TblDevicePairingRequest> pendingRequests = new();
+
+    // Device id to the flavour it is already enrolled with, so an approval that would overwrite
+    // one says so. Silent overwrite was rejected: it is exactly how a device that lies about its
+    // flavour reflavours itself, and approval is already a human gate.
+    private Dictionary<string, string> enrolledFlavours = new(StringComparer.OrdinalIgnoreCase);
+
+    private string? EnrolledFlavourFor(string? deviceId)
+        => !string.IsNullOrEmpty(deviceId) && enrolledFlavours.TryGetValue(deviceId, out var flavour)
+            ? flavour
+            : null;
+    private List<TblDevicePairingRequest> deniedRequests = new();
+    private List<TblDeviceToken> deviceTokens = new();
+
+    private string pairingCodeInput = "";
+    private string successMessage = "";
+    private string errorMessage = "";
+
+    private System.Threading.Timer? refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPendingRequests();
+        await LoadDeniedRequests();
+        await LoadDeviceTokens();
+
+        // Auto-refresh pending requests every 5 seconds
+        refreshTimer = new System.Threading.Timer(async _ =>
+        {
+            await InvokeAsync(async () =>
+            {
+                await LoadPendingRequests();
+                StateHasChanged();
+            });
+        }, null, TimeSpan.FromSeconds(5), TimeSpan.FromSeconds(5));
+    }
+
+    private async Task LoadPendingRequests()
+    {
+        try
+        {
+            pendingRequests = await pairingService.GetPendingRequestsAsync();
+
+            var requestedDeviceIds = pendingRequests
+                .Select(r => r.DeviceId)
+                .Where(id => !string.IsNullOrEmpty(id))
+                .Distinct()
+                .ToList();
+
+            if (requestedDeviceIds.Count > 0)
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                enrolledFlavours = await db.TblDevices
+                    .Where(d => requestedDeviceIds.Contains(d.DeviceId) && d.PlatformId != null)
+                    .Select(d => new { d.DeviceId, Flavour = d.Platform!.PlatformName })
+                    .ToDictionaryAsync(x => x.DeviceId, x => x.Flavour, StringComparer.OrdinalIgnoreCase);
+            }
+            else
+            {
+                enrolledFlavours.Clear();
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load pending requests: {ex.Message}";
+        }
+    }
+
+    private async Task LoadDeviceTokens()
+    {
+        try
+        {
+            deviceTokens = await deviceTokenService.GetAllDeviceTokensAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load device tokens: {ex.Message}";
+        }
+    }
+
+    private async Task LoadDeniedRequests()
+    {
+        try
+        {
+            deniedRequests = await pairingService.GetDeniedRequestsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load denied devices: {ex.Message}";
+        }
+    }
+
+    private async Task UnblockDevice(TblDevicePairingRequest request)
+    {
+        try
+        {
+            errorMessage = "";
+            var userId = sessionState.User?.UserId ?? 0;
+            await pairingService.UnblockDeviceAsync(request.PairingRequestId, userId);
+
+            successMessage = "Device unblocked. It can now create new pairing requests.";
+            await LoadDeniedRequests();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to unblock device: {ex.Message}";
+        }
+    }
+
+    private async Task ApproveByCode()
+    {
+        if (string.IsNullOrWhiteSpace(pairingCodeInput) || pairingCodeInput.Length != 6)
+        {
+            errorMessage = "Please enter a valid 6-digit pairing code.";
+            return;
+        }
+
+        try
+        {
+            errorMessage = "";
+            var userId = sessionState.User?.UserId ?? 0;
+            await pairingService.ApprovePairingAsync(pairingCodeInput, userId);
+
+            successMessage = "Device approved! The device will receive its token on the next poll.";
+            pairingCodeInput = "";
+
+            await LoadPendingRequests();
+            await LoadDeviceTokens();
+            StateHasChanged();
+        }
+        catch (ArgumentException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to approve: {ex.Message}";
+        }
+    }
+
+    private async Task DenyRequest(TblDevicePairingRequest request)
+    {
+        try
+        {
+            errorMessage = "";
+            var userId = sessionState.User?.UserId ?? 0;
+            await pairingService.DenyPairingAsync(request.PairingRequestId, userId);
+
+            successMessage = "Pairing request denied. The device is now blocklisted.";
+            await LoadPendingRequests();
+            await LoadDeniedRequests();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to deny request: {ex.Message}";
+        }
+    }
+
+    private async Task RevokeToken(TblDeviceToken token)
+    {
+        try
+        {
+            errorMessage = "";
+            await deviceTokenService.RevokeDeviceTokenAsync(token.DeviceTokenId);
+
+            successMessage = "Device token revoked. Reactivate it before the device re-pairs, or the device will create a new token.";
+            await LoadDeviceTokens();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to revoke token: {ex.Message}";
+        }
+    }
+
+    private async Task ReactivateToken(TblDeviceToken token)
+    {
+        try
+        {
+            errorMessage = "";
+            await deviceTokenService.ReactivateDeviceTokenAsync(token.DeviceTokenId);
+
+            successMessage = "Device token reactivated. The device will reconnect on its next heartbeat.";
+            await LoadDeviceTokens();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to reactivate token: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteToken(TblDeviceToken token)
+    {
+        try
+        {
+            errorMessage = "";
+            await deviceTokenService.DeleteDeviceTokenAsync(token.DeviceTokenId);
+
+            successMessage = "Device token permanently deleted.";
+            await LoadDeviceTokens();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to delete token: {ex.Message}";
+        }
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}
+
+<style>
+    .dp-code-input {
+        font-family: monospace;
+        font-size: 1.5rem;
+        letter-spacing: 0.3em;
+        text-align: center;
+        width: 260px;
+    }
+
+    .dp-table thead th {
+        font-size: 11px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: var(--dx-text-primary);
+        background-color: var(--dx-bg-alt);
+        border-bottom: 2px solid var(--dx-border-color);
+        padding: 10px 12px;
+        white-space: nowrap;
+    }
+
+    .dp-table tbody td {
+        font-size: 13px;
+        padding: 10px 12px;
+        vertical-align: middle;
+        border-bottom: 1px solid var(--dx-border-color);
+    }
+
+    .dp-empty-cell {
+        text-align: center;
+        color: var(--dx-text-muted);
+        padding: 24px 12px !important;
+        font-size: 13px;
+    }
+
+    .dp-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+    }
+
+    .dp-badge-active {
+        background-color: #d4edda;
+        color: #155724;
+    }
+
+    .dp-badge-revoked {
+        background-color: #e9ecef;
+        color: #6c757d;
+    }
+</style>

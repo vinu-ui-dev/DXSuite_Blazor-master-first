@@ -1,0 +1,314 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using System.Text.Json
+@inject IDirectorDBContext dbContext
+@inject ISessionState sessionState
+@inject IUploadIdentityService uploadIdentity
+@inject IContentMetadataService contentMetadataService
+@inject ILogger<StreamAssetUploader> Logger
+@inject IPublicationInvalidator publicationInvalidator
+
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="max-width:500px; position:relative;" @onclick:stopPropagation="true">
+
+            <div class="dx-modal-header">
+                <h5>Add Stream</h5>
+                @if (!isLoading)
+                {
+                    <button class="btn-close btn-close-white" @onclick="Close"></button>
+                }
+            </div>
+
+            <div class="dx-modal-body">
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Stream Name</label>
+                    <input type="text" class="dx-form-control" placeholder="Live News Feed"
+                           @bind="streamName" @bind:event="oninput" />
+                    <small class="dx-text-muted">A friendly name for this stream</small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Protocol</label>
+                    <div class="d-flex flex-column gap-1">
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="su-protocol" id="su-hls"
+                                   checked="@(streamProtocol == "HLS")"
+                                   @onchange="@(() => streamProtocol = "HLS")" />
+                            <label class="form-check-label" for="su-hls">
+                                HLS (.m3u8) — <span style="color:#28a745;">Recommended</span>
+                            </label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="su-protocol" id="su-dash"
+                                   checked="@(streamProtocol == "DASH")"
+                                   @onchange="@(() => streamProtocol = "DASH")" />
+                            <label class="form-check-label" for="su-dash">DASH (.mpd)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="su-protocol" id="su-rtsp"
+                                   checked="@(streamProtocol == "RTSP")"
+                                   @onchange="@(() => streamProtocol = "RTSP")" />
+                            <label class="form-check-label" for="su-rtsp">RTSP (IP Camera)</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="su-protocol" id="su-udp"
+                                   checked="@(streamProtocol == "UDP")"
+                                   @onchange="@(() => streamProtocol = "UDP")" />
+                            <label class="form-check-label" for="su-udp">UDP Multicast</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Stream URL</label>
+                    <input type="text" class="dx-form-control" placeholder="@GetUrlPlaceholder()"
+                           @bind="streamUrl" @bind:event="oninput" />
+                    <small class="dx-text-muted">Enter the full stream URL</small>
+                </div>
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="su-reconnect"
+                               checked="@autoReconnect"
+                               @onchange="@((e) => autoReconnect = (bool)(e.Value ?? true))" />
+                        <label class="form-check-label fw-semibold" for="su-reconnect">Auto-reconnect on failure</label>
+                    </div>
+                    <small class="dx-text-muted">
+                        The player will automatically attempt to reconnect if the stream drops.
+                    </small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Buffer Size: @bufferMs ms</label>
+                    <input type="range" class="form-range" min="500" max="10000" step="500"
+                           @bind="bufferMs" @bind:event="oninput" />
+                    <div style="display:flex; justify-content:space-between; font-size:12px;" class="dx-text-muted">
+                        <span>Less delay</span>
+                        <span>Smoother playback</span>
+                    </div>
+                </div>
+
+                <div class="mb-3" style="background:#f8f9fa; padding:10px; border-radius:4px; border:1px solid #e9ecef;">
+                    <small style="color:#666;">
+                        <strong>Note:</strong> If the stream is unavailable, the default background image will be displayed.
+                    </small>
+                </div>
+
+                @if (ShowsUploadingAs)
+                {
+                    <div class="mb-3">
+                        <UploadingAsSection @ref="uploadingAs" LocationId="@(locationId ?? 0)" OnChanged="StateHasChanged" />
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-2">@errorMessage</div>
+                }
+
+            </div>
+
+            <div class="dx-modal-footer">
+                @if (UploadBlockReason is { } blockReason)
+                {
+                    <span class="dx-text-red" style="font-size:0.8rem; margin-right:auto;">@blockReason</span>
+                }
+                <button class="dx-btn dx-btn-blue" @onclick="HandleSubmit"
+                        disabled="@(UploadBlockReason != null)" title="@UploadBlockReason"
+                        style="@(isLoading ? "pointer-events:none;" : "")">
+                    Save Stream
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="Close"
+                        style="@(isLoading ? "pointer-events:none;" : "")">
+                    Cancel
+                </button>
+            </div>
+
+            @if (isLoading)
+            {
+                <div style="position:absolute; inset:0; background:rgba(255,255,255,0.8); display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:inherit; z-index:10;">
+                    <div class="dx-spinner"></div>
+                    <p class="dx-text-muted mt-2" style="font-size:13px;">Adding stream…</p>
+                </div>
+            }
+
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnStreamSubmit { get; set; }
+
+    private bool isVisible;
+    private bool isLoading;
+
+    private int? locationId;
+    private int? constraintId;
+
+    private string streamName = "";
+    private string streamUrl = "";
+    private string streamProtocol = "HLS";
+    private bool autoReconnect = true;
+    private int bufferMs = 3000;
+    private string? errorMessage;
+
+    public void Open(int? locationId = null, int? constraintId = null)
+    {
+        this.locationId   = locationId;
+        this.constraintId = constraintId;
+
+        streamName     = "";
+        streamUrl      = "";
+        streamProtocol = "HLS";
+        autoReconnect  = true;
+        bufferMs       = 3000;
+        errorMessage   = null;
+        isLoading      = false;
+        isVisible      = true;
+
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        isVisible      = false;
+        streamName     = "";
+        streamUrl      = "";
+        streamProtocol = "HLS";
+        autoReconnect  = true;
+        bufferMs       = 3000;
+        errorMessage   = null;
+
+        StateHasChanged();
+    }
+
+    private string GetUrlPlaceholder() => streamProtocol switch
+    {
+        "HLS"  => "https://example.com/stream.m3u8",
+        "DASH" => "https://example.com/stream.mpd",
+        "RTSP" => "rtsp://camera.local:554/stream",
+        "UDP"  => "udp://@239.0.0.1:1234",
+        _      => "https://example.com/stream"
+    };
+
+    private bool IsValidStreamUrl(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url)) return false;
+
+        return streamProtocol switch
+        {
+            "RTSP" => url.StartsWith("rtsp://", StringComparison.OrdinalIgnoreCase),
+            // UDP multicast addresses use udp://@<group>:<port> — the @ joins the multicast group
+            "UDP"  => url.StartsWith("udp://", StringComparison.OrdinalIgnoreCase),
+            _      => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+                         && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps)
+        };
+    }
+
+    private string GetValidationError() => streamProtocol switch
+    {
+        "RTSP" => "Please enter a valid RTSP URL (must start with rtsp://).",
+        "UDP"  => "Please enter a valid UDP multicast URL (e.g. udp://@239.0.10.26:1026).",
+        _      => "Please enter a valid URL (must start with http:// or https://)."
+    };
+
+    private UploadingAsSection? uploadingAs;
+
+    // A stream opened with no location has no participating keys, no access rule and no identity to
+    // pick, so it is created unowned: only full access users can change it.
+    private bool ShowsUploadingAs => (locationId ?? 0) > 0;
+
+    private string? UploadBlockReason => ShowsUploadingAs && uploadingAs is { IsBlocked: true } section ? section.BlockReason : null;
+
+    private async Task HandleSubmit()
+    {
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(streamName))
+        {
+            errorMessage = "Please enter a stream name.";
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(streamUrl))
+        {
+            errorMessage = "Please enter a stream URL.";
+            return;
+        }
+
+        if (!IsValidStreamUrl(streamUrl))
+        {
+            errorMessage = GetValidationError();
+            return;
+        }
+
+        PreparedUpload? prepared = null;
+        if (ShowsUploadingAs)
+        {
+            prepared = await uploadIdentity.PrepareAsync(sessionState.User?.UserId ?? 0, locationId!.Value,
+                uploadingAs?.PickedGroupId, uploadingAs?.Picks);
+            if (!prepared.IsValid)
+            {
+                errorMessage = prepared.Error;
+                if (uploadingAs != null)
+                    await uploadingAs.ReloadAfterRefusalAsync(prepared.Error);
+                return;
+            }
+        }
+
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            var extendedData = JsonSerializer.Serialize(new
+            {
+                streamProtocol,
+                autoReconnect,
+                bufferMs
+            });
+
+            var asset = new TblAsset
+            {
+                LocationId   = locationId   ?? 0,
+                ConstraintId = constraintId ?? 0,
+                AssetPath    = streamUrl,
+                AssetTypeId  = (int)Types.AssetType.Stream,
+                AssetGroupId = 1,
+                Duration     = 0,
+                AssetHeight  = 0,
+                AssetWidth   = 0,
+                SortOrder    = 0,
+                CreateDate   = DateTime.UtcNow,
+                IsDeleted    = false,
+                AssetName    = streamName.Trim(),
+                ExtendedData = extendedData,
+                UploadedByUserId      = prepared?.OwnerUserId,
+                UploadedByUserGroupId = prepared?.OwnerGroupId
+            };
+
+            dbContext.TblAssets.Add(asset);
+            await dbContext.SaveChangesAsync();
+            publicationInvalidator.AssetsChanged([asset.LocationId]);
+
+            foreach (var (key, values) in prepared?.Tags ?? new Dictionary<string, List<string>>())
+                await contentMetadataService.SetMetadataAsync(asset.AssetId, key, values, sessionState.User?.UserId);
+
+            await OnStreamSubmit.InvokeAsync();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error adding stream: {ex.Message}";
+            Logger.LogError(ex, "Error saving stream asset for location {LocationId}", locationId);
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

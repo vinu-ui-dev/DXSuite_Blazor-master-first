@@ -1,0 +1,105 @@
+@using DXSuite.Design.Entities
+
+<div class="rp-container">
+    <strong style="font-size:.9rem">Rooms</strong>
+    <div class="rp-list">
+        @foreach (var room in Rooms)
+        {
+            @if (editingRoomId == room.RoomId)
+            {
+                <div class="rp-item rp-item-edit">
+                    <input class="ct-field" style="flex:1" @bind="editName" @onkeydown="@(e => OnEditKey(e, room.RoomId))" />
+                    <button class="blue-btn" style="padding:2px 8px" @onclick="() => CommitRename(room.RoomId)">✓</button>
+                    <button class="outline-btn" style="padding:2px 8px" @onclick="CancelEdit">✗</button>
+                </div>
+            }
+            else
+            {
+                <div class="rp-item">
+                    <span class="rp-name">@room.RoomName</span>
+                    <button class="rp-icon-btn" title="Rename" @onclick="() => StartEdit(room)">✎</button>
+                    <button class="rp-icon-btn rp-icon-danger" title="Delete" @onclick="() => OnDeleteRoom.InvokeAsync(room.RoomId)">✕</button>
+                </div>
+            }
+        }
+    </div>
+
+    @if (addingRoom)
+    {
+        <div class="rp-item rp-item-edit" style="margin-top:6px">
+            <input class="ct-field" style="flex:1" placeholder="Room name" @bind="newRoomName"
+                   @onkeydown="OnAddKey" @ref="addInput" />
+            <button class="blue-btn" style="padding:2px 8px" @onclick="CommitAdd">Add</button>
+            <button class="outline-btn" style="padding:2px 8px" @onclick="() => addingRoom = false">✗</button>
+        </div>
+    }
+    else
+    {
+        <button class="outline-btn" style="margin-top:6px; font-size:.8rem" @onclick="StartAdd">+ Add Room</button>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<TblDesignWorksheetRoom> Rooms { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback<string> OnAddRoom { get; set; }
+    [Parameter, EditorRequired] public EventCallback<(int RoomId, string Name)> OnRenameRoom { get; set; }
+    [Parameter, EditorRequired] public EventCallback<int> OnDeleteRoom { get; set; }
+
+    private bool addingRoom;
+    private string newRoomName = "";
+    private int? editingRoomId;
+    private string editName = "";
+    private ElementReference addInput;
+
+    private void StartAdd()
+    {
+        addingRoom = true;
+        newRoomName = "";
+    }
+
+    private async Task CommitAdd()
+    {
+        if (string.IsNullOrWhiteSpace(newRoomName)) return;
+        await OnAddRoom.InvokeAsync(newRoomName.Trim());
+        newRoomName = "";
+        addingRoom = false;
+    }
+
+    private async Task OnAddKey(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await CommitAdd();
+        else if (e.Key == "Escape") addingRoom = false;
+    }
+
+    private void StartEdit(TblDesignWorksheetRoom room)
+    {
+        editingRoomId = room.RoomId;
+        editName = room.RoomName;
+    }
+
+    private async Task CommitRename(int roomId)
+    {
+        if (!string.IsNullOrWhiteSpace(editName))
+            await OnRenameRoom.InvokeAsync((roomId, editName.Trim()));
+        CancelEdit();
+    }
+
+    private async Task OnEditKey(KeyboardEventArgs e, int roomId)
+    {
+        if (e.Key == "Enter") await CommitRename(roomId);
+        else if (e.Key == "Escape") CancelEdit();
+    }
+
+    private void CancelEdit() { editingRoomId = null; editName = ""; }
+}
+
+<style>
+    .rp-container { margin-bottom: 16px; }
+    .rp-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+    .rp-item { display: flex; align-items: center; gap: 4px; background: var(--surface, #f8f9fa); border: 1px solid var(--border, #dee2e6); border-radius: 20px; padding: 3px 10px; }
+    .rp-item-edit { border-radius: 6px; padding: 3px 6px; }
+    .rp-name { font-size: .85rem; }
+    .rp-icon-btn { background: none; border: none; cursor: pointer; color: var(--text-muted, #6c757d); font-size: .85rem; padding: 0 2px; line-height: 1; }
+    .rp-icon-btn:hover { color: var(--text, #212529); }
+    .rp-icon-danger:hover { color: #dc3545; }
+</style>

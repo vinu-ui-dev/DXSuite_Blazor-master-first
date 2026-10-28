@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Throwaway probe for DXME-162. Reports what the runtime actually does with IANA
+    timezone ids under a given globalization configuration. Not referenced by the
+    solution and not shipped.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>TzProbe</AssemblyName>
+    <RootNamespace>TzProbe</RootNamespace>
+  </PropertyGroup>
+
+</Project>

@@ -1,0 +1,148 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_Platform">
+    <value>Platform</value>
+  </data>
+  <data name="Label_AllPlatforms">
+    <value>All Platforms</value>
+  </data>
+  <data name="Tab_Versions">
+    <value>Versions</value>
+  </data>
+  <data name="Tab_Deployments">
+    <value>Deployments</value>
+  </data>
+  <data name="Button_UploadNewVersion">
+    <value>Upload New Version</value>
+  </data>
+  <data name="Label_UploadNewVersion">
+    <value>Upload New Version</value>
+  </data>
+  <data name="Label_ZipFileLabel">
+    <value>ZIP File (.zip)</value>
+  </data>
+  <data name="Label_Uploading">
+    <value>Uploading...</value>
+  </data>
+  <data name="Button_Upload">
+    <value>Upload</value>
+  </data>
+  <data name="Label_Download">
+    <value>Download</value>
+  </data>
+  <data name="Label_ServerUrl">
+    <value>Server URL</value>
+  </data>
+  <data name="Label_ApiKey">
+    <value>API Key</value>
+  </data>
+  <data name="Label_LoadingDefaults">
+    <value>Loading defaults...</value>
+  </data>
+  <data name="Button_DownloadZip">
+    <value>Download ZIP</value>
+  </data>
+  <data name="Column_Platform">
+    <value>Platform</value>
+  </data>
+  <data name="Column_Version">
+    <value>Version</value>
+  </data>
+  <data name="Column_Size">
+    <value>Size</value>
+  </data>
+  <data name="Column_Created">
+    <value>Created</value>
+  </data>
+  <data name="Button_NewDeployment">
+    <value>New Deployment</value>
+  </data>
+  <data name="Label_CreateNewDeployment">
+    <value>Create New Deployment</value>
+  </data>
+  <data name="Label_EditDeployment">
+    <value>Edit Deployment</value>
+  </data>
+  <data name="Label_SelectPlatform">
+    <value>Select Platform</value>
+  </data>
+  <data name="Label_TargetVersion">
+    <value>Target Version</value>
+  </data>
+  <data name="Label_SelectVersion">
+    <value>Select Version</value>
+  </data>
+  <data name="Label_Scope">
+    <value>Scope</value>
+  </data>
+  <data name="Label_SpecificDevices">
+    <value>Specific Devices</value>
+  </data>
+  <data name="Label_Location">
+    <value>Location</value>
+  </data>
+  <data name="Label_AllDevicesPlatform">
+    <value>All Devices (Platform)</value>
+  </data>
+  <data name="Label_SelectLocation">
+    <value>Select Location</value>
+  </data>
+  <data name="Label_SelectDevices">
+    <value>Select Devices</value>
+  </data>
+  <data name="Label_DevicesSelected">
+    <value>device(s) selected</value>
+  </data>
+  <data name="Label_EnableBatchDeployment">
+    <value>Enable Batch Deployment</value>
+  </data>
+  <data name="Label_BatchDescription">
+    <value>Deploy to devices in batches with automatic pause between groups.</value>
+  </data>
+  <data name="Label_BatchSize">
+    <value>Batch Size</value>
+  </data>
+  <data name="Label_BatchSizeDesc">
+    <value>Number of devices per batch</value>
+  </data>
+  <data name="Button_CreateDeployment">
+    <value>Create Deployment</value>
+  </data>
+  <data name="Button_SaveChanges">
+    <value>Save Changes</value>
+  </data>
+  <data name="Column_Scope">
+    <value>Scope</value>
+  </data>
+  <data name="Column_Batch">
+    <value>Batch</value>
+  </data>
+  <data name="Label_AllDevices">
+    <value>All Devices</value>
+  </data>
+  <data name="Label_MinBootloaderVersion">
+    <value>Minimum Bootloader Version</value>
+  </data>
+  <data name="Placeholder_MinBootloaderVersion">
+    <value>e.g. 2.0.3</value>
+  </data>
+  <data name="Help_MinBootloaderVersion">
+    <value>Optional. Players on an older bootloader will not take this build.</value>
+  </data>
+</root>

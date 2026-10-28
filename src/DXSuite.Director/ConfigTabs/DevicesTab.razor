@@ -1,0 +1,1729 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Multitenancy
+@using System.Threading
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ISessionState SessionState
+@inject IDirectorUserPreferenceService UserPreferenceService
+@inject IUpdateService UpdateService
+@inject IScreenshotService ScreenshotService
+@inject IContentHealthService ContentHealthService
+@inject IConsoleLoggingService ConsoleLoggingService
+@inject IDeviceCommandService DeviceCommands
+@inject IManifestCacheService ManifestCache
+@inject PlayerWakeConnectionTracker WakeTracker
+@inject ITenantContext TenantContext
+@inject NavigationManager NavMan
+@inject IJSRuntime JS
+@implements IDisposable
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden;">
+        <button class="dx-tab-btn @(activeDeviceSubTab == "devices" ? "active" : "")"
+                @onclick="@(() => activeDeviceSubTab = "devices")">Device Management</button>
+        <button class="dx-tab-btn @(activeDeviceSubTab == "screenshots" ? "active" : "")"
+                @onclick="@(() => activeDeviceSubTab = "screenshots")">Screenshots</button>
+        <button class="dx-tab-btn @(activeDeviceSubTab == "models" ? "active" : "")"
+                @onclick="@(() => activeDeviceSubTab = "models")">Model Configuration</button>
+        <button class="dx-tab-btn @(activeDeviceSubTab == "settings" ? "active" : "")"
+                @onclick="@(() => { activeDeviceSubTab = "settings"; _ = LoadDeviceSettings(); })">Settings</button>
+    </div>
+    @if (activeDeviceSubTab == "devices")
+    {
+    <div class="dx-panel-header">
+        <h4>Device Management</h4>
+        <div class="dx-panel-controls">
+            <input @bind="searchFilter" @bind:event="oninput" @onkeyup="OnSearchChanged"
+                   class="dx-search-input"
+                   placeholder="Search devices..." />
+
+            @* Column visibility dropdown *@
+            <div class="dx-column-dropdown-wrapper">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="ToggleColumnDropdown" @onclick:stopPropagation="true">
+                    Columns
+                </button>
+                @if (showColumnDropdown)
+                {
+                    <div class="dx-column-dropdown">
+                        @foreach (var col in allColumns)
+                        {
+                            <label class="dx-column-option">
+                                <input type="checkbox" class="dx-checkbox" checked="@columnOrder.Contains(col.Key)"
+                                       @onchange="() => ToggleColumn(col.Key)" />
+                                @col.Value
+                            </label>
+                        }
+                    </div>
+                }
+            </div>
+
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDeviceView">
+                Save View
+            </button>
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ResetDeviceView">
+                Reset View
+            </button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadDevices">
+                Refresh
+            </button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (FilteredDevices?.Any() == true)
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table dx-sticky-first" style="min-width:max-content; @GetColumnVars()">
+                <div class="dx-table-header" style="@GetGridStyle()">
+                    @foreach (var col in columnOrder)
+                    {
+                        var label = allColumns.GetValueOrDefault(col, col);
+                        var isSortable = sortableColumns.Contains(col);
+                        var resizeCol = col;
+                        <div draggable="true"
+                             class="@(draggedColumn == col ? "dragging" : "") @(dragOverColumn == col ? "drag-over" : "")"
+                             @ondragstart="() => OnColumnDragStart(col)"
+                             @ondragover:preventDefault
+                             @ondragover="() => OnColumnDragOver(col)"
+                             @ondrop="() => OnColumnDrop(col)"
+                             @ondragend="OnColumnDragEnd"
+                             role="@(isSortable ? "button" : "")"
+                             @onclick="() => { if (isSortable) SetSort(col); }"
+                             style="@(col == "status" || col == "contentHealth" ? "text-align:center;" : "")">
+                            @label @(isSortable ? SortCaret(col) : "")
+                            <span class="dx-col-resize"
+                                  data-resize-col="@col"
+                                  title="Drag to resize"
+                                  @onpointerdown="@(e => StartColumnResize(e, resizeCol))"
+                                  @onpointerdown:stopPropagation="true"
+                                  @onclick:stopPropagation="true"></span>
+                        </div>
+                    }
+                </div>
+                @foreach (var d in FilteredDevices)
+                {
+                    var isOnline = IsOnline(d.Heartbeat);
+                    <div class="dx-table-row" style="@GetGridStyle()">
+                        @foreach (var col in columnOrder)
+                        {
+                            @RenderCell(d, col, isOnline)
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="dx-text-muted" style="padding:8px 20px; font-size:0.85rem;">
+            Showing @FilteredDevices.Count() of @(devices?.Count ?? 0) devices
+        </div>
+    }
+    else
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No devices found</h5>
+            <p class="dx-text-muted">No devices have registered with this Director instance.</p>
+        </div>
+    }
+    }
+    else if (activeDeviceSubTab == "screenshots")
+    {
+        <DeviceScreenshotsTab />
+    }
+    else if (activeDeviceSubTab == "models")
+    {
+        <DeviceModelConfigTab />
+    }
+    else if (activeDeviceSubTab == "settings")
+    {
+        <div class="dx-panel-header">
+            <h4>Device Settings</h4>
+        </div>
+        <div class="dx-panel-content" style="max-width:640px;">
+            <h5>Playback</h5>
+            <div class="dx-form-row" style="align-items:flex-start;">
+                <div style="flex:1;">
+                    <label class="dx-label">Allow HTTP fallback during initial download</label>
+                    <p class="text-muted small mb-0">
+                        When enabled, players start displaying content immediately using the original
+                        server URLs while assets are being cached locally. Disable this for
+                        cloud-hosted deployments where serving the same content twice generates
+                        billable egress — players will wait until all files are cached before
+                        starting display.
+                    </p>
+                </div>
+                <div style="padding-top:4px;">
+                    <input type="checkbox" class="dx-checkbox" @bind="settingAllowHttpFallback" />
+                </div>
+            </div>
+            <div class="mt-3">
+                @if (deviceSettingsSaveMessage != null)
+                {
+                    <span class="@(deviceSettingsSaveError ? "text-danger" : "text-success") small me-3">@deviceSettingsSaveMessage</span>
+                }
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDeviceSettings" disabled="@deviceSettingsSaving">
+                    @(deviceSettingsSaving ? "Saving…" : "Save")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@* Click-outside handler to close column dropdown *@
+@if (showColumnDropdown)
+{
+    <div class="dx-dropdown-overlay" @onclick="() => showColumnDropdown = false"></div>
+}
+
+@if (toastVisible)
+{
+    <div class="dx-toast">@toastMessage</div>
+}
+
+@if (showDeviceSettingsModal && selectedSettingsDevice != null)
+{
+    <div class="dx-modal-overlay" @onclick="CloseDeviceSettingsModal">
+        <div class="dx-modal" style="max-width:700px; width:90%; max-height:85vh; display:flex; flex-direction:column;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5 style="margin:0;">Device Settings — @selectedSettingsDevice.DeviceId</h5>
+                <button class="dx-modal-close" @onclick="CloseDeviceSettingsModal">×</button>
+            </div>
+            <div class="dx-modal-body" style="display:flex; flex-direction:column; gap:16px; flex:1; overflow-y:auto;">
+
+                @* Flavour *@
+                @if (!string.IsNullOrEmpty(selectedSettingsDevice.Flavour))
+                {
+                    <div>
+                        <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Flavour</div>
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <span class="dx-badge dx-badge-blue">@selectedSettingsDevice.Flavour</span>
+                            @if (selectedSettingsDevice.FlavourCheck == FlavourState.Mismatched)
+                            {
+                                <span class="dx-badge dx-badge-yellow">Declares @selectedSettingsDevice.DeclaredFlavour</span>
+                            }
+                            <div style="margin-left:auto;">
+                                <button class="dx-btn dx-btn-gray dx-btn-sm"
+                                        title="@(CanClearFlavour(selectedSettingsDevice)
+                                                 ? "Return this device to the applet by clearing its flavour"
+                                                 : $"This player is still running {selectedSettingsDevice.Flavour}. Move it back to the applet first.")"
+                                        disabled="@(!CanClearFlavour(selectedSettingsDevice) || isClearingFlavour)"
+                                        @onclick="ClearFlavour">
+                                    @(isClearingFlavour ? "Clearing..." : "Clear Flavour")
+                                </button>
+                            </div>
+                        </div>
+                        <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">
+                            Clearing is the last step of moving a player back to the applet, not the first.
+                            A cleared device raises no mismatch and receives no deployments.
+                        </div>
+                    </div>
+                }
+
+                @* Orientation: Engage for BrightSign only. LG and Samsung take their viewport from the panel. *@
+                @if (selectedSettingsDevice.Flavour == RecoveryHandlerService.EngageBrightSignPlatformName)
+                {
+                    <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                        <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Orientation</div>
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <select class="dx-form-control" style="width:340px;" @bind="editingOrientation"
+                                    disabled="@isSavingOrientation">
+                                @foreach (var orientation in DeviceOrientation.All)
+                                {
+                                    <option value="@orientation">@OrientationLabels[orientation]</option>
+                                }
+                            </select>
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveOrientation"
+                                    disabled="@(isSavingOrientation || editingOrientation == selectedSettingsDevice.Orientation)">
+                                @(isSavingOrientation ? "Saving…" : "Apply Orientation")
+                            </button>
+                        </div>
+                        <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">
+                            Takes effect at the player's next check-in, within a minute. The screen goes blank for about two seconds while it turns.
+                        </div>
+                    </div>
+
+                    var seamlessSupported = DeviceVideoPath.SupportsPage(selectedSettingsDevice.Model);
+                    var seamlessOn = selectedSettingsDevice.VideoPath == DeviceVideoPath.Page && seamlessSupported;
+                    <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                        <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Video Transitions</div>
+                        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <label class="dx-toggle" title="@(seamlessSupported ? "Seamless transitions between clips" : $"Not available on {selectedSettingsDevice.Model}")">
+                                <input type="checkbox" checked="@seamlessOn" disabled="@(!seamlessSupported || isSavingVideoPath)"
+                                       @onchange="@(e => SaveVideoPath((bool)e.Value!))" />
+                                <span class="dx-toggle-slider"></span>
+                            </label>
+                            <span style="font-size:0.9rem;">
+                                @(isSavingVideoPath ? "Saving..." : seamlessOn ? "Seamless transitions" : "Standard transitions")
+                            </span>
+                            @if (!seamlessSupported)
+                            {
+                                <span class="dx-badge dx-badge-gray">Not available on @selectedSettingsDevice.Model</span>
+                            }
+                        </div>
+                        <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">
+                            @if (seamlessSupported)
+                            {
+                                <text>Cuts straight from one clip to the next with no black frame. For Full HD content; leave off for 4K. Applies from the next clip after the player checks in.</text>
+                            }
+                            else
+                            {
+                                <text>This model always plays video on its hardware video layer, so there is a brief dark moment between clips.</text>
+                            }
+                        </div>
+                    </div>
+                }
+
+                @* Console Logging *@
+                <div>
+                    <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Console Logging</div>
+                    <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px;">
+                        <label class="dx-toggle" title="@(consoleLoggingEnabled ? "Disable logging" : "Enable logging")">
+                            <input type="checkbox" checked="@consoleLoggingEnabled"
+                                   @onchange="@(e => ToggleConsoleLogging((bool)e.Value!))"
+                                   disabled="@isTogglingConsoleLogging" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span class="dx-text-muted" style="font-size:0.9rem;">
+                            @(isTogglingConsoleLogging ? "Saving..." : consoleLoggingEnabled ? "Logging enabled" : "Logging disabled")
+                        </span>
+                        <div style="margin-left:auto; display:flex; gap:8px;">
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="RefreshConsoleLogs" disabled="@isLoadingConsoleLogs">
+                                @(isLoadingConsoleLogs ? "Refreshing..." : "Refresh")
+                            </button>
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ClearConsoleLogs"
+                                    disabled="@(consoleLogs.Count == 0 || isClearingConsoleLogs)">
+                                @(isClearingConsoleLogs ? "Clearing..." : "Clear Logs")
+                            </button>
+                        </div>
+                    </div>
+                    <div style="flex:1; overflow-y:auto; background:#1e1e1e; border-radius:6px; padding:10px; font-family:monospace; font-size:0.8rem; min-height:200px; max-height:300px;">
+                        @if (consoleLogs.Count == 0)
+                        {
+                            <div style="color:#888; padding:20px; text-align:center;">
+                                @(consoleLoggingEnabled ? "No logs yet — logs will appear after the next sync cycle." : "Enable logging above to start capturing console output.")
+                            </div>
+                        }
+                        else
+                        {
+                            @foreach (var entry in consoleLogs)
+                            {
+                                var levelColor = entry.Level switch {
+                                    "error" => "#f88",
+                                    "warn"  => "#fd8",
+                                    _ => "#aaa"
+                                };
+                                var msgColor = entry.Level switch {
+                                    "error" => "#fcc",
+                                    "warn"  => "#ffe",
+                                    _ => "#eee"
+                                };
+                                <div style="display:flex; gap:8px; margin-bottom:3px; line-height:1.4;">
+                                    <span style="color:#666; white-space:nowrap;">@entry.Timestamp.ToString("HH:mm:ss.fff")</span>
+                                    <span style="color:@levelColor; white-space:nowrap; font-weight:600;">[@entry.Level.ToUpper()]</span>
+                                    <span style="color:@msgColor; word-break:break-all;">@entry.Message</span>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                @* Video Settings — temporarily hidden. Restore by changing the guard back to
+                   (selectedSettingsDevice.EngageBadge == "Engage"); SignageOS devices only. *@
+                @if (false)
+                {
+                    <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                        <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Video Settings</div>
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <label class="dx-toggle" title="Force HTML5 video instead of native SOS API">
+                                <input type="checkbox" checked="@forceHtml5Video"
+                                       @onchange="@(e => SaveVideoMode((bool)e.Value!))"
+                                       disabled="@isSavingVideoMode" />
+                                <span class="dx-toggle-slider"></span>
+                            </label>
+                            <div>
+                                <div style="font-size:0.9rem;">@(isSavingVideoMode ? "Saving..." : forceHtml5Video ? "HTML5 video (forced)" : "Native SOS video (default)")</div>
+                                <div style="font-size:0.8rem; color:var(--dx-text-muted);">Force HTML5 video path — use when native SOS video freezes on loop (common on WebOS/Tizen)</div>
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @* Window Mode — Avalonia thick-client players only *@
+                @if (selectedSettingsDevice?.ClientPlatform == "avalonia" && windowModeSettings != null)
+                {
+                    <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                        <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Window Mode</div>
+
+                        <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                            <label class="dx-label" style="min-width:80px;">Mode</label>
+                            <select class="dx-form-control" style="width:190px;"
+                                    @bind="windowModeSettings.Mode">
+                                <option value="fullscreen">Fullscreen</option>
+                                <option value="windowed">Windowed</option>
+                                <option value="borderless">Borderless Windowed</option>
+                            </select>
+                        </div>
+
+                        @if (windowModeSettings.Mode is "windowed" or "borderless")
+                        {
+                            <div style="display:flex; align-items:center; gap:12px; margin-bottom:8px; flex-wrap:wrap;">
+                                <label class="dx-label" style="min-width:80px;">Position</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <span class="dx-text-muted" style="font-size:0.85rem;">X</span>
+                                    <input type="number" class="dx-form-control" style="width:80px;"
+                                           @bind="windowModeSettings.X" placeholder="0" />
+                                    <span class="dx-text-muted" style="font-size:0.85rem;">Y</span>
+                                    <input type="number" class="dx-form-control" style="width:80px;"
+                                           @bind="windowModeSettings.Y" placeholder="0" />
+                                </div>
+                            </div>
+                            <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
+                                <label class="dx-label" style="min-width:80px;">Resolution</label>
+                                <div style="display:flex; gap:8px; align-items:center;">
+                                    <input type="number" class="dx-form-control" style="width:80px;"
+                                           @bind="windowModeSettings.Width" placeholder="1920" />
+                                    <span class="dx-text-muted">×</span>
+                                    <input type="number" class="dx-form-control" style="width:80px;"
+                                           @bind="windowModeSettings.Height" placeholder="1080" />
+                                </div>
+                            </div>
+                        }
+
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveWindowMode"
+                                    disabled="@isSavingWindowMode">
+                                @(isSavingWindowMode ? "Saving…" : "Apply Window Mode")
+                            </button>
+                            <span class="dx-text-muted" style="font-size:0.8rem;">
+                                Takes effect on the player's next sync (up to 30 seconds).
+                            </span>
+                        </div>
+                    </div>
+                }
+
+                <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                    <DXSuite.Director.Components.DeviceMetadata.DeviceMetadataSection DeviceId="@selectedSettingsDevice.DeviceId"
+                                                                                  LocationId="@selectedSettingsDevice.LocationId" />
+                </div>
+
+                @* Cache Management *@
+                <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                    <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Cache Management</div>
+                    <div style="display:flex; align-items:center; gap:12px;">
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="QueueFlushCache" disabled="@(isFlushingCache || flushCacheQueued)">
+                            @if (isFlushingCache)
+                            {
+                                <span>Queuing…</span>
+                            }
+                            else if (flushCacheQueued)
+                            {
+                                <span>✓ Flush queued</span>
+                            }
+                            else
+                            {
+                                <span>Flush Cache</span>
+                            }
+                        </button>
+                        <div style="font-size:0.8rem; color:var(--dx-text-muted);">
+                            Clears all locally cached media on the device. Takes effect on the next sync heartbeat (up to 30 seconds).
+                        </div>
+                    </div>
+                </div>
+
+                @* Command History *@
+                <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
+                    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+                        <div style="font-weight:600; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Recent Commands</div>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadCommandHistory" disabled="@isLoadingCommandHistory">
+                            @(isLoadingCommandHistory ? "Loading…" : "Refresh")
+                        </button>
+                    </div>
+                    @if (commandHistory == null || commandHistory.Count == 0)
+                    {
+                        <div style="font-size:0.8rem; color:var(--dx-text-muted);">No commands recorded for this device.</div>
+                    }
+                    else
+                    {
+                        <table class="dx-table" style="font-size:0.8rem;">
+                            <thead>
+                                <tr>
+                                    <th>Command</th>
+                                    <th>Status</th>
+                                    <th>Issued</th>
+                                    <th>By</th>
+                                    <th>Delivered</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var cmd in commandHistory)
+                                {
+                                    <tr>
+                                        <td>@FormatCommandType(cmd)</td>
+                                        <td>@cmd.Status</td>
+                                        <td title="@cmd.IssuedAt UTC">@cmd.IssuedAt.ToLocalTime().ToString("g")</td>
+                                        <td>@(cmd.IssuedBy ?? "-")</td>
+                                        <td>@(cmd.DeliveredAt?.ToLocalTime().ToString("g") ?? "-")</td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                </div>
+
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private string activeDeviceSubTab = "devices";
+
+    // Device Settings tab state
+    private bool settingAllowHttpFallback = true;
+    private bool deviceSettingsSaving;
+    private string? deviceSettingsSaveMessage;
+    private bool deviceSettingsSaveError;
+    private List<DeviceRow>? devices;
+    private string searchFilter = "";
+    private bool isLoading = true;
+    private string sortColumn = "id";
+    private bool sortAsc = true;
+    private bool showColumnDropdown;
+    private string? editingTimeZoneDeviceId;
+    private string editingTimeZoneValue = "";
+    private string? editingSiteDeviceId;
+    private string editingSiteValue = "";
+    private List<TblSite> sites = new();
+
+    // Inline editing — description
+    private string? editingDeviceId;
+    private string editingValue = "";
+
+    // Inline editing — name
+    private string? editingNameDeviceId;
+    private string editingNameValue = "";
+
+    // Column system
+    private static readonly string[] DefaultColumnOrder = ["status", "deviceId", "model", "name", "description", "serial", "ip", "lastSeen", "contentSync", "timeZone"];
+
+    private List<string> columnOrder = new(DefaultColumnOrder);
+
+    private static readonly Dictionary<string, string> allColumns = new()
+    {
+        ["status"] = "Status",
+        ["deviceId"] = "Device ID",
+        ["name"] = "Name",
+        ["description"] = "Description",
+        ["manufacturer"] = "Manufacturer",
+        ["model"] = "Model",
+        ["serial"] = "Serial",
+        ["ip"] = "IP Address",
+        ["lastSeen"] = "Heartbeat",
+        ["contentSync"] = "Content Sync",
+        ["timeZone"] = "Time Zone",
+        ["timeZoneSource"] = "Zone Set By",
+        ["timeZoneCheck"] = "Zone Check",
+        ["site"] = "Site",
+        ["city"] = "City",
+        ["state"] = "State",
+        ["contentHealth"] = "Content",
+        ["browser"] = "Browser",
+        ["clientVersion"] = "Version",
+        ["platform"] = "Flavour",
+        ["settings"] = "Settings",
+    };
+
+    private static readonly Dictionary<string, string> DefaultColumnWidths = new()
+    {
+        ["status"] = "60px",
+        ["deviceId"] = "150px",
+        ["name"] = "180px",
+        ["description"] = "200px",
+        ["manufacturer"] = "120px",
+        ["model"] = "120px",
+        ["serial"] = "150px",
+        ["ip"] = "120px",
+        ["lastSeen"] = "100px",
+        ["contentSync"] = "110px",
+        ["timeZone"] = "220px",
+        ["timeZoneSource"] = "100px",
+        ["timeZoneCheck"] = "110px",
+        ["site"] = "160px",
+        ["city"] = "120px",
+        ["state"] = "80px",
+        ["contentHealth"] = "80px",
+        ["browser"] = "160px",
+        ["clientVersion"] = "120px",
+        ["platform"] = "150px",
+        ["settings"] = "70px",
+    };
+
+    // Per-circuit, because a width is a user's own adjustment. Seeded from the defaults and
+    // persisted alongside the column order by Save View.
+    private Dictionary<string, string> columnWidths = new(DefaultColumnWidths);
+
+    private static readonly HashSet<string> sortableColumns = ["deviceId", "name", "description", "lastSeen", "manufacturer", "model", "serial", "ip", "timeZone", "timeZoneSource", "site", "city", "state"];
+
+    // Device settings modal
+    private bool showDeviceSettingsModal;
+    private DeviceRow? selectedSettingsDevice;
+    private bool consoleLoggingEnabled;
+    private bool isTogglingConsoleLogging;
+    private bool isLoadingConsoleLogs;
+    private bool isClearingConsoleLogs;
+    private List<ConsoleLogEntry> consoleLogs = new();
+    private bool forceHtml5Video;
+    private bool isSavingVideoMode;
+    private bool isFlushingCache;
+    private bool flushCacheQueued;
+    private WindowModeData? windowModeSettings;
+    private bool isSavingWindowMode;
+    private string editingOrientation = DeviceOrientation.Landscape;
+    private bool isSavingOrientation;
+    private bool isSavingVideoPath;
+
+    // Labels name how the panel hangs, viewed from the front, so an installer can pick without
+    // knowing which way the player rotates its output.
+    private static readonly Dictionary<string, string> OrientationLabels = new()
+    {
+        [DeviceOrientation.Landscape] = "Landscape",
+        [DeviceOrientation.Portrait] = "Portrait (panel turned clockwise)",
+        [DeviceOrientation.PortraitFlipped] = "Portrait, flipped (panel turned counter-clockwise)",
+        [DeviceOrientation.LandscapeFlipped] = "Landscape, flipped (upside down)",
+    };
+
+    // Drag-and-drop
+    private string? draggedColumn;
+    private string? dragOverColumn;
+
+    // Handed to the resize script so it can report the final width back
+    private DotNetObjectReference<DevicesTab>? selfRef;
+
+    // Toast
+    private bool toastVisible;
+    private string toastMessage = "";
+    private Timer? toastTimer;
+
+    // Widths live as custom properties on the table and the header and rows size themselves from
+    // those, so a resize drag can repaint by setting one property on one element instead of
+    // pushing a new style onto every row.
+    private string GetColumnVars() =>
+        string.Join(" ", columnOrder.Select(c => $"--dxcol-{c}:{columnWidths.GetValueOrDefault(c, "100px")};"));
+
+    private string GetGridStyle() =>
+        "grid-template-columns: " + string.Join(" ", columnOrder.Select(c => $"var(--dxcol-{c})")) + ";";
+
+    private async Task StartColumnResize(PointerEventArgs e, string col)
+    {
+        selfRef ??= DotNetObjectReference.Create(this);
+        await JS.InvokeVoidAsync("dxStartColumnResize", col, e.ClientX, selfRef);
+    }
+
+    [JSInvokable]
+    public void OnColumnResized(string col, string width)
+    {
+        columnWidths[col] = width;
+        StateHasChanged();
+    }
+
+    private void OnColumnDragStart(string col) => draggedColumn = col;
+    private void OnColumnDragOver(string col) => dragOverColumn = col;
+    private void OnColumnDragEnd() { draggedColumn = null; dragOverColumn = null; }
+
+    private void OnColumnDrop(string targetCol)
+    {
+        if (draggedColumn != null && draggedColumn != targetCol)
+        {
+            var fromIdx = columnOrder.IndexOf(draggedColumn);
+            var toIdx = columnOrder.IndexOf(targetCol);
+            if (fromIdx >= 0 && toIdx >= 0)
+            {
+                columnOrder.RemoveAt(fromIdx);
+                columnOrder.Insert(toIdx, draggedColumn);
+            }
+        }
+        draggedColumn = null;
+        dragOverColumn = null;
+    }
+
+    private void ToggleColumn(string col)
+    {
+        if (columnOrder.Contains(col))
+            columnOrder.Remove(col);
+        else
+            columnOrder.Add(col);
+    }
+
+    private void ToggleColumnDropdown() => showColumnDropdown = !showColumnDropdown;
+
+    private RenderFragment RenderCell(DeviceRow d, string col, bool isOnline) => col switch
+    {
+        "status" => @<div style="text-align:center;"><span class="dx-status-indicator @(isOnline ? "online" : "offline")">●</span>@if (d.LiveSocket) { <span title="Live wake channel connected" style="font-size:0.7rem; margin-left:2px;">⚡</span> }</div>,
+        "deviceId" => @<div class="dx-truncate" style="font-weight:600; color:var(--dx-blue);">@d.DeviceId</div>,
+        "name" => RenderNameCell(d),
+        "description" => RenderDescriptionCell(d),
+        "manufacturer" => @<div class="dx-truncate">@d.Manufacturer</div>,
+        "model" => @<div class="dx-truncate">@d.Model</div>,
+        "serial" => @<div class="dx-truncate">@d.SerialNumber</div>,
+        "ip" => @<div>@if (!string.IsNullOrEmpty(d.IpAddress)) { <a class="dx-col-link" href="http://@d.IpAddress" target="_blank">@d.IpAddress</a> }</div>,
+        "lastSeen" => @<div><span title="@d.Heartbeat.ToString("g")">@FormatHeartbeat(d.Heartbeat)</span></div>,
+        "contentSync" => @<div style="text-align:center;">
+            @if (d.ContentCurrent == true) { <span class="dx-badge dx-badge-green" title="Playing current content (@d.ManifestVersion)">Current</span> }
+            else if (d.ContentCurrent == false) { <span class="dx-badge dx-badge-yellow" title="Device reports @d.ManifestVersion">Stale</span> }
+            else if (!string.IsNullOrEmpty(d.ManifestVersion)) { <span class="dx-badge dx-badge-gray" title="Reported @d.ManifestVersion; no built manifest to compare against yet">Reported</span> }
+            else { <span style="opacity:0.4;">—</span> }
+        </div>,
+        "timeZone" => RenderTimeZoneCell(d),
+        "timeZoneSource" => @<div class="dx-truncate" title="Seeded means nobody has confirmed this device's zone, so no zone is sent to it">@d.TimeZoneSource</div>,
+        "timeZoneCheck" => @<div style="text-align:center;">
+            @switch (d.TimeZoneCheck)
+            {
+                case TimeZoneVerificationState.Verified:
+                    <span class="dx-badge dx-badge-green" title="The player applied this zone and its rules agree">Verified</span>;
+                    break;
+                case TimeZoneVerificationState.Pending:
+                    <span class="dx-badge dx-badge-gray" title="The player has not applied this zone yet">Pending</span>;
+                    break;
+                case TimeZoneVerificationState.Mismatch:
+                    <span class="dx-badge dx-badge-yellow" title="The player applied this zone and is running different rules">Mismatch</span>;
+                    break;
+                default:
+                    <span style="opacity:0.4;" title="This player reports no time zone fingerprint">—</span>;
+                    break;
+            }
+        </div>,
+        "site" => RenderSiteCell(d),
+        "city" => @<div class="dx-truncate">@d.City</div>,
+        "state" => @<div class="dx-truncate">@d.StateProvince</div>,
+        "contentHealth" => @<div style="text-align:center;">@if (d.ContentHealthStatus != null) { <span class="dx-badge @GetHealthBadge(d.ContentHealthStatus)">@d.ContentHealthStatus</span> }</div>,
+        "browser" => @<div class="dx-truncate">@(d.BrowserType != null ? $"{d.BrowserType} {d.BrowserVersion}" : "—")</div>,
+        "clientVersion" => @<div class="dx-truncate">@d.ClientVersion</div>,
+        "platform" => RenderFlavourCell(d),
+        "settings" => @<div style="text-align:center;"><button class="dx-btn dx-btn-gray dx-btn-sm" title="Device settings" @onclick="@(() => ShowDeviceSettingsModal(d))">⚙</button></div>,
+        _ => @<div></div>,
+    };
+
+    // The real enrolled flavour, not the literal "Engage" this column used to render from
+    // LocationId. A mismatch is surfaced and never acted on: a device declaring a flavour it was
+    // not enrolled with is either mis-provisioned or not ours, and both want a human.
+    private RenderFragment RenderFlavourCell(DeviceRow d) => __builder =>
+    {
+        <div class="dx-truncate">
+            @if (!string.IsNullOrEmpty(d.Flavour))
+            {
+                <span class="dx-badge dx-badge-blue">@d.Flavour</span>
+            }
+            else
+            {
+                <span style="opacity:0.4;" title="No flavour enrolled">—</span>
+            }
+
+            @if (d.FlavourCheck == FlavourState.Mismatched)
+            {
+                <span class="dx-badge dx-badge-yellow"
+                      title="@($"Enrolled as {d.Flavour}, but this player declares {d.DeclaredFlavour}")">Mismatch</span>
+            }
+            @if (!string.IsNullOrEmpty(d.Flavour) && d.DwsPasswordRotatedAt == null)
+            {
+                <span class="dx-badge dx-badge-gray"
+                      title="Still on the provisioning package's shared bootstrap password. It rotates to a per-device secret on enrollment, and again after any config re-apply.">Bootstrap DWS</span>
+            }
+        </div>;
+    };
+
+    // A curated list rather than free text, and this is the highest-risk operator action in the
+    // whole effort: somebody reasoning "Phoenix is Mountain" and picking Mountain Time gets
+    // America/Denver, which tracks Denver's daylight saving and is wrong for eight months a year
+    // while looking correct all winter.
+    private RenderFragment RenderTimeZoneCell(DeviceRow d) => __builder =>
+    {
+        if (editingTimeZoneDeviceId == d.DeviceId)
+        {
+            <div>
+                <select class="dx-form-control" style="font-size:0.85rem; padding:2px 6px;"
+                        @bind="editingTimeZoneValue"
+                        @bind:after="async () => await SaveTimeZone(d)">
+                    @foreach (var option in TimeZoneCatalog.Options)
+                    {
+                        <option value="@option.IanaId">@option.Label</option>
+                    }
+                </select>
+            </div>
+        }
+        else
+        {
+            var unconfirmed = !DeviceProvisioning.IsOperatorConfirmed(d.TimeZoneSource);
+            var label = TimeZoneCatalog.Options.FirstOrDefault(o => o.IanaId == d.TimeZone).Label ?? d.TimeZone;
+            <div class="dx-editable-cell dx-truncate" @onclick="() => StartEditTimeZone(d)"
+                 style="@(unconfirmed ? "opacity:0.55; font-style:italic;" : "")"
+                 title="@(unconfirmed ? "Not confirmed by an operator, so no zone is sent to this player. Click to set." : "Click to change")">@label</div>
+        }
+    };
+
+    private void StartEditTimeZone(DeviceRow d)
+    {
+        editingTimeZoneDeviceId = d.DeviceId;
+        editingTimeZoneValue = d.TimeZone ?? "";
+    }
+
+    private async Task SaveTimeZone(DeviceRow d)
+    {
+        if (editingTimeZoneDeviceId != d.DeviceId) return;
+        editingTimeZoneDeviceId = null;
+
+        var newZone = editingTimeZoneValue;
+        if (string.IsNullOrEmpty(newZone) || newZone == d.TimeZone) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(x => x.DeviceId == d.DeviceId);
+            if (device != null)
+            {
+                device.TimeZone = newZone;
+
+                // Setting it here is an operator confirming it, which is what unlocks sending the
+                // zone to the player at all.
+                device.TimeZoneSource = DeviceProvisioning.OperatorSource;
+                await db.SaveChangesAsync();
+                d.TimeZone = newZone;
+                d.TimeZoneSource = DeviceProvisioning.OperatorSource;
+                d.TimeZoneCheck = ResolveTimeZoneCheck(d.TimeZone, d.Fingerprint);
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving time zone: {ex.Message}");
+        }
+    }
+
+    private RenderFragment RenderSiteCell(DeviceRow d) => __builder =>
+    {
+        if (editingSiteDeviceId == d.DeviceId)
+        {
+            <div>
+                <select class="dx-form-control" style="font-size:0.85rem; padding:2px 6px;"
+                        @bind="editingSiteValue"
+                        @bind:after="async () => await SaveSite(d)">
+                    <option value="">(none)</option>
+                    @foreach (var site in sites)
+                    {
+                        <option value="@site.SiteId">@site.SiteName</option>
+                    }
+                </select>
+            </div>
+        }
+        else
+        {
+            <div class="dx-editable-cell dx-truncate" @onclick="() => StartEditSite(d)"
+                 title="Click to assign a site">@(d.SiteName ?? "—")</div>
+        }
+    };
+
+    private void StartEditSite(DeviceRow d)
+    {
+        editingSiteDeviceId = d.DeviceId;
+        editingSiteValue = d.SiteId?.ToString() ?? "";
+    }
+
+    private async Task SaveSite(DeviceRow d)
+    {
+        if (editingSiteDeviceId != d.DeviceId) return;
+        editingSiteDeviceId = null;
+
+        int? newSiteId = int.TryParse(editingSiteValue, out var parsed) ? parsed : null;
+        if (newSiteId == d.SiteId) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(x => x.DeviceId == d.DeviceId);
+            if (device != null)
+            {
+                device.SiteId = newSiteId;
+                await db.SaveChangesAsync();
+
+                var site = sites.FirstOrDefault(x => x.SiteId == newSiteId);
+                d.SiteId = newSiteId;
+                d.SiteName = site?.SiteName;
+                d.City = site?.City;
+                d.StateProvince = site?.StateProvince;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving site: {ex.Message}");
+        }
+    }
+
+    private static TimeZoneVerificationState ResolveTimeZoneCheck(string? ianaId, TimeZoneFingerprintData? reported)
+        => TimeZoneVerification.Evaluate(
+            ianaId,
+            TimeZoneCatalog.FindSetTimeZoneArgument(ianaId),
+            reported is null
+                ? null
+                : new TimeZoneFingerprint(
+                    reported.OffsetJanuaryHours, reported.OffsetJulyHours, reported.Year,
+                    reported.PosixString, reported.AppliedLiteral));
+
+    private RenderFragment RenderNameCell(DeviceRow d) => __builder =>
+    {
+        if (editingNameDeviceId == d.DeviceId)
+        {
+            <div>
+                <input class="dx-form-control" style="font-size:0.9rem; padding:2px 6px;"
+                       @bind="editingNameValue"
+                       @onkeydown="e => OnNameKeyDown(e, d)"
+                       @onfocusout="async () => await SaveName(d)" />
+            </div>
+        }
+        else
+        {
+            <div class="dx-editable-cell dx-truncate" @onclick="() => StartEditName(d)"
+                 title="Click to rename">@(d.Name ?? d.DeviceId)</div>
+        }
+    };
+
+    private void StartEditName(DeviceRow d)
+    {
+        editingNameDeviceId = d.DeviceId;
+        editingNameValue = d.Name ?? d.DeviceId;
+    }
+
+    private async Task OnNameKeyDown(KeyboardEventArgs e, DeviceRow d)
+    {
+        if (e.Key == "Enter") await SaveName(d);
+        else if (e.Key == "Escape") editingNameDeviceId = null;
+    }
+
+    private async Task SaveName(DeviceRow d)
+    {
+        if (editingNameDeviceId != d.DeviceId) return;
+        editingNameDeviceId = null;
+
+        var newName = editingNameValue.Trim();
+        if (string.IsNullOrEmpty(newName) || newName == (d.Name ?? d.DeviceId)) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(x => x.DeviceId == d.DeviceId);
+            if (device != null)
+            {
+                device.Name = newName;
+                await db.SaveChangesAsync();
+                d.Name = newName;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving name: {ex.Message}");
+        }
+    }
+
+    private RenderFragment RenderDescriptionCell(DeviceRow d) => __builder =>
+    {
+        if (editingDeviceId == d.DeviceId)
+        {
+            <div>
+                <input class="dx-form-control" style="font-size:0.9rem; padding:2px 6px;"
+                       @bind="editingValue"
+                       @onkeydown="e => OnDescriptionKeyDown(e, d)"
+                       @onfocusout="async () => await SaveDescription(d)" />
+            </div>
+        }
+        else
+        {
+            <div class="dx-editable-cell dx-truncate" @onclick="() => StartEditDescription(d)">
+                @(d.Description ?? "—")
+            </div>
+        }
+    };
+
+    private async Task OnDescriptionKeyDown(KeyboardEventArgs e, DeviceRow d)
+    {
+        if (e.Key == "Enter") await SaveDescription(d);
+        else if (e.Key == "Escape") editingDeviceId = null;
+    }
+
+    private void StartEditDescription(DeviceRow d)
+    {
+        editingDeviceId = d.DeviceId;
+        editingValue = d.Description ?? "";
+    }
+
+    private async Task SaveDescription(DeviceRow d)
+    {
+        if (editingDeviceId != d.DeviceId) return;
+        editingDeviceId = null;
+
+        var newDesc = editingValue.Trim();
+        if (newDesc == (d.Description ?? "")) return;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(x => x.DeviceId == d.DeviceId);
+            if (device != null)
+            {
+                device.Description = newDesc;
+                await db.SaveChangesAsync();
+                d.Description = newDesc;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving description: {ex.Message}");
+        }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevices();
+        await LoadSavedView();
+    }
+
+    private async Task LoadSavedView()
+    {
+        try
+        {
+            var saved = await UserPreferenceService.GetConfigurationViewSettingsAsync(SessionState.User!.UserId);
+            if (saved?.DeviceColumnOrder?.Count > 0)
+            {
+                var validated = saved.DeviceColumnOrder.Where(c => allColumns.ContainsKey(c)).ToList();
+                if (validated.Count > 0)
+                    columnOrder = validated;
+            }
+
+            if (saved?.DeviceColumnWidths != null)
+            {
+                foreach (var (col, width) in saved.DeviceColumnWidths.Where(w => allColumns.ContainsKey(w.Key)))
+                    columnWidths[col] = width;
+            }
+        }
+        catch { /* Fall back to defaults */ }
+    }
+
+    private async Task SaveDeviceView()
+    {
+        try
+        {
+            // Read first and write the whole object back: the saved settings also carry the
+            // Locations grid's column order, which a fresh object would drop.
+            var settings = await UserPreferenceService.GetConfigurationViewSettingsAsync(SessionState.User!.UserId)
+                           ?? new ConfigurationViewSettings();
+            settings.DeviceColumnOrder = new List<string>(columnOrder);
+            settings.DeviceColumnWidths = columnWidths
+                .Where(w => DefaultColumnWidths.GetValueOrDefault(w.Key) != w.Value)
+                .ToDictionary(w => w.Key, w => w.Value);
+            await UserPreferenceService.SaveConfigurationViewSettingsAsync(SessionState.User!.UserId, settings);
+            ShowToast("View saved");
+        }
+        catch (Exception ex)
+        {
+            ShowToast($"Failed to save view: {ex.Message}");
+        }
+    }
+
+    private async Task ResetDeviceView()
+    {
+        columnOrder = new List<string>(DefaultColumnOrder);
+        columnWidths = new Dictionary<string, string>(DefaultColumnWidths);
+        try
+        {
+            await UserPreferenceService.ClearConfigurationViewSettingsAsync(SessionState.User!.UserId);
+        }
+        catch { /* Ignore — local state already reset */ }
+        ShowToast("View reset to defaults");
+    }
+
+    private async Task LoadDevices()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            // Ink folder entries (inkf-* prefix) are managed in Content Channels — exclude from Device Management
+            var deviceList = await db.TblDevices
+                .AsNoTracking()
+                .Include(d => d.Platform)
+                .Include(d => d.Site)
+                .Where(d => !d.DeviceId.StartsWith("inkf-"))
+                .OrderBy(d => d.DeviceId)
+                .ToListAsync();
+
+            sites = await db.TblSites.AsNoTracking().OrderBy(x => x.SiteName).ToListAsync();
+
+            devices = deviceList.Select(d =>
+            {
+                var extData = ExtendedDataHelper.Parse<DeviceExtendedData>(d.ExtendedData);
+
+                // Compare the echoed manifest version to the current cached manifest for the
+                // device's bucket (displayId when display-assigned, locationId otherwise)
+                var echoedVersion = extData?.ContentSync?.ManifestVersion;
+                bool? contentCurrent = null;
+                var bucketId = d.DisplayId ?? d.LocationId;
+                if (!string.IsNullOrEmpty(echoedVersion))
+                {
+                    // Compared against the delivery version this device was last served, not against
+                    // the cached publication: a publication is shared by every device at a location
+                    // while a delivery is resolved per device, so those two versions are different
+                    // values by design and comparing them would call every device stale.
+                    var delivered = ManifestCache.GetDeliveredVersion(TenantContext.TenantId, d.DeviceId);
+                    if (!string.IsNullOrEmpty(delivered))
+                        contentCurrent = echoedVersion == delivered;
+                }
+
+                return new DeviceRow
+                {
+                    DeviceId = d.DeviceId,
+                    Name = d.Name,
+                    Description = d.Description,
+                    Manufacturer = d.Manufacturer,
+                    Model = d.Model,
+                    SerialNumber = d.SerialNumber,
+                    IpAddress = d.Ipaddress,
+                    LocationId = d.LocationId,
+                    Heartbeat = d.Heartbeat,
+                    ClientVersion = d.ClientAppVersion,
+                    UpdateStatus = d.LastUpdateStatus,
+                    ContentHealthStatus = extData?.ContentHealth?.Status,
+                    BrowserType = extData?.Browser?.Type,
+                    BrowserVersion = extData?.Browser?.Version,
+                    // A device with an assigned location is an active Engage player
+                    EngageBadge = d.LocationId.HasValue ? "Engage" : null,
+                    ClientPlatform = d.Platform?.PlatformName?.ToLowerInvariant(),
+                    Flavour = d.Platform?.PlatformName,
+                    DeclaredFlavour = extData?.DeclaredFlavour?.PlatformName,
+                    FlavourCheck = FlavourVerification.Evaluate(
+                        d.Platform?.PlatformName, extData?.DeclaredFlavour?.PlatformName),
+                    DwsPasswordRotatedAt = d.DwsPasswordRotatedAt,
+                    ManifestVersion = echoedVersion,
+                    ContentCurrent = contentCurrent,
+                    TimeZone = d.TimeZone,
+                    TimeZoneSource = d.TimeZoneSource,
+                    Fingerprint = extData?.TimeZoneFingerprint,
+                    TimeZoneCheck = ResolveTimeZoneCheck(d.TimeZone, extData?.TimeZoneFingerprint),
+                    Orientation = d.Orientation,
+                    VideoPath = d.VideoPath,
+                    SiteId = d.SiteId,
+                    SiteName = d.Site?.SiteName,
+                    City = d.Site?.City,
+                    StateProvince = d.Site?.StateProvince,
+                    LiveSocket = WakeTracker.IsConnected(d.DeviceId),
+                };
+            }).ToList();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading devices: {ex.Message}");
+            devices = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private IEnumerable<DeviceRow> FilteredDevices
+    {
+        get
+        {
+            if (devices == null) return Enumerable.Empty<DeviceRow>();
+            var filtered = devices.AsEnumerable();
+
+            if (!string.IsNullOrWhiteSpace(searchFilter))
+            {
+                var term = searchFilter.Trim();
+                filtered = filtered.Where(d =>
+                    (d.DeviceId?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (d.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (d.Description?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (d.IpAddress?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (d.SerialNumber?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false));
+            }
+
+            filtered = sortColumn switch
+            {
+                "name" => sortAsc ? filtered.OrderBy(d => d.Name ?? d.DeviceId) : filtered.OrderByDescending(d => d.Name ?? d.DeviceId),
+                "description" => sortAsc ? filtered.OrderBy(d => d.Description) : filtered.OrderByDescending(d => d.Description),
+                "lastSeen" => sortAsc ? filtered.OrderBy(d => d.Heartbeat) : filtered.OrderByDescending(d => d.Heartbeat),
+                "manufacturer" => sortAsc ? filtered.OrderBy(d => d.Manufacturer) : filtered.OrderByDescending(d => d.Manufacturer),
+                "model" => sortAsc ? filtered.OrderBy(d => d.Model) : filtered.OrderByDescending(d => d.Model),
+                "serial" => sortAsc ? filtered.OrderBy(d => d.SerialNumber) : filtered.OrderByDescending(d => d.SerialNumber),
+                "ip" => sortAsc ? filtered.OrderBy(d => d.IpAddress) : filtered.OrderByDescending(d => d.IpAddress),
+                _ => sortAsc ? filtered.OrderBy(d => d.DeviceId) : filtered.OrderByDescending(d => d.DeviceId),
+            };
+
+            return filtered;
+        }
+    }
+
+    private void SetSort(string col)
+    {
+        if (sortColumn == col)
+            sortAsc = !sortAsc;
+        else
+        {
+            sortColumn = col;
+            sortAsc = true;
+        }
+    }
+
+    private string SortCaret(string col) =>
+        sortColumn != col ? "" : sortAsc ? "▲" : "▼";
+
+    private void OnSearchChanged() { }
+
+    private static bool IsOnline(DateTime heartbeat) =>
+        (DateTime.UtcNow - heartbeat).TotalMinutes <= 2;
+
+    private static string FormatHeartbeat(DateTime hb)
+    {
+        var ago = DateTime.UtcNow - hb;
+        if (ago.TotalMinutes < 2) return "Just now";
+        if (ago.TotalHours < 1) return $"{(int)ago.TotalMinutes}m ago";
+        if (ago.TotalDays < 1) return $"{(int)ago.TotalHours}h ago";
+        return $"{(int)ago.TotalDays}d ago";
+    }
+
+    private static string GetHealthBadge(string? status) => status?.ToLower() switch
+    {
+        "healthy" => "dx-badge-green",
+        "unresponsive" => "dx-badge-yellow",
+        "failed" => "dx-badge-red",
+        _ => "dx-badge-gray"
+    };
+
+    private void ShowToast(string message)
+    {
+        toastMessage = message;
+        toastVisible = true;
+        toastTimer?.Dispose();
+        toastTimer = new Timer(_ =>
+        {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 3000, Timeout.Infinite);
+    }
+
+    public void Dispose()
+    {
+        toastTimer?.Dispose();
+        selfRef?.Dispose();
+    }
+
+    private async Task LoadDeviceSettings()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var setting = await db.TblSystemSettings
+            .AsNoTracking()
+            .FirstOrDefaultAsync(s => s.SettingKey == "engage:allowHttpFallback");
+        settingAllowHttpFallback = setting?.SettingValue != "false";
+        deviceSettingsSaveMessage = null;
+    }
+
+    private async Task SaveDeviceSettings()
+    {
+        deviceSettingsSaving = true;
+        deviceSettingsSaveMessage = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var existing = await db.TblSystemSettings.FindAsync("engage:allowHttpFallback");
+            var value = settingAllowHttpFallback ? "true" : "false";
+            if (existing != null)
+            {
+                existing.SettingValue = value;
+                existing.LastEditDate = DateTime.UtcNow;
+                existing.LastEditUser = SessionState.UserName ?? "system";
+            }
+            else
+            {
+                db.TblSystemSettings.Add(new TblSystemSetting
+                {
+                    SettingKey = "engage:allowHttpFallback",
+                    SettingValue = value,
+                    LastEditDate = DateTime.UtcNow,
+                    LastEditUser = SessionState.UserName ?? "system"
+                });
+            }
+            await db.SaveChangesAsync();
+            deviceSettingsSaveMessage = "Saved.";
+            deviceSettingsSaveError = false;
+        }
+        catch (Exception ex)
+        {
+            deviceSettingsSaveMessage = $"Error: {ex.Message}";
+            deviceSettingsSaveError = true;
+        }
+        deviceSettingsSaving = false;
+    }
+
+    // Device settings modal methods
+    private bool isClearingFlavour;
+
+    private static bool CanClearFlavour(DeviceRow d)
+        => FlavourVerification.CanClearFlavour(d.Flavour, d.DeclaredFlavour);
+
+    /// <summary>
+    /// Returns a device to the applet by clearing its enrolled flavour.
+    ///
+    /// An operator action rather than a pairing, because going back to the applet means clearing
+    /// PlatformId to null and the applet's pairing request carries no flavour to approve.
+    /// Clearing is safe where setting is not, since null already means "no flavour enrolled".
+    /// </summary>
+    private async Task ClearFlavour()
+    {
+        if (selectedSettingsDevice == null || isClearingFlavour) return;
+
+        if (!CanClearFlavour(selectedSettingsDevice))
+        {
+            ShowToast($"{selectedSettingsDevice.DeviceId} still declares {selectedSettingsDevice.DeclaredFlavour}. Move it back to the applet before clearing.");
+            return;
+        }
+
+        isClearingFlavour = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            var device = await db.TblDevices
+                .Include(d => d.Platform)
+                .FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+
+            if (device == null) return;
+
+            var previousPlatformName = device.Platform?.PlatformName;
+            var previousPlatformId = device.PlatformId;
+
+            device.PlatformId = null;
+            // The pin outlives the flavour and is returned ahead of any platform check, so it goes
+            // with it rather than being left to resolve against a flavour the device no longer has.
+            device.TargetAppVersionId = null;
+            device.TargetBootloaderVersionId = null;
+
+            db.TblEventLogs.Add(new TblEventLog
+            {
+                EventSource = "DevicesTab",
+                EventTypeId = 1,
+                EventSeverityId = 1,
+                EventTitle = $"Cleared flavour on {device.DeviceId}",
+                EventMessage = $"Returned to the applet from {previousPlatformName ?? previousPlatformId?.ToString() ?? "none"}.",
+                DeviceId = device.DeviceId,
+                CreateDate = DateTime.UtcNow,
+                Details = System.Text.Json.JsonSerializer.Serialize(new
+                {
+                    previousPlatformId,
+                    previousPlatformName,
+                    clearedBy = SessionState.UserName
+                })
+            });
+
+            await db.SaveChangesAsync();
+
+            selectedSettingsDevice.Flavour = null;
+            selectedSettingsDevice.FlavourCheck = FlavourState.NotEnrolled;
+
+            ShowToast($"Flavour cleared on {device.DeviceId}.");
+            await LoadDevices();
+        }
+        finally
+        {
+            isClearingFlavour = false;
+        }
+    }
+
+    private async Task ShowDeviceSettingsModal(DeviceRow device)
+    {
+        selectedSettingsDevice = device;
+        showDeviceSettingsModal = true;
+        consoleLogs = new List<ConsoleLogEntry>();
+        consoleLoggingEnabled = false;
+        forceHtml5Video = false;
+        isFlushingCache = false;
+        flushCacheQueued = false;
+        windowModeSettings = null;
+        isSavingWindowMode = false;
+        editingOrientation = device.Orientation;
+        isSavingOrientation = false;
+        commandHistory = null;
+        StateHasChanged();
+        await LoadCommandHistory();
+        await RefreshConsoleLogs();
+        await LoadVideoMode();
+        await LoadWindowMode();
+    }
+
+    private void CloseDeviceSettingsModal()
+    {
+        showDeviceSettingsModal = false;
+        selectedSettingsDevice = null;
+        consoleLogs = new List<ConsoleLogEntry>();
+        StateHasChanged();
+    }
+
+    private async Task LoadVideoMode()
+    {
+        if (selectedSettingsDevice == null) return;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            var extData = ExtendedDataHelper.Parse<DeviceExtendedData>(device?.ExtendedData);
+            forceHtml5Video = extData?.VideoMode?.ForceHtml5 == true;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading video mode: {ex.Message}");
+        }
+        StateHasChanged();
+    }
+
+    private async Task SaveVideoMode(bool value)
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isSavingVideoMode = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            if (device != null)
+            {
+                device.ExtendedData = ExtendedDataHelper.UpdateProperty<DeviceExtendedData>(
+                    device.ExtendedData,
+                    d => d.VideoMode = new VideoModeData { ForceHtml5 = value });
+                await db.SaveChangesAsync();
+                forceHtml5Video = value;
+                ShowToast($"Video mode set to {(value ? "HTML5" : "native SOS")} for {selectedSettingsDevice.DeviceId}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving video mode: {ex.Message}");
+            ShowToast("Error saving video mode setting.");
+        }
+        finally
+        {
+            isSavingVideoMode = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task LoadWindowMode()
+    {
+        if (selectedSettingsDevice == null) return;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            var extData = ExtendedDataHelper.Parse<DeviceExtendedData>(device?.ExtendedData);
+            windowModeSettings = extData?.WindowMode ?? new WindowModeData { Mode = "fullscreen" };
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading window mode: {ex.Message}");
+            windowModeSettings = new WindowModeData { Mode = "fullscreen" };
+        }
+        StateHasChanged();
+    }
+
+    private async Task SaveWindowMode()
+    {
+        if (selectedSettingsDevice == null || windowModeSettings == null) return;
+
+        isSavingWindowMode = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            if (device != null)
+            {
+                var snapshot = windowModeSettings;
+                device.ExtendedData = ExtendedDataHelper.UpdateProperty<DeviceExtendedData>(
+                    device.ExtendedData,
+                    d => d.WindowMode = snapshot);
+                await db.SaveChangesAsync();
+                ShowToast($"Window mode saved for {selectedSettingsDevice.DeviceId}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving window mode: {ex.Message}");
+            ShowToast("Error saving window mode.");
+        }
+        finally
+        {
+            isSavingWindowMode = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveOrientation()
+    {
+        if (selectedSettingsDevice == null || !DeviceOrientation.All.Contains(editingOrientation)) return;
+
+        isSavingOrientation = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            if (device != null)
+            {
+                device.Orientation = editingOrientation;
+                await db.SaveChangesAsync();
+                selectedSettingsDevice.Orientation = editingOrientation;
+                ShowToast($"Orientation set to {OrientationLabels[editingOrientation]} for {selectedSettingsDevice.DeviceId}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving orientation: {ex.Message}");
+            ShowToast("Error saving orientation.");
+        }
+        finally
+        {
+            isSavingOrientation = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task SaveVideoPath(bool seamless)
+    {
+        if (selectedSettingsDevice == null) return;
+        var videoPath = seamless ? DeviceVideoPath.Page : DeviceVideoPath.Hardware;
+        if (videoPath == DeviceVideoPath.Page && !DeviceVideoPath.SupportsPage(selectedSettingsDevice.Model)) return;
+
+        isSavingVideoPath = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == selectedSettingsDevice.DeviceId);
+            if (device != null)
+            {
+                device.VideoPath = videoPath;
+                await db.SaveChangesAsync();
+                selectedSettingsDevice.VideoPath = videoPath;
+                ShowToast($"{(seamless ? "Seamless" : "Standard")} transitions for {selectedSettingsDevice.DeviceId}.");
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error saving video path: {ex.Message}");
+            ShowToast("Error saving video transitions.");
+        }
+        finally
+        {
+            isSavingVideoPath = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task QueueFlushCache()
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isFlushingCache = true;
+        StateHasChanged();
+
+        try
+        {
+            await DeviceCommands.QueueFlushCacheAsync(selectedSettingsDevice.DeviceId, "ui");
+            flushCacheQueued = true;
+            await LoadCommandHistory();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error queuing cache flush: {ex.Message}");
+            ShowToast("Error queuing cache flush.");
+        }
+        finally
+        {
+            isFlushingCache = false;
+            StateHasChanged();
+        }
+    }
+
+    private List<TblDeviceCommand>? commandHistory;
+    private bool isLoadingCommandHistory;
+
+    private async Task LoadCommandHistory()
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isLoadingCommandHistory = true;
+        try
+        {
+            commandHistory = await DeviceCommands.GetHistoryAsync(selectedSettingsDevice.DeviceId);
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading command history: {ex.Message}");
+            commandHistory = new List<TblDeviceCommand>();
+        }
+        finally
+        {
+            isLoadingCommandHistory = false;
+            StateHasChanged();
+        }
+    }
+
+    private static string FormatCommandType(TblDeviceCommand cmd)
+    {
+        if (cmd.CommandType == DeviceCommandTypes.Cec && !string.IsNullOrEmpty(cmd.PayloadJson))
+        {
+            try
+            {
+                var payload = System.Text.Json.JsonSerializer.Deserialize<CecCommandPayload>(cmd.PayloadJson);
+                if (payload != null) return $"CEC {payload.Action}";
+            }
+            catch { }
+        }
+        return cmd.CommandType switch
+        {
+            DeviceCommandTypes.Screenshot => "Screenshot",
+            DeviceCommandTypes.FlushCache => "Flush cache",
+            _ => cmd.CommandType
+        };
+    }
+
+    private async Task RefreshConsoleLogs()
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isLoadingConsoleLogs = true;
+        StateHasChanged();
+
+        try
+        {
+            var data = await ConsoleLoggingService.GetLoggingDataAsync(selectedSettingsDevice.DeviceId);
+            consoleLoggingEnabled = data?.Enabled ?? false;
+            consoleLogs = data?.Entries ?? new List<ConsoleLogEntry>();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading console logs: {ex.Message}");
+            ShowToast("Error loading console logs.");
+        }
+        finally
+        {
+            isLoadingConsoleLogs = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleConsoleLogging(bool enabled)
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isTogglingConsoleLogging = true;
+        StateHasChanged();
+
+        try
+        {
+            await ConsoleLoggingService.SetLoggingEnabledAsync(selectedSettingsDevice.DeviceId, enabled);
+            consoleLoggingEnabled = enabled;
+            if (!enabled) consoleLogs = new List<ConsoleLogEntry>();
+            ShowToast($"Console logging {(enabled ? "enabled" : "disabled")} for {selectedSettingsDevice.DeviceId}.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error toggling console logging: {ex.Message}");
+            ShowToast("Error updating console logging setting.");
+        }
+        finally
+        {
+            isTogglingConsoleLogging = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ClearConsoleLogs()
+    {
+        if (selectedSettingsDevice == null) return;
+
+        isClearingConsoleLogs = true;
+        StateHasChanged();
+
+        try
+        {
+            await ConsoleLoggingService.ClearLogsAsync(selectedSettingsDevice.DeviceId);
+            consoleLogs = new List<ConsoleLogEntry>();
+            ShowToast("Console logs cleared.");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error clearing console logs: {ex.Message}");
+            ShowToast("Error clearing console logs.");
+        }
+        finally
+        {
+            isClearingConsoleLogs = false;
+            StateHasChanged();
+        }
+    }
+
+    private class DeviceRow
+    {
+        public string DeviceId { get; set; } = null!;
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+        public string? Manufacturer { get; set; }
+        public string? Model { get; set; }
+        public string? SerialNumber { get; set; }
+        public string? IpAddress { get; set; }
+        // LocationId is not displayed in Device Management but is retained to determine Platform badge
+        public int? LocationId { get; set; }
+        public DateTime Heartbeat { get; set; }
+        public string? ClientVersion { get; set; }
+        public string? UpdateStatus { get; set; }
+        public string? ContentHealthStatus { get; set; }
+        public string? BrowserType { get; set; }
+        public string? BrowserVersion { get; set; }
+        // Derived from LocationId, and never a platform: an assigned location means an active
+        // Engage player. Named for what it is, because "Platform" here collided with the flavour.
+        public string? EngageBadge { get; set; }
+        // Lowercase platform name from TblAppPlatform (e.g., "avalonia", "signageos").
+        // Drives platform-specific controls in the device settings modal.
+        public string? ClientPlatform { get; set; }
+        // The flavour this device was enrolled with, from its TblAppPlatform row.
+        public string? Flavour { get; set; }
+        // The flavour it last declared on a heartbeat. Compared against Flavour on read.
+        public string? DeclaredFlavour { get; set; }
+        public FlavourState FlavourCheck { get; set; }
+        // Null means the player is still on the package's shared bootstrap DWS password, which is
+        // a visible state rather than a silent one: a leaked card opens every player made from it
+        // until each has rotated.
+        public DateTime? DwsPasswordRotatedAt { get; set; }
+        // Manifest version the player last echoed, compared against the location's
+        // current cached manifest: true = current, false = stale, null = can't compare
+        public string? ManifestVersion { get; set; }
+        public bool? ContentCurrent { get; set; }
+        public bool LiveSocket { get; set; }
+        public string? TimeZone { get; set; }
+        public string? TimeZoneSource { get; set; }
+        public TimeZoneFingerprintData? Fingerprint { get; set; }
+        public TimeZoneVerificationState TimeZoneCheck { get; set; }
+        public string Orientation { get; set; } = DeviceOrientation.Landscape;
+        public string VideoPath { get; set; } = DeviceVideoPath.Hardware;
+        public int? SiteId { get; set; }
+        public string? SiteName { get; set; }
+        public string? City { get; set; }
+        public string? StateProvince { get; set; }
+    }
+}

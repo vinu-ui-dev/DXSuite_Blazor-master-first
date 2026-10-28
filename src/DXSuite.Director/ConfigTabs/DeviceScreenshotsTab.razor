@@ -1,0 +1,198 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject IScreenshotService ScreenshotService
+@inject IDeviceCommandService DeviceCommands
+@implements IDisposable
+
+<div class="dx-panel-header">
+    <h4>Screenshots</h4>
+    <div class="dx-panel-controls">
+        <input @bind="searchFilter" @bind:event="oninput"
+               class="dx-search-input" placeholder="Search Devices..." />
+        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CaptureAllVisible" disabled="@(!Filtered.Any())">
+            Capture all visible
+        </button>
+        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadDevices">Refresh</button>
+    </div>
+</div>
+
+<div class="dx-panel-content ss-content">
+    @if (devices is null)
+    {
+        <div class="ss-empty"><div class="dx-spinner" role="status"></div></div>
+    }
+    else if (!Filtered.Any())
+    {
+        <div class="ss-empty">No devices match.</div>
+    }
+    else
+    {
+        <div class="ss-grid">
+            @foreach (var d in Filtered)
+            {
+                var online = d.Heartbeat > DateTime.UtcNow.AddMinutes(-10);
+                <div class="ss-card @(online ? "ss-online" : "ss-offline")">
+                    <div class="ss-thumb">
+                        @if (!string.IsNullOrEmpty(d.ScreenshotPath))
+                        {
+                            <img src="@($"{d.ScreenshotPath}?t={d.ScreenshotCapturedAt?.Ticks}")" alt="screenshot" />
+                        }
+                        else
+                        {
+                            <div class="ss-noimg">No screenshot</div>
+                        }
+                    </div>
+                    <div class="ss-meta">
+                        <div class="ss-name" title="@d.DeviceId">@(string.IsNullOrWhiteSpace(d.Description) ? d.DeviceId : d.Description)</div>
+                        <div class="ss-sub">
+                            <span>@(d.ScreenshotCapturedAt.HasValue ? d.ScreenshotCapturedAt.Value.ToLocalTime().ToString("MMM dd HH:mm") : "never")</span>
+                            @if (!string.IsNullOrEmpty(d.IpAddress)) { <span class="ss-ip">@d.IpAddress</span> }
+                        </div>
+                    </div>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm ss-capture" @onclick="() => Capture(d.DeviceId)"
+                            disabled="@requested.Contains(d.DeviceId)">
+                        @(requested.Contains(d.DeviceId) ? "Requested…" : "Capture")
+                    </button>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private List<DeviceRow>? devices;
+    private string searchFilter = "";
+    private readonly HashSet<string> requested = new();
+    private Timer? _refreshTimer;
+
+    private IEnumerable<DeviceRow> Filtered =>
+        devices is null ? Enumerable.Empty<DeviceRow>()
+        : string.IsNullOrWhiteSpace(searchFilter)
+            ? devices
+            : devices.Where(d =>
+                (d.Description?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+                || (d.Name?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false)
+                || d.DeviceId.Contains(searchFilter, StringComparison.OrdinalIgnoreCase)
+                || (d.IpAddress?.Contains(searchFilter, StringComparison.OrdinalIgnoreCase) ?? false));
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadDevices();
+        // Newly captured screenshots arrive asynchronously (device grabs the request on its next sync,
+        // then uploads). Re-query periodically so cards surface fresh images without manual refresh.
+        _refreshTimer = new Timer(_ => _ = InvokeAsync(RefreshTick), null,
+            TimeSpan.FromSeconds(20), TimeSpan.FromSeconds(20));
+    }
+
+    private async Task RefreshTick()
+    {
+        await LoadDevices();
+        StateHasChanged();
+    }
+
+    private async Task LoadDevices()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var rows = await db.TblDevices
+                .AsNoTracking()
+                .Where(d => !d.DeviceId.StartsWith("inkf-"))
+                .OrderBy(d => d.Description ?? d.DeviceId)
+                .ToListAsync();
+
+            devices = rows.Select(d =>
+            {
+                var ext = ExtendedDataHelper.Parse<DeviceExtendedData>(d.ExtendedData);
+                return new DeviceRow
+                {
+                    DeviceId = d.DeviceId,
+                    Name = d.Name,
+                    Description = d.Description,
+                    IpAddress = d.Ipaddress,
+                    Heartbeat = d.Heartbeat,
+                    ScreenshotPath = ext?.Screenshot?.Path,
+                    ScreenshotCapturedAt = ext?.Screenshot?.CapturedAt
+                };
+            }).ToList();
+
+            // A device whose screenshot has refreshed since the request can drop its "Requested…" state.
+            requested.RemoveWhere(id =>
+            {
+                var dev = devices!.FirstOrDefault(x => x.DeviceId == id);
+                return dev?.ScreenshotCapturedAt > DateTime.UtcNow.AddMinutes(-1);
+            });
+        }
+        catch (Exception)
+        {
+            devices = new();
+        }
+    }
+
+    private async Task Capture(string deviceId)
+    {
+        await DeviceCommands.QueueScreenshotAsync(deviceId, "ui");
+        requested.Add(deviceId);
+    }
+
+    private async Task CaptureAllVisible()
+    {
+        foreach (var d in Filtered)
+        {
+            await DeviceCommands.QueueScreenshotAsync(d.DeviceId, "ui-bulk");
+            requested.Add(d.DeviceId);
+        }
+    }
+
+    public void Dispose() => _refreshTimer?.Dispose();
+
+    private class DeviceRow
+    {
+        public string DeviceId { get; set; } = "";
+        public string? Name { get; set; }
+        public string? Description { get; set; }
+        public string? IpAddress { get; set; }
+        public DateTime Heartbeat { get; set; }
+        public string? ScreenshotPath { get; set; }
+        public DateTime? ScreenshotCapturedAt { get; set; }
+    }
+}
+
+<style>
+    .ss-content { padding: 16px; overflow-y: auto; }
+    .ss-empty { text-align: center; color: #777; padding: 40px; }
+    .ss-grid { display: flex; flex-wrap: wrap; gap: 10px; }
+
+    .ss-card {
+        width: 212px;
+        background: #f4f4f4;
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+        padding: 8px;
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+    }
+    .ss-thumb {
+        height: 119px;
+        background: #000;
+        border-radius: 4px;
+        overflow: hidden;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: 3px solid #bbb;
+    }
+    .ss-online .ss-thumb { border-color: #51b848; }
+    .ss-offline .ss-thumb { border-color: #ed2024; }
+    .ss-thumb img { width: 100%; height: 100%; object-fit: contain; display: block; }
+    .ss-noimg { color: #888; font-size: 12px; }
+
+    .ss-meta { min-height: 32px; }
+    .ss-name { font-weight: 600; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .ss-sub { display: flex; justify-content: space-between; gap: 6px; font-size: 11px; color: #777; }
+    .ss-ip { font-family: Consolas, monospace; }
+    .ss-capture { width: 100%; }
+</style>

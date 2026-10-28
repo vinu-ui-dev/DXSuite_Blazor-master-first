@@ -1,0 +1,222 @@
+<Window x:Class="DXSuite.Host.Setup.Wizard.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="DXSuite Setup" Height="660" Width="740"
+        WindowStartupLocation="CenterScreen" MinHeight="560" MinWidth="660">
+  <Grid Margin="0">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto" />
+      <RowDefinition Height="*" />
+      <RowDefinition Height="Auto" />
+    </Grid.RowDefinitions>
+
+    <Border Grid.Row="0" Background="#1F2A37" Padding="18,14">
+      <StackPanel>
+        <TextBlock Text="DXSuite On-Premises Setup" Foreground="White" FontSize="18" FontWeight="SemiBold" />
+        <TextBlock Text="Configure the site, database, and application settings for this server."
+                   Foreground="#C7D2DE" Margin="0,3,0,0" />
+      </StackPanel>
+    </Border>
+
+    <TabControl Grid.Row="1" x:Name="Tabs" Margin="12,12,12,6">
+
+      <!-- The IIS site, app pool, binding, and install folder are owned by the MSI
+           (INSTALLFOLDER + SITE_NAME / SITE_PORT / APP_POOL properties). This wizard
+           collects application configuration only. -->
+
+      <!-- 1. Database -->
+      <TabItem Header="Database">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+          <StackPanel>
+            <TextBlock TextWrapping="Wrap" Margin="0,0,0,8" Foreground="#444"
+                       Text="Only the Director database is created and migrated here. The admin account creates the database and applies the schema; the application account is what the app connects with at runtime (db_datareader + db_datawriter)." />
+
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="260" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0" Margin="0,0,8,0">
+                <Label Content="SQL Server (host\instance)" />
+                <TextBox x:Name="ServerBox" />
+              </StackPanel>
+              <StackPanel Grid.Column="1">
+                <Label Content="Director database name" />
+                <TextBox x:Name="DirectorDbBox" />
+              </StackPanel>
+            </Grid>
+            <CheckBox x:Name="TrustCertBox" Content="Trust server certificate" Margin="0,2,0,8" />
+
+            <GroupBox Header="Admin credentials (provisioning + migrations)" Padding="10" Margin="0,0,0,8">
+              <StackPanel>
+                <CheckBox x:Name="AdminIntegratedBox" Content="Use Windows authentication (integrated security)" Margin="0,0,0,6" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                    <Label Content="Login" />
+                    <TextBox x:Name="AdminUserBox" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                    <Label Content="Password" />
+                    <PasswordBox x:Name="AdminPassBox" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Application account (runtime connection string)" Padding="10" Margin="0,0,0,8">
+              <StackPanel>
+                <CheckBox x:Name="AppIntegratedBox" Content="Use Windows authentication (app pool identity)" Margin="0,0,0,6" />
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="*" />
+                  </Grid.ColumnDefinitions>
+                  <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                    <Label Content="Login" />
+                    <TextBox x:Name="AppUserBox" />
+                  </StackPanel>
+                  <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                    <Label Content="Password" />
+                    <PasswordBox x:Name="AppPassBox" />
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="External databases (written to config, not created here)" Padding="10" Margin="0,0,0,8">
+              <Grid>
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*" />
+                  <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                  <Label Content="CoreData DB (blank to omit)" />
+                  <TextBox x:Name="CoreDataDbBox" />
+                </StackPanel>
+                <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                  <Label Content="Aviation DB (blank to omit)" />
+                  <TextBox x:Name="AviationDbBox" />
+                </StackPanel>
+              </Grid>
+            </GroupBox>
+
+            <CheckBox x:Name="RunSeedBox" Content="Run seed data (system lookup rows) after migrating" Margin="0,0,0,8" />
+
+            <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+              <Button x:Name="TestButton" Content="Test &amp; detect state" Click="TestButton_Click" />
+              <TextBlock x:Name="DbStatusText" VerticalAlignment="Center" Margin="12,0,0,0" TextWrapping="Wrap" />
+            </StackPanel>
+
+            <Border x:Name="BaselinePanel" Visibility="Collapsed" Background="#FFF7E6"
+                    BorderBrush="#E0A800" BorderThickness="1" Padding="10" Margin="0,4,0,0">
+              <StackPanel>
+                <TextBlock TextWrapping="Wrap" Foreground="#7A5C00"
+                           Text="An existing DXSuite schema with no migration tracking was found. Confirm it matches the current baseline before the installer stamps and migrates it. If unsure, take a backup and verify the schema first." />
+                <CheckBox x:Name="ConfirmBaselineBox" Margin="0,8,0,0"
+                          Content="I confirm this database matches the baseline schema and may be stamped." />
+              </StackPanel>
+            </Border>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- 3. Authentication -->
+      <TabItem Header="Authentication">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+          <StackPanel>
+            <Label Content="Default sign-in method" />
+            <ComboBox x:Name="AuthTypeBox" Margin="0,0,0,6">
+              <ComboBoxItem Content="Local" />
+              <ComboBoxItem Content="Azure" />
+              <ComboBoxItem Content="Google" />
+              <ComboBoxItem Content="Okta" />
+              <ComboBoxItem Content="Ldap" />
+            </ComboBox>
+            <CheckBox x:Name="LocalAccountsBox" Content="Allow local accounts" Margin="0,0,0,10" />
+
+            <GroupBox Header="Microsoft Entra (Azure)" Padding="10" Margin="0,0,0,8">
+              <StackPanel>
+                <Label Content="Tenant ID" /><TextBox x:Name="MsTenantBox" />
+                <Label Content="Domain" /><TextBox x:Name="MsDomainBox" />
+                <Label Content="Client ID" /><TextBox x:Name="MsClientIdBox" />
+                <Label Content="Client secret" /><PasswordBox x:Name="MsClientSecretBox" />
+              </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Okta" Padding="10" Margin="0,0,0,8">
+              <StackPanel>
+                <Label Content="Authority" /><TextBox x:Name="OktaAuthorityBox" />
+                <Label Content="Client ID" /><TextBox x:Name="OktaClientIdBox" />
+                <Label Content="Client secret" /><PasswordBox x:Name="OktaClientSecretBox" />
+              </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Google" Padding="10" Margin="0,0,0,8">
+              <StackPanel>
+                <Label Content="Client ID" /><TextBox x:Name="GoogleClientIdBox" />
+                <Label Content="Client secret" /><PasswordBox x:Name="GoogleClientSecretBox" />
+              </StackPanel>
+            </GroupBox>
+
+            <GroupBox Header="Active Directory (LDAP)" Padding="10">
+              <StackPanel>
+                <Label Content="Server" /><TextBox x:Name="LdapServerBox" />
+                <Label Content="Base DN" /><TextBox x:Name="LdapBaseDnBox" />
+                <Label Content="Service account DN" /><TextBox x:Name="LdapSvcDnBox" />
+                <Label Content="Service account password" /><PasswordBox x:Name="LdapSvcPassBox" />
+                <Label Content="Email domain suffix" /><TextBox x:Name="LdapEmailSuffixBox" />
+              </StackPanel>
+            </GroupBox>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+
+      <!-- 4. Application -->
+      <TabItem Header="Application">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" Padding="12">
+          <StackPanel>
+            <Grid>
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="*" />
+              </Grid.ColumnDefinitions>
+              <StackPanel Grid.Column="0" Margin="0,0,6,0">
+                <Label Content="Customer code" /><TextBox x:Name="CustomerCodeBox" />
+              </StackPanel>
+              <StackPanel Grid.Column="1" Margin="6,0,0,0">
+                <Label Content="Tenant id" /><TextBox x:Name="TenantBox" />
+              </StackPanel>
+            </Grid>
+            <Label Content="Media share (BaseUNC)" /><TextBox x:Name="BaseUncBox" />
+            <Label Content="External site URL" /><TextBox x:Name="SiteUrlBox" />
+
+            <GroupBox Header="Modules" Padding="10" Margin="0,8,0,8">
+              <WrapPanel x:Name="ModulesPanel" />
+            </GroupBox>
+            <GroupBox Header="Features" Padding="10">
+              <WrapPanel x:Name="FeaturesPanel" />
+            </GroupBox>
+          </StackPanel>
+        </ScrollViewer>
+      </TabItem>
+    </TabControl>
+
+    <Border Grid.Row="2" Background="#F2F4F7" Padding="14,10">
+      <Grid>
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="*" />
+          <ColumnDefinition Width="Auto" />
+        </Grid.ColumnDefinitions>
+        <TextBlock x:Name="FooterText" Grid.Column="0" VerticalAlignment="Center" TextWrapping="Wrap" Foreground="#555" />
+        <StackPanel Grid.Column="1" Orientation="Horizontal">
+          <Button Content="Cancel" Click="CancelButton_Click" Margin="0,0,8,0" />
+          <Button x:Name="FinishButton" Content="Finish" Click="FinishButton_Click" IsDefault="True" />
+        </StackPanel>
+      </Grid>
+    </Border>
+  </Grid>
+</Window>

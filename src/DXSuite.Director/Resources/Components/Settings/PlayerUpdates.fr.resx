@@ -1,0 +1,148 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_Platform">
+    <value>Plateforme</value>
+  </data>
+  <data name="Label_AllPlatforms">
+    <value>Toutes les plateformes</value>
+  </data>
+  <data name="Tab_Versions">
+    <value>Versions</value>
+  </data>
+  <data name="Tab_Deployments">
+    <value>Déploiements</value>
+  </data>
+  <data name="Button_UploadNewVersion">
+    <value>Téléverser une nouvelle version</value>
+  </data>
+  <data name="Label_UploadNewVersion">
+    <value>Téléverser une nouvelle version</value>
+  </data>
+  <data name="Label_ZipFileLabel">
+    <value>Fichier ZIP (.zip)</value>
+  </data>
+  <data name="Label_Uploading">
+    <value>Téléversement...</value>
+  </data>
+  <data name="Button_Upload">
+    <value>Téléverser</value>
+  </data>
+  <data name="Label_Download">
+    <value>Télécharger</value>
+  </data>
+  <data name="Label_ServerUrl">
+    <value>URL du serveur</value>
+  </data>
+  <data name="Label_ApiKey">
+    <value>Clé API</value>
+  </data>
+  <data name="Label_LoadingDefaults">
+    <value>Chargement des valeurs par défaut...</value>
+  </data>
+  <data name="Button_DownloadZip">
+    <value>Télécharger le ZIP</value>
+  </data>
+  <data name="Column_Platform">
+    <value>Plateforme</value>
+  </data>
+  <data name="Column_Version">
+    <value>Version</value>
+  </data>
+  <data name="Column_Size">
+    <value>Taille</value>
+  </data>
+  <data name="Column_Created">
+    <value>Créé</value>
+  </data>
+  <data name="Button_NewDeployment">
+    <value>Nouveau déploiement</value>
+  </data>
+  <data name="Label_CreateNewDeployment">
+    <value>Créer un nouveau déploiement</value>
+  </data>
+  <data name="Label_EditDeployment">
+    <value>Modifier le déploiement</value>
+  </data>
+  <data name="Label_SelectPlatform">
+    <value>Sélectionner la plateforme</value>
+  </data>
+  <data name="Label_TargetVersion">
+    <value>Version cible</value>
+  </data>
+  <data name="Label_SelectVersion">
+    <value>Sélectionner la version</value>
+  </data>
+  <data name="Label_Scope">
+    <value>Portée</value>
+  </data>
+  <data name="Label_SpecificDevices">
+    <value>Appareils spécifiques</value>
+  </data>
+  <data name="Label_Location">
+    <value>Emplacement</value>
+  </data>
+  <data name="Label_AllDevicesPlatform">
+    <value>Tous les appareils (plateforme)</value>
+  </data>
+  <data name="Label_SelectLocation">
+    <value>Sélectionner l'emplacement</value>
+  </data>
+  <data name="Label_SelectDevices">
+    <value>Sélectionner les appareils</value>
+  </data>
+  <data name="Label_DevicesSelected">
+    <value>appareil(s) sélectionné(s)</value>
+  </data>
+  <data name="Label_EnableBatchDeployment">
+    <value>Activer le déploiement par lots</value>
+  </data>
+  <data name="Label_BatchDescription">
+    <value>Déployer vers les appareils par lots avec pause automatique entre les groupes.</value>
+  </data>
+  <data name="Label_BatchSize">
+    <value>Taille du lot</value>
+  </data>
+  <data name="Label_BatchSizeDesc">
+    <value>Nombre d'appareils par lot</value>
+  </data>
+  <data name="Button_CreateDeployment">
+    <value>Créer le déploiement</value>
+  </data>
+  <data name="Button_SaveChanges">
+    <value>Enregistrer les modifications</value>
+  </data>
+  <data name="Column_Scope">
+    <value>Portée</value>
+  </data>
+  <data name="Column_Batch">
+    <value>Lot</value>
+  </data>
+  <data name="Label_AllDevices">
+    <value>Tous les appareils</value>
+  </data>
+  <data name="Label_MinBootloaderVersion">
+    <value>Version minimale du chargeur d'amorçage</value>
+  </data>
+  <data name="Placeholder_MinBootloaderVersion">
+    <value>ex. 2.0.3</value>
+  </data>
+  <data name="Help_MinBootloaderVersion">
+    <value>Facultatif. Les lecteurs dont le chargeur d'amorçage est plus ancien ne prendront pas cette version.</value>
+  </data>
+</root>

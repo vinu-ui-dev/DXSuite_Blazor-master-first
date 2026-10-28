@@ -1,0 +1,87 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ISessionState Session
+
+<div class="ct-thread">
+    @if (Comments.Any())
+    {
+        <div class="ct-thread-list">
+            @foreach (var c in Comments.OrderBy(c => c.CreateDate))
+            {
+                <div class="ct-comment">
+                    <div class="ct-comment-header">
+                        <strong>@c.AuthorName</strong>
+                        <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">
+                            @c.CreateDate.ToLocalTime().ToString("MMM d, yyyy h:mm tt")
+                        </span>
+                    </div>
+                    <div class="ct-comment-body">@c.Body</div>
+                </div>
+            }
+        </div>
+    }
+
+    <div class="ct-thread-compose">
+        <textarea class="dx-form-control" style="width:100%; height:64px; resize:vertical"
+                  placeholder="Add a comment…"
+                  @bind="newBody" />
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:4px">
+            <div>@FooterActions</div>
+            <button class="dx-btn dx-btn-blue dx-btn-sm"
+                    disabled="@(string.IsNullOrWhiteSpace(newBody) || posting)"
+                    @onclick="PostAsync">
+                @(posting ? "Posting…" : "Post")
+            </button>
+        </div>
+        @if (postError is not null)
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-top:4px">@postError</div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int RequirementId { get; set; }
+    [Parameter, EditorRequired] public List<TblDesignRequirementComment> Comments { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback OnCommentPosted { get; set; }
+    /// <summary>Rendered at the bottom-left of the compose row, opposite the Post button.</summary>
+    [Parameter] public RenderFragment? FooterActions { get; set; }
+
+    private string newBody = "";
+    private bool posting;
+    private string? postError;
+
+    private async Task PostAsync()
+    {
+        if (string.IsNullOrWhiteSpace(newBody)) return;
+        posting = true; postError = null;
+        try
+        {
+            var user = Session.User;
+            await using var db = await DbFactory.CreateDbContextAsync();
+            db.TblDesignRequirementComments.Add(new TblDesignRequirementComment
+            {
+                RequirementId = RequirementId,
+                AuthorUserId = user?.UserId.ToString() ?? string.Empty,
+                AuthorName = user?.FriendlyName ?? user?.GivenName ?? "Unknown",
+                Body = newBody.Trim(),
+                CreateDate = DateTime.UtcNow,
+            });
+            await db.SaveChangesAsync();
+            newBody = "";
+            await OnCommentPosted.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            postError = $"Failed to post: {ex.Message}";
+        }
+        finally { posting = false; }
+    }
+}
+
+<style>
+    .ct-thread { border-top: 1px solid var(--border, #dee2e6); margin-top: 10px; padding-top: 10px; }
+    .ct-thread-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 10px; }
+    .ct-comment { background: var(--surface, #f8f9fa); border-radius: 6px; padding: 8px 12px; }
+    .ct-comment-header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+    .ct-comment-body { font-size: .875rem; white-space: pre-wrap; }
+</style>

@@ -1,0 +1,421 @@
+@rendermode InteractiveServer
+@using DXSuite.Aviation.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
+@inject IServiceScopeFactory ScopeFactory
+@inject IDbContextFactory<AviationDbContext> AviationDbFactory
+@inject ILogger<AirlinesTab> Logger
+
+<div class="dx-card" style="display:flex; flex-direction:column;">
+    <div class="dx-panel-header">
+        <h4>Airlines</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:24px;">
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-bottom:16px;">@errorMessage</div>
+        }
+
+        <div class="dx-form-row" style="margin-bottom:16px;">
+            <div class="dx-form-group" style="flex:2; position:relative;">
+                <label class="dx-form-label">Search Airline</label>
+                <input type="text" class="dx-form-control" autocomplete="off"
+                       value="@selectedAirlineName"
+                       @oninput="OnAirlineSearchInput"
+                       @onclick="ShowAirlines"
+                       placeholder="Start typing airline name or code..." />
+
+                @if (filteredAirlines.Any() && showAirlines)
+                {
+                    <div class="dx-typeahead-dropdown">
+                        @foreach (var airline in filteredAirlines)
+                        {
+                            <button class="dx-typeahead-item" @onclick="() => SelectAirline(airline)">
+                                <div class="dx-truncate">
+                                    @airline.CarrierName (@airline.AirlineCode)
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="dx-form-group" style="flex:1;">
+                <label class="dx-form-label">Airline Code</label>
+                <input type="text" class="dx-form-control" value="@selectedAirlineCode" readonly />
+            </div>
+        </div>
+
+        <div class="dx-form-group" style="margin-bottom:16px; position:relative;">
+            <label class="dx-form-label">Search IATA Locations</label>
+            <div style="display:flex; gap:8px; align-items:flex-start; position:relative;">
+                <div style="flex:1; position:relative;">
+                    <input type="text" class="dx-form-control" autocomplete="off"
+                           value="@selectedLocationName"
+                           @oninput="OnLocationSearchInput"
+                           @onclick="ShowLocations"
+                           placeholder="Start typing location name or code..." />
+
+                    @if (filteredLocations.Any() && showLocations)
+                    {
+                        <div class="dx-typeahead-dropdown">
+                            @foreach (var location in filteredLocations)
+                            {
+                                <button class="dx-typeahead-item" @onclick="() => SelectLocation(location)">
+                                    <div class="dx-truncate">
+                                        @location.Name (@location.IataCode)
+                                    </div>
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+
+                @if (selectedAirline != null && selectedLocation != null)
+                {
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:2px;" @onclick="() => AddLocation(selectedLocation, selectedAirline)">Add</button>
+                }
+                else
+                {
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" style="margin-top:2px;" disabled>Add</button>
+                }
+            </div>
+        </div>
+
+        @if (assignedLocations.Count > 0)
+        {
+            <div class="dx-form-group" style="margin-bottom:16px;">
+                <label class="dx-form-label">Assigned Locations</label>
+                <div class="dx-scrollable" style="max-height:180px; border:1px solid var(--dx-border-color, #dee2e6); border-radius:4px;">
+                    @foreach (var location in assignedLocations)
+                    {
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--dx-border-color, #f0f0f0);">
+                            <span>@location.Name (@location.IataCode)</span>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RemoveLocation(location, selectedAirline!)">Remove</button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (airlineWithPin == true)
+        {
+            <div class="dx-form-row" style="margin-bottom:16px;">
+                <div class="dx-form-group" style="flex:1;">
+                    <label class="dx-form-label">Wayfinding PIN</label>
+                    <input type="text" class="dx-form-control" value="@selectedAirlinePin" readonly />
+                </div>
+                <div class="dx-form-group" style="flex:2;">
+                    <label class="dx-form-label">Update PIN</label>
+                    <div style="display:flex; gap:8px;">
+                        <input type="text" class="dx-form-control" autocomplete="off"
+                               @bind="selectedPin"
+                               placeholder="Enter 4-digit PIN" />
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SavePin(selectedPin ?? string.Empty)">Save</button>
+                    </div>
+                </div>
+            </div>
+        }
+
+    </div>
+</div>
+
+<style>
+    .dx-typeahead-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        max-height: 220px;
+        overflow-y: auto;
+    }
+
+    .dx-typeahead-item {
+        display: block;
+        width: 100%;
+        padding: 8px 12px;
+        text-align: left;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #f0f0f0;
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .dx-typeahead-item:hover {
+        background: #f5f8ff;
+    }
+
+    .dx-typeahead-item:last-child {
+        border-bottom: none;
+    }
+</style>
+
+@code {
+    private List<TblAirline> allAirlines = new();
+    private List<TblAirline> filteredAirlines = new();
+    private TblAirline? selectedAirline;
+
+    private string selectedAirlineName = "";
+    private string selectedAirlineCode = "";
+    private int? selectedAirlinePin;
+    private bool? airlineWithPin = false;
+    private string? selectedPin = "";
+
+    private bool showLocations = false;
+    private bool showAirlines = false;
+
+    private List<TblLocation> allLocations = new();
+    private List<TblLocation> filteredLocations = new();
+    private List<TblLocation> assignedLocations = new();
+    private TblLocation? selectedLocation;
+    private string selectedLocationName = "";
+
+    private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var aviationDb = await AviationDbFactory.CreateDbContextAsync();
+
+        allAirlines = await aviationDb.TblAirlines
+            .OrderBy(a => a.CarrierName)
+            .ToListAsync();
+
+        allLocations = await aviationDb.TblLocations
+            .OrderBy(l => l.Name)
+            .ToListAsync();
+
+        filteredLocations = allLocations;
+    }
+
+    private void OnAirlineSearchInput(ChangeEventArgs e)
+    {
+        var term = e.Value?.ToString() ?? "";
+        selectedAirlineName = term;
+
+        if (term.Length >= 2)
+        {
+            showAirlines = true;
+            showLocations = false;
+
+            filteredAirlines = allAirlines
+                .Where(a => (a.AirlineCode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                            (a.CarrierName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList();
+        }
+        else
+        {
+            filteredAirlines.Clear();
+        }
+    }
+
+    private void OnLocationSearchInput(ChangeEventArgs e)
+    {
+        var term = e.Value?.ToString() ?? "";
+        selectedLocationName = term;
+
+        if (term.Length >= 1)
+        {
+            filteredLocations = allLocations
+                .Where(l => (l.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                            l.IataCode.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        else
+        {
+            filteredLocations = allLocations;
+        }
+    }
+
+    private async Task SelectAirline(TblAirline airline)
+    {
+        errorMessage = "";
+        selectedPin = "";
+        selectedAirline = airline;
+        selectedAirlineName = airline.CarrierName ?? "";
+        selectedAirlineCode = airline.AirlineCode;
+
+        airlineWithPin = (airline.Tpenabled1 ?? false) || (airline.Tpenabled2 ?? false);
+        selectedAirlinePin = airline.Pincode;
+
+        filteredAirlines.Clear();
+        showAirlines = false;
+
+        await LoadAirlineLocations();
+        StateHasChanged();
+    }
+
+    private async Task LoadAirlineLocations()
+    {
+        if (selectedAirline == null)
+        {
+            assignedLocations = new List<TblLocation>();
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+
+        // Load via the many-to-many navigation: TblAirline.IataCodes → TblLocation
+        var airline = await aviationDb.TblAirlines
+            .Include(a => a.IataCodes)
+            .FirstOrDefaultAsync(a => a.AirlineCode == selectedAirline.AirlineCode);
+
+        assignedLocations = airline?.IataCodes.OrderBy(l => l.Name).ToList()
+                            ?? new List<TblLocation>();
+
+        StateHasChanged();
+    }
+
+    private void SelectLocation(TblLocation location)
+    {
+        selectedLocation = location;
+        selectedLocationName = $"{location.Name} ({location.IataCode})";
+        showLocations = false;
+    }
+
+    private void ShowLocations()
+    {
+        showLocations = !showLocations;
+        if (showLocations) showAirlines = false;
+    }
+
+    private void ShowAirlines()
+    {
+        showAirlines = !showAirlines;
+        if (showAirlines) showLocations = false;
+    }
+
+    private async Task AddLocation(TblLocation location, TblAirline airline)
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+
+        try
+        {
+            var trackedAirline = await aviationDb.TblAirlines
+                .Include(a => a.IataCodes)
+                .FirstOrDefaultAsync(a => a.AirlineCode == airline.AirlineCode);
+
+            if (trackedAirline == null)
+            {
+                errorMessage = $"Airline '{airline.CarrierName}' not found.";
+                return;
+            }
+
+            bool alreadyLinked = trackedAirline.IataCodes.Any(l => l.IataCode == location.IataCode);
+            if (alreadyLinked)
+            {
+                errorMessage = $"The location '{location.Name}' is already linked to airline '{airline.CarrierName}'.";
+            }
+            else
+            {
+                var trackedLocation = await aviationDb.TblLocations
+                    .FirstOrDefaultAsync(l => l.IataCode == location.IataCode);
+
+                if (trackedLocation != null)
+                {
+                    trackedAirline.IataCodes.Add(trackedLocation);
+                    await aviationDb.SaveChangesAsync();
+                    errorMessage = "";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving airline location");
+            errorMessage = "An error occurred while saving the location assignment.";
+        }
+
+        await LoadAirlineLocations();
+
+        selectedLocation = null;
+        selectedLocationName = "";
+        StateHasChanged();
+    }
+
+    private async Task RemoveLocation(TblLocation location, TblAirline airline)
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+
+        try
+        {
+            var trackedAirline = await aviationDb.TblAirlines
+                .Include(a => a.IataCodes)
+                .FirstOrDefaultAsync(a => a.AirlineCode == airline.AirlineCode);
+
+            if (trackedAirline == null)
+            {
+                errorMessage = $"Airline '{airline.CarrierName}' not found.";
+                return;
+            }
+
+            var linkedLocation = trackedAirline.IataCodes.FirstOrDefault(l => l.IataCode == location.IataCode);
+            if (linkedLocation != null)
+            {
+                trackedAirline.IataCodes.Remove(linkedLocation);
+                await aviationDb.SaveChangesAsync();
+                errorMessage = "";
+            }
+            else
+            {
+                errorMessage = $"The location '{location.Name}' is not linked to airline '{airline.CarrierName}'.";
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error removing airline location");
+            errorMessage = "An error occurred while removing the location assignment.";
+        }
+
+        await LoadAirlineLocations();
+        StateHasChanged();
+    }
+
+    private async Task SavePin(string pin)
+    {
+        errorMessage = "";
+
+        if (string.IsNullOrWhiteSpace(pin) || pin.Length != 4 || !pin.All(char.IsDigit))
+        {
+            errorMessage = "PIN must be exactly 4 digits.";
+            return;
+        }
+
+        int parsedPin = int.Parse(pin);
+
+        if (selectedAirline == null)
+        {
+            errorMessage = "No airline selected.";
+            return;
+        }
+
+        await using var aviationDb = await AviationDbFactory.CreateDbContextAsync();
+
+        var airline = await aviationDb.TblAirlines.FindAsync(selectedAirline.RecordId);
+        if (airline != null)
+        {
+            airline.Pincode = parsedPin;
+            await aviationDb.SaveChangesAsync();
+            selectedAirline = airline;
+            selectedAirlinePin = airline.Pincode;
+        }
+
+        selectedPin = "";
+        StateHasChanged();
+    }
+}

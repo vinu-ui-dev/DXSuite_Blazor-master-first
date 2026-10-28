@@ -1,0 +1,109 @@
+@page "/platform/tenants/new"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Registry
+@using DXSuite.Shared.Services
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantProvisioningService ProvisioningService
+@inject ReAuthConfirmationService ReAuth
+@inject NavigationManager Nav
+
+<ReAuthConfirmationModal />
+
+<div class="dx-platform-page">
+    @if (!ProvisioningService.IsAvailable)
+    {
+        <div class="dx-alert dx-alert-warning">
+            Tenant registry database is not configured. Provisioning is unavailable in this deployment.
+        </div>
+    }
+    else
+    {
+        <div class="dx-platform-header">
+            <h2>New Tenant</h2>
+            <a href="/platform/tenants" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
+        </div>
+
+        <div class="dx-form" style="max-width:600px;">
+            <div class="dx-form-group">
+                <label>Tenant ID <span class="dx-text-muted">(unique slug, e.g. "acme")</span></label>
+                <input class="dx-form-control" @bind="model.TenantId" />
+            </div>
+            <div class="dx-form-group">
+                <label>Display Name</label>
+                <input class="dx-form-control" @bind="model.DisplayName" />
+            </div>
+            <div class="dx-form-group">
+                <label>Subdomain</label>
+                <input class="dx-form-control" @bind="model.Subdomain" />
+            </div>
+            <div class="dx-form-group">
+                <label>Customer Code</label>
+                <input class="dx-form-control" @bind="model.CustomerCode" />
+            </div>
+            <div class="dx-form-group">
+                <label>Director Connection String</label>
+                <input class="dx-form-control" @bind="model.ConnectionString_Director" />
+            </div>
+            <div class="dx-form-group">
+                <label>Design Connection String <span class="dx-text-muted">(leave blank if Design not licensed)</span></label>
+                <input class="dx-form-control" @bind="model.ConnectionString_Design" />
+            </div>
+
+            @if (error != null)
+            {
+                <div class="dx-alert dx-alert-danger">@error</div>
+            }
+
+            <div style="margin-top:1rem;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="Create" disabled="@saving">
+                    @(saving ? "Creating…" : "Create Tenant")
+                </button>
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private TblTenant model = new() { IsEnabled = true };
+    private bool saving;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator || !ProvisioningService.IsAvailable)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+    }
+
+    private async Task Create()
+    {
+        if (SessionState.PlatformUserId == null) return;
+        error = null;
+
+        if (string.IsNullOrWhiteSpace(model.TenantId) || string.IsNullOrWhiteSpace(model.DisplayName)
+            || string.IsNullOrWhiteSpace(model.Subdomain) || string.IsNullOrWhiteSpace(model.CustomerCode))
+        {
+            error = "Tenant ID, Display Name, Subdomain, and Customer Code are required.";
+            return;
+        }
+
+        var token = await ReAuth.RequestConfirmationAsync();
+        if (token == null) return;
+
+        saving = true;
+        try
+        {
+            var created = await ProvisioningService.CreateTenantAsync(model, SessionState.PlatformUserId.Value, token.Value);
+            Nav.NavigateTo($"/platform/tenants/{created.TenantId}");
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            saving = false;
+        }
+    }
+}

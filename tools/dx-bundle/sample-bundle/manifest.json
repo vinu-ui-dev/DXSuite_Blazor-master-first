@@ -1,0 +1,16 @@
+{
+  "id": "sample-room-signage",
+  "name": "Sample Room Signage",
+  "version": "1.0.0",
+  "entry": "index.html",
+  "description": "Reference bundle exercising the full dx-location.js SDK surface",
+  "capabilities": ["assets:read", "assets:write", "schedule:read", "schedule:write", "storage", "overrides"],
+  "settingsSchema": {
+    "fields": [
+      { "key": "theme", "label": "Theme", "type": "select", "options": ["light", "dark"], "default": "light" },
+      { "key": "welcomeText", "label": "Welcome text", "type": "text", "default": "Welcome" },
+      { "key": "refreshSeconds", "label": "Refresh interval (seconds)", "type": "number", "default": 30 },
+      { "key": "showAssets", "label": "Show asset list", "type": "boolean", "default": true }
+    ]
+  }
+}

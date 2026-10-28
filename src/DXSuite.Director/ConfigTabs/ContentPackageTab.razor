@@ -1,0 +1,622 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Controllers
+@using DXSuite.Director.Services.ContentPackage
+@using DXSuite.Shared.Authorization
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject IContentPackageBundleBuilder BundleBuilder
+@inject IContentPackageBundleImporter BundleImporter
+@inject IContentPackageHistoryService HistoryService
+@inject ISessionState SessionState
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject ILogger<ContentPackageTab> Logger
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden;">
+        <button class="dx-tab-btn @(activeSubTab == "export" ? "active" : "")"
+                @onclick="@(() => activeSubTab = "export")">Export</button>
+        <button class="dx-tab-btn @(activeSubTab == "import" ? "active" : "")"
+                @onclick="@(() => activeSubTab = "import")">Import</button>
+        <button class="dx-tab-btn @(activeSubTab == "history" ? "active" : "")"
+                @onclick="@(() => { activeSubTab = "history"; _ = LoadHistory(); })">History</button>
+    </div>
+
+    @if (activeSubTab == "export")
+    {
+    <div class="dx-panel-header">
+        <h4>Export Bundle</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        <p class="dx-text-muted" style="margin-top:0;">
+            Export a content package bundle (ZIP) containing the selected locations, displays, and assets. Import it
+            in a target environment to upsert records by their stable ContentPackageId — existing records update,
+            new records are inserted.
+        </p>
+
+        <section style="margin-top:20px;">
+            <h5>Select Locations</h5>
+            @if (isLoading)
+            {
+                <div class="dx-spinner"></div>
+            }
+            else if (locations.Count == 0)
+            {
+                <p class="dx-text-muted">No locations available.</p>
+            }
+            else
+            {
+                <div style="max-height:280px; overflow:auto; border:1px solid var(--dx-border-color); border-radius:var(--dx-border-radius); padding:8px;">
+                    @foreach (var loc in locations)
+                    {
+                        <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer;">
+                            <input type="checkbox" class="dx-checkbox"
+                                   checked="@selectedLocationIds.Contains(loc.ContentPackageId)"
+                                   @onchange="@(e => ToggleLocation(loc.ContentPackageId, (bool)e.Value!))" />
+                            <span>@loc.LocationName</span>
+                            <code style="font-size:0.75em; color:var(--dx-text-muted);">@loc.ContentPackageId</code>
+                        </label>
+                    }
+                </div>
+            }
+        </section>
+
+        <section style="margin-top:20px;">
+            <h5>Options</h5>
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer;">
+                <input type="checkbox" class="dx-checkbox" @bind="includeAccessControl" />
+                Include location access rules and schedules
+            </label>
+            <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px; cursor:pointer;">
+                <input type="checkbox" class="dx-checkbox" @bind="includeApprovalChains" />
+                Include approval chains
+            </label>
+            <div class="dx-form-group" style="margin-top:12px; max-width:300px;">
+                <label class="dx-form-label">Source environment label</label>
+                @if (environmentLabels.Count > 0)
+                {
+                    <select class="dx-form-control" @bind="sourceEnvironment">
+                        <option value="">(select)</option>
+                        @foreach (var label in environmentLabels)
+                        {
+                            <option value="@label">@label</option>
+                        }
+                    </select>
+                }
+                else
+                {
+                    <input type="text" class="dx-form-control" @bind="sourceEnvironment" placeholder="e.g. Dev" />
+                    <span class="dx-form-hint">
+                        Add environment labels in Settings &gt; Content Package Environments to use a dropdown here.
+                    </span>
+                }
+            </div>
+            <div class="dx-form-group" style="margin-top:12px; max-width:600px;">
+                <label class="dx-form-label">Scope description (optional)</label>
+                <input type="text" class="dx-form-control" @bind="scopeDescription" placeholder="e.g. Q2 content refresh" />
+            </div>
+        </section>
+
+        <section style="margin-top:24px; display:flex; gap:12px; align-items:center;">
+            <button class="dx-btn dx-btn-blue" disabled="@(!CanExport || isExporting)" @onclick="ExportBundle">
+                @if (isExporting)
+                {
+                    <div class="dx-spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"></div>
+                    <span>Building bundle...</span>
+                }
+                else
+                {
+                    <i class="bi bi-download"></i> <span>Export Bundle</span>
+                }
+            </button>
+            @if (!string.IsNullOrEmpty(exportStatus))
+            {
+                <span class="dx-text-muted">@exportStatus</span>
+            }
+        </section>
+    </div>
+    }
+    else if (activeSubTab == "import")
+    {
+    <div class="dx-panel-header">
+        <h4>Import Bundle</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        <p class="dx-text-muted" style="margin-top:0;">
+            Upload a content package bundle to stage an import. Review the diff, then Apply to write the changes
+            into this environment. Cancel discards the staged bundle without touching the database.
+        </p>
+
+        <section style="margin-top:20px;">
+            <h5>1. Upload Bundle</h5>
+            <InputFile OnChange="OnBundleSelected" accept=".zip" />
+            @if (isPreviewing)
+            {
+                <div class="dx-spinner" style="margin-top:12px;"></div>
+            }
+            @if (!string.IsNullOrEmpty(importError))
+            {
+                <div class="dx-alert dx-alert-danger" style="margin-top:12px;">
+                    <i class="bi bi-x-circle"></i>
+                    <span>@importError</span>
+                </div>
+            }
+        </section>
+
+        @if (preview != null)
+        {
+            <section style="margin-top:24px;">
+                <h5>2. Preview</h5>
+                <div style="display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; margin-bottom:16px; font-size:0.9rem;">
+                    <strong>Bundle:</strong><span>@preview.BundleFileName</span>
+                    <strong>Schema version:</strong><span>@preview.SchemaVersion</span>
+                    <strong>Exported at:</strong><span>@preview.ExportedAt.ToLocalTime().ToString("g")</span>
+                    <strong>Exported by:</strong><span>@(preview.ExportedByUser ?? "(unknown)")</span>
+                    <strong>Source environment:</strong><span>@(preview.SourceEnvironment ?? "(unspecified)")</span>
+                    <strong>Scope:</strong><span>@(preview.ScopeDescription ?? "(none)")</span>
+                </div>
+
+                <div class="dx-table" style="max-width:560px;">
+                    <div class="dx-table-header" style="grid-template-columns: 2fr 80px 80px 80px;">
+                        <div>Entity</div>
+                        <div style="text-align:right;">Insert</div>
+                        <div style="text-align:right;">Update</div>
+                        <div style="text-align:right;">Skip</div>
+                    </div>
+                    @foreach (var diff in preview.EntityDiffs)
+                    {
+                        <div class="dx-table-row" style="grid-template-columns: 2fr 80px 80px 80px;">
+                            <div>@diff.EntityType</div>
+                            <div style="text-align:right;"><span class="dx-badge dx-badge-green">@diff.InsertCount</span></div>
+                            <div style="text-align:right;"><span class="dx-badge dx-badge-blue">@diff.UpdateCount</span></div>
+                            <div style="text-align:right;"><span class="dx-badge dx-badge-gray">@diff.SkipCount</span></div>
+                        </div>
+                    }
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 80px 80px 80px; font-weight:600; border-top:2px solid #ccc;">
+                        <div>Total</div>
+                        <div style="text-align:right;"><span class="dx-badge dx-badge-green">@preview.TotalInserts</span></div>
+                        <div style="text-align:right;"><span class="dx-badge dx-badge-blue">@preview.TotalUpdates</span></div>
+                        <div style="text-align:right;"><span class="dx-badge dx-badge-gray">@preview.TotalSkips</span></div>
+                    </div>
+                </div>
+
+                @if (preview.Warnings.Count > 0)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:12px;">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <span>
+                            <strong>Warnings:</strong>
+                            <ul style="margin:4px 0 0 20px;">
+                                @foreach (var w in preview.Warnings)
+                                {
+                                    <li>@w</li>
+                                }
+                            </ul>
+                        </span>
+                    </div>
+                }
+            </section>
+
+            <section style="margin-top:16px;">
+                <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                    <input type="checkbox" class="dx-checkbox" @bind="replaceMode" />
+                    <span><strong>Replace mode</strong> — after upsert, delete any child records
+                        (displays, assets, schedule events, constraints, floor plan elements) of
+                        the bundle's locations that are not in the bundle. Destructive.</span>
+                </label>
+                @if (replaceMode)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:8px;">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <span>Target records outside the bundle (within the promoted location scope)
+                            will be permanently deleted on Apply.</span>
+                    </div>
+                }
+            </section>
+
+            <section style="margin-top:16px; display:flex; gap:12px; align-items:center;">
+                <button class="dx-btn dx-btn-green" disabled="@isApplying" @onclick="ApplyBundle">
+                    @if (isApplying)
+                    {
+                        <div class="dx-spinner" style="width:14px;height:14px;display:inline-block;vertical-align:middle;margin-right:6px;"></div>
+                        <span>Applying...</span>
+                    }
+                    else
+                    {
+                        <i class="bi bi-check-lg"></i> <span>Apply</span>
+                    }
+                </button>
+                <button class="dx-btn dx-btn-gray" disabled="@isApplying" @onclick="CancelPreview">Cancel</button>
+                @if (!string.IsNullOrEmpty(applyStatus))
+                {
+                    <span class="dx-text-muted">@applyStatus</span>
+                }
+            </section>
+        }
+
+        @if (result != null)
+        {
+            <section style="margin-top:24px;">
+                <h5>Result</h5>
+                <div class="dx-alert dx-alert-success" style="margin-bottom:12px;">
+                    <i class="bi bi-check-circle"></i>
+                    <span>Import complete — @result.Inserted inserted, @result.Updated updated, @result.Skipped skipped, @result.MediaFilesCopied media files copied.</span>
+                </div>
+                <div style="display:grid; grid-template-columns:max-content 1fr; gap:6px 16px; font-size:0.9rem;">
+                    <strong>Status:</strong><span><span class="dx-badge @(result.Status == "Success" ? "dx-badge-green" : "dx-badge-yellow")">@result.Status</span></span>
+                    <strong>History ID:</strong><span>@result.ContentPackageHistoryId</span>
+                </div>
+                @if (result.Warnings.Count > 0)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:12px;">
+                        <i class="bi bi-exclamation-triangle"></i>
+                        <span>
+                            <strong>Warnings:</strong>
+                            <ul style="margin:4px 0 0 20px;">
+                                @foreach (var w in result.Warnings)
+                                {
+                                    <li>@w</li>
+                                }
+                            </ul>
+                        </span>
+                    </div>
+                }
+            </section>
+        }
+    </div>
+    }
+    else if (activeSubTab == "history")
+    {
+    <div class="dx-panel-header">
+        <h4>Content Package History</h4>
+        <div class="dx-panel-controls" style="display:flex; gap:12px; align-items:center;">
+            <label class="dx-form-label" style="margin:0;">Direction:</label>
+            <select class="dx-form-control" @bind="historyDirectionFilter" @bind:after="LoadHistory" style="max-width:160px;">
+                <option value="">All</option>
+                <option value="export">Export</option>
+                <option value="import">Import</option>
+            </select>
+            <button class="dx-btn dx-btn-gray" @onclick="LoadHistory"><i class="bi bi-arrow-clockwise"></i> Refresh</button>
+        </div>
+    </div>
+    <div class="dx-panel-content" style="padding:16px; overflow:auto;">
+        @if (historyRows.Count == 0)
+        {
+            <p class="dx-text-muted">No history rows.</p>
+        }
+        else
+        {
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 170px 72px 85px 1fr 1.5fr 50px 56px 50px 54px;">
+                    <div>Started</div>
+                    <div>Direction</div>
+                    <div>Status</div>
+                    <div>Initiator</div>
+                    <div>Scope</div>
+                    <div style="text-align:right;">Insert</div>
+                    <div style="text-align:right;">Update</div>
+                    <div style="text-align:right;">Skip</div>
+                    <div></div>
+                </div>
+                @foreach (var h in historyRows)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 170px 72px 85px 1fr 1.5fr 50px 56px 50px 54px;">
+                        <div class="dx-col-primary" style="white-space:nowrap;">@h.StartedAt.ToLocalTime().ToString("g")</div>
+                        <div><span class="dx-badge @(h.Direction == "export" ? "dx-badge-blue" : "dx-badge-orange")">@h.Direction</span></div>
+                        <div><span class="dx-badge @StatusBadge(h.Status)">@h.Status</span></div>
+                        <div class="dx-col-hide" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@(h.InitiatedByUser ?? "")">@(h.InitiatedByUser ?? "-")</div>
+                        <div class="dx-col-hide" style="overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">@(h.ScopeDescription ?? h.BundleFileName ?? "-")</div>
+                        <div class="dx-col-hide" style="text-align:right;">@h.InsertedCount</div>
+                        <div class="dx-col-hide" style="text-align:right;">@h.UpdatedCount</div>
+                        <div class="dx-col-hide" style="text-align:right;">@h.SkippedCount</div>
+                        <div class="dx-col-actions"><button class="dx-btn dx-btn-sm" @onclick="@(() => ShowHistoryDetail(h.ContentPackageHistoryId))">Detail</button></div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (historyDetail != null)
+        {
+            <section style="margin-top:20px; padding:16px; border:1px solid var(--dx-border-color); border-radius:var(--dx-border-radius); background:#fafafa;">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:12px;">
+                    <h5 style="margin:0;">History #@historyDetail.Header.ContentPackageHistoryId — @historyDetail.Header.Direction</h5>
+                    <button class="dx-btn dx-btn-sm dx-btn-gray" @onclick="@(() => historyDetail = null)">Close</button>
+                </div>
+                <div style="display:grid; grid-template-columns:max-content 1fr; gap:4px 16px; font-size:0.9rem;">
+                    <strong>Status:</strong><span><span class="dx-badge @StatusBadge(historyDetail.Header.Status)">@historyDetail.Header.Status</span></span>
+                    <strong>Started:</strong><span>@historyDetail.Header.StartedAt.ToLocalTime().ToString("g")</span>
+                    <strong>Completed:</strong><span>@(historyDetail.Header.CompletedAt?.ToLocalTime().ToString("g") ?? "-")</span>
+                    <strong>Initiator:</strong><span>@(historyDetail.Header.InitiatedByUser ?? "-")</span>
+                    <strong>Bundle:</strong><span>@(historyDetail.Header.BundleFileName ?? "-")</span>
+                    <strong>Source env:</strong><span>@(historyDetail.Header.SourceEnvironment ?? "-")</span>
+                    <strong>Scope:</strong><span>@(historyDetail.Header.ScopeDescription ?? "-")</span>
+                    @if (!string.IsNullOrEmpty(historyDetail.Header.ErrorMessage))
+                    {
+                        <strong>Error:</strong><span style="color:var(--dx-red);">@historyDetail.Header.ErrorMessage</span>
+                    }
+                </div>
+
+                <h6 style="margin-top:16px;">Records (@historyDetail.Items.Count)</h6>
+                <div style="max-height:360px; overflow:auto;">
+                    <div class="dx-table dx-collapse">
+                        <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1fr 80px 2fr 1.5fr 2fr;">
+                            <div>Entity</div>
+                            <div>Action</div>
+                            <div>ContentPackageId</div>
+                            <div>Source User</div>
+                            <div>Notes</div>
+                        </div>
+                        @foreach (var item in historyDetail.Items)
+                        {
+                            <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1fr 80px 2fr 1.5fr 2fr;">
+                                <div class="dx-col-primary">@item.EntityType</div>
+                                <div><span class="dx-badge @ActionBadge(item.Action)">@item.Action</span></div>
+                                <div class="dx-col-hide" style="font-family:monospace; font-size:0.8rem;">@item.ContentPackageId</div>
+                                <div class="dx-col-hide">@(item.SourceUserPrincipalName ?? "-")</div>
+                                <div class="dx-col-break">@(item.Notes ?? "-")</div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </section>
+        }
+    </div>
+    }
+</div>
+
+@code {
+    private string activeSubTab = "export";
+
+    // Export
+    private List<LocationListItem> locations = new();
+    private List<string> environmentLabels = new();
+    private HashSet<Guid> selectedLocationIds = new();
+    private bool includeAccessControl;
+    private bool includeApprovalChains;
+    private string? sourceEnvironment;
+    private string? scopeDescription;
+    private bool isLoading = true;
+    private bool isExporting;
+    private string? exportStatus;
+
+    // Import
+    private bool isPreviewing;
+    private bool isApplying;
+    private bool replaceMode;
+    private string? importError;
+    private string? applyStatus;
+    private ContentPackageImportPreview? preview;
+    private ContentPackageImportResult? result;
+
+    // History
+    private List<ContentPackageHistoryListRow> historyRows = new();
+    private ContentPackageHistoryDetail? historyDetail;
+    private string historyDirectionFilter = "";
+    private bool historyLoaded;
+
+    // 2 GiB upload cap — matches the controller's RequestSizeLimit
+    private const long MaxBundleBytes = 2L * 1024 * 1024 * 1024;
+
+    private bool CanExport => selectedLocationIds.Count > 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            locations = await db.TblLocations.AsNoTracking()
+                .OrderBy(l => l.SortOrder).ThenBy(l => l.LocationName)
+                .Select(l => new LocationListItem(l.ContentPackageId, l.LocationName ?? "(unnamed)"))
+                .ToListAsync();
+
+            environmentLabels = await db.TblContentPackageEnvironmentLabels.AsNoTracking()
+                .OrderBy(el => el.SortOrder).ThenBy(el => el.Label)
+                .Select(el => el.Label)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load locations for content package export");
+            exportStatus = "Failed to load locations.";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void ToggleLocation(Guid id, bool selected)
+    {
+        if (selected) selectedLocationIds.Add(id);
+        else selectedLocationIds.Remove(id);
+    }
+
+    private async Task ExportBundle()
+    {
+        if (!CanExport) return;
+
+        isExporting = true;
+        exportStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            var selection = new ContentPackageSelection
+            {
+                LocationContentPackageIds = selectedLocationIds.ToList(),
+                IncludeAccessControl = includeAccessControl,
+                IncludeApprovalChains = includeApprovalChains,
+                SourceEnvironment = sourceEnvironment,
+                ScopeDescription = scopeDescription
+            };
+
+            // Write the bundle to a temp file instead of holding it all in memory,
+            // then hand it off to a GET endpoint for a browser-native download.
+            // This avoids the SignalR message-size limit on large bundles.
+            var tempPath = Path.Combine(Path.GetTempPath(), $"cpkg-{Guid.NewGuid():N}.zip");
+            await using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, 81920))
+            {
+                var bundleResult = await BundleBuilder.BuildAsync(selection, SessionState.UserName, fs);
+                var fileName = bundleResult.SuggestedFileName ?? $"content-package-{DateTime.UtcNow:yyyyMMdd-HHmmss}.zip";
+
+                var token = Guid.NewGuid();
+                ContentPackageController.PendingDownloads[token] = new ContentPackageController.PendingDownload
+                {
+                    FilePath = tempPath,
+                    FileName = fileName,
+                    CreatedAt = DateTime.UtcNow
+                };
+
+                exportStatus = $"Exported {bundleResult.TotalRecords} records, {bundleResult.MediaFileCount} media files.";
+
+                // Trigger a browser-native download via the GET endpoint
+                var downloadUrl = $"{Navigation.BaseUri}api/content-package/bundle/download/{token}";
+                await JS.InvokeVoidAsync("dxDownloadUrl", downloadUrl);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Content package bundle export failed");
+            exportStatus = $"Export failed: {ex.Message}";
+        }
+        finally
+        {
+            isExporting = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task OnBundleSelected(InputFileChangeEventArgs e)
+    {
+        preview = null;
+        result = null;
+        importError = null;
+        applyStatus = null;
+
+        var file = e.File;
+        if (file == null) return;
+
+        if (file.Size > MaxBundleBytes)
+        {
+            importError = $"Bundle too large ({file.Size / (1024 * 1024)} MiB). Max is 2048 MiB.";
+            return;
+        }
+
+        isPreviewing = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var stream = file.OpenReadStream(MaxBundleBytes);
+            preview = await BundleImporter.CreatePreviewAsync(stream, file.Name);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Content package bundle preview failed");
+            importError = $"Preview failed: {ex.Message}";
+        }
+        finally
+        {
+            isPreviewing = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ApplyBundle()
+    {
+        if (preview == null) return;
+
+        isApplying = true;
+        applyStatus = null;
+        StateHasChanged();
+
+        try
+        {
+            result = await BundleImporter.ApplyAsync(preview.StagingId, SessionState.UserName, replaceMode);
+            preview = null;
+            applyStatus = "Apply complete.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Content package bundle apply failed");
+            applyStatus = $"Apply failed: {ex.Message}";
+        }
+        finally
+        {
+            isApplying = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CancelPreview()
+    {
+        if (preview == null) return;
+
+        try
+        {
+            BundleImporter.CancelPreview(preview.StagingId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to cancel content package preview {StagingId}", preview.StagingId);
+        }
+        finally
+        {
+            preview = null;
+            importError = null;
+            applyStatus = null;
+            StateHasChanged();
+        }
+    }
+
+    // ─────────── History ───────────
+
+    private async Task LoadHistory()
+    {
+        try
+        {
+            historyRows = await HistoryService.ListAsync(
+                string.IsNullOrEmpty(historyDirectionFilter) ? null : historyDirectionFilter,
+                100);
+            historyLoaded = true;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load content package history");
+        }
+    }
+
+    private async Task ShowHistoryDetail(int id)
+    {
+        try
+        {
+            historyDetail = await HistoryService.GetDetailAsync(id);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to load content package history detail {Id}", id);
+        }
+    }
+
+    private static string StatusBadge(string status) => status switch
+    {
+        "Success" => "dx-badge-green",
+        "PartialSuccess" => "dx-badge-yellow",
+        "Failed" => "dx-badge-red",
+        "InProgress" => "dx-badge-blue",
+        _ => "dx-badge-gray"
+    };
+
+    private static string ActionBadge(string action) => action switch
+    {
+        "insert" => "dx-badge-green",
+        "update" => "dx-badge-blue",
+        "delete" => "dx-badge-red",
+        "skip" => "dx-badge-gray",
+        _ => "dx-badge-gray"
+    };
+
+    private record LocationListItem(Guid ContentPackageId, string LocationName);
+}

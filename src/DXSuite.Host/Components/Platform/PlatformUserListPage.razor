@@ -1,0 +1,80 @@
+@page "/platform/users"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject IPlatformIdentityService? IdentityService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Platform Users</h2>
+    </div>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (users.Count == 0)
+    {
+        <p class="dx-text-muted">No platform users found.</p>
+    }
+    else
+    {
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 2fr 1.5fr 80px 80px 80px;">
+                <div>Email</div>
+                <div>Display Name</div>
+                <div>Operator</div>
+                <div>Tenants</div>
+                <div></div>
+            </div>
+            @foreach (var u in users)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 2fr 1.5fr 80px 80px 80px;">
+                    <div>@u.PrimaryEmail</div>
+                    <div>@(u.DisplayName ?? "—")</div>
+                    <div>@(u.IsPlatformOperator ? "Yes" : "No")</div>
+                    <div>@u.Memberships.Count(m => m.IsActive)</div>
+                    <div>
+                        <a href="/platform/users/@u.PlatformUserId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (error != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@error</div>
+    }
+</div>
+
+@code {
+    private List<PlatformUserSummary> users = new();
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        try
+        {
+            if (IdentityService != null)
+                users = (await IdentityService.GetPlatformUsersAsync()).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

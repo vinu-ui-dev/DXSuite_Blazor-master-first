@@ -1,0 +1,608 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ILogger<DisplayEditModal> Logger
+@inject IPublicationInvalidator publicationInvalidator
+
+@if (isOpen)
+{
+    <div class="dem-overlay">
+        <div class="dem-modal" @onclick:stopPropagation="true">
+            <div class="dem-header">
+                <h4>Edit Display</h4>
+                <button class="dem-close" @onclick="Close">&times;</button>
+            </div>
+
+            <div class="dem-body">
+                <div class="dem-field">
+                    <label class="dem-label">Display</label>
+                    <span class="dem-value">@display?.DisplayName</span>
+                </div>
+
+                <div class="dem-field">
+                    <label class="dem-label">Resolution</label>
+                    <div class="dem-resolution-inputs">
+                        <input type="number" class="form-control" @bind="editWidth" min="1" placeholder="Width" />
+                        <span class="dem-resolution-x">×</span>
+                        <input type="number" class="form-control" @bind="editHeight" min="1" placeholder="Height" />
+                    </div>
+                </div>
+
+                <div class="dem-field">
+                    <label class="dem-label">Schedule Slot Mode</label>
+                    <select class="form-select" @bind="editSingleAssetsOnly">
+                        <option value="">Default (location setting)</option>
+                        <option value="true">Single asset per slot</option>
+                        <option value="false">Multiple assets per slot</option>
+                    </select>
+                    <small class="text-muted">Single asset: dragging a second asset replaces the first and the duration editor is hidden.</small>
+                </div>
+
+                <div class="dem-field" style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                    <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                        <input type="checkbox" class="dx-checkbox" @bind="editShowFadeButton" />
+                        <span>Show Fade button to users</span>
+                    </label>
+                    <label style="display:flex; align-items:center; gap:8px; margin-left:auto;">
+                        <label class="dx-toggle">
+                            <input type="checkbox" checked="@editFadeEnabled" @onchange="@(() => editFadeEnabled = !editFadeEnabled)" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span>Fade @(editFadeEnabled ? "On" : "Off")</span>
+                    </label>
+                </div>
+
+                <div class="dem-field">
+                    <label class="dem-label">Content Tools</label>
+                    <small class="text-muted d-block mb-1">Unset tools follow the location setting, then the system default (media upload only).</small>
+                    <div class="dem-tool-grid">
+                        <span>Media Upload</span>
+                        <select class="form-select form-select-sm" @bind="editEnableMediaUpload">
+                            <option value="">Default</option>
+                            <option value="true">On</option>
+                            <option value="false">Off</option>
+                        </select>
+                        <span>Web Content</span>
+                        <select class="form-select form-select-sm" @bind="editEnableWebContent">
+                            <option value="">Default</option>
+                            <option value="true">On</option>
+                            <option value="false">Off</option>
+                        </select>
+                        <span>Stream</span>
+                        <select class="form-select form-select-sm" @bind="editEnableStream">
+                            <option value="">Default</option>
+                            <option value="true">On</option>
+                            <option value="false">Off</option>
+                        </select>
+                        <span>Create Media</span>
+                        <select class="form-select form-select-sm" @bind="editEnableCreateMedia">
+                            <option value="">Default</option>
+                            <option value="true">On</option>
+                            <option value="false">Off</option>
+                        </select>
+                        @* Template Creator is not production-ready; restore this toggle when it ships *@
+                    </div>
+                </div>
+
+                <div class="dem-field">
+                    <label class="dem-label">Video Mask</label>
+                    <div class="form-check form-switch mt-1">
+                        <input class="form-check-input" type="checkbox" @bind="editUseVideoMask" id="useVideoMaskToggle" />
+                        <label class="form-check-label text-muted small" for="useVideoMaskToggle">
+                            Generate a grayscale alpha mask alongside each uploaded image. Used with Pixera to float content over video layers.
+                        </label>
+                    </div>
+                </div>
+
+                <hr />
+
+                <div class="dem-field">
+                    <label class="dem-label">Constraint</label>
+                    <select class="form-select" @bind="selectedConstraintId">
+                        <option value="0">(Default — no constraint)</option>
+                        @if (locationConstraints.Count > 0 && selectedDisplayMode != (int)Types.DisplayMode.StatusSelector)
+                        {
+                            <optgroup label="Location Constraints">
+                                @foreach (var c in locationConstraints)
+                                {
+                                    <option value="@c.ConstraintId">@c.ConstraintName (@(c.ResolutionWidth)×@(c.ResolutionHeight))</option>
+                                }
+                            </optgroup>
+                        }
+                        @if (globalConstraints.Count > 0)
+                        {
+                            <optgroup label="Asset Libraries">
+                                @foreach (var c in globalConstraints)
+                                {
+                                    <option value="@c.ConstraintId">@c.ConstraintName (@(c.ResolutionWidth)×@(c.ResolutionHeight))</option>
+                                }
+                            </optgroup>
+                        }
+                    </select>
+                </div>
+
+                @if (selectedConstraintId > 0)
+                {
+                    var selected = AllConstraints.FirstOrDefault(c => c.ConstraintId == selectedConstraintId);
+                    if (selected?.ExtendedData != null)
+                    {
+                        var overrides = ExtendedDataHelper.Parse<ConstraintExtendedData>(selected.ExtendedData);
+                        if (overrides != null && HasAnyOverride(overrides))
+                        {
+                            <div class="dem-overrides-hint">
+                                <span class="dem-overrides-title">Content Tool Overrides</span>
+                                @if (overrides.EnableMediaUpload.HasValue)
+                                {
+                                    <span class="dem-override-item @(overrides.EnableMediaUpload.Value ? "enabled" : "disabled")">Media Upload: @(overrides.EnableMediaUpload.Value ? "On" : "Off")</span>
+                                }
+                                @if (overrides.EnableWebContent.HasValue)
+                                {
+                                    <span class="dem-override-item @(overrides.EnableWebContent.Value ? "enabled" : "disabled")">Web Content: @(overrides.EnableWebContent.Value ? "On" : "Off")</span>
+                                }
+                                @if (overrides.EnableStream.HasValue)
+                                {
+                                    <span class="dem-override-item @(overrides.EnableStream.Value ? "enabled" : "disabled")">Stream: @(overrides.EnableStream.Value ? "On" : "Off")</span>
+                                }
+                                @if (overrides.EnableCreateMedia.HasValue)
+                                {
+                                    <span class="dem-override-item @(overrides.EnableCreateMedia.Value ? "enabled" : "disabled")">Create Media: @(overrides.EnableCreateMedia.Value ? "On" : "Off")</span>
+                                }
+                                @if (overrides.EnableTemplateCreator.HasValue)
+                                {
+                                    <span class="dem-override-item @(overrides.EnableTemplateCreator.Value ? "enabled" : "disabled")">Template Creator: @(overrides.EnableTemplateCreator.Value ? "On" : "Off")</span>
+                                }
+                            </div>
+                        }
+                    }
+                }
+
+                <hr />
+
+                <div class="dem-field">
+                    <label class="dem-label">Workflow</label>
+                    <select class="form-select" value="@selectedDisplayMode" @onchange="OnDisplayModeChanged">
+                        <option value="0">Schedule</option>
+                        <option value="3">Status Selector</option>
+                    </select>
+                </div>
+
+                @if (selectedDisplayMode == (int)Types.DisplayMode.StatusSelector)
+                {
+                    <div class="dem-field">
+                        <label class="dem-label">Metadata Field</label>
+                        <select class="form-select" @bind="selectedMetadataKey">
+                            <option value="">(None — one button per asset)</option>
+                            @foreach (var def in metadataDefinitions)
+                            {
+                                <option value="@def.MetadataKey">@def.DisplayName (@def.MetadataKey)</option>
+                            }
+                        </select>
+                        <small class="text-muted">Group assets by this field. Leave empty for flat mode.</small>
+                    </div>
+                }
+
+                <hr />
+
+                <h5>Video Encoding Profiles</h5>
+                <p class="text-muted small">Profiles are checked when a video is uploaded to this display's schedule. The first matching profile triggers a re-encode offer.</p>
+                <EncodingProfileEditor Profiles="_encProfiles" ProfilesChanged="@(p => _encProfiles = p)" />
+
+                @if (!string.IsNullOrEmpty(saveError))
+                {
+                    <div class="alert alert-danger mt-2">@saveError</div>
+                }
+            </div>
+
+            <div class="dem-footer">
+                <div>
+                    @if (!showDeleteConfirm)
+                    {
+                        <button class="dx-btn dx-btn-red" @onclick="() => showDeleteConfirm = true">Delete</button>
+                    }
+                    else
+                    {
+                        <span class="text-danger small fw-bold">Delete this display?</span>
+                        <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="ExecuteDeleteDisplay" disabled="@isDeleting">
+                            @(isDeleting ? "Deleting..." : "Yes, Delete")
+                        </button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => { showDeleteConfirm = false; deleteError = null; }">Cancel</button>
+                        @if (!string.IsNullOrEmpty(deleteError))
+                        {
+                            <div class="text-danger small mt-1">@deleteError</div>
+                        }
+                    }
+                </div>
+                <div class="d-flex gap-2">
+                    <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">
+                        @(isSaving ? "Saving..." : "Save")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSave { get; set; }
+
+    private bool isOpen;
+    private TblDisplay? display;
+    private int locationId;
+    private int selectedConstraintId;
+    private int selectedDisplayMode;
+    private string? selectedMetadataKey;
+    private string? resolutionText;
+    private double editWidth;
+    private double editHeight;
+    private bool isSaving;
+    private string? saveError;
+    // Tri-state selects: ""=defer to location/default, "true"=on, "false"=off
+    private string editSingleAssetsOnly = "";
+    private string editEnableMediaUpload = "";
+    private string editEnableWebContent = "";
+    private string editEnableStream = "";
+    private string editEnableCreateMedia = "";
+    private bool editUseVideoMask;
+
+    // Fade button visibility and current fade state (off by default for displays)
+    private bool editShowFadeButton;
+    private bool editFadeEnabled;
+
+    // Encoding profiles
+    private List<EncodingProfile> _encProfiles = new();
+
+    // Delete display
+    private bool showDeleteConfirm;
+    private bool isDeleting;
+    private string? deleteError;
+
+    private List<TblConstraint> locationConstraints = new();
+    private List<TblConstraint> globalConstraints = new();
+    private List<TblMetadataDefinition> metadataDefinitions = new();
+    private IEnumerable<TblConstraint> AllConstraints => locationConstraints.Concat(globalConstraints);
+
+    public async Task Open(TblDisplay d, int locId)
+    {
+        display = d;
+        locationId = locId;
+        selectedConstraintId = d.ConstraintId;
+        selectedDisplayMode = d.DisplayMode;
+        selectedMetadataKey = d.StatusSelectorMetadataKey;
+        resolutionText = d.DisplayWidth > 0 && d.DisplayHeight > 0
+            ? $"{d.DisplayWidth:0}x{d.DisplayHeight:0}"
+            : "";
+        editWidth = d.DisplayWidth;
+        editHeight = d.DisplayHeight;
+        saveError = null;
+        isSaving = false;
+        showDeleteConfirm = false;
+        isDeleting = false;
+        deleteError = null;
+        var extData = ExtendedDataHelper.Parse<DisplayExtendedData>(d.ExtendedData);
+        _encProfiles = extData?.EncodingProfiles ?? new();
+        editSingleAssetsOnly = TriStateToString(extData?.SingleAssetsOnly);
+        editEnableMediaUpload = TriStateToString(extData?.EnableMediaUpload);
+        editEnableWebContent = TriStateToString(extData?.EnableWebContent);
+        editEnableStream = TriStateToString(extData?.EnableStream);
+        editEnableCreateMedia = TriStateToString(extData?.EnableCreateMedia);
+        editUseVideoMask = d.UseVideoMask;
+        editShowFadeButton = extData?.ShowFadeButton ?? false;
+        editFadeEnabled = d.EnableFade;
+
+        await using var db = await dbFactory.CreateDbContextAsync();
+
+        locationConstraints = await db.TblConstraints
+            .AsNoTracking()
+            .Where(c => c.OwningLocationId == locId && !c.IsGlobal)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        globalConstraints = await db.TblConstraints
+            .AsNoTracking()
+            .Where(c => c.IsGlobal)
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        metadataDefinitions = await db.TblMetadataDefinitions
+            .AsNoTracking()
+            .OrderBy(m => m.DisplayName)
+            .ToListAsync();
+
+        isOpen = true;
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        if (display == null) return;
+        saveError = null;
+        isSaving = true;
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var entity = await db.TblDisplays.FirstOrDefaultAsync(d => d.DisplayId == display.DisplayId);
+            if (entity == null)
+            {
+                saveError = "Display not found.";
+                return;
+            }
+
+            if (selectedDisplayMode == (int)Types.DisplayMode.StatusSelector)
+            {
+                if (selectedConstraintId == 0)
+                {
+                    saveError = "Please select an Asset Library for Status Selector mode.";
+                    return;
+                }
+                var constraint = globalConstraints.FirstOrDefault(c => c.ConstraintId == selectedConstraintId);
+                if (constraint?.OwningLocationId == null)
+                {
+                    saveError = "Selected constraint is not linked to an Asset Library.";
+                    return;
+                }
+            }
+
+            entity.DisplayWidth = editWidth;
+            entity.DisplayHeight = editHeight;
+            entity.ConstraintId = selectedConstraintId;
+            entity.DisplayMode = selectedDisplayMode;
+            if (selectedDisplayMode == (int)Types.DisplayMode.StatusSelector)
+            {
+                var constraint = globalConstraints.FirstOrDefault(c => c.ConstraintId == selectedConstraintId);
+                entity.AssetLibraryLocationId = constraint?.OwningLocationId;
+            }
+            else
+            {
+                entity.AssetLibraryLocationId = null;
+            }
+            entity.StatusSelectorMetadataKey = selectedDisplayMode == (int)Types.DisplayMode.StatusSelector
+                ? (string.IsNullOrEmpty(selectedMetadataKey) ? null : selectedMetadataKey)
+                : null;
+            entity.UseVideoMask = editUseVideoMask;
+            entity.EnableFade = editFadeEnabled;
+            entity.ExtendedData = ExtendedDataHelper.UpdateProperty<DisplayExtendedData>(
+                entity.ExtendedData, ed =>
+                {
+                    ed.EncodingProfiles = _encProfiles.Count > 0 ? _encProfiles : null;
+                    ed.SingleAssetsOnly = ParseTriState(editSingleAssetsOnly);
+                    ed.EnableMediaUpload = ParseTriState(editEnableMediaUpload);
+                    ed.EnableWebContent = ParseTriState(editEnableWebContent);
+                    ed.EnableStream = ParseTriState(editEnableStream);
+                    ed.EnableCreateMedia = ParseTriState(editEnableCreateMedia);
+                    ed.ShowFadeButton = editShowFadeButton;
+                });
+            await db.SaveChangesAsync();
+            publicationInvalidator.DisplayChanged(entity.DisplayId);
+
+            display.DisplayWidth = editWidth;
+            display.DisplayHeight = editHeight;
+            display.EnableFade = editFadeEnabled;
+            display.ConstraintId = selectedConstraintId;
+            display.DisplayMode = selectedDisplayMode;
+            display.UseVideoMask = editUseVideoMask;
+            display.AssetLibraryLocationId = entity.AssetLibraryLocationId;
+            display.StatusSelectorMetadataKey = entity.StatusSelectorMetadataKey;
+
+            Logger.LogInformation("Display {DisplayId} updated: Constraint={ConstraintId}, DisplayMode={DisplayMode}",
+                display.DisplayId, selectedConstraintId, selectedDisplayMode);
+
+            isOpen = false;
+            await OnSave.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving display {DisplayId}", display?.DisplayId);
+            saveError = "An error occurred while saving.";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task ExecuteDeleteDisplay()
+    {
+        if (display == null) return;
+        deleteError = null;
+        isDeleting = true;
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+
+            var fpRefCount = await db.TblFloorPlanElements.CountAsync(f => f.ChildDisplayId == display.DisplayId);
+            if (fpRefCount > 0) { deleteError = $"Cannot delete: referenced in {fpRefCount} Floorplan layout element(s)."; return; }
+
+            var deviceCount = await db.TblDevices.CountAsync(d => d.DisplayId == display.DisplayId);
+            if (deviceCount > 0) { deleteError = $"Cannot delete: {deviceCount} device(s) assigned to this display."; return; }
+
+            db.TblScheduleEvents.RemoveRange(db.TblScheduleEvents.Where(se => se.DisplayId == display.DisplayId));
+            db.TblControlClientDisplays.RemoveRange(db.TblControlClientDisplays.Where(ccd => ccd.DisplayId == display.DisplayId));
+            db.TblAccessSchedules.RemoveRange(db.TblAccessSchedules.Where(a => a.DisplayId == display.DisplayId));
+
+            var entity = await db.TblDisplays.FindAsync(display.DisplayId);
+            if (entity != null) db.TblDisplays.Remove(entity);
+
+            await db.SaveChangesAsync();
+            publicationInvalidator.DisplayRemoved(display.DisplayId);
+            isOpen = false;
+            await OnSave.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            deleteError = $"Delete failed: {ex.Message}";
+            Logger.LogError(ex, "Failed to delete display {DisplayId}", display.DisplayId);
+        }
+        finally
+        {
+            isDeleting = false;
+        }
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+    }
+
+    private void OnDisplayModeChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var mode))
+        {
+            selectedDisplayMode = mode;
+
+            // When switching to StatusSelector, clear constraint if it's a location constraint
+            if (mode == (int)Types.DisplayMode.StatusSelector)
+            {
+                var isGlobal = globalConstraints.Any(c => c.ConstraintId == selectedConstraintId);
+                if (selectedConstraintId > 0 && !isGlobal)
+                    selectedConstraintId = 0;
+            }
+        }
+    }
+
+    private static bool HasAnyOverride(ConstraintExtendedData d) =>
+        d.EnableMediaUpload.HasValue || d.EnableWebContent.HasValue || d.EnableStream.HasValue ||
+        d.EnableCreateMedia.HasValue || d.EnableTemplateCreator.HasValue;
+
+    private static bool? ParseTriState(string val) =>
+        string.IsNullOrEmpty(val) ? null : bool.Parse(val);
+
+    private static string TriStateToString(bool? val) =>
+        val?.ToString().ToLower() ?? "";
+}
+
+<style>
+    .dem-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1050;
+    }
+
+    .dem-modal {
+        background: white;
+        border-radius: 8px;
+        width: 480px;
+        max-height: 90vh;
+        overflow-y: auto;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.3);
+    }
+
+    .dem-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 16px 20px;
+        background-color: #0071BC;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .dem-header h4 {
+        margin: 0;
+        font-size: 16px;
+        font-weight: 600;
+        color: #fff;
+    }
+
+    .dem-close {
+        background: none;
+        border: none;
+        font-size: 22px;
+        cursor: pointer;
+        color: #fff;
+    }
+
+    .dem-body {
+        padding: 20px;
+    }
+
+    .dem-field {
+        margin-bottom: 12px;
+    }
+
+    .dem-label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 4px;
+    }
+
+    .dem-value {
+        font-size: 14px;
+        font-weight: 500;
+    }
+
+    .dem-resolution-inputs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .dem-resolution-inputs .form-control {
+        width: 100px;
+    }
+
+    .dem-resolution-x {
+        font-size: 14px;
+        color: #888;
+    }
+
+    .dem-tool-grid {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 6px 10px;
+        align-items: center;
+        font-size: 13px;
+    }
+
+    .dem-overrides-hint {
+        margin-top: 12px;
+        padding: 10px 12px;
+        background: #f8f9fa;
+        border: 1px solid #e9ecef;
+        border-radius: 6px;
+        font-size: 12px;
+    }
+
+    .dem-overrides-title {
+        display: block;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 6px;
+    }
+
+    .dem-override-item {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 3px;
+        margin: 2px 4px 2px 0;
+        font-size: 11px;
+    }
+
+    .dem-override-item.enabled {
+        background: #d4edda;
+        color: #155724;
+    }
+
+    .dem-override-item.disabled {
+        background: #f8d7da;
+        color: #721c24;
+    }
+
+    .dem-footer {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 8px;
+        padding: 12px 20px;
+        border-top: 1px solid #eee;
+    }
+</style>

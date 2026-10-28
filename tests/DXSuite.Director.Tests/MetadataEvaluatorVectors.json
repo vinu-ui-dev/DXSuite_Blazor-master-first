@@ -1,0 +1,54 @@
+{
+  "$comment": [
+    "Vectors for MetadataEvaluator.Verdict, the per-key truth table of docs/spec/metadata-content-targeting.md section 3.4.",
+    "Hand-authored, never generated from the spec. Each case carries its section 3.4 row number, so a red case names a spec row.",
+    "Named cases are spec section 15.3's stage 1 list verbatim. The rest cover the 'any' and 'either' cells of their row.",
+    "Arrays reach the evaluator as ordinal sets, so case-variant and padded duplicates arrive unnormalized.",
+    "untaggedContent is all | none. untaggedPlayers is all | untaggedOnly | none. blankSubjectPolicy is applyKeyRules (targeting) | alwaysAbstain (scope).",
+    "UntaggedPlayers none with a blank subject under applyKeyRules is absent on purpose: stage 0 consumes it before the table."
+  ],
+  "verdict": [
+    { "row": 1,  "name": "Key_BothTagged_Intersecting_Matches",                         "asset": ["Concourse B", "Concourse C"], "subject": ["Concourse B"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_BothTagged_Disjoint_NoMatch",                             "asset": ["Concourse B"],                "subject": ["Concourse A"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+    { "row": 1,  "name": "Key_AssetMultiValue_DeviceSingleValue_IntersectionMatches",   "asset": ["Concourse B", "Concourse C"], "subject": ["Concourse C"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_UserMultiValue_AssetMultiValue_AnyOfAnyMatches",          "asset": ["Concourse B", "Concourse C"], "subject": ["Concourse A", "Concourse C"], "untaggedContent": "all", "untaggedPlayers": "all",       "blankSubjectPolicy": "alwaysAbstain", "expected": "match" },
+    { "row": 1,  "name": "Key_CaseVariantValues_Match",                                 "asset": ["Concourse B"],                "subject": ["concourse b"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_WhitespacePaddedValues_Match",                            "asset": ["  Concourse B "],             "subject": ["Concourse B"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_AssetHoldsCaseVariantDuplicates_CollapseToOneValue",      "asset": ["Green", "green", "GREEN "],   "subject": ["green"],                   "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_ValueContainingComma_NotSplit",                           "asset": ["Green,Red"],                  "subject": ["Green"],                   "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+    { "row": 1,  "name": "Key_ValueContainingComma_MatchesWholeValue",                  "asset": ["Green,Red"],                  "subject": ["green,red"],               "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_BothTagged_Intersecting_StrictPolicies_Matches",          "asset": ["Delta"],                      "subject": ["Delta"],                   "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+    { "row": 1,  "name": "Key_BothTagged_Disjoint_Scope_NoMatch",                       "asset": ["Delta"],                      "subject": ["United"],                  "untaggedContent": "none", "untaggedPlayers": "none",         "blankSubjectPolicy": "alwaysAbstain", "expected": "noMatch" },
+
+    { "row": 2,  "name": "Key_UntaggedAsset_TaggedDevice_AllPlayers_Abstains",          "asset": [],                             "subject": ["Concourse A"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "abstain" },
+    { "row": 2,  "name": "Key_UntaggedAsset_TaggedUser_AllPlayers_Abstains",            "asset": [],                             "subject": ["Concourse A"],             "untaggedContent": "all",  "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "alwaysAbstain", "expected": "abstain" },
+    { "row": 2,  "name": "Key_WhitespaceOnlyAssetValue_IsUntagged_Abstains",            "asset": ["   "],                        "subject": ["Concourse A"],             "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "abstain" },
+
+    { "row": 3,  "name": "Key_UntaggedAsset_TaggedDevice_NoPlayers_NoMatch",            "asset": [],                             "subject": ["Concourse A"],             "untaggedContent": "none", "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+    { "row": 3,  "name": "Key_UntaggedAsset_TaggedUser_NoPlayers_NoMatch",              "asset": [],                             "subject": ["Concourse A"],             "untaggedContent": "none", "untaggedPlayers": "none",         "blankSubjectPolicy": "alwaysAbstain", "expected": "noMatch" },
+    { "row": 3,  "name": "Key_EmptyStringAssetValue_IsUntagged_NoMatch",                "asset": [""],                           "subject": ["Concourse A"],             "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+
+    { "row": 4,  "name": "Key_TaggedAsset_BlankDevice_AllContent_Abstains",             "asset": ["Concourse B"],                "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "abstain" },
+    { "row": 4,  "name": "Key_TaggedAsset_BlankDevice_AllContent_ContentPolicyIgnored_Abstains", "asset": ["Concourse B"],       "subject": [],                         "untaggedContent": "none", "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "abstain" },
+
+    { "row": 5,  "name": "Key_TaggedAsset_BlankDevice_UntaggedOnly_NoMatch",            "asset": ["Concourse B"],                "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+    { "row": 5,  "name": "Key_TaggedAsset_WhitespaceOnlyDevice_UntaggedOnly_NoMatch",   "asset": ["Concourse B"],                "subject": [" "],                       "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+
+    { "row": 6,  "name": "Key_TaggedAsset_BlankUser_AlwaysAbstains",                    "asset": ["Concourse B"],                "subject": [],                          "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "alwaysAbstain", "expected": "abstain" },
+    { "row": 6,  "name": "Key_TaggedAsset_BlankUser_NothingPlayers_AlwaysAbstains",     "asset": ["Concourse B"],                "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "none",         "blankSubjectPolicy": "alwaysAbstain", "expected": "abstain" },
+
+    { "row": 7,  "name": "Key_BothUntagged_AllPlayers_AllContent_Abstains",             "asset": [],                             "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "abstain" },
+
+    { "row": 8,  "name": "Key_BothUntagged_AllPlayers_UntaggedOnly_Matches",            "asset": [],                             "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "match" },
+
+    { "row": 9,  "name": "Key_BothUntagged_NoPlayers_AllContent_NoMatch",               "asset": [],                             "subject": [],                          "untaggedContent": "none", "untaggedPlayers": "all",          "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+
+    { "row": 10, "name": "Key_BothUntagged_NoPlayers_UntaggedOnly_NoMatch",             "asset": [],                             "subject": [],                          "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "applyKeyRules", "expected": "noMatch" },
+
+    { "row": 11, "name": "Key_BothUntagged_AllPlayers_Scope_Abstains",                  "asset": [],                             "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "all",          "blankSubjectPolicy": "alwaysAbstain", "expected": "abstain" },
+    { "row": 11, "name": "Key_BothUntagged_AllPlayers_Scope_NothingPlayers_Abstains",   "asset": [],                             "subject": [],                          "untaggedContent": "all",  "untaggedPlayers": "none",         "blankSubjectPolicy": "alwaysAbstain", "expected": "abstain" },
+
+    { "row": 12, "name": "Key_BothUntagged_NoPlayers_Scope_NoMatch",                    "asset": [],                             "subject": [],                          "untaggedContent": "none", "untaggedPlayers": "all",          "blankSubjectPolicy": "alwaysAbstain", "expected": "noMatch" },
+    { "row": 12, "name": "Key_BothUntagged_NoPlayers_Scope_UntaggedOnly_NoMatch",       "asset": [],                             "subject": [],                          "untaggedContent": "none", "untaggedPlayers": "untaggedOnly", "blankSubjectPolicy": "alwaysAbstain", "expected": "noMatch" }
+  ]
+}

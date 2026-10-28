@@ -1,0 +1,1433 @@
+@using DXSuite.Design.Entities
+@using DXSuite.Design.Models
+@inject INetsuiteService NetsuiteService
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+
+<div class="lit-wrapper">
+    <h4 class="lit-section-title">Hardware</h4>
+    @if (LineItems.Count == 0 && !_hasSearch)
+    {
+        <p class="ct-empty" style="padding:24px 0; text-align:center">No items yet. Search below to add the first item.</p>
+    }
+    else
+    {
+        // Two-level grouping: CategoryGroup (outer) → Category (inner).
+        // Items without a group (CategoryGroupId = null) sort last.
+        var byGroup = LineItems
+            .GroupBy(r => r.CategoryGroupId ?? 0)
+            .OrderBy(g => g.Key == 0 ? "￿" : g.First().CategoryGroupName)
+            .ToList();
+
+        var totalCols = 21 + ColumnHeaders.Count;
+
+        <div style="overflow-x:auto">
+            <table class="lit-table">
+                <colgroup>
+                    <col style="min-width:200px; width:200px" />@* Description (sticky @ 0) *@
+                    <col style="min-width:90px; width:90px" />@* System (sticky @ 200) *@
+                    <col style="min-width:110px; width:110px" />@* Manufacturer (sticky @ 290) *@
+                    <col style="min-width:110px; width:110px" />@* Model (sticky @ 400) *@
+                    @if (_showCategoryCol)
+                    {
+                        <col style="min-width:130px; width:130px" />@* Category (sticky @ 510) *@
+                    }
+                    else
+                    {
+                        <col style="min-width:26px; width:26px" />@* Category collapsed (sticky @ 510) *@
+                    }
+                    @if (_showCatGroupCol)
+                    {
+                        <col style="min-width:120px; width:120px" />@* Cat. Group (sticky @ 640 / 536) *@
+                    }
+                    else
+                    {
+                        <col style="min-width:26px; width:26px" />@* Cat. Group collapsed (sticky @ 640 / 536) *@
+                    }
+                    <col style="min-width:55px; width:55px" />@* Qty *@
+                    <col style="min-width:75px; width:75px" />@* Cost *@
+                    <col style="min-width:60px; width:60px" />@* Disc% *@
+                    <col style="min-width:80px; width:80px" />@* Disc.Cost *@
+                    <col style="min-width:65px; width:65px" />@* Margin% *@
+                    <col style="min-width:80px; width:80px" />@* Sell *@
+                    <col style="min-width:85px; width:85px" />@* Ext.Cost *@
+                    <col style="min-width:85px; width:85px" />@* Ext.Sell *@
+                    <col style="min-width:65px; width:65px" />@* LAN Drops *@
+                    <col style="min-width:68px; width:68px" />@* Power Outlets *@
+                    <col style="min-width:65px; width:65px" />@* PoE Power *@
+                    @foreach (var _ in ColumnHeaders)
+                    {
+                        <col style="min-width:70px; width:70px" />
+                    }
+                    <col style="min-width:78px; width:78px" />@* Shipping *@
+                    <col style="min-width:84px; width:84px" />@* Loc *@
+                    <col style="min-width:74px; width:74px" />@* Actions *@
+                </colgroup>
+                <thead>
+                    <tr class="lit-header-row">
+                        <th class="lit-th lit-sticky lit-sticky-0">Description</th>
+                        <th class="lit-th lit-sticky lit-sticky-200">System</th>
+                        <th class="lit-th lit-sticky lit-sticky-290 lit-muted">Manufacturer</th>
+                        <th class="lit-th lit-sticky lit-sticky-400 lit-muted">Model</th>
+                        @if (_showCategoryCol)
+                        {
+                            <th class="lit-th lit-sticky lit-sticky-510">
+                                <div class="lit-col-hdr">
+                                    <span>Category</span>
+                                    <button class="lit-col-hide-btn" title="Hide column" @onclick="() => _showCategoryCol = false">◂</button>
+                                </div>
+                            </th>
+                        }
+                        else
+                        {
+                            <th class="lit-th lit-col-collapsed-hdr lit-sticky lit-sticky-510" title="Show Category column">
+                                <button class="lit-col-show-btn" @onclick="() => _showCategoryCol = true">Cat▸</button>
+                            </th>
+                        }
+                        @{
+                            var catGrpLeft = _showCategoryCol ? "lit-sticky-640" : "lit-sticky-536";
+                        }
+                        @if (_showCatGroupCol)
+                        {
+                            <th class="lit-th lit-sticky @catGrpLeft">
+                                <div class="lit-col-hdr">
+                                    <span>Cat. Group</span>
+                                    <button class="lit-col-hide-btn" title="Hide column" @onclick="() => _showCatGroupCol = false">◂</button>
+                                </div>
+                            </th>
+                        }
+                        else
+                        {
+                            <th class="lit-th lit-col-collapsed-hdr lit-sticky @catGrpLeft" title="Show Cat. Group column">
+                                <button class="lit-col-show-btn" @onclick="() => _showCatGroupCol = true">Grp▸</button>
+                            </th>
+                        }
+                        <th class="lit-th lit-num">Qty</th>
+                        <th class="lit-th lit-num">Cost</th>
+                        <th class="lit-th lit-num">Disc%</th>
+                        <th class="lit-th lit-num">Disc.Cost</th>
+                        <th class="lit-th lit-num">Margin%</th>
+                        <th class="lit-th lit-num">Sell</th>
+                        <th class="lit-th lit-num">Ext.Cost</th>
+                        <th class="lit-th lit-num">Ext.Sell</th>
+                        <th class="lit-th lit-num">LAN Drops</th>
+                        <th class="lit-th lit-num">Power Outlets</th>
+                        <th class="lit-th lit-num">PoE Power</th>
+                        @foreach (var col in ColumnHeaders)
+                        {
+                            var colLocal = col;
+                            <th class="lit-th lit-num lit-labor-th">
+                                @col.Name
+                                @if (ManualColumnIds.Contains(col.ColumnId))
+                                {
+                                    <button class="lit-labor-th-dismiss" title="Remove column"
+                                            @onclick="() => OnRemoveColumn.InvokeAsync(colLocal.ColumnId)"
+                                            @onclick:stopPropagation>×</button>
+                                }
+                            </th>
+                        }
+                        <th class="lit-th lit-num">Shipping</th>
+                        <th class="lit-th" style="text-align:center">Loc</th>
+                        <th class="lit-th"></th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var outerGroup in byGroup)
+                    {
+                        var outerGroupId = outerGroup.Key;
+                        @if (outerGroupId != 0)
+                        {
+                            var gd = GroupDescriptions.TryGetValue(outerGroupId, out var gDesc) ? gDesc : null;
+                            var grpActiveItems = outerGroup.Where(r => !r.IsDisabled).ToList();
+                            var grpExtCost = grpActiveItems.Sum(r => r.DiscCost * r.Qty);
+                            var grpExtSell = grpActiveItems.Sum(r => r.SellPrice * r.Qty);
+                            <tr class="lit-group-row">
+                                <td colspan="@totalCols" class="lit-group-cell">
+                                    <div class="lit-group-content">
+                                        <span class="lit-group-name">@outerGroup.First().CategoryGroupName.ToUpperInvariant()</span>
+                                        <span class="lit-group-sep"></span>
+                                        <span class="lit-group-totals">
+                                            <span class="lit-group-total-label">Cost</span>
+                                            <span class="lit-group-total-val">@M0(grpExtCost)</span>
+                                            <span class="lit-group-total-label">Sell</span>
+                                            <span class="lit-group-total-val">@M0(grpExtSell)</span>
+                                        </span>
+                                        <span class="lit-group-actions">
+                                            <input type="checkbox"
+                                                   checked="@(gd?.IsEnabled ?? false)"
+                                                   @onchange="() => OnToggleGroupDescription.InvokeAsync(outerGroupId)"
+                                                   title="Include description row before this group in NetSuite push" />
+                                            <span class="lit-group-desc-label">Desc.</span>
+                                            <button class="lit-pencil-btn"
+                                                    @onclick="() => OnEditGroupDescription.InvokeAsync(outerGroupId)"
+                                                    title="Edit group description row">✎</button>
+                                        </span>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        @foreach (var catGroup in outerGroup
+                            .GroupBy(r => r.CategoryId ?? 0)
+                            .OrderBy(g => g.Key == 0 ? "￿" : g.First().CategoryName))
+                        {
+                            var catName = catGroup.First().CategoryName;
+                            <tr class="lit-cat-row">
+                                <td colspan="@totalCols" class="lit-cat-cell">
+                                    <span class="lit-cat-label">@catName</span>
+                                </td>
+                            </tr>
+                        @foreach (var li in catGroup)
+                        {
+                            <tr class="lit-row @(li.IsDisabled ? "lit-row-disabled" : "")">
+                                <td class="lit-td lit-sticky lit-sticky-0 lit-desc" title="@li.Description">@li.Description</td>
+                                <td class="lit-td lit-sticky lit-sticky-200">
+                                    <input type="text" class="lit-input" value="@li.SystemName"
+                                           @onchange="e => OnUpdateSystem.InvokeAsync((li.LineItemId, e.Value?.ToString() ?? string.Empty))" />
+                                </td>
+                                <td class="lit-td lit-sticky lit-sticky-290 lit-muted">@li.Manufacturer</td>
+                                <td class="lit-td lit-sticky lit-sticky-400 lit-muted">@li.ModelName</td>
+
+                                @* ── Category dropdown (collapsible, sticky) ───────────────────── *@
+                                @if (_showCategoryCol)
+                                {
+                                    <td class="lit-td lit-sticky lit-sticky-510 @(IsCategoryDirty(li) ? "lit-cell-dirty" : "")">
+                                        <div class="lit-select-wrap">
+                                            <select class="lit-select" value="@(li.CategoryId?.ToString() ?? "")"
+                                                    @onchange="e => OnCategoryChanged(li, e)">
+                                                <option value="">— none —</option>
+                                                @foreach (var cat in AllCategories.OrderBy(c => c.SortOrder).ThenBy(c => c.Name))
+                                                {
+                                                    <option value="@cat.CategoryId">@cat.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+                                    </td>
+                                }
+                                else
+                                {
+                                    <td class="lit-td lit-sticky lit-sticky-510 lit-col-collapsed-cell @(IsCategoryDirty(li) ? "lit-cell-dirty" : "")"></td>
+                                }
+
+                                @* ── Cat. Group dropdown (collapsible, sticky; left offset depends on Category width) ── *@
+                                @if (_showCatGroupCol)
+                                {
+                                    <td class="lit-td lit-sticky @catGrpLeft @(IsCatGroupDirty(li) ? "lit-cell-dirty" : "")">
+                                        @if (!li.CategoryId.HasValue)
+                                        {
+                                            @* No category selected — group is meaningless; show placeholder *@
+                                            <div class="lit-select-wrap">
+                                                <select class="lit-select" disabled>
+                                                    <option value="">— none —</option>
+                                                </select>
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="lit-select-wrap">
+                                                <select class="lit-select" value="@(li.CategoryGroupId?.ToString() ?? "")"
+                                                        @onchange="e => OnGroupFilterChanged(li, e)">
+                                                    <option value="">— none —</option>
+                                                    @foreach (var grp in AllCategoryGroups.OrderBy(g => g.Name))
+                                                    {
+                                                        <option value="@grp.CategoryGroupId">@grp.Name</option>
+                                                    }
+                                                </select>
+                                            </div>
+                                        }
+                                    </td>
+                                }
+                                else
+                                {
+                                    <td class="lit-td lit-sticky @catGrpLeft lit-col-collapsed-cell @(IsCatGroupDirty(li) ? "lit-cell-dirty" : "")"></td>
+                                }
+                                <td class="lit-td lit-num">
+                                    <input type="number" class="lit-input lit-num" min="1" value="@li.Qty"
+                                           @onchange="e => OnUpdateQty.InvokeAsync((li.LineItemId, int.TryParse(e.Value?.ToString(), out var q) ? Math.Max(1, q) : li.Qty))" />
+                                </td>
+                                <td class="lit-td lit-num lit-ro">@M(li.Cost)</td>
+                                <td class="lit-td lit-num">
+                                    <input type="number" class="lit-input lit-num" min="0" max="100" step="0.5"
+                                           value="@((li.DiscountPct * 100).ToString("F1"))"
+                                           @onchange="e => DiscChanged(li, e.Value?.ToString())" />
+                                </td>
+                                <td class="lit-td lit-num lit-ro">@M(li.DiscCost)</td>
+                                <td class="lit-td lit-num">
+                                    <input type="number" class="lit-input lit-num" min="0" max="99" step="0.5"
+                                           value="@((li.MarginPct * 100).ToString("F1"))"
+                                           @onchange="e => MarginChanged(li, e.Value?.ToString())" />
+                                </td>
+                                <td class="lit-td lit-num">
+                                    <input type="number" class="lit-input lit-num" min="0" step="0.01"
+                                           value="@li.SellPrice.ToString("F2")"
+                                           @onchange="e => SellChanged(li, e.Value?.ToString())" />
+                                </td>
+                                <td class="lit-td lit-num lit-ro">@M(li.DiscCost * li.Qty)</td>
+                                <td class="lit-td lit-num lit-ro">@M(li.SellPrice * li.Qty)</td>
+
+                                @* Attribute cells: user edits per-unit; cell displays total (per-unit × qty).
+                                   Click the cell to reveal the per-unit input; blur commits and returns to total display. *@
+                                @{ var editLan   = _editingAttr == (li.LineItemId, LanDropsAttributeId); }
+                                @{ var lanPerUnit = GetAttrDecimal(li, LanDropsAttributeId); }
+                                <td class="lit-td lit-num @(IsAttrDirty(li, LanDropsAttributeId) ? "lit-cell-dirty" : "")"
+                                    @onclick="() => StartEditAttr(li.LineItemId, LanDropsAttributeId)">
+                                    @if (editLan)
+                                    {
+                                        <input type="number" step="any" min="0" class="lit-input lit-num" autofocus
+                                               value="@(lanPerUnit > 0 ? lanPerUnit.ToString("G") : string.Empty)"
+                                               @onchange="e => AttrEditLan(li, e)"
+                                               @onblur="() => _editingAttr = null" />
+                                    }
+                                    else
+                                    {
+                                        <span class="lit-attr-total">@(lanPerUnit > 0 ? (lanPerUnit * li.Qty).ToString("G") : "")</span>
+                                    }
+                                </td>
+
+                                @{ var editPwr   = _editingAttr == (li.LineItemId, PowerOutletsAttributeId); }
+                                @{ var pwrPerUnit = GetAttrDecimal(li, PowerOutletsAttributeId); }
+                                <td class="lit-td lit-num @(IsAttrDirty(li, PowerOutletsAttributeId) ? "lit-cell-dirty" : "")"
+                                    @onclick="() => StartEditAttr(li.LineItemId, PowerOutletsAttributeId)">
+                                    @if (editPwr)
+                                    {
+                                        <input type="number" step="any" min="0" class="lit-input lit-num" autofocus
+                                               value="@(pwrPerUnit > 0 ? pwrPerUnit.ToString("G") : string.Empty)"
+                                               @onchange="e => AttrEditPower(li, e)"
+                                               @onblur="() => _editingAttr = null" />
+                                    }
+                                    else
+                                    {
+                                        <span class="lit-attr-total">@(pwrPerUnit > 0 ? (pwrPerUnit * li.Qty).ToString("G") : "")</span>
+                                    }
+                                </td>
+
+                                @{ var editPoe   = _editingAttr == (li.LineItemId, PoePowerAttributeId); }
+                                @{ var poePerUnit = GetAttrDecimal(li, PoePowerAttributeId); }
+                                <td class="lit-td lit-num @(IsAttrDirty(li, PoePowerAttributeId) ? "lit-cell-dirty" : "")"
+                                    @onclick="() => StartEditAttr(li.LineItemId, PoePowerAttributeId)">
+                                    @if (editPoe)
+                                    {
+                                        <input type="number" step="any" min="0" class="lit-input lit-num" autofocus
+                                               value="@(poePerUnit > 0 ? poePerUnit.ToString("G") : string.Empty)"
+                                               @onchange="e => AttrEditPoe(li, e)"
+                                               @onblur="() => _editingAttr = null" />
+                                    }
+                                    else
+                                    {
+                                        <span class="lit-attr-total">@(poePerUnit > 0 ? (poePerUnit * li.Qty).ToString("G") : "")</span>
+                                    }
+                                </td>
+
+                                @* Column labor cells: user edits and sees TOTAL hours (per-unit × qty).
+                                   Saving divides by qty to store the per-unit value on the catalog item. *@
+                                @foreach (var col in ColumnHeaders)
+                                {
+                                    var colId = col.ColumnId;
+                                    var totalHrs = GetLaborTotal(li, colId);
+                                    <td class="lit-td lit-num @(IsLaborDirty(li, colId) ? "lit-cell-dirty" : "")">
+                                        <input type="number" step="0.25" min="0" class="lit-input lit-num"
+                                               value="@(totalHrs > 0 ? totalHrs.ToString("G") : string.Empty)"
+                                               placeholder="—"
+                                               @onchange="e => OnLaborEdit(li.LineItemId, colId, e.Value?.ToString())" />
+                                    </td>
+                                }
+
+                                <td class="lit-td lit-num @(IsAttrDirty(li, ShippingAttributeId) ? "lit-cell-dirty" : "")">
+                                    <div style="display:flex; align-items:center; gap:2px">
+                                        <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">$</span>
+                                        <input type="number" step="0.01" min="0" class="lit-input lit-num" style="flex:1"
+                                               value="@GetAttrValue(li, ShippingAttributeId)"
+                                               @onchange="e => AttrEditShipping(li, e)" />
+                                    </div>
+                                </td>
+                                <td class="lit-td" style="text-align:center; position:relative">
+                                    <LocationPickerPopover
+                                        CurrentLocationId="@li.LocationId"
+                                        CurrentLocationName="@li.LocationName"
+                                        DefaultLocationId="@WorksheetDefaultLocationId"
+                                        DefaultLocationName="@WorksheetDefaultLocationName"
+                                        Locations="CachedLocations"
+                                        OnSelect="args => OnUpdateLocation.InvokeAsync((li.LineItemId, args.Id, args.Name))" />
+                                </td>
+                                <td class="lit-td" style="text-align:center">
+                                    <div style="display:flex; gap:3px; justify-content:center; align-items:center">
+                                        @if (IsRowDirty(li) && li.CatalogItemId.HasValue)
+                                        {
+                                            <button class="lit-btn-save" title="Save changes to catalog item"
+                                                    @onclick="() => OpenSaveModal(li)">💾</button>
+                                        }
+                                        <button class="lit-btn-toggle @(li.IsDisabled ? "lit-btn-toggle-off" : "lit-btn-toggle-on")"
+                                                title="@(li.IsDisabled ? "Re-enable row" : "Disable row")"
+                                                @onclick="() => OnToggleDisabled.InvokeAsync(li.LineItemId)">
+                                            @(li.IsDisabled ? "On" : "Off")
+                                        </button>
+                                        <button class="lit-btn-delete"
+                                                title="Remove item"
+                                                @onclick="() => OnRemoveItem.InvokeAsync(li.LineItemId)">🗑</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        } @* end catGroup loop *@
+                    }
+                </tbody>
+            </table>
+        </div>
+    }
+</div>
+
+@* Search strip rendered outside the scrollable table so the dropdown is never clipped *@
+<div class="lit-add-strip">
+    <div class="lit-add-input-wrap">
+        <input type="text"
+               class="lit-add-input"
+               placeholder="+ Search to add item…"
+               value="@_addSearch"
+               @oninput="OnAddSearchInput"
+               @onblur="CloseAddDropdown"
+               autocomplete="off" />
+        @if (_addSearching)
+        {
+            <span class="lit-add-spinner">⏳</span>
+        }
+        @if (_addError is not null)
+        {
+            <span class="lit-add-error">@_addError</span>
+        }
+        @if (_catalogResults is { Count: > 0 } || _addResults is { Count: > 0 })
+        {
+            <div class="lit-add-dropdown" @onmousedown:preventDefault>
+                @if (_catalogResults is { Count: > 0 })
+                {
+                    <div class="lit-add-section-header">Items</div>
+                    @foreach (var item in _catalogResults)
+                    {
+                        var ci = item;
+                        <div class="lit-add-result" @onclick="() => SelectCatalogItem(ci)">
+                            <span class="lit-add-result-main">@ci.ModelName</span>
+                            <span class="lit-add-result-sub">@ci.Manufacturer — @ci.Description</span>
+                            <span class="lit-add-result-price">@M(ci.Cost)</span>
+                        </div>
+                    }
+                }
+                @if (_addResults is { Count: > 0 })
+                {
+                    <div class="lit-add-section-header">Import from NetSuite</div>
+                    @foreach (var result in _addResults)
+                    {
+                        var r = result;
+                        <div class="lit-add-result" @onclick="() => SelectAddItem(r)">
+                            <span class="lit-add-result-main">@r.ItemId</span>
+                            <span class="lit-add-result-sub">@r.Manufacturer — @r.PurchaseDescription</span>
+                            <span class="lit-add-result-price">@M(r.Cost)</span>
+                        </div>
+                    }
+                }
+                <div class="lit-add-new-wrap">
+                    <button class="lit-add-new-btn" @onclick="() => _showCreateModal = true">
+                        + Create New NetSuite Item
+                    </button>
+                </div>
+            </div>
+        }
+        else if (_addResults is { Count: 0 } && _catalogResults is { Count: 0 } && !_addSearching && _addSearch.Length >= 2)
+        {
+            <div class="lit-add-dropdown" @onmousedown:preventDefault>
+                <div class="lit-add-result lit-add-result-empty">No items found for "@_addSearch"</div>
+                <div class="lit-add-new-wrap">
+                    <button class="lit-add-new-btn" @onclick="() => _showCreateModal = true">
+                        + Create New NetSuite Item
+                    </button>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@if (_showCreateModal)
+{
+    <CreateNetsuiteItemModal OnCreated="OnItemCreatedFromWorksheet"
+                             OnClose="() => _showCreateModal = false" />
+}
+
+@* Save-to-item confirmation modal *@
+@if (_saveModalRow is not null)
+{
+    <div class="dx-modal-overlay" @onclick="() => _saveModalRow = null">
+        <div class="dx-modal" style="min-width:320px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>Save Changes to Catalog Item</span>
+                <button class="dx-modal-close" @onclick="() => _saveModalRow = null">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p style="font-size:.85rem; color:var(--text-muted,#6c757d); margin-bottom:12px">
+                    Select what to update on <strong>@_saveModalRow.Description</strong>:
+                </p>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px">
+                    <input type="checkbox" @bind="_saveModalLabor" />
+                    Labor hours
+                </label>
+                <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px">
+                    <input type="checkbox" @bind="_saveModalAttrs" />
+                    Attribute values
+                </label>
+                @if (_saveModalRow is not null && IsCategoryDirty(_saveModalRow))
+                {
+                    <label style="display:flex; align-items:center; gap:8px; margin-bottom:8px">
+                        <input type="checkbox" @bind="_saveModalCategory" />
+                        Category — update catalog item to <strong>@(_saveModalRow.CategoryName is { Length: > 0 } n ? n : "none")</strong>
+                    </label>
+                }
+                @if (_saveModalRow is not null && IsCatGroupDirty(_saveModalRow))
+                {
+                    var grpName = _saveModalRow.CategoryGroupId.HasValue
+                        ? (AllCategoryGroups.FirstOrDefault(g => g.CategoryGroupId == _saveModalRow.CategoryGroupId.Value)?.Name ?? "?")
+                        : "none";
+                    <label style="display:flex; align-items:center; gap:8px">
+                        <input type="checkbox" @bind="_saveModalCatGroup" />
+                        Category Group — update category <strong>@_saveModalRow.CategoryName</strong> to group <strong>@grpName</strong>
+                    </label>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" disabled="@_saveModalSaving"
+                        @onclick="() => _saveModalRow = null">Cancel</button>
+                <button class="dx-btn dx-btn-blue"
+                        disabled="@(!_saveModalLabor && !_saveModalAttrs && !_saveModalCategory && !_saveModalCatGroup || _saveModalSaving)"
+                        @onclick="ConfirmSave">
+                    @if (_saveModalSaving)
+                    {
+                        <span class="lit-save-spinner"></span>
+                        <span>Saving…</span>
+                    }
+                    else
+                    {
+                        <span>Save to Item</span>
+                    }
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public List<WorksheetEditor.LineItemRow> LineItems { get; set; } = [];
+    [Parameter] public List<TblDesignLaborColumn> ColumnHeaders { get; set; } = [];
+    [Parameter] public HashSet<int> ManualColumnIds { get; set; } = [];
+    [Parameter] public EventCallback<int> OnRemoveColumn { get; set; }
+    // Key: lineItemId → (columnId → per-unit hours)
+    [Parameter] public Dictionary<int, Dictionary<int, decimal>> LaborHoursByLineItem { get; set; } = [];
+    [Parameter] public int ShippingAttributeId { get; set; }
+    [Parameter] public int LanDropsAttributeId { get; set; }
+    [Parameter] public int PowerOutletsAttributeId { get; set; }
+    [Parameter] public int PoePowerAttributeId { get; set; }
+    [Parameter] public EventCallback<(int LineItemId, int Qty)> OnUpdateQty { get; set; }
+    [Parameter] public EventCallback<(int LineItemId, decimal Disc, decimal Margin)> OnUpdateDiscountMargin { get; set; }
+    [Parameter] public EventCallback<(int LineItemId, string System)> OnUpdateSystem { get; set; }
+    [Parameter] public EventCallback<(int LineItemId, string Val)> OnUpdateShipping { get; set; }
+    [Parameter] public EventCallback<int> OnRemoveItem { get; set; }
+    [Parameter] public EventCallback<NetsuiteItem> OnAddItem { get; set; }
+    [Parameter] public EventCallback<TblDesignCatalogItem> OnAddCatalogItem { get; set; }
+    [Parameter] public EventCallback<int> OnToggleDisabled { get; set; }
+    [Parameter] public EventCallback<(int LineItemId, bool SaveLabor, bool SaveAttrs,
+        Dictionary<int, decimal> ColumnHoursPerUnit, Dictionary<int, string> AttrValues)> OnSaveToItem { get; set; }
+    /// <summary>
+    /// Fires on blur after every column hour cell edit. Carries merged per-unit hours
+    /// (original catalog values overridden by current edits) so WorksheetEditor can
+    /// update itemColumnLookup and recalculate labor immediately without waiting for
+    /// the save-to-catalog modal.
+    /// </summary>
+    [Parameter] public EventCallback<(int LineItemId, int CatalogItemId, Dictionary<int, decimal> PerUnitHours)> OnColumnHoursEdited { get; set; }
+    /// <summary>Category Group description rows, keyed by CategoryGroupId.</summary>
+    [Parameter] public Dictionary<int, TblDesignWorksheetGroupDescription> GroupDescriptions { get; set; } = [];
+    /// <summary>Fired when the user toggles the description-row checkbox on a group header.</summary>
+    [Parameter] public EventCallback<int> OnToggleGroupDescription { get; set; }
+    /// <summary>Fired when the user clicks the pencil on a group header to edit its description row.</summary>
+    [Parameter] public EventCallback<int> OnEditGroupDescription { get; set; }
+    /// <summary>Fired when the user picks a location from the per-row location picker.</summary>
+    [Parameter] public EventCallback<(int LineItemId, string? LocationId, string? LocationName)> OnUpdateLocation { get; set; }
+    /// <summary>Worksheet-level default location ID — shown in the location picker as the "Use Default" option.</summary>
+    [Parameter] public string? WorksheetDefaultLocationId { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationName { get; set; }
+    /// <summary>All available NS locations — passed from WorksheetEditor's cached list.</summary>
+    [Parameter] public List<NetsuiteLocation>? CachedLocations { get; set; }
+    /// <summary>All customer categories; used to populate the Category dropdown per row.</summary>
+    [Parameter] public List<TblDesignCategory> AllCategories { get; set; } = [];
+    /// <summary>All customer category groups; used to populate the Cat. Group dropdown per row.</summary>
+    [Parameter] public List<TblDesignCategoryGroup> AllCategoryGroups { get; set; } = [];
+    /// <summary>Fired when the user selects a category from the per-row dropdown.</summary>
+    [Parameter] public EventCallback<(int LineItemId, int? CategoryId)> OnUpdateCategory { get; set; }
+    /// <summary>Fired when the user independently changes the Cat.Group dropdown (without changing the category).</summary>
+    [Parameter] public EventCallback<(int LineItemId, int? GroupId)> OnUpdateCategoryGroup { get; set; }
+    /// <summary>Fired by Save modal when "Category" is checked — persists category to the catalog item entity.</summary>
+    [Parameter] public EventCallback<(int LineItemId, int? CategoryId)> OnSaveCategoryToItem { get; set; }
+    /// <summary>Fired by Save modal when "Category Group" is checked — persists group to the category entity.</summary>
+    [Parameter] public EventCallback<(int LineItemId, int? GroupId)> OnSaveCatGroupToCategory { get; set; }
+
+    // ── Column show/hide state ─────────────────────────────────────────────────
+    private bool _showCategoryCol = true;
+    private bool _showCatGroupCol = true;
+
+    private void OnCategoryChanged(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        int? catId = int.TryParse(raw, out var id) ? id : (int?)null;
+        OnUpdateCategory.InvokeAsync((li.LineItemId, catId));
+    }
+
+    private void OnGroupFilterChanged(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+    {
+        var raw = e.Value?.ToString();
+        int? groupId = int.TryParse(raw, out var id) ? id : (int?)null;
+        OnUpdateCategoryGroup.InvokeAsync((li.LineItemId, groupId));
+    }
+
+    // ── Category/Cat.Group dirty helpers ─────────────────────────────────────
+
+    // Category is dirty when the user has chosen a different category than what the catalog item has in DB.
+    private bool IsCategoryDirty(WorksheetEditor.LineItemRow li)
+        => li.CategoryId != li.OriginalCategoryId;
+
+    // Cat.Group is dirty when the group shown in the row differs from the group the current category entity has.
+    private bool IsCatGroupDirty(WorksheetEditor.LineItemRow li)
+    {
+        if (!li.CategoryId.HasValue) return false;
+        var cat = AllCategories.FirstOrDefault(c => c.CategoryId == li.CategoryId.Value);
+        return li.CategoryGroupId != cat?.CategoryGroupId;
+    }
+
+    // ── Create-new-item modal state ───────────────────────────────────────────
+    private bool _showCreateModal;
+
+    private async Task OnItemCreatedFromWorksheet(CreatedItemInfo info)
+    {
+        _showCreateModal = false;
+        _addSearch = "";
+        _addResults = null;
+        _catalogResults = null;
+
+        // Load the full catalog entity (with includes) so WorksheetEditor can build a line item row.
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var catalogItem = await db.TblDesignCatalogItems
+            .Include(i => i.Category)
+            .Include(i => i.ColumnOverrides)
+            .Include(i => i.AttributeValues)
+            .FirstOrDefaultAsync(i => i.ItemId == info.CatalogItemId);
+
+        if (catalogItem is not null)
+            await OnAddCatalogItem.InvokeAsync(catalogItem);
+    }
+
+    // ── Inline search state ────────────────────────────────────────────────────
+    private string _addSearch = "";
+    private List<NetsuiteItem>? _addResults;
+    private List<TblDesignCatalogItem>? _catalogResults;
+    private bool _addSearching;
+    private string? _addError;
+    private CancellationTokenSource? _addCts;
+    private bool _hasSearch => _addSearch.Length >= 2;
+
+    // ── Per-row pending edit state (not yet saved to catalog) ─────────────────
+    private Dictionary<int, Dictionary<int, string>> _attrEdits = [];   // lineItemId → attrId → per-unit value string
+    private Dictionary<int, Dictionary<int, decimal>> _laborEdits = [];  // lineItemId → ltId → TOTAL hours (not per-unit)
+
+    // ── Attribute display/edit focus tracking ──────────────────────────────────
+    // Attr cells show total (per-unit × qty) until clicked; click reveals per-unit input.
+    private (int LineItemId, int AttrId)? _editingAttr;
+
+    private void StartEditAttr(int lineItemId, int attrId)
+    {
+        _editingAttr = (lineItemId, attrId);
+    }
+
+    // ── Save modal state ───────────────────────────────────────────────────────
+    private WorksheetEditor.LineItemRow? _saveModalRow;
+    private bool _saveModalLabor = true;
+    private bool _saveModalAttrs = true;
+    private bool _saveModalCategory = false;
+    private bool _saveModalCatGroup = false;
+    private bool _saveModalSaving = false;
+
+    private async Task OnAddSearchInput(ChangeEventArgs e)
+    {
+        _addSearch = e.Value?.ToString() ?? "";
+        _addResults = null;
+        _catalogResults = null;
+        _addError = null;
+
+        _addCts?.Cancel();
+        _addCts?.Dispose();
+        _addCts = new CancellationTokenSource();
+        var cts = _addCts;
+
+        if (_addSearch.Length < 2)
+        {
+            _addSearching = false;
+            return;
+        }
+
+        _addSearching = true;
+        try
+        {
+            // 300 ms debounce so we don't fire on every keystroke
+            await Task.Delay(300, cts.Token);
+
+            // Parallel: search both catalog items and NetSuite
+            var term = _addSearch;
+            var catalogTask = SearchCatalogAsync(term, cts.Token);
+            var netsuiteTask = NetsuiteService.SearchItemsAsync(term, cts.Token);
+            await Task.WhenAll(catalogTask, netsuiteTask);
+            _catalogResults = catalogTask.Result;
+            _addResults = netsuiteTask.Result;
+        }
+        catch (OperationCanceledException)
+        {
+            // superseded by a newer keystroke — ignore
+        }
+        catch (Exception ex)
+        {
+            _addError = $"Search failed: {ex.Message}";
+        }
+        finally
+        {
+            _addSearching = false;
+        }
+    }
+
+    private async Task<List<TblDesignCatalogItem>> SearchCatalogAsync(string term, CancellationToken ct)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        return await db.TblDesignCatalogItems
+            .Include(i => i.Category)
+            .Include(i => i.ColumnOverrides)
+            .Include(i => i.AttributeValues)
+            .Where(i => i.CustomerId == Tenant.CustomerCode &&
+                (i.Description!.Contains(term) || i.ModelName!.Contains(term) || i.Manufacturer!.Contains(term)))
+            .Take(20)
+            .ToListAsync(ct);
+    }
+
+    private async Task SelectAddItem(NetsuiteItem item)
+    {
+        _addSearch = "";
+        _addResults = null;
+        _catalogResults = null;
+        await OnAddItem.InvokeAsync(item);
+    }
+
+    private async Task SelectCatalogItem(TblDesignCatalogItem item)
+    {
+        _addSearch = "";
+        _addResults = null;
+        _catalogResults = null;
+        await OnAddCatalogItem.InvokeAsync(item);
+    }
+
+    // Clears the dropdown when the search input loses focus (click-outside behavior).
+    // @onmousedown:preventDefault on the dropdown divs ensures item clicks fire before blur.
+    private void CloseAddDropdown()
+    {
+        _addSearch = "";
+        _addResults = null;
+        _catalogResults = null;
+    }
+
+    private void DiscChanged(WorksheetEditor.LineItemRow li, string? raw)
+    {
+        if (!decimal.TryParse(raw, out var pct)) return;
+        var newDisc = Math.Clamp(pct, 0, 100) / 100m;
+        var newDiscCost = li.Cost * (1 - newDisc);
+        // Preserve the current sell price — back-calculate what margin achieves it at the new disc cost.
+        var newMargin = newDiscCost > 0 && li.SellPrice > newDiscCost
+            ? Math.Clamp((li.SellPrice - newDiscCost) / li.SellPrice, 0, 0.99m)
+            : li.MarginPct;
+        OnUpdateDiscountMargin.InvokeAsync((li.LineItemId, newDisc, newMargin));
+    }
+
+    private void MarginChanged(WorksheetEditor.LineItemRow li, string? raw)
+    {
+        if (decimal.TryParse(raw, out var pct))
+            OnUpdateDiscountMargin.InvokeAsync((li.LineItemId, li.DiscountPct, Math.Clamp(pct, 0, 99) / 100m));
+    }
+
+    private void SellChanged(WorksheetEditor.LineItemRow li, string? raw)
+    {
+        if (!decimal.TryParse(raw, out var sell) || sell < 0) return;
+        // Back-calculate the margin that produces this sell price at the current disc cost.
+        var newMargin = li.DiscCost > 0 && sell > li.DiscCost
+            ? Math.Clamp((sell - li.DiscCost) / sell, 0, 0.99m)
+            : li.MarginPct;
+        OnUpdateDiscountMargin.InvokeAsync((li.LineItemId, li.DiscountPct, newMargin));
+    }
+
+    // ── Attribute edit helpers ────────────────────────────────────────────────
+
+    private string GetAttrValue(WorksheetEditor.LineItemRow li, int attrId)
+    {
+        if (attrId == 0) return "";
+        if (_attrEdits.TryGetValue(li.LineItemId, out var edits) && edits.TryGetValue(attrId, out var v)) return v;
+        return li.AttributeValues.TryGetValue(attrId, out var ov) ? ov : "";
+    }
+
+    // Returns the per-unit decimal for an attribute (for both display math and dirty comparison).
+    private decimal GetAttrDecimal(WorksheetEditor.LineItemRow li, int attrId)
+        => decimal.TryParse(GetAttrValue(li, attrId), out var d) ? d : 0m;
+
+    private bool IsAttrDirty(WorksheetEditor.LineItemRow li, int attrId)
+    {
+        if (attrId == 0) return false;
+        var current = GetAttrValue(li, attrId);
+        var original = li.OriginalAttrValues.TryGetValue(attrId, out var ov) ? ov : "";
+        return current != original;
+    }
+
+    private void OnAttrEdit(int lineItemId, int attrId, string val)
+    {
+        if (attrId == 0) return;
+        if (!_attrEdits.ContainsKey(lineItemId)) _attrEdits[lineItemId] = [];
+        _attrEdits[lineItemId][attrId] = val;
+    }
+
+    // Named wrappers so Razor markup can call them without inline lambda closure issues
+    private void AttrEditLan(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+        => OnAttrEdit(li.LineItemId, LanDropsAttributeId, e.Value?.ToString() ?? string.Empty);
+    private void AttrEditPower(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+        => OnAttrEdit(li.LineItemId, PowerOutletsAttributeId, e.Value?.ToString() ?? string.Empty);
+    private void AttrEditPoe(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+        => OnAttrEdit(li.LineItemId, PoePowerAttributeId, e.Value?.ToString() ?? string.Empty);
+    private void AttrEditShipping(WorksheetEditor.LineItemRow li, ChangeEventArgs e)
+        => OnAttrEdit(li.LineItemId, ShippingAttributeId, e.Value?.ToString() ?? string.Empty);
+
+    // ── Labor edit helpers ────────────────────────────────────────────────────
+
+    // Returns TOTAL hours for display (per-unit × qty, or the user-entered total override).
+    private decimal GetLaborTotal(WorksheetEditor.LineItemRow li, int ltId)
+    {
+        // _laborEdits stores the total hours the user typed directly
+        if (_laborEdits.TryGetValue(li.LineItemId, out var edits) && edits.TryGetValue(ltId, out var v)) return v;
+        // LaborHoursByLineItem stores per-unit; multiply by qty to get the total to display
+        var perUnit = LaborHoursByLineItem.TryGetValue(li.LineItemId, out var h) && h.TryGetValue(ltId, out var d) ? d : 0;
+        return perUnit * li.Qty;
+    }
+
+    private bool IsLaborDirty(WorksheetEditor.LineItemRow li, int colId)
+    {
+        if (!_laborEdits.TryGetValue(li.LineItemId, out var edits) || !edits.TryGetValue(colId, out var v)) return false;
+        // Compare user-entered total to original total (per-unit × qty)
+        var originalTotal = (li.OriginalColumnHoursPerUnit.TryGetValue(colId, out var o) ? o : 0) * li.Qty;
+        return v != originalTotal;
+    }
+
+    private void OnLaborEdit(int lineItemId, int colId, string? raw)
+    {
+        if (!_laborEdits.ContainsKey(lineItemId)) _laborEdits[lineItemId] = [];
+        // Store total hours as entered; saving will divide by qty to get per-unit for the catalog item
+        _laborEdits[lineItemId][colId] = decimal.TryParse(raw, out var d) ? Math.Max(0, d) : 0;
+
+        // Propagate the edited hours to WorksheetEditor immediately so the labor
+        // calculation updates on blur without requiring the save-to-catalog modal.
+        var li = LineItems.FirstOrDefault(r => r.LineItemId == lineItemId);
+        if (li?.CatalogItemId is null) return;
+        var qty = Math.Max(1, li.Qty);
+
+        // Build merged per-unit hours: start from the current catalog defaults for this item,
+        // then apply all pending edits (total → per-unit by dividing by qty).
+        var perUnit = new Dictionary<int, decimal>(li.OriginalColumnHoursPerUnit);
+        foreach (var (col, totalHrs) in _laborEdits[lineItemId])
+            perUnit[col] = totalHrs / qty;
+
+        _ = OnColumnHoursEdited.InvokeAsync((lineItemId, li.CatalogItemId.Value, perUnit));
+    }
+
+    // ── Row dirty state ───────────────────────────────────────────────────────
+
+    private bool IsRowDirty(WorksheetEditor.LineItemRow li)
+    {
+        if (_attrEdits.TryGetValue(li.LineItemId, out var ae) && ae.Any(kv => IsAttrDirty(li, kv.Key))) return true;
+        if (_laborEdits.TryGetValue(li.LineItemId, out var le) && le.Any(kv => IsLaborDirty(li, kv.Key))) return true;
+        if (IsCategoryDirty(li) || IsCatGroupDirty(li)) return true;
+        return false;
+    }
+
+    // ── Save modal ────────────────────────────────────────────────────────────
+
+    private void OpenSaveModal(WorksheetEditor.LineItemRow li)
+    {
+        _saveModalRow = li;
+        // Pre-check whichever sections have dirty changes
+        _saveModalLabor    = _laborEdits.ContainsKey(li.LineItemId) && _laborEdits[li.LineItemId].Any(kv => IsLaborDirty(li, kv.Key));
+        _saveModalAttrs    = _attrEdits.ContainsKey(li.LineItemId) && _attrEdits[li.LineItemId].Any(kv => IsAttrDirty(li, kv.Key));
+        _saveModalCategory = IsCategoryDirty(li);
+        _saveModalCatGroup = IsCatGroupDirty(li);
+    }
+
+    private async Task ConfirmSave()
+    {
+        if (_saveModalRow is null) return;
+        var li = _saveModalRow;
+        var qty = Math.Max(1, li.Qty);
+        _saveModalSaving = true;
+
+        var columnHoursToSave = new Dictionary<int, decimal>();
+        if (_saveModalLabor)
+        {
+            // Start from original per-unit column hours
+            foreach (var (colId, hrs) in li.OriginalColumnHoursPerUnit)
+                columnHoursToSave[colId] = hrs;
+            // Apply edits: _laborEdits holds total hours; divide by qty to store per-unit on the catalog item
+            if (_laborEdits.TryGetValue(li.LineItemId, out var le))
+                foreach (var (colId, totalHrs) in le)
+                    columnHoursToSave[colId] = totalHrs / qty;
+        }
+
+        var attrsToSave = new Dictionary<int, string>();
+        if (_saveModalAttrs)
+        {
+            foreach (var (attrId, val) in li.AttributeValues)
+                attrsToSave[attrId] = val;
+            if (_attrEdits.TryGetValue(li.LineItemId, out var ae))
+                foreach (var (attrId, val) in ae)
+                    attrsToSave[attrId] = val;
+        }
+
+        await OnSaveToItem.InvokeAsync((li.LineItemId, _saveModalLabor, _saveModalAttrs, columnHoursToSave, attrsToSave));
+        _laborEdits.Remove(li.LineItemId);
+        _attrEdits.Remove(li.LineItemId);
+
+        // Persist category / category-group to catalog if checked
+        if (_saveModalCategory)
+            await OnSaveCategoryToItem.InvokeAsync((li.LineItemId, li.CategoryId));
+        if (_saveModalCatGroup)
+            await OnSaveCatGroupToCategory.InvokeAsync((li.LineItemId, li.CategoryGroupId));
+
+        _saveModalRow = null;
+        _saveModalSaving = false;
+    }
+
+    private static string M(decimal v) => "$" + v.ToString("N2");
+    private static string M0(decimal v) => "$" + v.ToString("N0");
+}
+
+<style>
+    .lit-wrapper { margin-bottom: 8px; }
+
+    .lit-section-title {
+        font-size: .95rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-muted, #6c757d);
+        margin: 0 0 6px;
+    }
+
+    .lit-table {
+        /* border-separate + border-spacing:0 is required for sticky columns to render correctly.
+           border-collapse:collapse causes shared-border recalculation that makes sticky cells shrink. */
+        border-collapse: separate;
+        border-spacing: 0;
+        font-size: .78rem;
+        width: max-content;
+        min-width: 100%;
+        border-left: 1px solid var(--border, #dee2e6);
+        border-top: 1px solid var(--border, #dee2e6);
+    }
+
+    .lit-th {
+        background: var(--surface, #f8f9fa);
+        border-right: 1px solid var(--border, #dee2e6);
+        border-bottom: 1px solid var(--border, #dee2e6);
+        padding: 4px 6px;
+        font-weight: 600;
+        white-space: nowrap;
+        position: sticky;
+        top: 0;
+        z-index: 2;
+    }
+
+    .lit-td {
+        border-right: 1px solid var(--border, #dee2e6);
+        border-bottom: 1px solid var(--border, #dee2e6);
+        padding: 2px 4px;
+        vertical-align: middle;
+        white-space: nowrap;
+    }
+
+    .lit-sticky {
+        position: sticky;
+        z-index: 3;
+        background: #fff;
+    }
+
+    .lit-header-row .lit-sticky {
+        z-index: 4;
+    }
+
+    .lit-sticky-0   { left: 0; }
+    .lit-sticky-200 { left: 200px; }
+    .lit-sticky-290 { left: 290px; }
+    .lit-sticky-400 { left: 400px; }
+    .lit-sticky-510 { left: 510px; }
+    .lit-sticky-536 { left: 536px; }
+    .lit-sticky-640 { left: 640px; }
+
+    .lit-num { text-align: right; }
+    .lit-ro { color: var(--text-muted, #6c757d); }
+    .lit-muted { color: var(--text-muted, #6c757d); font-size: .75rem; }
+    .lit-desc { font-weight: 500; max-width: 200px; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Category Group header row — slightly darker than category dividers, all-caps treatment via JS/C# */
+    .lit-group-row { background: #d0d5db; }
+    .lit-group-cell {
+        /* Horizontal padding lives on the inner sticky element so the label
+           stays pinned to the left edge of the viewport during horizontal scroll. */
+        padding: 4px 0;
+        font-weight: 700;
+        font-size: .78rem;
+        border-top: 2px solid #adb5bd;
+        border-bottom: 1px solid #adb5bd;
+        background: #d0d5db;
+    }
+    /* Inner content is sticky so the label doesn't scroll away while the full-width
+       td background continues to cover the viewport at any scroll position.
+       min-width fills the visible scroll container so justify-content: space-between
+       can push the Desc. controls to the right edge of the visible header bar. */
+    .lit-group-content {
+        position: sticky;
+        left: 0;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 8px;
+        padding: 0 8px;
+        min-width: min(100%, calc(100vw - 250px));
+        box-sizing: border-box;
+    }
+    .lit-group-name {
+        flex-shrink: 0;
+    }
+    .lit-group-actions {
+        display: flex;
+        align-items: center;
+        gap: 4px;
+        font-weight: 400;
+        flex-shrink: 0;
+    }
+    .lit-group-desc-label {
+        font-size: .75rem;
+        opacity: .8;
+    }
+    .lit-group-sep {
+        display: inline-block;
+        width: 1px;
+        height: 14px;
+        background: #adb5bd;
+        margin: 0 4px;
+        flex-shrink: 0;
+    }
+    .lit-group-totals {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-weight: 400;
+    }
+    .lit-group-total-label {
+        font-size: .65rem;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+        opacity: .7;
+    }
+    .lit-group-total-val {
+        font-size: .78rem;
+        font-weight: 700;
+    }
+
+    .lit-pencil-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: .85rem;
+        padding: 0 4px;
+        color: var(--text-muted, #6c757d);
+        line-height: 1;
+        border-radius: 3px;
+    }
+    .lit-pencil-btn:hover { color: var(--dx-blue, #0071BC); background: rgba(0,113,188,.08); }
+
+    .lit-cat-row { background: var(--surface, #f8f9fa); }
+    .lit-cat-cell {
+        padding: 3px 0;
+        font-weight: 600;
+        font-size: .78rem;
+        color: var(--text-muted, #6c757d);
+        border-top: 2px solid var(--border, #dee2e6);
+        border-bottom: 1px solid var(--border, #dee2e6);
+        background: var(--surface, #f8f9fa);
+    }
+    .lit-cat-label {
+        position: sticky;
+        left: 0;
+        display: inline-block;
+        padding: 0 6px;
+        width: max-content;
+    }
+
+    .lit-input {
+        width: 100%;
+        padding: 2px 4px;
+        font-size: .78rem;
+        border: 1px solid transparent;
+        background: transparent;
+        box-sizing: border-box;
+    }
+
+    .lit-input:focus {
+        border-color: var(--dx-blue, #0071BC);
+        background: #fff;
+        outline: none;
+    }
+
+    .lit-row:hover .lit-sticky,
+    .lit-row:hover .lit-muted.lit-sticky {
+        background: #f5f5f5;
+    }
+
+    .lit-row:hover td {
+        background: #f5f5f5;
+    }
+
+    /* Disabled row styling */
+    .lit-row-disabled td { color: #aaa !important; }
+    .lit-row-disabled .lit-sticky { background: #fafafa !important; }
+    .lit-row-disabled .lit-desc,
+    .lit-row-disabled .lit-muted { text-decoration: line-through; }
+
+    /* Modified cell: yellow highlight on the cell only, not the whole row */
+    .lit-cell-dirty { background: #fef9c3 !important; }
+
+    /* Clickable attr cells that show total-display (span) mode */
+    .lit-attr-total {
+        display: block;
+        width: 100%;
+        text-align: right;
+        cursor: text;
+        padding: 2px 4px;
+        min-height: 1.4em;
+    }
+
+    /* Action buttons */
+    .lit-btn-toggle {
+        font-size: .65rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+        border: 1px solid;
+        cursor: pointer;
+        line-height: 1.4;
+        white-space: nowrap;
+    }
+
+    .lit-btn-toggle-on {
+        background: #fff3cd;
+        border-color: #ffc107;
+        color: #856404;
+    }
+
+    .lit-btn-toggle-on:hover {
+        background: #ffe69c;
+    }
+
+    .lit-btn-toggle-off {
+        background: #d1e7dd;
+        border-color: #198754;
+        color: #0a3622;
+    }
+
+    .lit-btn-toggle-off:hover {
+        background: #a3cfbb;
+    }
+
+    .lit-btn-delete {
+        font-size: .8rem;
+        padding: 1px 4px;
+        border-radius: 3px;
+        border: 1px solid #dc3545;
+        background: #fff;
+        color: #dc3545;
+        cursor: pointer;
+        line-height: 1.4;
+    }
+
+    .lit-btn-delete:hover {
+        background: #dc3545;
+        color: #fff;
+    }
+
+    .lit-btn-save {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: .85rem;
+        padding: 2px 4px;
+    }
+
+    .lit-btn-save:hover { color: var(--dx-blue, #0071BC); }
+
+    /* Manually-pinned labor column header */
+    .lit-labor-th { white-space: nowrap; }
+
+    .lit-labor-th-dismiss {
+        display: inline-block;
+        margin-left: 3px;
+        padding: 0 3px;
+        font-size: .65rem;
+        line-height: 1.2;
+        border: none;
+        background: none;
+        color: var(--text-muted, #6c757d);
+        cursor: pointer;
+        vertical-align: middle;
+        border-radius: 2px;
+    }
+
+    .lit-labor-th-dismiss:hover {
+        background: #dc354520;
+        color: #dc3545;
+    }
+
+    .lit-save-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255,255,255,.4);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: lit-spin .6s linear infinite;
+        vertical-align: middle;
+        margin-right: 5px;
+    }
+
+    @@keyframes lit-spin {
+        to { transform: rotate(360deg); }
+    }
+
+    /* Inline add strip */
+    .lit-add-strip {
+        padding: 6px 0 2px;
+    }
+
+    .lit-add-input-wrap {
+        position: relative;
+        display: inline-block;
+        width: 340px;
+        max-width: 100%;
+    }
+
+    .lit-add-input {
+        width: 100%;
+        padding: 5px 10px;
+        font-size: .82rem;
+        border: 1px dashed var(--border, #dee2e6);
+        border-radius: 4px;
+        background: var(--surface, #f8f9fa);
+        color: var(--text-muted, #6c757d);
+        box-sizing: border-box;
+        transition: border-color .15s, background .15s;
+    }
+
+    .lit-add-input:focus {
+        outline: none;
+        border-color: var(--dx-blue, #0071BC);
+        border-style: solid;
+        background: #fff;
+        color: inherit;
+    }
+
+    .lit-add-spinner {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: .78rem;
+        pointer-events: none;
+    }
+
+    .lit-add-error {
+        display: block;
+        font-size: .75rem;
+        color: #dc3545;
+        margin-top: 2px;
+    }
+
+    .lit-add-dropdown {
+        position: absolute;
+        top: calc(100% + 2px);
+        left: 0;
+        right: 0;
+        background: #fff;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,.12);
+        z-index: 999;
+        max-height: 260px;
+        overflow-y: auto;
+    }
+
+    /* Section headers in add dropdown */
+    .lit-add-section-header {
+        padding: 4px 10px;
+        font-size: .7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .07em;
+        color: var(--text-muted, #6c757d);
+        background: var(--surface, #f8f9fa);
+        border-bottom: 1px solid var(--border, #dee2e6);
+    }
+
+    .lit-add-result {
+        padding: 6px 10px;
+        cursor: pointer;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 0 8px;
+        align-items: baseline;
+        font-size: .8rem;
+        border-bottom: 1px solid var(--border, #dee2e6);
+    }
+
+    .lit-add-result:last-child { border-bottom: none; }
+
+    .lit-add-result:hover { background: #f0f7ff; }
+
+    .lit-add-result-main { font-weight: 600; }
+
+    .lit-add-result-sub {
+        color: var(--text-muted, #6c757d);
+        font-size: .75rem;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .lit-add-result-price {
+        color: var(--text-muted, #6c757d);
+        font-size: .75rem;
+        white-space: nowrap;
+    }
+
+    .lit-add-result-empty {
+        color: var(--text-muted, #6c757d);
+        font-style: italic;
+        cursor: default;
+        grid-column: 1 / -1;
+    }
+
+    .lit-add-result-empty:hover { background: none; }
+
+    /* Sticky "Create New NetSuite Item" footer at the bottom of the add dropdown */
+    .lit-add-new-wrap {
+        border-top: 1px solid var(--border, #dee2e6);
+        padding: 6px 8px;
+        background: var(--surface, #f8f9fa);
+    }
+
+    .lit-add-new-btn {
+        width: 100%;
+        background: none;
+        border: 1px dashed var(--dx-blue, #0071BC);
+        color: var(--dx-blue, #0071BC);
+        border-radius: 4px;
+        padding: 5px 10px;
+        font-size: .78rem;
+        cursor: pointer;
+        text-align: center;
+    }
+
+    .lit-add-new-btn:hover {
+        background: var(--dx-blue, #0071BC);
+        color: #fff;
+    }
+
+    /* Category and Cat. Group dropdown cells */
+    .lit-select-wrap {
+        position: relative;
+    }
+    /* Custom chevron — replaces the native arrow removed via appearance:none */
+    .lit-select-wrap::after {
+        content: '▾';
+        position: absolute;
+        right: 3px;
+        top: 50%;
+        transform: translateY(-50%);
+        font-size: .6rem;
+        color: var(--text-muted, #6c757d);
+        pointer-events: none;
+    }
+    .lit-select {
+        width: 100%;
+        /* Right padding reserves space for the custom chevron */
+        padding: 1px 14px 1px 3px;
+        font-size: .75rem;
+        border: 1px solid transparent;
+        background: transparent;
+        box-sizing: border-box;
+        cursor: pointer;
+        /* Suppress the native dropdown arrow so we can render our own and
+           gain support for text-overflow:ellipsis on the selected value */
+        appearance: none;
+        -webkit-appearance: none;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    .lit-select:focus {
+        outline: none;
+        border-color: var(--dx-blue, #0071BC);
+        background: #fff;
+    }
+    .lit-row:hover .lit-select { border-color: var(--border, #dee2e6); background: #fff; }
+
+    /* Collapsible column header */
+    .lit-col-hdr {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px;
+        white-space: nowrap;
+    }
+    .lit-col-hide-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: .65rem;
+        color: var(--text-muted, #6c757d);
+        padding: 0 2px;
+        line-height: 1;
+        opacity: 0;
+        transition: opacity .15s;
+    }
+    .lit-th:hover .lit-col-hide-btn { opacity: 1; }
+
+    .lit-col-collapsed-hdr {
+        text-align: center;
+        padding: 2px;
+    }
+    .lit-col-show-btn {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        background: none;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px;
+        cursor: pointer;
+        font-size: .6rem;
+        font-weight: 600;
+        color: var(--text-muted, #6c757d);
+        padding: 4px 2px;
+        line-height: 1.2;
+        white-space: nowrap;
+    }
+    .lit-col-show-btn:hover { border-color: var(--dx-blue, #0071BC); color: var(--dx-blue, #0071BC); }
+
+    .lit-col-collapsed-cell { padding: 0; }
+
+    /* Accent-color on description-row checkboxes (group header toggles) */
+    .lit-group-cell input[type=checkbox] { accent-color: var(--dx-blue, #0071BC); }
+</style>

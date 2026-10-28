@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <!--
+    Web SDK so the agent can host a local-only config/status page (Kestrel on
+    localhost) alongside the MQTT worker. The worker still runs as a hosted
+    BackgroundService; the web host only serves the operator UI.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UserSecretsId>dotnet-DXSuite.SentinelGateway-b7eae1f5-05a6-402e-82d8-3492ba8e634b</UserSecretsId>
+    <!-- Customer-facing name. Project/namespace stay DXSuite.SentinelGateway (internal); only the
+         shipped executable is branded "Agent" so Task Manager / Program Files don't say "gateway". -->
+    <AssemblyName>DXSuite.SentinelAgent</AssemblyName>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.9" />
+    <PackageReference Include="MQTTnet" Version="5.1.0.1559" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\DXSuite.Sentinel.Contracts\DXSuite.Sentinel.Contracts.csproj" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,771 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@using System.Text
+@using System.Threading
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ISessionState SessionState
+@inject IProvisioningPackageService PackageService
+@inject IProvisioningAuthorizationService AuthorizationService
+@inject IOffOriginHostReportService OffOriginReports
+@inject IPlayerArtifactStore ArtifactStore
+@inject IUpdateService UpdateService
+@inject NavigationManager Navigation
+@inject IJSRuntime JS
+@inject ILogger<PlayerProvisioning> Logger
+@implements IDisposable
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden;">
+        <button class="dx-tab-btn @(activeTab == "packages" ? "active" : "")"
+                @onclick="@(() => activeTab = "packages")">Packages</button>
+        <button class="dx-tab-btn @(activeTab == "authorisations" ? "active" : "")"
+                @onclick="ShowAuthorisations">Authorisations</button>
+        <button class="dx-tab-btn @(activeTab == "takeover" ? "active" : "")"
+                @onclick="ShowTakeover">Takeover</button>
+        <button class="dx-tab-btn @(activeTab == "offorigin" ? "active" : "")"
+                @onclick="ShowOffOrigin">Off-origin Hosts</button>
+    </div>
+
+    @if (activeTab == "packages")
+    {
+        <div class="dx-panel-header">
+            <h4>Provisioning Packages</h4>
+            <div class="dx-panel-controls">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="@(() => showPackageForm = !showPackageForm)">
+                    @(showPackageForm ? "Cancel" : "New Package")
+                </button>
+            </div>
+        </div>
+
+        <div class="dx-panel-content">
+            @if (bootstrapPasswordOnce != null)
+            {
+                <div class="dx-alert dx-alert-warning" style="max-width:900px; margin-bottom:16px;">
+                    <strong>Bootstrap DWS password, shown once.</strong>
+                    <code style="display:block; margin:8px 0; font-size:1.1rem;">@bootstrapPasswordOnce</code>
+                    Every player made from this card shares it until it enrolls and rotates to a
+                    per-device secret. It is not recoverable from this screen again; reissuing the
+                    same package keeps it, regenerating mints a new one.
+                    <div style="margin-top:8px;">
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="@(() => bootstrapPasswordOnce = null)">
+                            I have recorded it
+                        </button>
+                    </div>
+                </div>
+            }
+
+            @if (showPackageForm)
+            {
+                <div class="dx-card" style="max-width:900px; margin-bottom:16px;">
+                    <div class="dx-card-body">
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Package name</label>
+                                <input class="dx-form-control" @bind="form.PackageName" placeholder="Terminal 2 wired" />
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Hardware family</label>
+                                <select class="dx-form-control" @bind="form.HardwareFamily" @bind:after="OnFamilyChanged">
+                                    <option value="@HardwareFamilies.Hd4">hd4 (LS424, HD1024)</option>
+                                    <option value="@HardwareFamilies.Xt4">xt4 (XT1144)</option>
+                                    <option value="@HardwareFamilies.Xt5">xt5 (HD1025, XT1145)</option>
+                                </select>
+                                <span class="dx-form-hint">One package is one family. A wrong-family card is inert, not harmful.</span>
+                            </div>
+                        </div>
+
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Firmware</label>
+                                <select class="dx-form-control" @bind="form.FirmwareImageId">
+                                    <option value="">Family default</option>
+                                    @foreach (var image in firmwareForFamily)
+                                    {
+                                        <option value="@image.FirmwareImageId">@image.VersionNumber @(image.IsDefaultForFamily ? "(default)" : "")</option>
+                                    }
+                                </select>
+                                @if (!firmwareForFamily.Any())
+                                {
+                                    <span class="dx-form-hint" style="color:var(--dx-red);">
+                                        No firmware uploaded for this family. A package cannot be generated without one.
+                                    </span>
+                                }
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Local web server</label>
+                                <select class="dx-form-control" @bind="form.DwsPosition">
+                                    <option value="@DwsPositions.OffEntirely">Off entirely</option>
+                                    <option value="@DwsPositions.OnAtPark">On at park</option>
+                                    <option value="@DwsPositions.OnAlways">On always</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Time source (optional)</label>
+                                <input class="dx-form-control" @bind="form.TimeSourceUrl" placeholder="ntp://time.customer.local" />
+                                <span class="dx-form-hint">Blank uses the DXSuite time route at the player API origin.</span>
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Explicit proxy (optional)</label>
+                                <input class="dx-form-control" @bind="form.ProxyHostPort" placeholder="proxy.customer.local:8080" />
+                                <span class="dx-form-hint">A literal host:port. PAC files are refused.</span>
+                            </div>
+                        </div>
+
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Wi-Fi SSID (optional)</label>
+                                <input class="dx-form-control" @bind="form.WifiSsid" />
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label">Wi-Fi PSK (optional)</label>
+                                <input type="password" class="dx-form-control" @bind="form.WifiPsk" />
+                                <span class="dx-form-hint">
+                                    Encrypted at rest. A wired site carries no secret at all, and a lost card
+                                    with one on it means rotating the PSK.
+                                </span>
+                            </div>
+                        </div>
+
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Customer root CA (optional, PEM)</label>
+                            <textarea class="dx-form-control" rows="4" @bind="form.CustomRootCaPem"
+                                      placeholder="-----BEGIN CERTIFICATE-----"></textarea>
+                        </div>
+
+                        <div style="display:flex; gap:8px;">
+                            <button class="dx-btn dx-btn-blue" @onclick="GeneratePackage"
+                                    disabled="@(isGenerating || string.IsNullOrWhiteSpace(form.PackageName))">
+                                @(isGenerating ? "Generating..." : "Generate")
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1.4fr 90px 110px 1fr 150px 220px;">
+                    <div>Package</div>
+                    <div>Family</div>
+                    <div>Firmware</div>
+                    <div>Fingerprint</div>
+                    <div>Created</div>
+                    <div style="text-align:right;">Actions</div>
+                </div>
+                @foreach (var package in packages)
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1.4fr 90px 110px 1fr 150px 220px;">
+                        <div class="dx-col-primary">
+                            @package.PackageName
+                            @if (package.IsRevoked)
+                            {
+                                <span class="dx-badge dx-badge-red" title="@($"Revoked {package.RevokedDate:yyyy-MM-dd} by {package.RevokedBy}")">Revoked</span>
+                            }
+                            else if (IsSuperseded(package))
+                            {
+                                <span class="dx-badge dx-badge-gray" title="A newer package exists for this family. Cards in the field still reference this one.">Superseded</span>
+                            }
+                        </div>
+                        <div>@package.HardwareFamily</div>
+                        <div>
+                            @package.FirmwareImage?.VersionNumber
+                            @if (package.FirmwarePinOverridden)
+                            {
+                                <span class="dx-badge dx-badge-yellow" title="Pinned away from the family default">Pinned</span>
+                            }
+                        </div>
+                        <div class="dx-truncate"><code style="font-size:0.75rem;">@Shorten(package.ConfigFingerprint)</code></div>
+                        <div class="dx-col-hide">@package.CreatedDate.ToString("yyyy-MM-dd HH:mm")</div>
+                        <div class="dx-col-actions" style="display:flex; gap:4px; justify-content:flex-end;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    title="Download the card image"
+                                    @onclick="@(() => DownloadPackage(package))">Download</button>
+                            @if (!package.IsRevoked)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                        title="Rebuild this exact card. Same fingerprint, same bootstrap password."
+                                        @onclick="@(() => ReissuePackage(package))">Reissue</button>
+                                <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                        title="Withdraw a leaked card. Players already made from it keep running."
+                                        @onclick="@(() => RevokePackage(package))">Revoke</button>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (!packages.Any())
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">No provisioning packages yet.</div>
+                }
+            </div>
+        </div>
+    }
+    else if (activeTab == "authorisations")
+    {
+        <div class="dx-panel-header">
+            <h4>Provisioning Authorisations</h4>
+            <div class="dx-panel-controls">
+                <span class="dx-text-muted" style="font-size:0.85rem;">
+                    @authorizations.Count(a => a.State == ProvisioningAuthorizationStates.Converted) of
+                    @authorizations.Count armed serials have converted
+                </span>
+            </div>
+        </div>
+
+        <div class="dx-panel-content">
+            <div class="dx-card" style="max-width:900px; margin-bottom:16px;">
+                <div class="dx-card-body">
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Serial number</label>
+                            <input class="dx-form-control" @bind="armSerial" placeholder="42D98X001975" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Valid for</label>
+                            <select class="dx-form-control" @bind="armHours">
+                                <option value="4">4 hours</option>
+                                <option value="24">24 hours</option>
+                                <option value="168">7 days</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">Bootloader this conversion installs</label>
+                            <select class="dx-form-control" @bind="armBootloaderVersionId">
+                                <option value="">Known-good bootloader</option>
+                                @foreach (var v in bootloaderVersions)
+                                {
+                                    <option value="@v.AppVersionId">@v.VersionNumber</option>
+                                }
+                            </select>
+                            <span class="dx-form-hint">
+                                A separate pin from the known-good rescue image. Conflating them would let a
+                                rollout candidate become what rescues a broken player.
+                            </span>
+                        </div>
+                        <div class="dx-form-group">
+                            <label class="dx-form-label">App bundle</label>
+                            <select class="dx-form-control" @bind="armAppVersionId">
+                                <option value="">Current at conversion</option>
+                                @foreach (var v in appVersions)
+                                {
+                                    <option value="@v.AppVersionId">@v.VersionNumber</option>
+                                }
+                            </select>
+                        </div>
+                    </div>
+                    <button class="dx-btn dx-btn-blue" @onclick="ArmSerial"
+                            disabled="@(string.IsNullOrWhiteSpace(armSerial) || isArming)">
+                        @(isArming ? "Arming..." : "Arm")
+                    </button>
+                </div>
+            </div>
+
+            @RenderAuthorizationTable(authorizations)
+        </div>
+    }
+    else if (activeTab == "takeover")
+    {
+        <div class="dx-panel-header">
+            <h4>Takeover</h4>
+            <div class="dx-panel-controls">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ShowTakeover">Refresh</button>
+            </div>
+        </div>
+
+        <div class="dx-panel-content">
+            <div class="dx-card" style="max-width:900px; margin-bottom:16px;">
+                <div class="dx-card-body">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Arm a batch of serials</label>
+                        <textarea class="dx-form-control" rows="5" @bind="batchSerials"
+                                  placeholder="One serial per line"></textarea>
+                        <span class="dx-form-hint">
+                            Each serial is armed with the same pins as the Authorisations form. Re-arming a
+                            serial replaces its existing authorisation rather than adding a second.
+                        </span>
+                    </div>
+                    <button class="dx-btn dx-btn-blue" @onclick="ArmBatch"
+                            disabled="@(string.IsNullOrWhiteSpace(batchSerials) || isArming)">
+                        @(isArming ? "Arming..." : "Arm all")
+                    </button>
+                </div>
+            </div>
+
+            @{
+                var live = authorizations.Where(a => a.State == ProvisioningAuthorizationStates.Armed).ToList();
+                var converted = authorizations.Where(a => a.State == ProvisioningAuthorizationStates.Converted).ToList();
+            }
+            <div style="display:flex; gap:16px; margin-bottom:16px;">
+                <div class="dx-card" style="flex:1;"><div class="dx-card-body">
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Armed, waiting</div>
+                    <div style="font-size:1.6rem; font-weight:600;">@live.Count</div>
+                </div></div>
+                <div class="dx-card" style="flex:1;"><div class="dx-card-body">
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Converted</div>
+                    <div style="font-size:1.6rem; font-weight:600;">@converted.Count</div>
+                </div></div>
+            </div>
+
+            @if (live.Any())
+            {
+                <div class="dx-alert dx-alert-warning" style="max-width:900px; margin-bottom:16px;">
+                    Disarming is the kill switch for a takeover in flight. A disarmed serial stops
+                    converting on its next recovery poll.
+                </div>
+            }
+
+            @RenderAuthorizationTable(live.Concat(converted).ToList())
+        </div>
+    }
+    else if (activeTab == "offorigin")
+    {
+        <div class="dx-panel-header">
+            <h4>Off-origin Content Hosts</h4>
+            <div class="dx-panel-controls">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ShowOffOrigin" disabled="@isLoadingReport">
+                    @(isLoadingReport ? "Deriving..." : "Refresh")
+                </button>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="ExportOffOriginCsv"
+                        disabled="@(report == null || !report.Hosts.Any())">
+                    Export CSV
+                </button>
+            </div>
+        </div>
+
+        <div class="dx-panel-content">
+            <div class="dx-alert dx-alert-info" style="max-width:900px; margin-bottom:16px;">
+                Every host DXSuite will <strong>direct</strong> a player to, derived from the authored
+                library rather than from what is scheduled today. Each of these hosts is the customer's
+                to trace for its own dependencies: a page DXSuite points at may itself fetch fonts, map
+                tiles and an API that DXSuite cannot see.
+                @if (report != null)
+                {
+                    <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">
+                        Measured against: @(report.KnownOrigins.Any() ? string.Join(", ", report.KnownOrigins) : "nothing configured")
+                        &middot; generated @report.GeneratedAt.ToString("yyyy-MM-dd HH:mm") UTC
+                    </div>
+                }
+            </div>
+
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1.6fr 1.4fr 1fr 1fr 140px;">
+                    <div>Host</div>
+                    <div>Reached through</div>
+                    <div>Locations</div>
+                    <div>Devices</div>
+                    <div>First seen</div>
+                </div>
+                @foreach (var host in report?.Hosts ?? [])
+                {
+                    <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1.6fr 1.4fr 1fr 1fr 140px;">
+                        <div class="dx-col-primary">@host.Host</div>
+                        <div class="dx-truncate">@string.Join(", ", host.Sources)</div>
+                        <div class="dx-truncate">@(host.LocationIds.Any() ? string.Join(", ", host.LocationIds) : "—")</div>
+                        <div class="dx-truncate">@(host.DeviceIds.Any() ? string.Join(", ", host.DeviceIds) : "—")</div>
+                        <div class="dx-col-hide">@(host.FirstSeen?.ToString("yyyy-MM-dd") ?? "—")</div>
+                    </div>
+                }
+                @if (report != null && !report.Hosts.Any())
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">
+                        No off-origin hosts. Every host this tenant points a player at is its own.
+                    </div>
+                }
+                @if (report == null)
+                {
+                    <div style="text-align:center; padding:30px 0; color:#999;">
+                        @(isLoadingReport ? "Deriving..." : "Select Refresh to derive the report.")
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@if (toastVisible)
+{
+    <div class="dx-toast">@toastMessage</div>
+}
+
+@code {
+    private string activeTab = "packages";
+
+    private List<TblProvisioningPackage> packages = new();
+    private List<TblProvisioningAuthorization> authorizations = new();
+    private List<TblFirmwareImage> firmwareForFamily = new();
+    private List<TblAppVersion> bootloaderVersions = new();
+    private List<TblAppVersion> appVersions = new();
+    private OffOriginReport? report;
+
+    private bool showPackageForm;
+    private bool isGenerating;
+    private bool isArming;
+    private bool isLoadingReport;
+
+    /// <summary>Held only until the operator acknowledges it. It is not recoverable afterwards.</summary>
+    private string? bootstrapPasswordOnce;
+
+    private PackageForm form = new();
+
+    private string armSerial = "";
+    private int armHours = 24;
+    private string armBootloaderVersionId = "";
+    private string armAppVersionId = "";
+    private string batchSerials = "";
+
+    private string toastMessage = "";
+    private bool toastVisible;
+    private Timer? toastTimer;
+
+    private sealed class PackageForm
+    {
+        public string PackageName { get; set; } = "";
+        public string HardwareFamily { get; set; } = HardwareFamilies.Xt5;
+        public string FirmwareImageId { get; set; } = "";
+        public string DwsPosition { get; set; } = DwsPositions.OffEntirely;
+        public string? TimeSourceUrl { get; set; }
+        public string? ProxyHostPort { get; set; }
+        public string? WifiSsid { get; set; }
+        public string? WifiPsk { get; set; }
+        public string? CustomRootCaPem { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadPackagesAsync();
+        await OnFamilyChanged();
+        await LoadVersionsAsync();
+    }
+
+    private async Task LoadPackagesAsync()
+        => packages = await PackageService.GetAllAsync();
+
+    private async Task LoadVersionsAsync()
+    {
+        var all = await UpdateService.GetAllVersionsAsync();
+        bootloaderVersions = all.Where(v => v.ArtifactKind == ArtifactKinds.Bootloader).ToList();
+        appVersions = all.Where(v => v.ArtifactKind == ArtifactKinds.App).ToList();
+    }
+
+    private async Task OnFamilyChanged()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        firmwareForFamily = await db.TblFirmwareImages
+            .Where(f => f.Family == form.HardwareFamily)
+            .OrderByDescending(f => f.IsDefaultForFamily)
+            .ThenBy(f => f.VersionNumber)
+            .ToListAsync();
+
+        form.FirmwareImageId = "";
+    }
+
+    private async Task ShowAuthorisations()
+    {
+        activeTab = "authorisations";
+        await LoadAuthorizationsAsync();
+    }
+
+    private async Task ShowTakeover()
+    {
+        activeTab = "takeover";
+        await LoadAuthorizationsAsync();
+    }
+
+    private async Task LoadAuthorizationsAsync()
+    {
+        // Sweeps lapsed rows out of Armed first, so the counts on this screen mean what they say.
+        await AuthorizationService.ExpireLapsedAsync();
+        authorizations = await AuthorizationService.GetAllAsync();
+    }
+
+    private async Task ShowOffOrigin()
+    {
+        activeTab = "offorigin";
+        isLoadingReport = true;
+        try
+        {
+            report = await OffOriginReports.DeriveAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Off-origin derivation failed");
+            ShowToast($"Could not derive the report: {ex.Message}");
+        }
+        finally
+        {
+            isLoadingReport = false;
+        }
+    }
+
+    private async Task GeneratePackage()
+    {
+        isGenerating = true;
+        try
+        {
+            var request = new ProvisioningPackageRequest(
+                form.PackageName.Trim(),
+                form.HardwareFamily,
+                int.TryParse(form.FirmwareImageId, out var firmwareId) ? firmwareId : null,
+                NullIfBlank(form.TimeSourceUrl),
+                NullIfBlank(form.CustomRootCaPem),
+                NullIfBlank(form.ProxyHostPort),
+                NullIfBlank(form.WifiSsid),
+                NullIfBlank(form.WifiPsk),
+                form.DwsPosition);
+
+            var result = await PackageService.GenerateAsync(request, SessionState.UserName);
+
+            bootstrapPasswordOnce = result.BootstrapDwsPassword;
+            showPackageForm = false;
+            form = new PackageForm { HardwareFamily = form.HardwareFamily };
+            await OnFamilyChanged();
+            await LoadPackagesAsync();
+
+            ShowToast($"Generated {result.Package.PackageName}.");
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+        finally
+        {
+            isGenerating = false;
+        }
+    }
+
+    private async Task ReissuePackage(TblProvisioningPackage package)
+    {
+        try
+        {
+            await PackageService.ReissueAsync(package.ProvisioningPackageId, SessionState.UserName);
+            await LoadPackagesAsync();
+            ShowToast($"Reissued {package.PackageName}. Same fingerprint and same bootstrap password.");
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+    }
+
+    private async Task RevokePackage(TblProvisioningPackage package)
+    {
+        if (!await JS.InvokeAsync<bool>("confirm",
+            $"Revoke {package.PackageName}? Cards already in the field keep working, but this package stops being downloadable."))
+        {
+            return;
+        }
+
+        await PackageService.RevokeAsync(package.ProvisioningPackageId, SessionState.UserName);
+        await LoadPackagesAsync();
+        ShowToast($"Revoked {package.PackageName}.");
+    }
+
+    /// <summary>
+    /// The house download pattern: stash the bytes under a single-use token and navigate the
+    /// browser to the controller, so a card image never travels as base64 over the circuit.
+    /// </summary>
+    private async Task DownloadPackage(TblProvisioningPackage package)
+    {
+        var path = ArtifactStore.ResolveExisting(package.ZipFilePath);
+        if (path == null)
+        {
+            ShowToast("The card image is recorded but missing from disk. Reissue it.");
+            return;
+        }
+
+        await StashAndDownload(
+            await File.ReadAllBytesAsync(path), package.ZipFileName, "application/zip");
+    }
+
+    private async Task ArmSerial()
+    {
+        isArming = true;
+        try
+        {
+            await ArmOneAsync(armSerial);
+            armSerial = "";
+            await LoadAuthorizationsAsync();
+            ShowToast("Armed.");
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+        finally
+        {
+            isArming = false;
+        }
+    }
+
+    private async Task ArmBatch()
+    {
+        isArming = true;
+        try
+        {
+            var serials = batchSerials
+                .Split(['\n', '\r', ','], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            foreach (var serial in serials)
+                await ArmOneAsync(serial);
+
+            batchSerials = "";
+            await LoadAuthorizationsAsync();
+            ShowToast($"Armed {serials.Count} serial(s).");
+        }
+        catch (Exception ex)
+        {
+            ShowToast(ex.Message);
+        }
+        finally
+        {
+            isArming = false;
+        }
+    }
+
+    private Task ArmOneAsync(string serial) => AuthorizationService.ArmAsync(
+        serial.Trim(),
+        TimeSpan.FromHours(armHours),
+        int.TryParse(armAppVersionId, out var appId) ? appId : null,
+        int.TryParse(armBootloaderVersionId, out var bootloaderId) ? bootloaderId : null,
+        provisioningPackageId: null,
+        armedBy: SessionState.UserName);
+
+    private async Task Disarm(TblProvisioningAuthorization authorization)
+    {
+        await AuthorizationService.DisarmAsync(authorization.ProvisioningAuthorizationId, SessionState.UserName);
+        await LoadAuthorizationsAsync();
+        ShowToast($"Disarmed {authorization.SerialNumber}.");
+    }
+
+    private async Task ExportOffOriginCsv()
+    {
+        if (report == null) return;
+
+        var csv = new StringBuilder();
+        csv.AppendLine("Host,Reached through,Locations,Devices,First seen");
+
+        foreach (var host in report.Hosts)
+        {
+            csv.AppendLine(string.Join(',', new[]
+            {
+                Csv(host.Host),
+                Csv(string.Join("; ", host.Sources)),
+                Csv(string.Join("; ", host.LocationIds)),
+                Csv(string.Join("; ", host.DeviceIds)),
+                Csv(host.FirstSeen?.ToString("yyyy-MM-dd") ?? "")
+            }));
+        }
+
+        // A firewall request gets emailed to somebody with no DXSuite login, which is the whole
+        // reason this export exists.
+        await StashAndDownload(
+            Encoding.UTF8.GetBytes(csv.ToString()),
+            $"off-origin-hosts-{DateTime.Now:yyyyMMdd-HHmm}.csv",
+            "text/csv");
+    }
+
+    private async Task StashAndDownload(byte[] bytes, string fileName, string contentType)
+    {
+        var token = Guid.NewGuid();
+        Controllers.ProvisioningDownloadController.PendingDownloads[token] =
+            new Controllers.ProvisioningDownloadController.PendingDownload
+            {
+                Bytes = bytes,
+                FileName = fileName,
+                ContentType = contentType
+            };
+
+        await JS.InvokeVoidAsync("dxDownloadUrl", $"{Navigation.BaseUri}api/provisioning/download/{token}");
+    }
+
+    private static string Csv(string value)
+        => value.Contains(',') || value.Contains('"')
+            ? $"\"{value.Replace("\"", "\"\"")}\""
+            : value;
+
+    /// <summary>
+    /// A newer package for the same family supersedes this one. Derived rather than stored,
+    /// because it is a comparison and not a state somebody has to remember to update.
+    /// </summary>
+    private bool IsSuperseded(TblProvisioningPackage package)
+        => packages.Any(p => p.HardwareFamily == package.HardwareFamily
+                          && p.CreatedDate > package.CreatedDate
+                          && !p.IsRevoked);
+
+    private static string Shorten(string? value)
+        => string.IsNullOrEmpty(value) ? "—" : value[..Math.Min(12, value.Length)];
+
+    private static string? NullIfBlank(string? value)
+        => string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+
+    private RenderFragment RenderAuthorizationTable(List<TblProvisioningAuthorization> rows) => __builder =>
+    {
+        <div class="dx-table dx-collapse">
+            <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 1.2fr 110px 1fr 1fr 150px 120px;">
+                <div>Serial</div>
+                <div>State</div>
+                <div>Bootloader pin</div>
+                <div>App pin</div>
+                <div>Expires</div>
+                <div style="text-align:right;">Actions</div>
+            </div>
+            @foreach (var authorization in rows)
+            {
+                <div class="dx-table-row dx-collapse-row" style="grid-template-columns: 1.2fr 110px 1fr 1fr 150px 120px;">
+                    <div class="dx-col-primary">
+                        @authorization.SerialNumber
+                        @if (authorization.ConvertedDeviceId != null)
+                        {
+                            <span class="dx-text-muted" style="font-size:0.75rem; display:block;">
+                                became @authorization.ConvertedDeviceId
+                            </span>
+                        }
+                    </div>
+                    <div><span class="dx-badge @StateBadge(authorization.State)">@authorization.State</span></div>
+                    <div>@(authorization.PinnedBootloaderVersion?.VersionNumber ?? "known-good")</div>
+                    <div>@(authorization.PinnedAppVersion?.VersionNumber ?? "current")</div>
+                    <div class="dx-col-hide">@authorization.ExpiresDate.ToString("yyyy-MM-dd HH:mm")</div>
+                    <div class="dx-col-actions" style="text-align:right;">
+                        @if (authorization.State == ProvisioningAuthorizationStates.Armed)
+                        {
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                    @onclick="@(() => Disarm(authorization))">Disarm</button>
+                        }
+                    </div>
+                </div>
+            }
+            @if (!rows.Any())
+            {
+                <div style="text-align:center; padding:30px 0; color:#999;">No serials armed.</div>
+            }
+        </div>
+    };
+
+    private static string StateBadge(string state) => state switch
+    {
+        ProvisioningAuthorizationStates.Armed => "dx-badge-blue",
+        ProvisioningAuthorizationStates.Converted => "dx-badge-green",
+        ProvisioningAuthorizationStates.Disarmed => "dx-badge-gray",
+        _ => "dx-badge-yellow",
+    };
+
+    private void ShowToast(string message)
+    {
+        toastMessage = message;
+        toastVisible = true;
+        toastTimer?.Dispose();
+        toastTimer = new Timer(_ =>
+        {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 4000, Timeout.Infinite);
+    }
+
+    public void Dispose() => toastTimer?.Dispose();
+}

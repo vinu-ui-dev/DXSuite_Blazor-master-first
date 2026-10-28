@@ -1,0 +1,70 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_SearchUsers">
+    <value>Search Users</value>
+  </data>
+  <data name="Placeholder_StartTyping">
+    <value>Start typing...</value>
+  </data>
+  <data name="Label_CurrentRole">
+    <value>Current Role</value>
+  </data>
+  <data name="Label_SelectNewRole">
+    <value>Select New Role</value>
+  </data>
+  <data name="Label_EnablePulse">
+    <value>Enable Pulse Access</value>
+  </data>
+  <data name="Label_CopyLocations">
+    <value>Copy Locations From Another User</value>
+  </data>
+  <data name="Placeholder_SelectCopyFrom">
+    <value>Select user to copy from...</value>
+  </data>
+  <data name="Label_SearchLocations">
+    <value>Search Locations</value>
+  </data>
+  <data name="Label_AssignedLocations">
+    <value>Assigned Locations</value>
+  </data>
+  <data name="Label_SearchGroups">
+    <value>Search Groups</value>
+  </data>
+  <data name="Label_AssignedGroups">
+    <value>Assigned Groups</value>
+  </data>
+  <data name="Label_Airline">
+    <value>Airline</value>
+  </data>
+  <data name="Message_ErrorSavingLocation">
+    <value>An error occurred while saving the location.</value>
+  </data>
+  <data name="Message_BothUserAndLocationRequired">
+    <value>Both a user and a location must be selected.</value>
+  </data>
+  <data name="Message_ErrorRemovingLocation">
+    <value>An error occurred while removing the location.</value>
+  </data>
+  <data name="Message_BothUsersRequired">
+    <value>Both users must be selected.</value>
+  </data>
+  <data name="Message_ErrorCopyingLocations">
+    <value>An error occurred while copying locations.</value>
+  </data>
+</root>

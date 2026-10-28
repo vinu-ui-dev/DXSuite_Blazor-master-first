@@ -1,0 +1,86 @@
+@using Microsoft.JSInterop
+@inject IJSRuntime JSRuntime
+
+@if (!string.IsNullOrEmpty(AssetUrl))
+{
+    <div class="wap-panel">
+        <div class="wap-header">
+            <span class="wap-title">Preview</span>
+            <div class="wap-counter-stepper">
+                <label>Counters:</label>
+                <button class="wap-step-btn" @onclick="DecrementCounters" disabled="@(counterCount <= 1)">−</button>
+                <span class="wap-count">@counterCount</span>
+                <button class="wap-step-btn" @onclick="IncrementCounters" disabled="@(counterCount >= MaxCounters)">+</button>
+            </div>
+            <span class="wap-dims">@PreviewWidthPx px × @CounterHeightPx px</span>
+        </div>
+        <div class="wap-scroll">
+            <iframe @ref="iframeRef"
+                    src="@AssetUrl"
+                    style="width:@(PreviewWidthPx)px; height:@(CounterHeightPx)px; border:none; display:block;"
+                    sandbox="allow-scripts allow-same-origin">
+            </iframe>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>URL of the web asset to preview (HTML/SVG/CSS page).</summary>
+    [Parameter] public string? AssetUrl { get; set; }
+
+    /// <summary>Width of one counter display in pixels at content scale.</summary>
+    [Parameter] public int CounterWidthPx { get; set; } = 1920;
+
+    /// <summary>Height of one counter display in pixels at content scale.</summary>
+    [Parameter] public int CounterHeightPx { get; set; } = 1080;
+
+    /// <summary>Maximum counter count selectable in the stepper.</summary>
+    [Parameter] public int MaxCounters { get; set; } = 12;
+
+    private int counterCount = 2;
+    private ElementReference iframeRef;
+
+    private int PreviewWidthPx => counterCount * CounterWidthPx;
+
+    private async Task IncrementCounters()
+    {
+        if (counterCount < MaxCounters)
+        {
+            counterCount++;
+            await ApplyWidthAsync();
+        }
+    }
+
+    private async Task DecrementCounters()
+    {
+        if (counterCount > 1)
+        {
+            counterCount--;
+            await ApplyWidthAsync();
+        }
+    }
+
+    private async Task ApplyWidthAsync()
+    {
+        try
+        {
+            // Resize the iframe without a full reload so CSS reflow triggers correctly.
+            await JSRuntime.InvokeVoidAsync("eval",
+                $"document.querySelector('iframe[src=\"{AssetUrl}\"]')?.style && " +
+                $"(document.querySelector('iframe[src=\"{AssetUrl}\"]').style.width = '{PreviewWidthPx}px')");
+        }
+        catch { }
+    }
+}
+
+<style>
+    .wap-panel { border: 1px solid #d0d0d0; border-radius: 6px; overflow: hidden; background: #1a1a2e; }
+    .wap-header { display: flex; align-items: center; gap: 16px; padding: 8px 14px; background: #2a2a3e; color: #eee; font-size: 13px; }
+    .wap-title { font-weight: 600; }
+    .wap-counter-stepper { display: flex; align-items: center; gap: 6px; }
+    .wap-step-btn { width: 26px; height: 26px; border: 1px solid #555; background: #333; color: #eee; border-radius: 4px; cursor: pointer; font-size: 16px; line-height: 1; }
+    .wap-step-btn:disabled { opacity: 0.4; cursor: default; }
+    .wap-count { min-width: 20px; text-align: center; font-weight: 600; }
+    .wap-dims { margin-left: auto; font-size: 11px; color: #aaa; }
+    .wap-scroll { overflow-x: auto; overflow-y: hidden; }
+</style>

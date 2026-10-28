@@ -1,0 +1,322 @@
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+
+@using DXSuite.Director.Models
+@using System.Xml
+@inject IServiceScopeFactory scopeFactory;
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject NavigationManager navMan;
+@inject IJSRuntime JSRuntime;
+@inject ILogger<AssetPlaylist_Indirect> Logger
+@rendermode InteractiveServer
+
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="section-container" style="background-color:#CCCCCC; border-radius: 5px; padding: 20px">
+            <div class="section-header" style="background-color:unset; border:unset;">
+                <div class="section-title">
+                    <h3>@((!string.IsNullOrEmpty(PlaylistName)) ? PlaylistName : "Playlist")</h3>
+                </div>
+            </div>
+            <div class="asset-container" style="margin-top: 0 !important;">
+                <div class="d-flex" style="background-color:#f9f9f9; border-radius: 5px;">
+                    <div style="display: flex; gap: 15px; flex-wrap: wrap; justify-content: flex-start; padding: 15px;">
+                        @* DEFAULT CONTENT IN SCROLLING CONTAINER *@
+                        @if (MediaFiles.Count() == 0)
+                        {
+                            <h5>Generate a new welcome message above to begin assigning content.</h5>
+                        }
+                        else
+                        {
+                            @foreach (var mediaFile in MediaFiles)
+                            {
+                                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; width: 300px;">
+                                    <!-- Main Asset Card -->
+                                    <div style="background-color: white; border-radius: 5px; padding: 10px; box-shadow: 0 1px 3px rgba(0,0,0,0.2); text-align: center; width: 100%; position: relative;">
+
+                                        <!-- Filename Header -->
+                                        <h3 style="text-align: center; word-wrap: break-word; overflow-wrap: break-word; white-space: normal; height: 3em; line-height: 1.5em; overflow: hidden; text-overflow: ellipsis; font-size: 1rem; margin: 0 0 10px 0;">
+                                            @{
+                                                var fileName = mediaFile.Metadata.FirstOrDefault(m => m.Name == "FileName")?.Value ?? Path.GetFileName(mediaFile.DiskPath);
+                                            }
+                                            @fileName
+                                        </h3>
+
+                                        <!-- Edit and Delete Buttons -->
+                                        <div style="position: absolute; top: 50px; right: 10px; display: flex; gap: 5px; z-index: 15;">
+                                            <button class="dx-btn dx-btn-blue" style="padding: 5px 10px; font-size: 11px; min-width: auto;" @onclick="@(() => OpenMediaUploader(mediaFile))" title="Edit">
+                                                ✏️
+                                            </button>
+                                            <button class="dx-btn dx-btn-red" style="padding: 5px 10px; font-size: 11px; min-width: auto;" @onclick="@(() => assetDeleteModal.Open(0, Location.LocationId, mediaFile))" title="Delete">
+                                                🗑️
+                                            </button>
+                                        </div>
+
+                                        <!-- Asset Preview (larger, full width) -->
+                                        <div style="width: 100%; overflow: hidden; margin-bottom: 10px; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                                            <!-- Expired Indicator Badge -->
+                                            @if (mediaFile.IsExpired)
+                                            {
+                                                <div style="position: absolute; top: 5px; left: 5px; background-color: #990000; color: white; padding: 4px 8px; border-radius: 3px; font-size: 10px; font-weight: bold; z-index: 20;">
+                                                    EXPIRED
+                                                </div>
+                                            }
+
+                                            @if ((mediaFile.WebPath.ToUpper().Contains(".MP4")) || (mediaFile.WebPath.ToUpper().Contains(".AVI")))
+                                            {
+                                                <video src="@mediaFile.WebPath" style="width: 100%; height: auto; object-fit: contain; background-color: white; pointer-events: none; @(mediaFile.IsExpired ? "opacity: 0.6;" : "")" controlslist="nodownload noplaybackrate" />
+                                            }
+                                            else
+                                            {
+                                                <img src="@mediaFile.WebPath" style="width: 100%; height: auto; object-fit: contain; background-color: white; @(mediaFile.IsExpired ? "opacity: 0.6;" : "")" />
+                                            }
+                                        </div>
+
+                                        <!-- Schedule Table -->
+                                        @{
+                                            var startDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartDate");
+                                            var endDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndDate");
+                                            var startTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime")?.Value;
+                                            var endTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime")?.Value;
+                                            var overrideMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "Override")?.Value ?? "False";
+
+                                            string startDate = (startDateField != null && DateTime.TryParse(startDateField.Value, out DateTime parsedStartDate))
+                                                ? parsedStartDate.ToString("MM/dd/yyyy")
+                                                : "Now";
+                                            string endDate = (endDateField != null && DateTime.TryParse(endDateField.Value, out DateTime parsedEndDate))
+                                                ? parsedEndDate.ToString("MM/dd/yyyy")
+                                                : "Never";
+                                            string startTime = DateTime.TryParse(startTimeMetadata, out DateTime parsedStartTime) ? parsedStartTime.ToString("h:mm tt") : "All Day";
+                                            string endTime = DateTime.TryParse(endTimeMetadata, out DateTime parsedEndTime) ? parsedEndTime.ToString("h:mm tt") : "All Day";
+                                        }
+                                        <table width="100%" style="line-height: 20px; font-size: 12px;">
+                                            <tr>
+                                                <td width="30%"></td>
+                                                <td width="35%"><strong>START</strong></td>
+                                                <td width="35%"><strong>END</strong></td>
+                                            </tr>
+                                            <tr>
+                                                <td width="30%"><strong>DATE</strong></td>
+                                                <td width="35%">@startDate</td>
+                                                <td width="35%">@endDate</td>
+                                            </tr>
+                                            <tr>
+                                                <td width="30%"><strong>TIME</strong></td>
+                                                <td width="35%">@startTime</td>
+                                                <td width="35%">@endTime</td>
+                                            </tr>
+                                            <tr>
+                                                <td width="30%"><strong>OVERRIDE</strong></td>
+                                                <td colspan="2" width="70%">@overrideMetadata</td>
+                                            </tr>
+                                        </table>
+                                    </div>
+
+                                    <!-- VIEW Tab -->
+                                    <div class="dx-btn dx-btn-blue" style="padding: 4px 12px; border-radius: 0 0 4px 4px; font-size: 10px; font-weight: bold; cursor: pointer; transition: background-color 0.2s; margin-top: -3px; min-width: auto; width: 100%; text-align: center;"
+                                         @onclick="() => OpenAssetInNewTab(mediaFile)"
+                                         title="Click to open @((mediaFile.WebPath.ToUpper().Contains(".MP4") || mediaFile.WebPath.ToUpper().Contains(".AVI")) ? "video" : "image") in new tab">
+                                        VIEW
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+}
+
+<MediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="UpdateMediaFiles">
+
+</MediaAssetUploader>
+
+<AssetDeleteConfirmation @ref="assetDeleteModal" OnAssetDeletedMediaFile="DeleteMediaFile">
+
+</AssetDeleteConfirmation>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public string? PlaylistName { get; set; }
+    [Parameter] public double contentHeight { get; set; }
+    [Parameter] public double contentWidth { get; set; }
+
+    public double scaleFactor { get; set; } = 0.2;
+
+    private MediaAssetUploader? mediaUploaderModal { get; set; }
+    private AssetDeleteConfirmation? assetDeleteModal { get; set; }
+
+    private string? baseDirectory;
+
+    List<MediaFile> MediaFiles = new List<MediaFile>();
+
+    private bool alignAssetsVertically = false;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateMediaFiles();
+    }
+
+    private async Task DeleteMediaFile(MediaFile mediaFileToDelete)
+    {
+        bool deleteSuccess = false;
+        if (mediaFileToDelete.DiskPath != null)
+        {
+            if (System.IO.File.Exists(mediaFileToDelete.DiskPath))
+            {
+                System.IO.File.Delete(mediaFileToDelete.DiskPath);
+                deleteSuccess = true;
+            }
+            if (System.IO.File.Exists(mediaFileToDelete.DiskPath + ".metadata"))
+            {
+                System.IO.File.Delete(mediaFileToDelete.DiskPath + ".metadata");
+            }
+        }
+        if (deleteSuccess)
+        {
+            MediaFiles.Remove(mediaFileToDelete);
+            StateHasChanged();
+        }
+    }
+
+    public async Task UpdateMediaFiles()
+    {
+        try
+        {
+            DateTime now = DateTime.Now;
+            baseDirectory = MediaPaths.GetRoot();
+
+            if (baseDirectory != null && Location != null)
+            {
+                string uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString());
+
+                List<MediaFile> tempMediaFiles = new List<MediaFile>();
+
+                foreach (string file in System.IO.Directory.GetFiles(uploadDirectory, "", SearchOption.TopDirectoryOnly).Where(s => s.EndsWith(".metadata") == false && s.EndsWith(".db") == false))
+                {
+                    List<MetadataField> metadata = new List<MetadataField>();
+                    string metadataFilePath = file + ".metadata";
+
+                    if (System.IO.File.Exists(metadataFilePath))
+                    {
+                        XmlDocument doc = new XmlDocument();
+                        doc.Load(metadataFilePath);
+                        XmlNodeList nodes = doc.SelectNodes("usermetadata");
+
+                        foreach (XmlNode node in nodes)
+                        {
+                            foreach (XmlNode line in node)
+                            {
+                                MetadataField mdf = new MetadataField()
+                                    {
+                                        Name = line.Attributes["name"].Value,
+                                        DataType = line.Attributes["datatype"].Value,
+                                        Value = line.Attributes["value"].Value
+                                    };
+                                metadata.Add(mdf);
+                            }
+
+                        }
+                    }
+
+                    MetadataField? location = metadata.Where(x => x.Name == "Location").FirstOrDefault();
+
+                    if (location != null && location.Value == Location.LocationId.ToString())
+                    {
+                        bool isExpired = false;
+                        DateTime? parsedEndDate = null;
+
+                        MetadataField? endDate = metadata.Where(x => x.Name == "EndDate").FirstOrDefault();
+                        MetadataField? endTime = metadata.Where(x => x.Name == "EndTime").FirstOrDefault();
+
+                        if (endDate != null && DateTime.TryParse(endDate.Value, out DateTime parsedDate))
+                        {
+                            parsedEndDate = parsedDate;
+
+                            // Combine end date with end time if available
+                            DateTime endDateTime = parsedDate.Date;
+                            if (endTime != null && TimeSpan.TryParse(endTime.Value, out TimeSpan parsedTime))
+                            {
+                                endDateTime = endDateTime.Add(parsedTime);
+                            }
+                            else
+                            {
+                                // If no end time specified, consider end of day (23:59:59)
+                                endDateTime = endDateTime.AddDays(1).AddSeconds(-1);
+                            }
+
+                            // Content is expired if current time is past the end date+time
+                            if (now > endDateTime)
+                            {
+                                isExpired = true;
+                            }
+                        }
+                        MediaFile mf = new MediaFile()
+                            {
+                                WebPath = String.Format(@"/MediaAssets/{0}/{1}", Location.LocationId, Path.GetFileName(file)),
+                                DiskPath = file,
+                                Metadata = metadata,
+                                IsExpired = isExpired,
+                                EndDate = parsedEndDate
+                            };
+                        tempMediaFiles.Add(mf);
+                    }
+                }
+
+                MediaFiles = tempMediaFiles.OrderBy(x => x.EndDate ?? DateTime.MaxValue).ToList();
+                await InvokeAsync(StateHasChanged);
+            }
+
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating media files");
+        }
+
+    }
+
+    private void UpdateAspectRatio()
+    {
+        double aspectRatio = contentHeight / contentWidth;
+        if (aspectRatio < 0.3)
+        {
+            alignAssetsVertically = true;
+        }
+    }
+
+    private void OpenMediaUploader(MediaFile? editMediaFile)
+    {
+        var config = new MediaUploadConfig
+        {
+            UploadFolder = baseDirectory,
+            LocationId = Location.LocationId,
+            ConstraintId = 0,
+            ExpectedWidth = contentWidth,
+            ExpectedHeight = contentHeight,
+            EditMediaFile = editMediaFile,
+            AddToSql = false,
+            IsSchedulable = true,
+            EnableContentApproval = Location.EnableContentApproval
+        };
+
+        mediaUploaderModal.Open(config);
+    }
+
+    private void OpenMediaCreator()
+    {
+        var url = $"/mediacreator?LocationId={Location.LocationId}&ConstraintId=0&Width={contentWidth}&Height={contentHeight}";
+        navMan.NavigateTo(url);
+    }
+
+    private async Task OpenAssetInNewTab(MediaFile mediaFile)
+    {
+        // Open both images and videos in new tab
+        await JSRuntime.InvokeVoidAsync("open", mediaFile.WebPath, "_blank");
+    }
+}

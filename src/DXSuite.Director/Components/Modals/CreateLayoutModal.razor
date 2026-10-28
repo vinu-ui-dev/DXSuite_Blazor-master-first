@@ -1,0 +1,3684 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Models.LocationBundles
+@using DXSuite.Director.Services
+@using DXSuite.Director.Services.LocationBundles
+@using DXSuite.Shared.Services.Identity
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+@using System.Text.Json
+@inject IDirectorDBContext dbContext
+@inject ILogger<CreateLayoutModal> Logger
+@inject IDirectorLocationAccessService locationAccessService
+@inject ISessionState sessionState
+@inject ITenantContext tenantContext
+@inject LocationAccessBroadcastService accessBroadcast
+@inject IWebHostEnvironment webHostEnvironment
+@inject ITenantMediaPathResolver MediaPaths
+@inject IFloorPlanService floorPlanService
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject ILocationMetadataRuleService locationMetadataRules
+@inject IBackgroundRenditionService renditionService
+@inject IPublicationInvalidator publicationInvalidator
+
+@if (isOpen)
+{
+    <div class="modal-overlay">
+        <div class="modal-container" @onclick:stopPropagation="true">
+            <div class="modal-header">
+                <h4>@(isEditMode ? (selectedType == LocationType.FloorPlan ? "Edit Floorplan" : selectedType == LocationType.Panorama ? "Edit Panorama" : selectedType == LocationType.VideoWall ? "Edit Video Wall" : "Edit Layout") : "Create Location")</h4>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+            </div>
+
+            <div class="modal-body">
+                @if (currentStep == Step.SelectType)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Location Name</label>
+                        <input type="text" class="dx-form-control" @bind="locationName" placeholder="Enter location name" />
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Location Group</label>
+                        <div class="d-flex gap-2">
+                            <select class="form-select" @bind="selectedLocationGroupId" style="flex: 1;">
+                                @if (locationGroups != null)
+                                {
+                                    @foreach (var group in locationGroups)
+                                    {
+                                        <option value="@group.LocationGroupId">@group.LocationGroupName</option>
+                                    }
+                                }
+                                <option value="-1">+ Create New Group</option>
+                            </select>
+                        </div>
+                        @if (selectedLocationGroupId == -1)
+                        {
+                            <input type="text" class="dx-form-control mt-2" @bind="newGroupName" placeholder="Enter new group name" />
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Location Type</label>
+                        <div class="location-type-options">
+                            <div class="type-option @(selectedType == LocationType.Playlist ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.Playlist">
+                                <div class="type-icon"><i class="fa fa-list"></i></div>
+                                <div class="type-name">Playlist</div>
+                                <div class="type-desc">Sequential media playback</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.Card ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.Card">
+                                <div class="type-icon"><i class="fa fa-th-large"></i></div>
+                                <div class="type-name">Card</div>
+                                <div class="type-desc">Multiple displays with scheduling</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.Layout ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.Layout">
+                                <div class="type-icon"><i class="fa fa-border-all"></i></div>
+                                <div class="type-name">Layout</div>
+                                <div class="type-desc">Compose multiple locations into zones</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.AssetLibrary ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.AssetLibrary">
+                                <div class="type-icon"><i class="fa fa-database"></i></div>
+                                <div class="type-name">Asset Library</div>
+                                <div class="type-desc">Shared content pool for multiple locations</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.FloorPlan ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.FloorPlan">
+                                <div class="type-icon"><i class="fa fa-map"></i></div>
+                                <div class="type-name">Floorplan</div>
+                                <div class="type-desc">Interactive map with positioned displays</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.Panorama ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.Panorama">
+                                <div class="type-icon"><i class="fa fa-tv"></i></div>
+                                <div class="type-name">Panorama</div>
+                                <div class="type-desc">Display wall with positioned screens</div>
+                            </div>
+                            <div class="type-option @(selectedType == LocationType.VideoWall ? "type-active" : "")"
+                                 @onclick="() => selectedType = LocationType.VideoWall">
+                                <div class="type-icon"><i class="bi bi-grid-3x3"></i></div>
+                                <div class="type-name">Video Wall</div>
+                                <div class="type-desc">Airport counter video wall with airline scheduling</div>
+                            </div>
+                            @if (customLocationTypeId.HasValue)
+                            {
+                                <div class="type-option @(selectedType == LocationType.Custom ? "type-active" : "")"
+                                     @onclick="() => selectedType = LocationType.Custom">
+                                    <div class="type-icon"><i class="fa fa-puzzle-piece"></i></div>
+                                    <div class="type-name">Custom</div>
+                                    <div class="type-desc">Uploaded bundle experience</div>
+                                </div>
+                            }
+                            @if (customDisplayLocationTypeId.HasValue)
+                            {
+                                <div class="type-option @(selectedType == LocationType.CustomDisplay ? "type-active" : "")"
+                                     @onclick="() => selectedType = LocationType.CustomDisplay">
+                                    <div class="type-icon"><i class="fa fa-puzzle-piece"></i></div>
+                                    <div class="type-name">Custom Display</div>
+                                    <div class="type-desc">Uploaded bundle with managed displays</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (currentStep == Step.ConfigurePlaylist)
+                {
+                    <p class="text-muted mb-3">Set the resolution for this playlist location. This determines the aspect ratio for content.</p>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Width</label>
+                            <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Height</label>
+                            <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" />
+                        </div>
+                    </div>
+                    <div class="mt-2">
+                        <small class="text-muted">Common: 1920x1080 (16:9), 1080x1920 (9:16 portrait), 3840x2160 (4K)</small>
+                    </div>
+                }
+                else if (currentStep == Step.ConfigureCustom)
+                {
+                    <p class="text-muted mb-3">
+                        Choose the uploaded bundle this location renders. The location tracks the bundle's
+                        current version; settings and version pinning are available afterward via Configure.
+                    </p>
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Bundle</label>
+                        @if (availableBundles == null || availableBundles.Count == 0)
+                        {
+                            <p class="text-muted">No bundles uploaded yet. Upload one in Configuration &gt; Location Bundles first.</p>
+                        }
+                        else
+                        {
+                            <select class="form-select" @bind="selectedBundleKey">
+                                <option value="">(select a bundle)</option>
+                                @foreach (var bundle in availableBundles)
+                                {
+                                    <option value="@bundle.BundleKey">@bundle.Name (v@(bundle.CurrentVersion))</option>
+                                }
+                            </select>
+                        }
+                    </div>
+                    @if (selectedType == LocationType.CustomDisplay)
+                    {
+                        <p class="text-muted mb-2">This type manages displays. A first display is created now; more can be added in Edit.</p>
+                        <div class="row">
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Display Width</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" />
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Display Height</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" />
+                            </div>
+                        </div>
+                    }
+                }
+                else if (currentStep == Step.ConfigureCard)
+                {
+                    <p class="text-muted mb-3">Add displays for this card location. Each display can have independent content and scheduling.</p>
+
+                    <div class="displays-list">
+                        @foreach (var display in cardDisplays)
+                        {
+                            <div class="display-item">
+                                <div class="display-item-header">
+                                    <input type="text" class="dx-form-control form-control-sm" @bind="display.Name" placeholder="Display name" />
+                                    <button class="btn btn-sm btn-outline-danger" @onclick="() => RemoveCardDisplay(display)">
+                                        <i class="fa fa-times"></i>
+                                    </button>
+                                </div>
+                                <div class="display-item-resolution">
+                                    <input type="number" class="dx-form-control form-control-sm" @bind="display.Width" placeholder="Width" min="1" />
+                                    <span>x</span>
+                                    <input type="number" class="dx-form-control form-control-sm" @bind="display.Height" placeholder="Height" min="1" />
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    <button class="btn btn-outline-primary btn-sm mt-2" @onclick="AddCardDisplay">
+                        <i class="fa fa-plus me-1"></i> Add Display
+                    </button>
+                }
+                else if (currentStep == Step.ConfigureLayout)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Layout Resolution</label>
+                        <p class="text-muted small mb-2">The native resolution of the target display.</p>
+                        <div class="row">
+                            <div class="col-6">
+                                <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" placeholder="Width" />
+                            </div>
+                            <div class="col-6">
+                                <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" placeholder="Height" />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="available-locations mb-3">
+                        <label class="form-label fw-bold">Add Zones</label>
+                        <p class="text-muted small mb-2">Select existing Playlist or Card locations to add as zones.</p>
+                        @if (availableLocations != null)
+                        {
+                            @foreach (var loc in availableLocations)
+                            {
+                                var hasDimensions = HasValidDimensions(loc);
+                                var isPlaylist = IsPlaylistLocation(loc);
+                                <div class="location-item @(hasDimensions ? "" : "disabled")"
+                                     @onclick="() => SelectLocation(loc)">
+                                    <div class="location-item-info">
+                                        <span class="location-item-name">@loc.LocationName</span>
+                                        <span class="@(isPlaylist ? "dx-badge dx-badge-blue" : "dx-badge dx-badge-gray")">
+                                            @(isPlaylist ? "Playlist" : "Card")
+                                        </span>
+                                    </div>
+                                    @if (hasDimensions)
+                                    {
+                                        <span class="location-item-size">@GetDimensionsDisplay(loc)</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-warning small">No dimensions</span>
+                                    }
+                                </div>
+                            }
+                        }
+                    </div>
+
+                    @if (selectedLocation != null && !IsPlaylistLocation(selectedLocation))
+                    {
+                        <div class="display-selector-panel mb-3">
+                            <label class="form-label fw-bold">Select Display from @selectedLocation.LocationName</label>
+                            @foreach (var display in GetDisplaysForLocation(selectedLocation))
+                            {
+                                var hasDisplayDimensions = display.DisplayWidth > 0 && display.DisplayHeight > 0;
+                                <div class="location-item @(hasDisplayDimensions ? "" : "disabled")"
+                                     @onclick="() => AddZoneFromDisplay(selectedLocation, display)">
+                                    <span>@display.DisplayName</span>
+                                    @if (hasDisplayDimensions)
+                                    {
+                                        <span>@display.DisplayWidth x @display.DisplayHeight</span>
+                                    }
+                                    else
+                                    {
+                                        <span class="text-warning small">No dimensions</span>
+                                    }
+                                </div>
+                            }
+                            <button class="dx-btn dx-btn-gray btn-sm mt-2" @onclick="ClearSelectedLocation">Cancel</button>
+                        </div>
+                    }
+
+                    @if (layoutZones.Any())
+                    {
+                        <div class="layout-zones">
+                            <label class="form-label fw-bold">Layout Zones (@layoutZones.Count)</label>
+                            @foreach (var zone in layoutZones)
+                            {
+                                <div class="zone-item">
+                                    <div class="zone-item-header">
+                                        <span>Zone @zone.ZoneNumber: @zone.SourceLocationName</span>
+                                        @if (!string.IsNullOrEmpty(zone.DisplayName))
+                                        {
+                                            <small class="text-muted">(@zone.DisplayName)</small>
+                                        }
+                                        <button class="btn btn-sm btn-outline-danger ms-auto" @onclick="() => RemoveZone(zone)">x</button>
+                                    </div>
+                                    <div class="zone-item-position">
+                                        <div class="position-field">
+                                            <label>Left px</label>
+                                            <input type="number" class="dx-form-control form-control-sm" @bind="zone.Left" min="0" step="1" />
+                                        </div>
+                                        <div class="position-field">
+                                            <label>Top px</label>
+                                            <input type="number" class="dx-form-control form-control-sm" @bind="zone.Top" min="0" step="1" />
+                                        </div>
+                                        <div class="position-field">
+                                            <label>Width px</label>
+                                            <input type="number" class="dx-form-control form-control-sm" @bind="zone.Width" min="1" step="1" />
+                                        </div>
+                                        <div class="position-field">
+                                            <label>Height px</label>
+                                            <input type="number" class="dx-form-control form-control-sm" @bind="zone.Height" min="1" step="1" />
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+
+                else if (currentStep == Step.ConfigureAssetLibrary)
+                {
+                    <p class="text-muted mb-3">Configure the resolution for this asset library.</p>
+                    <div class="row">
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Width</label>
+                            <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" />
+                        </div>
+                        <div class="col-6">
+                            <label class="form-label fw-bold">Height</label>
+                            <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" />
+                        </div>
+                    </div>
+                    <div class="mt-2 mb-3">
+                        <small class="text-muted">Common: 1920x1080 (16:9), 1080x1920 (9:16 portrait), 3840x2160 (4K)</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Resolution Mode</label>
+                        <select class="dx-form-control" @bind="assetLibraryResolutionMode">
+                            <option value="aspect-ratio">Aspect Ratio (scales to fit)</option>
+                            <option value="exact">Exact Match (pixel-perfect)</option>
+                        </select>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Metadata Filters</label>
+                        <small class="text-muted d-block mb-2">Add metadata filters to tag and categorize assets</small>
+                        @for (var i = 0; i < assetLibraryMetadataKeys.Count; i++)
+                        {
+                            var idx = i;
+                            <div style="display:flex; gap:8px; margin-bottom:8px; align-items:center;">
+                                <select class="dx-form-control" style="flex:1;"
+                                        value="@assetLibraryMetadataKeys[idx]"
+                                        @onchange="@((ChangeEventArgs e) => assetLibraryMetadataKeys[idx] = e.Value?.ToString() ?? "")">
+                                    <option value="">— Select field —</option>
+                                    @if (metadataDefinitions != null)
+                                    {
+                                        @foreach (var def in metadataDefinitions)
+                                        {
+                                            <option value="@def.MetadataKey">@def.DisplayName (@def.MetadataKey)</option>
+                                        }
+                                    }
+                                </select>
+                                <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => assetLibraryMetadataKeys.RemoveAt(idx)">
+                                    <i class="fa fa-times"></i>
+                                </button>
+                            </div>
+                        }
+                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick='() => assetLibraryMetadataKeys.Add("")'>
+                            <i class="fa fa-plus"></i> Add Filter
+                        </button>
+                    </div>
+                }
+                else if (currentStep == Step.ConfigureFloorPlan)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Background Mode</label>
+                        <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                            <button class="mode-btn @(visualBackgroundMode == "image" ? "mode-active" : "")" @onclick='() => visualBackgroundMode = "image"'>
+                                <i class="fa fa-image"></i> Static Image
+                            </button>
+                            <button class="mode-btn @(visualBackgroundMode == "googlemap" ? "mode-active" : "")" @onclick='() => visualBackgroundMode = "googlemap"'>
+                                <i class="fa fa-map-marked-alt"></i> Google Map
+                            </button>
+                            <button class="mode-btn @(visualBackgroundMode == "offlinemap" ? "mode-active" : "")" @onclick='() => visualBackgroundMode = "offlinemap"'>
+                                <i class="fa fa-globe"></i> Offline Map
+                            </button>
+                            <button class="mode-btn @(visualBackgroundMode == "3dmodel" ? "mode-active" : "")" @onclick='() => visualBackgroundMode = "3dmodel"'>
+                                <i class="fa fa-cube"></i> 3D Model
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (visualBackgroundMode == "image")
+                    {
+                        <p class="text-muted mb-3">Upload a background image and set canvas dimensions.</p>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Background Image</label>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
+                                    <i class="fa fa-upload"></i> Choose Image
+                                    <InputFile OnChange="OnVisualBackgroundUpload" accept=".jpg,.jpeg,.png,.gif,.svg" style="display:none;" />
+                                </label>
+                                @if (visualBackgroundFile != null)
+                                {
+                                    <span class="text-muted" style="font-size:13px;">@visualBackgroundFile.Name</span>
+                                }
+                            </div>
+                            <small class="text-muted">Accepted: JPG, PNG, GIF, SVG (max 20 MB)</small>
+                        </div>
+
+                        @if (!string.IsNullOrEmpty(visualBackgroundPreviewUrl))
+                        {
+                            <div class="mb-3" style="text-align:center;">
+                                <img src="@visualBackgroundPreviewUrl" alt="Background preview" style="max-height:200px; max-width:100%; border:1px solid #ddd; border-radius:6px;" />
+                            </div>
+                        }
+
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Canvas Width</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" />
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Canvas Height</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" />
+                            </div>
+                        </div>
+                    }
+                    else if (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap")
+                    {
+                        <p class="text-muted mb-3">Configure map center, zoom, and bounds.</p>
+                        <div class="row mb-3">
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Center Latitude</label>
+                                <input type="number" class="dx-form-control" @bind="mapCenterLatitude" step="0.0001" />
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label fw-bold">Center Longitude</label>
+                                <input type="number" class="dx-form-control" @bind="mapCenterLongitude" step="0.0001" />
+                            </div>
+                        </div>
+                        <div class="row mb-3">
+                            <div class="col-4">
+                                <label class="form-label fw-bold">Zoom Level</label>
+                                <input type="number" class="dx-form-control" @bind="mapZoomLevel" min="1" max="22" />
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label fw-bold">Canvas Width</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionWidth" min="1" />
+                            </div>
+                            <div class="col-4">
+                                <label class="form-label fw-bold">Canvas Height</label>
+                                <input type="number" class="dx-form-control" @bind="resolutionHeight" min="1" />
+                            </div>
+                        </div>
+                        @if (visualBackgroundMode == "offlinemap")
+                        {
+                            <div class="mb-3">
+                                <label class="form-label fw-bold">Tile Path</label>
+                                <input type="text" class="dx-form-control" @bind="offlineTilePath" placeholder="/tiles/{z}/{x}/{y}.png" />
+                            </div>
+                        }
+                    }
+                    else if (visualBackgroundMode == "3dmodel")
+                    {
+                        <p class="text-muted mb-3">Upload a GLB 3D model file.</p>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">3D Model (GLB)</label>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
+                                    <i class="fa fa-cube"></i> Choose Model
+                                    <InputFile OnChange="OnModelFileUpload" accept=".glb" style="display:none;" />
+                                </label>
+                                @if (modelFile != null)
+                                {
+                                    <span class="text-muted" style="font-size:13px;">@modelFile.Name</span>
+                                }
+                            </div>
+                        </div>
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Hotspot Scale</label>
+                            <input type="number" class="dx-form-control" style="width:120px;" @bind="hotspotScale" step="0.1" min="0.1" />
+                        </div>
+                    }
+
+                    @* ── ELEMENT MANAGEMENT ── *@
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Add Element</label>
+                        <div class="row g-2 mb-1">
+                            <div class="col-3">
+                                <label class="small">Type</label>
+                                <select class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualType">
+                                    <option value="display">Display</option>
+                                    <option value="location">Location</option>
+                                </select>
+                            </div>
+                            <div class="col-5">
+                                @if (addVisualType == "display")
+                                {
+                                    <label class="small">Display</label>
+                                    <select class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualDisplayId">
+                                        <option value="0">— Select —</option>
+                                        @foreach (var d in allDisplays)
+                                        {
+                                            <option value="@d.DisplayId">@d.DisplayName</option>
+                                        }
+                                    </select>
+                                }
+                                else
+                                {
+                                    <label class="small">Location</label>
+                                    <select class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualLocationId">
+                                        <option value="0">— Select —</option>
+                                        @foreach (var l in allLocations.Where(l => l.LocationId != editingLocationId))
+                                        {
+                                            <option value="@l.LocationId">@l.LocationName</option>
+                                        }
+                                    </select>
+                                }
+                            </div>
+                            <div class="col-4">
+                                <label class="small">Icon URL</label>
+                                <input type="text" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualIconPath" placeholder="optional" />
+                            </div>
+                        </div>
+                        @if (addVisualType == "display")
+                        {
+                            <div style="margin-bottom:6px;">
+                                <input type="checkbox" id="chkLivePreview" @bind="addVisualShowLivePreview" />
+                                <label class="small" for="chkLivePreview" style="cursor:pointer;">Show live preview instead of icon</label>
+                            </div>
+                        }
+                        <div class="row g-1 mb-2">
+                            @if (visualBackgroundMode == "image")
+                            {
+                                <div class="col-2">
+                                    <label class="small">Left</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualLeft" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="small">Top</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualTop" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="small">Width</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualWidth" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="small">Height</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualHeight" />
+                                </div>
+                            }
+                            else if (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap")
+                            {
+                                <div class="col-3">
+                                    <label class="small">Latitude</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualLatitude" step="0.000001" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="small">Longitude</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisualLongitude" step="0.000001" />
+                                </div>
+                            }
+                            else if (visualBackgroundMode == "3dmodel")
+                            {
+                                <div class="col-2">
+                                    <label class="small">X</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisual3DX" step="0.1" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="small">Y</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisual3DY" step="0.1" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="small">Z</label>
+                                    <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="addVisual3DZ" step="0.1" />
+                                </div>
+                            }
+                            <div class="col-2 d-flex align-items-end">
+                                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddVisualElement">Add</button>
+                            </div>
+                        </div>
+                    </div>
+
+                    @if (visualElements.Any())
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Elements (@visualElements.Count)</label>
+                            @foreach (var el in visualElements)
+                            {
+                                <div class="pano-item-card">
+                                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                        <span>
+                                            <span class="badge @(el.Type == "display" ? "bg-primary" : "bg-secondary")" style="font-size:0.7rem;">@el.Type</span>
+                                            <strong class="small">@el.DisplayOrLocationName</strong>
+                                        </span>
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RemoveVisualElement(el)">×</button>
+                                    </div>
+                                    @if (visualBackgroundMode == "image")
+                                    {
+                                        <div class="row g-1">
+                                            <div class="col-3">
+                                                <label class="small">Left</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Left" min="0" />
+                                            </div>
+                                            <div class="col-3">
+                                                <label class="small">Top</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Top" min="0" />
+                                            </div>
+                                            <div class="col-3">
+                                                <label class="small">Width</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Width" min="1" />
+                                            </div>
+                                            <div class="col-3">
+                                                <label class="small">Height</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Height" min="1" />
+                                            </div>
+                                        </div>
+                                    }
+                                    else if (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap")
+                                    {
+                                        <div class="row g-1">
+                                            <div class="col-4">
+                                                <label class="small">Latitude</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Latitude" step="0.000001" />
+                                            </div>
+                                            <div class="col-4">
+                                                <label class="small">Longitude</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Longitude" step="0.000001" />
+                                            </div>
+                                        </div>
+                                    }
+                                    else if (visualBackgroundMode == "3dmodel")
+                                    {
+                                        <div class="row g-1">
+                                            <div class="col-2">
+                                                <label class="small">X</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Position3DX" step="0.1" />
+                                            </div>
+                                            <div class="col-2">
+                                                <label class="small">Y</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Position3DY" step="0.1" />
+                                            </div>
+                                            <div class="col-2">
+                                                <label class="small">Z</label>
+                                                <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="el.Position3DZ" step="0.1" />
+                                            </div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+                else if (currentStep == Step.ConfigurePanorama)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Background Image</label>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
+                                Choose Image
+                                <InputFile OnChange="OnPanoramaBackgroundUpload" accept=".jpg,.jpeg,.png,.gif,.svg" style="display:none;" />
+                            </label>
+                            @if (panoBackgroundPreviewUrl != null)
+                            {
+                                <span class="text-success small"><i class="fa fa-check"></i> @resolutionWidth × @resolutionHeight</span>
+                            }
+                        </div>
+                        @if (panoBackgroundPreviewUrl != null)
+                        {
+                            <img src="@panoBackgroundPreviewUrl" class="mt-2" style="max-width:100%;max-height:120px;border:1px solid #ddd;border-radius:4px;" />
+                        }
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Scale Factor</label>
+                        <input type="number" class="dx-form-control" style="width:100px;" @bind="panoScaleFactor" step="0.1" min="0.1" max="2.0" />
+                        <small class="text-muted">Controls preview zoom (0.4 = 40% of native resolution)</small>
+                    </div>
+
+                    <div class="mb-3">
+                        <label class="form-label fw-bold">Displays</label>
+                        <div style="display:flex; gap:8px; margin-bottom:8px;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="AddPanoDisplay">
+                                <i class="fa fa-plus"></i> Add Display
+                            </button>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="AddPanoGroup">
+                                <i class="fa fa-plus"></i> Add Group
+                            </button>
+                        </div>
+
+                        @foreach (var item in panoDisplayItems)
+                        {
+                            <div class="pano-item-card">
+                                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+                                    <strong class="small">@(item.IsGroup ? "Group" : "Display"): @item.Name</strong>
+                                    <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => panoDisplayItems.Remove(item)">×</button>
+                                </div>
+                                <div class="row g-1">
+                                    <div class="col-4">
+                                        <label class="small">Name</label>
+                                        <input type="text" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.Name" />
+                                    </div>
+                                    @if (item.IsGroup)
+                                    {
+                                        <div class="col-2">
+                                            <label class="small">Count</label>
+                                            <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.Count" min="1" max="50" />
+                                        </div>
+                                        <div class="col-2">
+                                            <label class="small">Spacing</label>
+                                            <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.Spacing" />
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="small">Direction</label>
+                                            <select class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.Direction">
+                                                <option value="horizontal">Horizontal</option>
+                                                <option value="vertical">Vertical</option>
+                                            </select>
+                                        </div>
+                                    }
+                                </div>
+                                <div class="row g-1 mt-1">
+                                    <div class="col-2">
+                                        <label class="small">Width</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.DisplayWidth" min="1" />
+                                    </div>
+                                    <div class="col-2">
+                                        <label class="small">Height</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.DisplayHeight" min="1" />
+                                    </div>
+                                    <div class="col-2">
+                                        <label class="small">Top</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.PositionTop" />
+                                    </div>
+                                    <div class="col-2">
+                                        <label class="small">Left</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.PositionLeft" />
+                                    </div>
+                                    <div class="col-2">
+                                        <label class="small">Z-Index</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.ZIndex" />
+                                    </div>
+                                    <div class="col-2">
+                                        <label class="small">Scale</label>
+                                        <input type="number" class="dx-form-control" style="font-size:0.85rem;padding:4px 8px;" @bind="item.DisplayScale" step="0.1" min="0.1" max="5.0" />
+                                    </div>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (panoBackgroundPreviewUrl != null && panoDisplayItems.Any())
+                    {
+                        <div class="mb-3">
+                            <label class="form-label fw-bold">Preview</label>
+                            <div style="position:relative; width:100%; max-height:200px; overflow:auto; border:1px solid #ddd; border-radius:4px;">
+                                <div style="position:relative; width:@(resolutionWidth * 0.1)px; height:@(resolutionHeight * 0.1)px; background-image:url('@panoBackgroundPreviewUrl'); background-size:100% 100%;">
+                                    @foreach (var item in panoDisplayItems)
+                                    {
+                                        if (item.IsGroup)
+                                        {
+                                            for (int gi = 0; gi < item.Count; gi++)
+                                            {
+                                                var scaledW = item.DisplayWidth * item.DisplayScale * 0.1;
+                                                var scaledH = item.DisplayHeight * item.DisplayScale * 0.1;
+                                                var gTop = item.Direction == "vertical"
+                                                    ? item.PositionTop * 0.1 + gi * (scaledH + item.Spacing * 0.1)
+                                                    : item.PositionTop * 0.1;
+                                                var gLeft = item.Direction == "horizontal"
+                                                    ? item.PositionLeft * 0.1 + gi * (scaledW + item.Spacing * 0.1)
+                                                    : item.PositionLeft * 0.1;
+                                                <div style="position:absolute;top:@(gTop)px;left:@(gLeft)px;width:@(scaledW)px;height:@(scaledH)px;border:1px solid #16FF00;background:rgba(22,255,0,0.15);z-index:@item.ZIndex;" title="@item.Name @(gi + 1)"></div>
+                                            }
+                                        }
+                                        else
+                                        {
+                                            <div style="position:absolute;top:@(item.PositionTop * 0.1)px;left:@(item.PositionLeft * 0.1)px;width:@(item.DisplayWidth * item.DisplayScale * 0.1)px;height:@(item.DisplayHeight * item.DisplayScale * 0.1)px;border:1px solid #16FF00;background:rgba(22,255,0,0.15);z-index:@item.ZIndex;" title="@item.Name"></div>
+                                        }
+                                    }
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+                else if (currentStep == Step.ConfigureVideoWall)
+                {
+                    <p class="text-muted mb-3">Configure a video wall with rows of counter displays for airline scheduling.</p>
+
+                    <div class="mb-3">
+                        <label class="form-label small mb-1">Context Background Image (optional)</label>
+                        <InputFile OnChange="OnWallBackgroundUpload" accept="image/*" class="form-control" />
+                        @if (wallBgPreviewUrl != null)
+                        {
+                            <img src="@wallBgPreviewUrl" style="max-height:120px;max-width:100%;margin-top:8px;border-radius:4px;border:1px solid #444;" alt="Background preview" />
+                        }
+                    </div>
+
+                    <div class="row g-2 align-items-end mb-3">
+                        <div class="col-3">
+                            <label class="form-label small mb-1">Counter Width (px)</label>
+                            <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallCounterWidthPx" min="1" />
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label small mb-1">
+                                Content Top Offset
+                                <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                   title="Shifts all wall content (rows, layers, logo zones) down against the context background in DXSuite's preview surfaces. Players ignore it — each element's own Top offset is relative to the content canvas."></i>
+                            </label>
+                            <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallContentTopOffsetPx" />
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label small mb-1">
+                                Background Scale
+                                <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                   title="Scales only the context background image, independently of the content. Tune it so the background's on-screen width matches the content: BackgroundImageWidth × BackgroundScale ≈ wall content width × Content Scale. Use values above 1 to enlarge a background image smaller than the content."></i>
+                            </label>
+                            <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallBackgroundScaleFactor" min="0.01" max="20" step="0.01" />
+                        </div>
+                        <div class="col-3">
+                            <label class="form-label small mb-1">
+                                Content Scale
+                                <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                   title="Scales all video wall content (counter rows, wall layers) in the admin UI preview. All native pixel coordinates are multiplied by this value. Lower values zoom out to see more of the wall at once."></i>
+                            </label>
+                            <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallContentScaleFactor" min="0.01" max="1" step="0.01" />
+                        </div>
+                    </div>
+
+                    <div class="pano-item-card mb-3">
+                        <div class="d-flex align-items-center gap-2 mb-1">
+                            <input type="checkbox" id="wallWrappedOutputs" @bind="wallWrappedOutputsEnabled" />
+                            <label class="form-label fw-bold mb-0" for="wallWrappedOutputs">
+                                Wrapped Outputs
+                                <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                   title="Enable when this wall is driven by fixed-size player outputs (e.g. Moxie 4K) that wrap the canvas row into stacked strips. Background videos get per-output pre-wrapped renditions generated in the background, and each output gets a consolidated layer URL. Strip height comes from the background layer's height."></i>
+                            </label>
+                        </div>
+                        @if (wallWrappedOutputsEnabled)
+                        {
+                            <div class="row g-2 mb-2">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Output Width (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallOutputWidth" min="640" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Output Height (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="wallOutputHeight" min="360" />
+                                </div>
+                            </div>
+                            @if (GetWrappedOutputUrls().ToList() is { Count: > 0 } outputUrls)
+                            {
+                                <label class="form-label small fw-bold mb-1">Per-Output URLs (click to select)</label>
+                                @foreach (var url in outputUrls)
+                                {
+                                    <div class="small text-muted" style="font-family:monospace; user-select:all; white-space:nowrap; overflow-x:auto;">@url</div>
+                                }
+                            }
+                            @if (GetRenditionStatuses() is { Count: > 0 } renditionStatuses)
+                            {
+                                <label class="form-label small fw-bold mb-1 mt-2">Background Renditions</label>
+                                @foreach (var r in renditionStatuses)
+                                {
+                                    <div class="small">
+                                        <span class="@(r.Status == "done" ? "text-success" : r.Status == "failed" ? "text-danger" : "text-warning")">@r.Status</span>
+                                        <span class="text-muted"> @r.OutputsReady/@r.OutputsTotal outputs — @string.Join(", ", r.Inputs.Select(System.IO.Path.GetFileName))</span>
+                                        @if (r.Error != null)
+                                        {
+                                            <span class="text-danger"> @r.Error</span>
+                                        }
+                                    </div>
+                                }
+                            }
+                        }
+                    </div>
+
+                    <hr class="my-3" />
+
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <label class="form-label fw-bold mb-0">Counter Rows</label>
+                        <button type="button" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                @onclick="AddWallRow">
+                            + Add Row
+                        </button>
+                    </div>
+
+                    @if (!wallRows.Any())
+                    {
+                        <p class="text-muted small">Add at least one counter row.</p>
+                    }
+                    @foreach (var row in wallRows)
+                    {
+                        <div class="pano-item-card">
+                            <div class="row g-2 align-items-end mb-1">
+                                <div class="col-4">
+                                    <label class="form-label small mb-1">Row Name</label>
+                                    <input type="text" class="dx-form-control dx-form-control-sm" @bind="row.Name" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Counters</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.CounterCount" min="1" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Height (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.CounterHeightPx" min="1" />
+                                </div>
+                                <div class="col-2 text-end">
+                                    <button type="button" class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                            @onclick="() => wallRows.Remove(row)">× Remove</button>
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-start mb-1">
+                                <div class="col-12">
+                                    <label class="form-label small mb-1">
+                                        Gap Pattern (px)
+                                        <span class="text-muted fw-normal" style="font-size:0.75rem;">
+                                            — Gap[i] is inserted after display i→i+1, cycling through the list
+                                        </span>
+                                    </label>
+                                    <div class="d-flex flex-wrap gap-1 align-items-center">
+                                        @for (int gi = 0; gi < row.Gaps.Count; gi++)
+                                        {
+                                            var gidx = gi;
+                                            <div class="d-flex align-items-center gap-1">
+                                                <span class="text-muted small">[@(gidx + 1)]</span>
+                                                <input type="number" class="dx-form-control dx-form-control-sm"
+                                                       style="width:80px;"
+                                                       value="@row.Gaps[gidx]"
+                                                       @onchange="e => { if (double.TryParse(e.Value?.ToString(), out var v)) { row.Gaps[gidx] = v; StateHasChanged(); } }" min="0" />
+                                                @if (row.Gaps.Count > 1)
+                                                {
+                                                    <button type="button" class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                            @onclick="() => { row.Gaps.RemoveAt(gidx); StateHasChanged(); }">×</button>
+                                                }
+                                            </div>
+                                        }
+                                        <button type="button" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                                @onclick="() => { row.Gaps.Add(0); StateHasChanged(); }">+ Gap</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Top offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.VerticalPositionPx" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Left offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.HorizontalStartPx" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">
+                                        Display Scale
+                                        <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                           title="Per-row multiplier applied on top of Content Scale. The final render scale for this row's displays is Content Scale × Display Scale. Set to 1.0 for standard layouts where all counter rows share the same canvas pixel density."></i>
+                                    </label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.DisplayScale" min="0.01" max="2" step="0.01" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Z-Index</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm no-spinner" @bind="row.ZIndex" />
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-end mt-1">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">
+                                        Allocation Left (px)
+                                        <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                           title="Pins the left edge of mask/background coverage for whichever airline cluster contains this row's first counter. Empty keeps the derived behavior (extend to x=0 / inherit the boundary)."></i>
+                                    </label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.AllocationLeftPx" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">
+                                        Allocation Right (px)
+                                        <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                           title="Pins the right edge of coverage for the cluster containing this row's last counter (and stops the wall's last cluster from extending to the output edge). Empty keeps the derived behavior."></i>
+                                    </label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="row.AllocationRightPx" />
+                                </div>
+                                <div class="col-6 d-flex align-items-end pb-1">
+                                    <span class="text-muted" style="font-size:0.78rem;">
+                                        Optional coverage bounds in canvas px. Values apply to whichever airline reaches this row's edge.
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    @if (AllocationBoundsWarning() is string allocWarning)
+                    {
+                        <div class="alert alert-warning py-2 mt-2" style="font-size:0.85rem;">@allocWarning</div>
+                    }
+
+                    <hr class="my-3" />
+
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <label class="form-label fw-bold mb-0">Wall Layers <span class="text-muted fw-normal small">(mask, background)</span></label>
+                        <button type="button" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                @onclick="AddWallLayer">
+                            + Add Layer
+                        </button>
+                    </div>
+
+                    @if (!wallLayers.Any())
+                    {
+                        <p class="text-muted small">Optional. Add mask or background layers that span the full wall.</p>
+                    }
+                    @foreach (var layer in wallLayers)
+                    {
+                        <div class="pano-item-card" style="border-left:3px solid var(--dx-blue,#0071BC)">
+                            <div class="row g-2 align-items-end mb-1">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Layer Name</label>
+                                    <input type="text" class="dx-form-control dx-form-control-sm" @bind="layer.Name" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Role</label>
+                                    <select class="form-select form-select-sm" @bind="layer.Role">
+                                        <option value="mask">Mask</option>
+                                        <option value="background">Background</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Width (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="layer.WidthPx" min="1" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Height (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="layer.HeightPx" min="1" />
+                                </div>
+                                <div class="col-1">
+                                    <label class="form-label small mb-1">Z-Index</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm no-spinner" @bind="layer.ZIndex" />
+                                </div>
+                                <div class="col-2 text-end">
+                                    <button type="button" class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                            @onclick="() => wallLayers.Remove(layer)">× Remove</button>
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Top offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="layer.PositionTop" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Left offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="layer.PositionLeft" />
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-end mt-1">
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">H. Loop</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="layer.HorizontalImageLoop" min="1" max="64" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Image Width (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm"
+                                           value="@(layer.WidthPx / Math.Max(1, layer.HorizontalImageLoop))"
+                                           readonly disabled style="background:var(--dx-bg-muted,#f0f0f0); color:var(--dx-text-muted,#888);" />
+                                </div>
+                                <div class="col-7 d-flex align-items-end pb-1">
+                                    <span class="text-muted" style="font-size:0.78rem;">
+                                        Tiles the image horizontally N times. Asset constraint = Image Width × Height.
+                                    </span>
+                                </div>
+                            </div>
+                        </div>
+                    }
+
+                    <hr class="my-3" />
+
+                    <div class="d-flex align-items-center justify-content-between mb-2">
+                        <label class="form-label fw-bold mb-0">Logo Zones <span class="text-muted fw-normal small">(allocation-driven per-zone logo placement)</span></label>
+                        <button type="button" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                @onclick="AddWallLogoZone">
+                            + Add Zone
+                        </button>
+                    </div>
+
+                    <div class="pano-item-card">
+                        <div class="d-flex align-items-center justify-content-between mb-1">
+                            <label class="form-label small fw-bold mb-1">
+                                Logo Roles
+                                <i class="bi bi-info-circle text-muted ms-1" style="font-size:0.85em; cursor:default;"
+                                   title="Named roles let airlines upload distinct content per zone type (e.g. 'Counter Logos' vs 'Accent Logos'). Zones without a role show the airline's single default logo."></i>
+                            </label>
+                            <button type="button" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    @onclick="AddLogoRole">
+                                + Add Role
+                            </button>
+                        </div>
+                        @if (!wallLogoRoles.Any())
+                        {
+                            <p class="text-muted small mb-1">No named roles — every zone shows the airline's default logo.</p>
+                        }
+                        @foreach (var role in wallLogoRoles)
+                        {
+                            <div class="row g-2 align-items-end mb-1">
+                                <div class="col-6">
+                                    <label class="form-label small mb-1">Role Name</label>
+                                    <input type="text" class="dx-form-control dx-form-control-sm" @bind="role.Name" />
+                                </div>
+                                <div class="col-4 d-flex align-items-end pb-1">
+                                    <span class="text-muted" style="font-size:0.75rem;">key: @role.Key</span>
+                                </div>
+                                <div class="col-2 text-end">
+                                    <button type="button" class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                            @onclick="() => RemoveLogoRole(role)">× Remove</button>
+                                </div>
+                            </div>
+                        }
+                    </div>
+
+                    @if (!wallLogoZones.Any())
+                    {
+                        <p class="text-muted small">Optional. Each zone shows the allocated airline's logo based on its canvas X position.</p>
+                    }
+                    @foreach (var zone in wallLogoZones)
+                    {
+                        <div class="pano-item-card" style="border-left:3px solid #f59e0b">
+                            <div class="row g-2 align-items-end mb-1">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Zone Name</label>
+                                    <input type="text" class="dx-form-control dx-form-control-sm" @bind="zone.Name" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Role</label>
+                                    <select class="form-select form-select-sm" @bind="zone.LogoRoleKey">
+                                        <option value="">Default</option>
+                                        @foreach (var role in wallLogoRoles)
+                                        {
+                                            <option value="@role.Key">@role.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Width (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="zone.WidthPx" min="1" />
+                                </div>
+                                <div class="col-2">
+                                    <label class="form-label small mb-1">Height (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="zone.HeightPx" min="1" />
+                                </div>
+                                <div class="col-1">
+                                    <label class="form-label small mb-1">Z-Index</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm no-spinner" @bind="zone.ZIndex" />
+                                </div>
+                                <div class="col-2 text-end">
+                                    <button type="button" class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                            @onclick="() => wallLogoZones.Remove(zone)">× Remove</button>
+                                </div>
+                            </div>
+                            <div class="row g-2 align-items-end">
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Top offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="zone.PositionTop" />
+                                </div>
+                                <div class="col-3">
+                                    <label class="form-label small mb-1">Left offset (px)</label>
+                                    <input type="number" class="dx-form-control dx-form-control-sm" @bind="zone.PositionLeft" />
+                                </div>
+                            </div>
+                        </div>
+                    }
+                }
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-3 py-2">@errorMessage</div>
+                }
+            </div>
+
+            <div class="modal-footer">
+                @if (currentStep == Step.SelectType)
+                {
+                    <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="NextStep" disabled="@(string.IsNullOrWhiteSpace(locationName) || selectedType == null)">Next</button>
+                }
+                else
+                {
+                    @if (!isEditMode)
+                    {
+                        <button class="dx-btn dx-btn-gray" @onclick="PreviousStep">Back</button>
+                    }
+                    else
+                    {
+                        <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                    }
+                    <button class="dx-btn dx-btn-blue" @onclick="@(isEditMode ? SaveLayout : CreateLocation)" disabled="@(!CanCreate() || isCreating)">
+                        @if (isCreating)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        @(isEditMode ? "Save" : "Create")
+                    </button>
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+
+    .modal-container {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        width: min(950px, 95vw);
+        max-width: 95vw;
+        max-height: 85vh;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .modal-header {
+        background-color: #0071BC;
+        color: white;
+        padding: 16px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .modal-header h4 {
+        margin: 0;
+        font-size: 1.1rem;
+        color: white;
+    }
+
+    .modal-close {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 1.5rem;
+        cursor: pointer;
+        line-height: 1;
+    }
+
+    .modal-body {
+        padding: 20px;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    .modal-footer {
+        padding: 15px 20px;
+        border-top: 1px solid #e0e0e0;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+
+    /* Location Type Selection */
+    .location-type-options {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+    }
+
+    .type-option {
+        flex: 1;
+        padding: 15px;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        cursor: pointer;
+        text-align: center;
+        transition: all 0.2s;
+    }
+
+    .type-option:hover {
+        border-color: #0071BC;
+        background-color: #f8f9fa;
+    }
+
+    .type-option.type-active {
+        border-color: #0071BC !important;
+        background-color: #e8f4fc !important;
+    }
+
+    .type-icon {
+        font-size: 1.5rem;
+        color: #0071BC;
+        margin-bottom: 8px;
+    }
+
+    .type-name {
+        font-weight: 600;
+        margin-bottom: 4px;
+    }
+
+    .type-desc {
+        font-size: 0.75rem;
+        color: #666;
+    }
+
+    /* Card Displays */
+    .displays-list {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .display-item {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+    }
+
+    .display-item-header {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 8px;
+    }
+
+    .display-item-header input {
+        flex: 1;
+    }
+
+    .display-item-resolution {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .display-item-resolution input {
+        width: 100px;
+    }
+
+    /* Available Locations */
+    .available-locations {
+        max-height: 200px;
+        overflow-y: auto;
+    }
+
+    .location-item {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 12px;
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        margin-bottom: 6px;
+        cursor: pointer;
+        transition: background 0.2s;
+    }
+
+    .location-item:hover:not(.disabled) {
+        background: #e8f4fc;
+        border-color: #0071BC;
+    }
+
+    .location-item.disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+    }
+
+    .location-item-info {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .location-item-name {
+        font-weight: 500;
+    }
+
+    .location-item-size {
+        color: #666;
+        font-size: 0.85rem;
+    }
+
+    /* Display Selector Panel */
+    .display-selector-panel {
+        background: #f0f7fc;
+        border: 1px solid #0071BC;
+        border-radius: 6px;
+        padding: 12px;
+    }
+
+    /* Layout Zones */
+    .layout-zones {
+        margin-top: 15px;
+    }
+
+    .zone-item {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+    }
+
+    .zone-item-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 8px;
+    }
+
+    .zone-item-position {
+        display: flex;
+        gap: 12px;
+        flex-wrap: wrap;
+    }
+
+    .position-field {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .position-field label {
+        font-size: 0.75rem;
+        color: #666;
+    }
+
+    .position-field input {
+        width: 80px;
+    }
+
+    .calculated-value {
+        padding: 6px 12px;
+        background: #e9ecef;
+        border-radius: 4px;
+        font-size: 0.875rem;
+    }
+
+    /* Background Mode Buttons */
+    .mode-btn {
+        padding: 6px 14px;
+        border: 2px solid #e0e0e0;
+        border-radius: 6px;
+        background: white;
+        cursor: pointer;
+        font-size: 0.85rem;
+        transition: all 0.2s;
+    }
+
+    .mode-btn:hover {
+        border-color: #0071BC;
+        background: #f8f9fa;
+    }
+
+    .mode-btn.mode-active {
+        border-color: #0071BC;
+        background: #e8f4fc;
+        color: #0071BC;
+        font-weight: 600;
+    }
+
+    /* Panorama Display Items */
+    .pano-item-card {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 10px;
+        margin-bottom: 8px;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public EventCallback<int> OnLayoutCreated { get; set; }
+
+    private enum Step { SelectType, ConfigurePlaylist, ConfigureCard, ConfigureLayout, ConfigureAssetLibrary, ConfigureFloorPlan, ConfigurePanorama, ConfigureVideoWall, ConfigureCustom }
+    private enum LocationType { Playlist, Card, Layout, AssetLibrary, FloorPlan, Panorama, VideoWall, Custom, CustomDisplay }
+
+    private Step currentStep = Step.SelectType;
+    private LocationType? selectedType = null;
+
+    private bool isOpen = false;
+    private bool isCreating = false;
+    private bool isEditMode = false;
+    private int? editingLocationId = null;
+    private string? errorMessage = null;
+
+    // Common fields
+    private string locationName = "";
+    private int resolutionWidth = 1920;
+    private int resolutionHeight = 1080;
+
+    // Location group fields
+    private List<TblLocationGroup>? locationGroups;
+    private int selectedLocationGroupId = 0;
+    private string newGroupName = "";
+
+    // Card-specific fields
+    private List<CardDisplayItem> cardDisplays = new();
+
+    // Layout-specific fields
+    private List<TblLocation>? availableLocations;
+    private TblLocation? selectedLocation;
+    private List<LayoutZone> layoutZones = new();
+    private int nextZoneNumber = 1;
+
+    private const int LAYOUT_LOCATION_TYPE_ID = 1015;
+    private const int PLAYLIST_LOCATION_TYPE_ID = 7;
+    private const int CARD_LOCATION_TYPE_ID = 4;
+    private const int ASSET_LIBRARY_LOCATION_TYPE_ID = 1020;
+    private const int PANORAMA_LOCATION_TYPE_ID = 1030;
+    private int? floorPlanLocationTypeId;
+    private int? videoWallLocationTypeId;
+
+    // Custom bundle-hosted types (seeded by migration; recognized by sentinel, never by id)
+    private int? customLocationTypeId;
+    private int? customDisplayLocationTypeId;
+    private List<TblLocationBundle>? availableBundles;
+    private string selectedBundleKey = "";
+
+    private class CardDisplayItem
+    {
+        public string Name { get; set; } = "";
+        public int Width { get; set; } = 1920;
+        public int Height { get; set; } = 1080;
+    }
+
+    // Asset Library fields
+    private string assetLibraryResolutionMode = "aspect-ratio";
+    private List<string> assetLibraryMetadataKeys = new();
+    private List<TblMetadataDefinition>? metadataDefinitions;
+
+    // Floorplan fields
+    private string visualBackgroundMode = "image";
+    private IBrowserFile? visualBackgroundFile;
+    private byte[]? visualBackgroundBytes;
+    private string? visualBackgroundPreviewUrl;
+    private double mapCenterLatitude = 40.7128;
+    private double mapCenterLongitude = -74.0060;
+    private int mapZoomLevel = 15;
+    private string? offlineTilePath;
+    private IBrowserFile? modelFile;
+    private byte[]? modelFileBytes;
+    private string? modelFilePath;
+    private double hotspotScale = 1.0;
+
+    // Floorplan element management
+    private List<VisualElementItem> visualElements = new();
+    private List<TblDisplay> allDisplays = new();
+    private List<TblLocation> allLocations = new();
+    private string addVisualType = "display";
+    private int addVisualDisplayId;
+    private int addVisualLocationId;
+    private string? addVisualIconPath;
+    private bool addVisualShowLivePreview;
+    private double addVisualWidth = 120;
+    private double addVisualHeight = 80;
+    private double addVisualTop = 50;
+    private double addVisualLeft = 50;
+    private double addVisualLatitude;
+    private double addVisualLongitude;
+    private double addVisual3DX;
+    private double addVisual3DY;
+    private double addVisual3DZ;
+
+    private class VisualElementItem
+    {
+        public int? ElementId { get; set; }
+        public string Type { get; set; } = "display";
+        public int? DisplayId { get; set; }
+        public int? LocationId { get; set; }
+        public string DisplayOrLocationName { get; set; } = "";
+        public string Label { get; set; } = "";
+        public string? IconPath { get; set; }
+        public double Width { get; set; } = 120;
+        public double Height { get; set; } = 80;
+        public double Top { get; set; } = 50;
+        public double Left { get; set; } = 50;
+        public int SortOrder { get; set; }
+        public double? Latitude { get; set; }
+        public double? Longitude { get; set; }
+        public double? Position3DX { get; set; }
+        public double? Position3DY { get; set; }
+        public double? Position3DZ { get; set; }
+        public bool ShowLivePreview { get; set; }
+    }
+
+    // Panorama fields
+    private double panoScaleFactor = 0.4;
+    private IBrowserFile? panoBackgroundFile;
+    private byte[]? panoBackgroundBytes;
+    private string? panoBackgroundPreviewUrl;
+    private List<PanoDisplayItem> panoDisplayItems = new();
+
+    private class PanoDisplayItem
+    {
+        public string Name { get; set; } = "";
+        public bool IsGroup { get; set; }
+        public int Count { get; set; } = 1;
+        public double Spacing { get; set; } = 10;
+        public string Direction { get; set; } = "horizontal";
+        public double DisplayWidth { get; set; } = 1920;
+        public double DisplayHeight { get; set; } = 1080;
+        public double PositionTop { get; set; }
+        public double PositionLeft { get; set; }
+        public int ZIndex { get; set; }
+        public double DisplayScale { get; set; } = 1.0;
+        // Non-zero when loaded from existing config; used in edit-mode save to reuse DB records
+        public int DisplayId { get; set; }
+        public List<int> ExistingDisplayIds { get; set; } = new();
+    }
+
+    // VideoWall fields
+    private int wallCounterWidthPx = 1920;
+    private double wallBackgroundScaleFactor = 0.15;
+    private double wallContentScaleFactor = 0.4;
+    private bool wallWrappedOutputsEnabled = false;
+    private int wallOutputWidth = 3840;
+    private int wallOutputHeight = 2160;
+    private double wallContentTopOffsetPx = 0;
+    private IBrowserFile? wallBgFile;
+    private byte[]? wallBgBytes;
+    private string? wallBgPreviewUrl;
+    private int wallBgWidth;
+    private int wallBgHeight;
+    private List<WallRowItem> wallRows = new();
+    private List<WallLayerItem>     wallLayers     = new();
+    private List<WallLogoZoneItem>  wallLogoZones  = new();
+    private List<LogoRoleDefinition> wallLogoRoles = new();
+
+    /// <summary>
+    /// Consolidated wrapped layer URL per player output. Strip height is the
+    /// background layer's height; the canvas row width is the background layer's
+    /// full width, so URLs only appear once a background layer is defined.
+    /// </summary>
+    private IEnumerable<string> GetWrappedOutputUrls()
+    {
+        if (!wallWrappedOutputsEnabled || !isEditMode || editingLocationId is not int locId)
+            yield break;
+        var bgLayer = wallLayers.FirstOrDefault(l =>
+            string.Equals(l.Role, "background", StringComparison.OrdinalIgnoreCase));
+        int stripH = bgLayer?.HeightPx ?? 0;
+        if (bgLayer == null || stripH <= 0 || wallOutputWidth <= 0 || wallOutputHeight < stripH)
+            yield break;
+
+        int strips = Math.Max(1, wallOutputHeight / stripH);
+        int span = strips * wallOutputWidth;
+        int outputs = (int)Math.Ceiling((double)bgLayer.WidthPx / span);
+        for (int n = 0; n < outputs; n++)
+            yield return $"/videowall/layer?locationId={locId}&layers=background,mask,counter,logo" +
+                         $"&left={n * span}&wrap={wallOutputWidth}x{stripH}&outh={wallOutputHeight}";
+    }
+
+    private IReadOnlyList<RenditionSetStatus> GetRenditionStatuses()
+    {
+        try
+        {
+            return isEditMode && editingLocationId is int locId
+                ? renditionService.GetStatuses(locId)
+                : Array.Empty<RenditionSetStatus>();
+        }
+        catch { return Array.Empty<RenditionSetStatus>(); }
+    }
+
+    private class WallRowItem
+    {
+        public string Name { get; set; } = "Counter Row";
+        public int CounterCount { get; set; } = 8;
+        public double CounterHeightPx { get; set; } = 1080;
+        public double VerticalPositionPx { get; set; } = 0;
+        public double HorizontalStartPx { get; set; } = 0;
+        /// <summary>
+        /// Cyclic gap pattern. Gaps[i] is the pixel gap after display i (before display i+1).
+        /// Replaces the legacy Spacing field; single-element list is equivalent to uniform spacing.
+        /// </summary>
+        public List<double> Gaps { get; set; } = new() { 0 };
+        public double DisplayScale { get; set; } = 1.0;
+        public int ZIndex { get; set; } = 10;
+        public double? AllocationLeftPx { get; set; }
+        public double? AllocationRightPx { get; set; }
+        public List<int> ExistingDisplayIds { get; set; } = new();
+    }
+
+    // Non-blocking sanity check: inverted bounds on a row, or authored bounds of
+    // neighboring rows crossing each other. Overlaps still apply verbatim.
+    private string? AllocationBoundsWarning()
+    {
+        foreach (var row in wallRows)
+            if (row.AllocationLeftPx.HasValue && row.AllocationRightPx.HasValue
+                && row.AllocationLeftPx.Value >= row.AllocationRightPx.Value)
+                return $"Row '{row.Name}': Allocation Left is at or beyond Allocation Right.";
+
+        var ordered = wallRows.OrderBy(r => r.HorizontalStartPx).ToList();
+        for (int i = 0; i < ordered.Count - 1; i++)
+            if (ordered[i].AllocationRightPx is double right
+                && ordered[i + 1].AllocationLeftPx is double left && right > left)
+                return $"Rows '{ordered[i].Name}' and '{ordered[i + 1].Name}' have overlapping allocation bounds ({right:0} > {left:0}). They will render as authored.";
+
+        return null;
+    }
+
+    /// <summary>
+    /// Creates a constraint for a wall layer display if one does not exist, or updates the
+    /// resolution of an existing constraint to match the current image dimensions.
+    /// The constraint enforces the per-tile asset size so the status selector and upload
+    /// validation use the tiled image width rather than the full canvas width.
+    /// </summary>
+    private async Task EnsureLayerConstraintAsync(
+        IDirectorDBContext db, TblDisplay display,
+        int widthPx, int heightPx, int locationId, string layerName)
+    {
+        if (display.ConstraintId > 0)
+        {
+            var c = await db.TblConstraints.FindAsync(display.ConstraintId);
+            if (c != null)
+            {
+                c.ResolutionWidth  = widthPx;
+                c.ResolutionHeight = heightPx;
+            }
+        }
+        else
+        {
+            var c = new TblConstraint
+            {
+                ConstraintName   = layerName,
+                OwningLocationId = locationId,
+                IsGlobal         = false,
+                ResolutionWidth  = widthPx,
+                ResolutionHeight = heightPx,
+                ResolutionMode   = "exact",
+                CreateDate       = DateTime.UtcNow
+            };
+            db.TblConstraints.Add(c);
+            await db.SaveChangesAsync();
+            display.ConstraintId = c.ConstraintId;
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private class WallLayerItem
+    {
+        public string Name { get; set; } = "Layer";
+        public string Role { get; set; } = "mask";
+        public int WidthPx { get; set; } = 6144;
+        public int HeightPx { get; set; } = 700;
+        public double PositionTop { get; set; } = 0;
+        public double PositionLeft { get; set; } = 0;
+        public int ZIndex { get; set; } = 1;
+        /// <summary>
+        /// How many times the image tiles horizontally. WidthPx is the full canvas width;
+        /// image width = WidthPx / HorizontalImageLoop.
+        /// </summary>
+        public int HorizontalImageLoop { get; set; } = 1;
+        public List<int> ExistingDisplayIds { get; set; } = new();
+    }
+
+    /// <summary>
+    /// One explicitly-positioned logo zone on the video wall canvas. Each zone is backed by a
+    /// TblDisplay (for the asset constraint) and a PanoramaGroup with Role="logo". The airline
+    /// whose logo appears here is resolved at runtime by whichever counter cluster's X range
+    /// contains this zone's midpoint.
+    /// </summary>
+    private class WallLogoZoneItem
+    {
+        public string Name { get; set; } = "Logo Zone";
+        /// <summary>Full canvas width of the zone in pixels.</summary>
+        public int WidthPx { get; set; } = 1073;
+        public int HeightPx { get; set; } = 648;
+        public double PositionTop { get; set; } = 0;
+        public double PositionLeft { get; set; } = 0;
+        public int ZIndex { get; set; } = 20;
+        /// <summary>Key of the wall logo role this zone renders; empty/null = the legacy default role.</summary>
+        public string? LogoRoleKey { get; set; }
+        public List<int> ExistingDisplayIds { get; set; } = new();
+    }
+
+    private void AddLogoRole()
+    {
+        var name = $"Role {wallLogoRoles.Count + 1}";
+        wallLogoRoles.Add(new LogoRoleDefinition
+        {
+            Key = UniqueRoleKey(name), Name = name, SortOrder = wallLogoRoles.Count
+        });
+    }
+
+    private void RemoveLogoRole(LogoRoleDefinition role)
+    {
+        if (wallLogoZones.Any(z => z.LogoRoleKey == role.Key))
+        {
+            errorMessage = $"Role '{role.Name}' is still assigned to a logo zone — reassign those zones first.";
+            return;
+        }
+        wallLogoRoles.Remove(role);
+        errorMessage = null;
+    }
+
+    // Keys are slugged once at creation and survive renames — zone assignments and
+    // airline uploads reference the key, so renaming a role must not orphan them.
+    private string UniqueRoleKey(string name)
+    {
+        var slug = new string(name.ToLowerInvariant()
+            .Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray()).Trim('-');
+        if (string.IsNullOrEmpty(slug)) slug = "role";
+        var key = slug;
+        int n = 2;
+        while (wallLogoRoles.Any(r => r.Key == key)) key = $"{slug}-{n++}";
+        return key;
+    }
+
+    public void Open()
+    {
+        isOpen = true;
+        isEditMode = false;
+        editingLocationId = null;
+        currentStep = Step.SelectType;
+        selectedType = null;
+        locationName = "";
+        resolutionWidth = 1920;
+        resolutionHeight = 1080;
+        selectedLocationGroupId = 0;
+        newGroupName = "";
+        selectedBundleKey = "";
+        cardDisplays.Clear();
+        cardDisplays.Add(new CardDisplayItem { Name = "Display 1", Width = 1920, Height = 1080 });
+        layoutZones.Clear();
+        nextZoneNumber = 1;
+        selectedLocation = null;
+        errorMessage = null;
+        // Reset panorama/floorplan/videowall state so a new location never inherits a previous session's data
+        panoScaleFactor = 0.4;
+        panoBackgroundFile = null;
+        panoBackgroundBytes = null;
+        panoBackgroundPreviewUrl = null;
+        panoDisplayItems.Clear();
+        visualElements.Clear();
+        visualBackgroundFile = null;
+        visualBackgroundBytes = null;
+        visualBackgroundPreviewUrl = null;
+        wallCounterWidthPx = 1920;
+        wallBackgroundScaleFactor = 0.15;
+        wallContentScaleFactor = 0.4;
+        wallWrappedOutputsEnabled = false;
+        wallOutputWidth = 3840;
+        wallOutputHeight = 2160;
+        wallContentTopOffsetPx = 0;
+        wallBgFile = null;
+        wallBgBytes = null;
+        wallBgPreviewUrl = null;
+        wallBgWidth = 0;
+        wallBgHeight = 0;
+        wallRows.Clear();
+        wallLayers.Clear();
+        wallLogoZones.Clear();
+        wallLogoRoles.Clear();
+        LoadDataAsync();
+        StateHasChanged();
+    }
+
+    public void OpenForEdit(TblLocation location)
+    {
+        isOpen = true;
+        isEditMode = true;
+        editingLocationId = location.LocationId;
+        currentStep = Step.ConfigureLayout;
+        selectedType = LocationType.Layout;
+
+        locationName = location.LocationName ?? "";
+        resolutionWidth = (int)(location.BackgroundImageWidth ?? 1920);
+        resolutionHeight = (int)(location.BackgroundImageHeight ?? 1080);
+        selectedLocationGroupId = location.LocationGroupId;
+        newGroupName = "";
+
+        layoutZones.Clear();
+        selectedLocation = null;
+        errorMessage = null;
+
+        // Parse existing layout configuration from ExtendedData
+        if (!string.IsNullOrEmpty(location.ExtendedData))
+        {
+            try
+            {
+                var config = JsonSerializer.Deserialize<LayoutConfiguration>(location.ExtendedData, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+
+                if (config != null)
+                {
+                    resolutionWidth = (int)config.AspectRatioWidth;
+                    resolutionHeight = (int)config.AspectRatioHeight;
+                    layoutZones = config.Zones ?? new List<LayoutZone>();
+                    nextZoneNumber = layoutZones.Any() ? layoutZones.Max(z => z.ZoneNumber) + 1 : 1;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error parsing layout config");
+            }
+        }
+
+        LoadDataAsync();
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        isOpen = false;
+        isEditMode = false;
+        editingLocationId = null;
+        StateHasChanged();
+    }
+
+    private async void LoadDataAsync()
+    {
+        try
+        {
+            // Load location groups
+            locationGroups = await dbContext.TblLocationGroups
+                .OrderBy(g => g.SortOrder)
+                .ThenBy(g => g.LocationGroupName)
+                .ToListAsync();
+
+            // Set default to first group if available
+            if (locationGroups.Any() && selectedLocationGroupId == 0)
+            {
+                selectedLocationGroupId = locationGroups.First().LocationGroupId;
+            }
+
+            // Load available locations for Layout type
+            availableLocations = await dbContext.TblLocations
+                .Include(l => l.TblDisplays)
+                .Include(l => l.LocationType)
+                .Where(l => l.LocationTypeId == PLAYLIST_LOCATION_TYPE_ID || l.LocationTypeId == CARD_LOCATION_TYPE_ID)
+                .OrderBy(l => l.LocationName)
+                .ToListAsync();
+
+            // Look up Floorplan and VideoWall type IDs (seeded by migration, not hardcoded)
+            var fpType = await dbContext.TblLocationTypes
+                .FirstOrDefaultAsync(t => t.LocationTypeName == "Floorplan");
+            floorPlanLocationTypeId = fpType?.LocationTypeId;
+
+            var vwType = await dbContext.TblLocationTypes
+                .FirstOrDefaultAsync(t => t.LocationTypeName == "VideoWall");
+            videoWallLocationTypeId = vwType?.LocationTypeId;
+
+            // Bundle-hosted custom types, recognized by the ComponentTypeName sentinel
+            var bundleTypes = await dbContext.TblLocationTypes
+                .Where(t => t.ComponentTypeName == LocationBundleConstants.BundleComponentSentinel)
+                .ToListAsync();
+            customLocationTypeId = bundleTypes.FirstOrDefault(t => !t.LinkedToDisplay)?.LocationTypeId;
+            customDisplayLocationTypeId = bundleTypes.FirstOrDefault(t => t.LinkedToDisplay)?.LocationTypeId;
+
+            availableBundles = await dbContext.TblLocationBundles
+                .AsNoTracking()
+                .Where(b => b.IsEnabled)
+                .OrderBy(b => b.Name)
+                .ToListAsync();
+
+            // Load all displays and locations for floorplan element management
+            allDisplays = await dbContext.TblDisplays.AsNoTracking().OrderBy(d => d.DisplayName).ToListAsync();
+            allLocations = await dbContext.TblLocations.AsNoTracking().OrderBy(l => l.LocationName).ToListAsync();
+
+            // Load metadata definitions for Asset Library filters
+            metadataDefinitions = await dbContext.TblMetadataDefinitions.OrderBy(m => m.DisplayName).ToListAsync();
+
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading data");
+        }
+    }
+
+    private void NextStep()
+    {
+        if (string.IsNullOrWhiteSpace(locationName))
+        {
+            errorMessage = "Please enter a location name";
+            return;
+        }
+        if (selectedLocationGroupId == -1 && string.IsNullOrWhiteSpace(newGroupName))
+        {
+            errorMessage = "Please enter a name for the new group";
+            return;
+        }
+        if (selectedLocationGroupId == 0 && (locationGroups == null || !locationGroups.Any()))
+        {
+            errorMessage = "No location groups available. Please create a new group.";
+            selectedLocationGroupId = -1;
+            return;
+        }
+        if (selectedType == null)
+        {
+            errorMessage = "Please select a location type";
+            return;
+        }
+
+        errorMessage = null;
+        currentStep = selectedType switch
+        {
+            LocationType.Playlist => Step.ConfigurePlaylist,
+            LocationType.Card => Step.ConfigureCard,
+            LocationType.Layout => Step.ConfigureLayout,
+            LocationType.AssetLibrary => Step.ConfigureAssetLibrary,
+            LocationType.FloorPlan => Step.ConfigureFloorPlan,
+            LocationType.Panorama => Step.ConfigurePanorama,
+            LocationType.VideoWall => Step.ConfigureVideoWall,
+            LocationType.Custom => Step.ConfigureCustom,
+            LocationType.CustomDisplay => Step.ConfigureCustom,
+            _ => Step.SelectType
+        };
+    }
+
+    private void PreviousStep()
+    {
+        errorMessage = null;
+        currentStep = Step.SelectType;
+    }
+
+    private bool CanCreate()
+    {
+        return selectedType switch
+        {
+            LocationType.Playlist => resolutionWidth > 0 && resolutionHeight > 0,
+            LocationType.Card => cardDisplays.Any(d => !string.IsNullOrWhiteSpace(d.Name) && d.Width > 0 && d.Height > 0),
+            LocationType.Layout => layoutZones.Any(),
+            LocationType.AssetLibrary => resolutionWidth > 0 && resolutionHeight > 0,
+            LocationType.FloorPlan => resolutionWidth > 0 && resolutionHeight > 0,
+            LocationType.Panorama => resolutionWidth > 0 && resolutionHeight > 0,
+            LocationType.VideoWall => wallRows.Any(r => r.CounterCount > 0),
+            LocationType.Custom => !string.IsNullOrEmpty(selectedBundleKey),
+            LocationType.CustomDisplay => !string.IsNullOrEmpty(selectedBundleKey) && resolutionWidth > 0 && resolutionHeight > 0,
+            _ => false
+        };
+    }
+
+    // Card helpers
+    private void AddCardDisplay()
+    {
+        cardDisplays.Add(new CardDisplayItem
+        {
+            Name = $"Display {cardDisplays.Count + 1}",
+            Width = 1920,
+            Height = 1080
+        });
+    }
+
+    private void RemoveCardDisplay(CardDisplayItem display)
+    {
+        cardDisplays.Remove(display);
+    }
+
+    // Layout helpers
+    private bool IsPlaylistLocation(TblLocation loc) => loc.LocationTypeId == PLAYLIST_LOCATION_TYPE_ID;
+
+    private bool HasValidDimensions(TblLocation loc)
+    {
+        if (IsPlaylistLocation(loc))
+        {
+            return loc.BackgroundImageWidth > 0 && loc.BackgroundImageHeight > 0;
+        }
+        return loc.TblDisplays?.Any(d => d.DisplayWidth > 0 && d.DisplayHeight > 0) == true;
+    }
+
+    private string GetDimensionsDisplay(TblLocation loc)
+    {
+        if (IsPlaylistLocation(loc))
+        {
+            return $"{loc.BackgroundImageWidth} x {loc.BackgroundImageHeight}";
+        }
+        var display = loc.TblDisplays?.FirstOrDefault(d => d.DisplayWidth > 0 && d.DisplayHeight > 0);
+        return display != null ? $"{display.DisplayWidth} x {display.DisplayHeight}" : "-";
+    }
+
+    private List<TblDisplay> GetDisplaysForLocation(TblLocation loc) => loc.TblDisplays?.ToList() ?? new List<TblDisplay>();
+
+    private void SelectLocation(TblLocation loc)
+    {
+        if (!HasValidDimensions(loc)) return;
+
+        if (IsPlaylistLocation(loc))
+        {
+            AddZoneFromPlaylist(loc);
+        }
+        else
+        {
+            selectedLocation = loc;
+        }
+    }
+
+    private void ClearSelectedLocation() => selectedLocation = null;
+
+    private void AddZoneFromPlaylist(TblLocation loc)
+    {
+        var sourceWidth = (decimal)(loc.BackgroundImageWidth ?? 1920);
+        var sourceHeight = (decimal)(loc.BackgroundImageHeight ?? 1080);
+
+        layoutZones.Add(new LayoutZone
+        {
+            ZoneNumber = nextZoneNumber++,
+            SourceLocationId = loc.LocationId,
+            SourceLocationName = loc.LocationName ?? $"Location {loc.LocationId}",
+            SourceWidth = sourceWidth,
+            SourceHeight = sourceHeight,
+            Left = 0,
+            Top = 0,
+            Width = sourceWidth,
+            Height = sourceHeight
+        });
+        StateHasChanged();
+    }
+
+    private void AddZoneFromDisplay(TblLocation loc, TblDisplay display)
+    {
+        if (display.DisplayWidth <= 0 || display.DisplayHeight <= 0) return;
+
+        var sourceWidth = (decimal)display.DisplayWidth;
+        var sourceHeight = (decimal)display.DisplayHeight;
+
+        layoutZones.Add(new LayoutZone
+        {
+            ZoneNumber = nextZoneNumber++,
+            SourceLocationId = loc.LocationId,
+            SourceLocationName = loc.LocationName ?? $"Location {loc.LocationId}",
+            SourceDisplayId = display.DisplayId,
+            DisplayName = display.DisplayName,
+            SourceWidth = sourceWidth,
+            SourceHeight = sourceHeight,
+            Left = 0,
+            Top = 0,
+            Width = sourceWidth,
+            Height = sourceHeight
+        });
+        selectedLocation = null;
+        StateHasChanged();
+    }
+
+    private void RemoveZone(LayoutZone zone)
+    {
+        layoutZones.Remove(zone);
+        for (int i = 0; i < layoutZones.Count; i++)
+            layoutZones[i].ZoneNumber = i + 1;
+        nextZoneNumber = layoutZones.Count + 1;
+    }
+
+    private async Task CreateLocation()
+    {
+        try
+        {
+            isCreating = true;
+            errorMessage = null;
+            StateHasChanged();
+
+            int locationId;
+
+            switch (selectedType)
+            {
+                case LocationType.Playlist:
+                    locationId = await CreatePlaylistLocation();
+                    break;
+                case LocationType.Card:
+                    locationId = await CreateCardLocation();
+                    break;
+                case LocationType.Layout:
+                    locationId = await CreateLayoutLocation();
+                    break;
+                case LocationType.AssetLibrary:
+                    locationId = await CreateAssetLibraryLocation();
+                    break;
+                case LocationType.FloorPlan:
+                    locationId = await CreateFloorPlanLocation();
+                    break;
+                case LocationType.Panorama:
+                    locationId = await CreatePanoramaLocation();
+                    break;
+                case LocationType.VideoWall:
+                    locationId = await CreateVideoWallLocation();
+                    break;
+                case LocationType.Custom:
+                case LocationType.CustomDisplay:
+                    locationId = await CreateCustomLocation();
+                    break;
+                default:
+                    throw new InvalidOperationException("Invalid location type");
+            }
+
+            // Auto-grant "full" access to the creating user
+            try
+            {
+                if (sessionState.User != null)
+                {
+                    await locationAccessService.CreateRuleAsync(locationId, sessionState.User.UserId, null, "full", null, sessionState.User.UserId.ToString());
+
+                    // Refresh this circuit synchronously so the caller's reload already sees
+                    // the new location; the broadcast covers the user's other open circuits.
+                    await sessionState.RefreshLocationAccessAsync();
+                    if (tenantContext.IsPopulated)
+                        accessBroadcast.NotifyUser(tenantContext.TenantId, sessionState.User.UserId);
+                }
+            }
+            catch (Exception accessEx)
+            {
+                Logger.LogWarning(accessEx, "Failed to auto-create access rule for location {LocationId}", locationId);
+            }
+
+            await OnLayoutCreated.InvokeAsync(locationId);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to create location: {ex.Message}";
+            Logger.LogError(ex, "Error creating location");
+        }
+        finally
+        {
+            isCreating = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task<int> GetOrCreateLocationGroupIdAsync()
+    {
+        if (selectedLocationGroupId == -1)
+        {
+            // Create a new location group
+            var newGroup = new TblLocationGroup
+            {
+                LocationGroupName = newGroupName,
+                SortOrder = 0,
+                CreateDate = DateTime.UtcNow
+            };
+            dbContext.TblLocationGroups.Add(newGroup);
+            await dbContext.SaveChangesAsync();
+            return newGroup.LocationGroupId;
+        }
+
+        return selectedLocationGroupId;
+    }
+
+    private async Task<int> CreatePlaylistLocation()
+    {
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = PLAYLIST_LOCATION_TYPE_ID,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = resolutionWidth,
+            BackgroundImageHeight = resolutionHeight,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+        return location.LocationId;
+    }
+
+    private async Task<int> CreateCardLocation()
+    {
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = CARD_LOCATION_TYPE_ID,
+            LocationGroupId = groupId,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        // Create displays for this location
+        foreach (var displayItem in cardDisplays.Where(d => !string.IsNullOrWhiteSpace(d.Name)))
+        {
+            var display = new TblDisplay
+            {
+                DisplayName = displayItem.Name,
+                LocationId = location.LocationId,
+                DisplayWidth = displayItem.Width,
+                DisplayHeight = displayItem.Height,
+                DisplayTypeId = (int)Types.DisplayType.StandardDisplay,
+                CreateDate = DateTime.UtcNow
+            };
+            dbContext.TblDisplays.Add(display);
+        }
+
+        await dbContext.SaveChangesAsync();
+        return location.LocationId;
+    }
+
+    private async Task<int> CreateCustomLocation()
+    {
+        var typeId = selectedType == LocationType.CustomDisplay ? customDisplayLocationTypeId : customLocationTypeId;
+        if (!typeId.HasValue)
+            throw new InvalidOperationException("Custom location type not found in database. Run the AddLocationBundles migration.");
+
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = typeId.Value,
+            LocationGroupId = groupId,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow,
+            ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(null,
+                ed => ed.Bundle = new LocationBundleAssignment { BundleKey = selectedBundleKey })
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        if (selectedType == LocationType.CustomDisplay)
+        {
+            dbContext.TblDisplays.Add(new TblDisplay
+            {
+                DisplayName = $"{locationName} Display",
+                LocationId = location.LocationId,
+                DisplayWidth = resolutionWidth,
+                DisplayHeight = resolutionHeight,
+                DisplayTypeId = (int)Types.DisplayType.StandardDisplay,
+                CreateDate = DateTime.UtcNow
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        return location.LocationId;
+    }
+
+    private async Task<int> CreateLayoutLocation()
+    {
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var config = new LayoutConfiguration
+        {
+            AspectRatioWidth = resolutionWidth,
+            AspectRatioHeight = resolutionHeight,
+            Zones = layoutZones
+        };
+
+        var extendedData = JsonSerializer.Serialize(config, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = LAYOUT_LOCATION_TYPE_ID,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = resolutionWidth,
+            BackgroundImageHeight = resolutionHeight,
+            ExtendedData = extendedData,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+        return location.LocationId;
+    }
+
+    private async Task SaveLayout()
+    {
+        if (!editingLocationId.HasValue)
+        {
+            errorMessage = "No location to edit";
+            return;
+        }
+
+        try
+        {
+            isCreating = true;
+            errorMessage = null;
+            StateHasChanged();
+
+            var location = await dbContext.TblLocations
+                .FirstOrDefaultAsync(l => l.LocationId == editingLocationId.Value);
+
+            if (location == null)
+            {
+                errorMessage = "Location not found";
+                return;
+            }
+
+            var removedDisplayIds = new List<int>();
+            location.LocationName = locationName;
+            location.BackgroundImageWidth = resolutionWidth;
+            location.BackgroundImageHeight = resolutionHeight;
+
+            if (selectedType == LocationType.Layout)
+            {
+                var config = new LayoutConfiguration
+                {
+                    AspectRatioWidth = resolutionWidth,
+                    AspectRatioHeight = resolutionHeight,
+                    Zones = layoutZones
+                };
+                location.ExtendedData = JsonSerializer.Serialize(config, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            }
+            else if (selectedType == LocationType.FloorPlan)
+            {
+                location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+                {
+                    ed.BackgroundMode = visualBackgroundMode == "image" ? null : visualBackgroundMode;
+                    if (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap")
+                    {
+                        ed.MapCenterLatitude = mapCenterLatitude;
+                        ed.MapCenterLongitude = mapCenterLongitude;
+                        ed.MapZoomLevel = mapZoomLevel;
+                        ed.OfflineTilePath = visualBackgroundMode == "offlinemap" ? offlineTilePath : null;
+                    }
+                    if (visualBackgroundMode == "3dmodel")
+                    {
+                        ed.ModelFilePath = modelFilePath;
+                        ed.HotspotScale = hotspotScale;
+                    }
+                });
+
+                // Save new background image if uploaded
+                if (visualBackgroundBytes != null && visualBackgroundFile != null)
+                {
+                    var ext = Path.GetExtension(visualBackgroundFile.Name).ToLowerInvariant();
+                    var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+                    Directory.CreateDirectory(folder);
+                    var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+                    await File.WriteAllBytesAsync(Path.Combine(folder, fileName), visualBackgroundBytes);
+                    location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+                }
+
+                // Sync floor plan elements: update existing, create new, delete removed
+                var existingIds = visualElements.Where(e => e.ElementId.HasValue).Select(e => e.ElementId!.Value).ToHashSet();
+                var dbElements = await floorPlanService.GetElementsForLocationAsync(location.LocationId);
+                foreach (var dbEl in dbElements.Where(e => !existingIds.Contains(e.FloorPlanElementId)))
+                    await floorPlanService.DeleteElementAsync(dbEl.FloorPlanElementId);
+
+                for (int i = 0; i < visualElements.Count; i++)
+                {
+                    var el = visualElements[i];
+                    el.SortOrder = i;
+                    if (el.ElementId.HasValue)
+                    {
+                        await floorPlanService.UpdateElementAsync(new TblFloorPlanElement
+                        {
+                            FloorPlanElementId = el.ElementId.Value,
+                            LocationId = location.LocationId,
+                            ChildDisplayId = el.DisplayId,
+                            ChildLocationId = el.LocationId,
+                            IconPath = el.IconPath,
+                            IconLabel = el.Label,
+                            ElementWidth = el.Width,
+                            ElementHeight = el.Height,
+                            PositionTop = el.Top,
+                            PositionLeft = el.Left,
+                            SortOrder = el.SortOrder,
+                            Latitude = el.Latitude,
+                            Longitude = el.Longitude,
+                            Position3DX = el.Position3DX,
+                            Position3DY = el.Position3DY,
+                            Position3DZ = el.Position3DZ,
+                            ShowLivePreview = el.ShowLivePreview
+                        });
+                    }
+                    else
+                    {
+                        var created = await floorPlanService.CreateElementAsync(new TblFloorPlanElement
+                        {
+                            LocationId = location.LocationId,
+                            ChildDisplayId = el.DisplayId,
+                            ChildLocationId = el.LocationId,
+                            IconPath = el.IconPath,
+                            IconLabel = el.Label,
+                            ElementWidth = el.Width,
+                            ElementHeight = el.Height,
+                            PositionTop = el.Top,
+                            PositionLeft = el.Left,
+                            SortOrder = el.SortOrder,
+                            Latitude = el.Latitude,
+                            Longitude = el.Longitude,
+                            Position3DX = el.Position3DX,
+                            Position3DY = el.Position3DY,
+                            Position3DZ = el.Position3DZ,
+                            ShowLivePreview = el.ShowLivePreview
+                        });
+                        el.ElementId = created.FloorPlanElementId;
+                    }
+                }
+            }
+            else if (selectedType == LocationType.Panorama)
+            {
+                // Save new background image if uploaded
+                if (panoBackgroundBytes != null && panoBackgroundFile != null)
+                {
+                    var ext = Path.GetExtension(panoBackgroundFile.Name).ToLowerInvariant();
+                    var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+                    Directory.CreateDirectory(folder);
+                    var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+                    await File.WriteAllBytesAsync(Path.Combine(folder, fileName), panoBackgroundBytes);
+                    location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+                }
+
+                // Build config from panoDisplayItems. Reuse existing DB display records where
+                // available (DisplayId > 0 / ExistingDisplayIds set); create new TblDisplay rows
+                // for items added during this edit session.
+                var panoConfig = new PanoramaConfiguration { ScaleFactor = panoScaleFactor };
+
+                foreach (var item in panoDisplayItems)
+                {
+                    if (item.IsGroup)
+                    {
+                        var group = new PanoramaGroup
+                        {
+                            GroupName = item.Name,
+                            PositionTop = item.PositionTop,
+                            PositionLeft = item.PositionLeft,
+                            Spacing = item.Spacing,
+                            Direction = item.Direction,
+                            ZIndex = item.ZIndex,
+                            DisplayScale = item.DisplayScale
+                        };
+
+                        for (int i = 0; i < item.Count; i++)
+                        {
+                            if (i < item.ExistingDisplayIds.Count)
+                            {
+                                group.DisplayIds.Add(item.ExistingDisplayIds[i]);
+                            }
+                            else
+                            {
+                                var d = new TblDisplay
+                                {
+                                    DisplayName = $"{item.Name} {i + 1}",
+                                    LocationId = location.LocationId,
+                                    DisplayWidth = item.DisplayWidth,
+                                    DisplayHeight = item.DisplayHeight,
+                                    DisplayTypeId = 1,
+                                    SortOrder = i,
+                                    CreateDate = DateTime.UtcNow
+                                };
+                                dbContext.TblDisplays.Add(d);
+                                await dbContext.SaveChangesAsync();
+                                group.DisplayIds.Add(d.DisplayId);
+                            }
+                        }
+
+                        panoConfig.Groups.Add(group);
+                    }
+                    else
+                    {
+                        int displayId;
+                        if (item.DisplayId > 0)
+                        {
+                            var existing = await dbContext.TblDisplays.FindAsync(item.DisplayId);
+                            if (existing != null)
+                            {
+                                existing.DisplayName = item.Name;
+                                existing.DisplayWidth = item.DisplayWidth;
+                                existing.DisplayHeight = item.DisplayHeight;
+                            }
+                            displayId = item.DisplayId;
+                        }
+                        else
+                        {
+                            var d = new TblDisplay
+                            {
+                                DisplayName = item.Name,
+                                LocationId = location.LocationId,
+                                DisplayWidth = item.DisplayWidth,
+                                DisplayHeight = item.DisplayHeight,
+                                DisplayTypeId = 1,
+                                CreateDate = DateTime.UtcNow
+                            };
+                            dbContext.TblDisplays.Add(d);
+                            await dbContext.SaveChangesAsync();
+                            displayId = d.DisplayId;
+                        }
+
+                        panoConfig.Placements.Add(new PanoramaPlacement
+                        {
+                            DisplayId = displayId,
+                            PositionTop = item.PositionTop,
+                            PositionLeft = item.PositionLeft,
+                            ZIndex = item.ZIndex,
+                            DisplayScale = item.DisplayScale
+                        });
+                    }
+                }
+
+                location.ExtendedData = JsonSerializer.Serialize(panoConfig, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            }
+            else if (selectedType == LocationType.VideoWall)
+            {
+                // Collect old display IDs before overwriting config — used for orphan cleanup after save
+                var oldDisplayIds = new HashSet<int>();
+                if (!string.IsNullOrEmpty(location.ExtendedData))
+                {
+                    try
+                    {
+                        var oldConfig = JsonSerializer.Deserialize<VideoWallConfiguration>(location.ExtendedData,
+                            new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                        if (oldConfig?.Layout?.Groups != null)
+                            foreach (var g in oldConfig.Layout.Groups)
+                                foreach (var id in g.DisplayIds)
+                                    oldDisplayIds.Add(id);
+                    }
+                    catch { }
+                }
+
+                if (wallBgBytes != null && wallBgFile != null)
+                {
+                    var ext = Path.GetExtension(wallBgFile.Name).ToLowerInvariant();
+                    var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+                    Directory.CreateDirectory(folder);
+                    var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+                    await File.WriteAllBytesAsync(Path.Combine(folder, fileName), wallBgBytes);
+                    location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+                }
+
+                // Always restore the correct dimensions for VideoWall. SaveLayout() writes resolutionWidth/Height
+                // unconditionally above, but those variables are not loaded during OpenForEditVideoWall — only
+                // wallBgWidth/wallBgHeight are, so use them to correct the overwrite.
+                if (wallBgWidth > 0) location.BackgroundImageWidth = wallBgWidth;
+                if (wallBgHeight > 0) location.BackgroundImageHeight = wallBgHeight;
+
+                var wallConfig = new VideoWallConfiguration
+                {
+                    BackgroundImagePath = location.BackgroundImagePath,
+                    BackgroundScaleFactor = wallBackgroundScaleFactor,
+                    ContentScaleFactor = wallContentScaleFactor,
+                    CounterWidthPx = wallCounterWidthPx,
+                    WrappedOutputsEnabled = wallWrappedOutputsEnabled,
+                    OutputWidth = wallOutputWidth,
+                    OutputHeight = wallOutputHeight,
+                    ContentTopOffsetPx = wallContentTopOffsetPx,
+                    LogoRoles = wallLogoRoles.ToList()
+                };
+
+                var newDisplayIds = new HashSet<int>();
+
+                foreach (var row in wallRows)
+                {
+                    var group = new PanoramaGroup
+                    {
+                        GroupName = row.Name,
+                        Role = "counter-row",
+                        AllowAirlineAllocation = true,
+                        Direction = "horizontal",
+                        Gaps    = row.Gaps,
+                        Spacing = row.Gaps.Count == 1 ? row.Gaps[0] : 0,
+                        PositionTop = row.VerticalPositionPx,
+                        PositionLeft = row.HorizontalStartPx,
+                        DisplayScale = row.DisplayScale,
+                        ZIndex = row.ZIndex,
+                        AllocationLeftPx = row.AllocationLeftPx,
+                        AllocationRightPx = row.AllocationRightPx
+                    };
+
+                    for (int i = 0; i < row.CounterCount; i++)
+                    {
+                        if (i < row.ExistingDisplayIds.Count)
+                        {
+                            var existingId = row.ExistingDisplayIds[i];
+                            var existing = await dbContext.TblDisplays.FindAsync(existingId);
+                            if (existing != null)
+                            {
+                                existing.DisplayName = $"{row.Name} {i + 1}";
+                                existing.DisplayWidth = wallCounterWidthPx;
+                                existing.DisplayHeight = (int)row.CounterHeightPx;
+                            }
+                            group.DisplayIds.Add(existingId);
+                            newDisplayIds.Add(existingId);
+                        }
+                        else
+                        {
+                            var d = new TblDisplay
+                            {
+                                DisplayName = $"{row.Name} {i + 1}",
+                                LocationId = location.LocationId,
+                                DisplayWidth = wallCounterWidthPx,
+                                DisplayHeight = (int)row.CounterHeightPx,
+                                DisplayTypeId = 1,
+                                SortOrder = i,
+                                CreateDate = DateTime.UtcNow
+                            };
+                            dbContext.TblDisplays.Add(d);
+                            await dbContext.SaveChangesAsync();
+                            group.DisplayIds.Add(d.DisplayId);
+                            newDisplayIds.Add(d.DisplayId);
+                        }
+                    }
+
+                    wallConfig.Layout.Groups.Add(group);
+                }
+
+                foreach (var layer in wallLayers)
+                {
+                    // ImageWidthPx is the per-tile width stored on TblDisplay; the full canvas
+                    // width (layer.WidthPx) is reconstructed on load via DisplayWidth × loop count.
+                    int imageWidthPx = layer.WidthPx / Math.Max(1, layer.HorizontalImageLoop);
+                    int layerDisplayId;
+
+                    if (layer.ExistingDisplayIds.Count > 0)
+                    {
+                        layerDisplayId = layer.ExistingDisplayIds[0];
+                        var existing = await dbContext.TblDisplays
+                            .Include(d => d.Constraint)
+                            .FirstOrDefaultAsync(d => d.DisplayId == layerDisplayId);
+                        if (existing != null)
+                        {
+                            existing.DisplayName   = layer.Name;
+                            existing.DisplayWidth  = imageWidthPx;
+                            existing.DisplayHeight = layer.HeightPx;
+                            await EnsureLayerConstraintAsync(
+                                dbContext, existing, imageWidthPx, layer.HeightPx, location.LocationId, layer.Name);
+                        }
+                    }
+                    else
+                    {
+                        var d = new TblDisplay
+                        {
+                            DisplayName   = layer.Name,
+                            LocationId    = location.LocationId,
+                            DisplayWidth  = imageWidthPx,
+                            DisplayHeight = layer.HeightPx,
+                            DisplayTypeId = 1,
+                            SortOrder     = 0,
+                            CreateDate    = DateTime.UtcNow
+                        };
+                        dbContext.TblDisplays.Add(d);
+                        await dbContext.SaveChangesAsync();
+                        await EnsureLayerConstraintAsync(
+                            dbContext, d, imageWidthPx, layer.HeightPx, location.LocationId, layer.Name);
+                        layerDisplayId = d.DisplayId;
+                    }
+
+                    newDisplayIds.Add(layerDisplayId);
+                    wallConfig.Layout.Groups.Add(new PanoramaGroup
+                    {
+                        GroupName              = layer.Name,
+                        Role                   = layer.Role,
+                        AllowAirlineAllocation = false,
+                        PositionTop            = layer.PositionTop,
+                        PositionLeft           = layer.PositionLeft,
+                        ZIndex                 = layer.ZIndex,
+                        HorizontalImageLoop    = Math.Max(1, layer.HorizontalImageLoop),
+                        DisplayIds             = new List<int> { layerDisplayId }
+                    });
+                }
+
+                foreach (var zone in wallLogoZones)
+                {
+                    int zoneDisplayId;
+
+                    if (zone.ExistingDisplayIds.Count > 0)
+                    {
+                        zoneDisplayId = zone.ExistingDisplayIds[0];
+                        var existing = await dbContext.TblDisplays
+                            .FirstOrDefaultAsync(d => d.DisplayId == zoneDisplayId);
+                        if (existing != null)
+                        {
+                            existing.DisplayName   = zone.Name;
+                            existing.DisplayWidth  = zone.WidthPx;
+                            existing.DisplayHeight = zone.HeightPx;
+                            await EnsureLayerConstraintAsync(
+                                dbContext, existing, zone.WidthPx, zone.HeightPx, location.LocationId, zone.Name);
+                        }
+                    }
+                    else
+                    {
+                        var d = new TblDisplay
+                        {
+                            DisplayName   = zone.Name,
+                            LocationId    = location.LocationId,
+                            DisplayWidth  = zone.WidthPx,
+                            DisplayHeight = zone.HeightPx,
+                            DisplayTypeId = 1,
+                            SortOrder     = 0,
+                            CreateDate    = DateTime.UtcNow
+                        };
+                        dbContext.TblDisplays.Add(d);
+                        await dbContext.SaveChangesAsync();
+                        await EnsureLayerConstraintAsync(
+                            dbContext, d, zone.WidthPx, zone.HeightPx, location.LocationId, zone.Name);
+                        zoneDisplayId = d.DisplayId;
+                    }
+
+                    newDisplayIds.Add(zoneDisplayId);
+                    wallConfig.Layout.Groups.Add(new PanoramaGroup
+                    {
+                        GroupName              = zone.Name,
+                        Role                   = "logo",
+                        AllowAirlineAllocation = false,
+                        PositionTop            = zone.PositionTop,
+                        PositionLeft           = zone.PositionLeft,
+                        ZIndex                 = zone.ZIndex,
+                        LogoRoleKey            = string.IsNullOrWhiteSpace(zone.LogoRoleKey) ? null : zone.LogoRoleKey,
+                        DisplayIds             = new List<int> { zoneDisplayId }
+                    });
+                }
+
+                // Remove displays that were in the old config but are no longer in the new one
+                var orphanIds = oldDisplayIds.Except(newDisplayIds).ToList();
+                if (orphanIds.Any())
+                {
+                    var orphans = await dbContext.TblDisplays.Where(d => orphanIds.Contains(d.DisplayId)).ToListAsync();
+                    dbContext.TblDisplays.RemoveRange(orphans);
+                    removedDisplayIds.AddRange(orphanIds);
+                }
+
+                location.ExtendedData = JsonSerializer.Serialize(wallConfig, new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            }
+
+            await dbContext.SaveChangesAsync();
+
+            // Zones, walls and displays all changed under this one location, so its publication and every
+            // display still attached to it are rebuilt.
+            publicationInvalidator.LocationChanged(location.LocationId);
+            foreach (var displayId in await dbContext.TblDisplays.Where(d => d.LocationId == location.LocationId).Select(d => d.DisplayId).ToListAsync())
+                publicationInvalidator.DisplayChanged(displayId);
+            foreach (var displayId in removedDisplayIds)
+                publicationInvalidator.DisplayRemoved(displayId);
+
+            await OnLayoutCreated.InvokeAsync(location.LocationId);
+            Close();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to save: {ex.Message}";
+            Logger.LogError(ex, "Error saving location");
+        }
+        finally
+        {
+            isCreating = false;
+            StateHasChanged();
+        }
+    }
+
+    // --- Asset Library Creation ---
+
+    private async Task<int> CreateAssetLibraryLocation()
+    {
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = ASSET_LIBRARY_LOCATION_TYPE_ID,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = resolutionWidth,
+            BackgroundImageHeight = resolutionHeight,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        // Create global constraint with the chosen resolution and mode
+        var constraint = new TblConstraint
+        {
+            ConstraintName = locationName,
+            OwningLocationId = location.LocationId,
+            IsGlobal = true,
+            ResolutionWidth = resolutionWidth,
+            ResolutionHeight = resolutionHeight,
+            ResolutionMode = assetLibraryResolutionMode,
+            CreateDate = DateTime.UtcNow
+        };
+        dbContext.TblConstraints.Add(constraint);
+        await dbContext.SaveChangesAsync();
+
+        location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+        {
+            ed.GlobalConstraintId = constraint.ConstraintId;
+        });
+        await dbContext.SaveChangesAsync();
+
+        // A library's participating keys are rule rows with policies at their defaults; a library targets nothing.
+        var metadataKeys = assetLibraryMetadataKeys
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Select(k => new LocationMetadataRuleInput(k))
+            .ToList();
+        if (metadataKeys.Count > 0)
+        {
+            // The location already exists; its fields can be added again from Content metadata, so a failure
+            // here must not stop the creator's access grant that follows.
+            try
+            {
+                await locationMetadataRules.SaveAsync(location.LocationId, targetContentByMetadata: false, matchMode: "all",
+                    metadataKeys, sessionState.User?.UserId.ToString() ?? "system");
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Failed to save content metadata fields for new asset library {LocationId}", location.LocationId);
+            }
+        }
+
+        return location.LocationId;
+    }
+
+    // --- FloorPlan Creation ---
+
+    private async Task<int> CreateFloorPlanLocation()
+    {
+        if (!floorPlanLocationTypeId.HasValue)
+            throw new InvalidOperationException("Floorplan location type not found in database.");
+
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = floorPlanLocationTypeId.Value,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = resolutionWidth,
+            BackgroundImageHeight = resolutionHeight,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        // Save ExtendedData with background mode config
+        location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+        {
+            ed.BackgroundMode = visualBackgroundMode == "image" ? null : visualBackgroundMode;
+            if (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap")
+            {
+                ed.MapCenterLatitude = mapCenterLatitude;
+                ed.MapCenterLongitude = mapCenterLongitude;
+                ed.MapZoomLevel = mapZoomLevel;
+                ed.OfflineTilePath = visualBackgroundMode == "offlinemap" ? offlineTilePath : null;
+            }
+            if (visualBackgroundMode == "3dmodel")
+            {
+                ed.ModelFilePath = modelFilePath;
+                ed.HotspotScale = hotspotScale;
+            }
+        });
+        await dbContext.SaveChangesAsync();
+
+        // Save background image to disk (image mode)
+        if (visualBackgroundMode == "image" && visualBackgroundBytes != null && visualBackgroundFile != null)
+        {
+            var ext = Path.GetExtension(visualBackgroundFile.Name).ToLowerInvariant();
+            var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+            Directory.CreateDirectory(folder);
+            var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+            var filePath = Path.Combine(folder, fileName);
+            await File.WriteAllBytesAsync(filePath, visualBackgroundBytes);
+            location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+            await dbContext.SaveChangesAsync();
+        }
+
+        // Save GLB model to disk (3D model mode)
+        if (visualBackgroundMode == "3dmodel" && modelFileBytes != null)
+        {
+            var modelFolder = Path.Combine(MediaPaths.GetRoot(), "models", location.LocationId.ToString());
+            Directory.CreateDirectory(modelFolder);
+            var glbPath = Path.Combine(modelFolder, "model.glb");
+            await File.WriteAllBytesAsync(glbPath, modelFileBytes);
+            modelFilePath = $"models/{location.LocationId}/model.glb";
+            location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+            {
+                ed.ModelFilePath = modelFilePath;
+            });
+            await dbContext.SaveChangesAsync();
+        }
+
+        return location.LocationId;
+    }
+
+    // --- Panorama Creation ---
+
+    private async Task<int> CreatePanoramaLocation()
+    {
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = PANORAMA_LOCATION_TYPE_ID,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = resolutionWidth,
+            BackgroundImageHeight = resolutionHeight,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        // Save background image
+        if (panoBackgroundBytes != null && panoBackgroundFile != null)
+        {
+            var ext = Path.GetExtension(panoBackgroundFile.Name).ToLowerInvariant();
+            var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+            Directory.CreateDirectory(folder);
+            var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+            var filePath = Path.Combine(folder, fileName);
+            await File.WriteAllBytesAsync(filePath, panoBackgroundBytes);
+            location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+            await dbContext.SaveChangesAsync();
+        }
+
+        // Build PanoramaConfiguration and create displays
+        var panoConfig = new PanoramaConfiguration { ScaleFactor = panoScaleFactor };
+
+        foreach (var item in panoDisplayItems)
+        {
+            if (item.IsGroup)
+            {
+                var group = new PanoramaGroup
+                {
+                    GroupName = item.Name,
+                    PositionTop = item.PositionTop,
+                    PositionLeft = item.PositionLeft,
+                    Spacing = item.Spacing,
+                    Direction = item.Direction,
+                    ZIndex = item.ZIndex,
+                    DisplayScale = item.DisplayScale
+                };
+
+                for (int i = 0; i < item.Count; i++)
+                {
+                    var display = new TblDisplay
+                    {
+                        DisplayName = $"{item.Name} {i + 1}",
+                        LocationId = location.LocationId,
+                        DisplayWidth = item.DisplayWidth,
+                        DisplayHeight = item.DisplayHeight,
+                        DisplayTypeId = 1,
+                        SortOrder = i,
+                        CreateDate = DateTime.UtcNow
+                    };
+                    dbContext.TblDisplays.Add(display);
+                    await dbContext.SaveChangesAsync();
+                    group.DisplayIds.Add(display.DisplayId);
+                }
+
+                panoConfig.Groups.Add(group);
+            }
+            else
+            {
+                var display = new TblDisplay
+                {
+                    DisplayName = item.Name,
+                    LocationId = location.LocationId,
+                    DisplayWidth = item.DisplayWidth,
+                    DisplayHeight = item.DisplayHeight,
+                    DisplayTypeId = 1,
+                    CreateDate = DateTime.UtcNow
+                };
+                dbContext.TblDisplays.Add(display);
+                await dbContext.SaveChangesAsync();
+
+                panoConfig.Placements.Add(new PanoramaPlacement
+                {
+                    DisplayId = display.DisplayId,
+                    PositionTop = item.PositionTop,
+                    PositionLeft = item.PositionLeft,
+                    ZIndex = item.ZIndex,
+                    DisplayScale = item.DisplayScale
+                });
+            }
+        }
+
+        location.ExtendedData = JsonSerializer.Serialize(panoConfig, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        await dbContext.SaveChangesAsync();
+
+        return location.LocationId;
+    }
+
+    // --- VideoWall Creation ---
+
+    private async Task<int> CreateVideoWallLocation()
+    {
+        if (!videoWallLocationTypeId.HasValue)
+            throw new InvalidOperationException("VideoWall location type not found in database.");
+
+        var groupId = await GetOrCreateLocationGroupIdAsync();
+
+        var location = new TblLocation
+        {
+            LocationName = locationName,
+            LocationTypeId = videoWallLocationTypeId.Value,
+            LocationGroupId = groupId,
+            BackgroundImageWidth = wallBgWidth > 0 ? wallBgWidth : null,
+            BackgroundImageHeight = wallBgHeight > 0 ? wallBgHeight : null,
+            SortOrder = 0,
+            CreateDate = DateTime.UtcNow
+        };
+
+        dbContext.TblLocations.Add(location);
+        await dbContext.SaveChangesAsync();
+
+        if (wallBgBytes != null && wallBgFile != null)
+        {
+            var ext = Path.GetExtension(wallBgFile.Name).ToLowerInvariant();
+            var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Visual Backgrounds");
+            Directory.CreateDirectory(folder);
+            var fileName = $"{location.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+            await File.WriteAllBytesAsync(Path.Combine(folder, fileName), wallBgBytes);
+            location.BackgroundImagePath = $"images/Visual Backgrounds/{fileName}";
+            await dbContext.SaveChangesAsync();
+        }
+
+        var wallConfig = new VideoWallConfiguration
+        {
+            BackgroundImagePath = location.BackgroundImagePath,
+            BackgroundScaleFactor = wallBackgroundScaleFactor,
+            ContentScaleFactor = wallContentScaleFactor,
+            CounterWidthPx = wallCounterWidthPx,
+            WrappedOutputsEnabled = wallWrappedOutputsEnabled,
+            OutputWidth = wallOutputWidth,
+            OutputHeight = wallOutputHeight,
+            ContentTopOffsetPx = wallContentTopOffsetPx,
+            LogoRoles = wallLogoRoles.ToList()
+        };
+
+        foreach (var row in wallRows)
+        {
+            var group = new PanoramaGroup
+            {
+                GroupName = row.Name,
+                Role = "counter-row",
+                AllowAirlineAllocation = true,
+                Direction = "horizontal",
+                Gaps    = row.Gaps,
+                Spacing = row.Gaps.Count == 1 ? row.Gaps[0] : 0,
+                PositionTop = row.VerticalPositionPx,
+                PositionLeft = row.HorizontalStartPx,
+                DisplayScale = row.DisplayScale,
+                ZIndex = row.ZIndex,
+                AllocationLeftPx = row.AllocationLeftPx,
+                AllocationRightPx = row.AllocationRightPx
+            };
+
+            for (int i = 0; i < row.CounterCount; i++)
+            {
+                var display = new TblDisplay
+                {
+                    DisplayName = $"{row.Name} {i + 1}",
+                    LocationId = location.LocationId,
+                    DisplayWidth = wallCounterWidthPx,
+                    DisplayHeight = (int)row.CounterHeightPx,
+                    DisplayTypeId = 1,
+                    SortOrder = i,
+                    CreateDate = DateTime.UtcNow
+                };
+                dbContext.TblDisplays.Add(display);
+                await dbContext.SaveChangesAsync();
+                group.DisplayIds.Add(display.DisplayId);
+            }
+
+            wallConfig.Layout.Groups.Add(group);
+        }
+
+        foreach (var layer in wallLayers)
+        {
+            var display = new TblDisplay
+            {
+                DisplayName = layer.Name,
+                LocationId = location.LocationId,
+                DisplayWidth = layer.WidthPx,
+                DisplayHeight = layer.HeightPx,
+                DisplayTypeId = 1,
+                SortOrder = 0,
+                CreateDate = DateTime.UtcNow
+            };
+            dbContext.TblDisplays.Add(display);
+            await dbContext.SaveChangesAsync();
+
+            wallConfig.Layout.Groups.Add(new PanoramaGroup
+            {
+                GroupName = layer.Name,
+                Role = layer.Role,
+                AllowAirlineAllocation = false,
+                PositionTop = layer.PositionTop,
+                PositionLeft = layer.PositionLeft,
+                ZIndex = layer.ZIndex,
+                DisplayIds = new List<int> { display.DisplayId }
+            });
+        }
+
+        foreach (var zone in wallLogoZones)
+        {
+            var display = new TblDisplay
+            {
+                DisplayName = zone.Name,
+                LocationId = location.LocationId,
+                DisplayWidth = zone.WidthPx,
+                DisplayHeight = zone.HeightPx,
+                DisplayTypeId = 1,
+                SortOrder = 0,
+                CreateDate = DateTime.UtcNow
+            };
+            dbContext.TblDisplays.Add(display);
+            await dbContext.SaveChangesAsync();
+            await EnsureLayerConstraintAsync(
+                dbContext, display, zone.WidthPx, zone.HeightPx, location.LocationId, zone.Name);
+
+            wallConfig.Layout.Groups.Add(new PanoramaGroup
+            {
+                GroupName = zone.Name,
+                Role = "logo",
+                AllowAirlineAllocation = false,
+                PositionTop = zone.PositionTop,
+                PositionLeft = zone.PositionLeft,
+                ZIndex = zone.ZIndex,
+                LogoRoleKey = string.IsNullOrWhiteSpace(zone.LogoRoleKey) ? null : zone.LogoRoleKey,
+                DisplayIds = new List<int> { display.DisplayId }
+            });
+        }
+
+        location.ExtendedData = JsonSerializer.Serialize(wallConfig, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase
+        });
+        await dbContext.SaveChangesAsync();
+
+        return location.LocationId;
+    }
+
+    // --- Edit mode openers ---
+
+    public async void OpenForEditVisual(TblLocation location)
+    {
+        isOpen = true;
+        isEditMode = true;
+        editingLocationId = location.LocationId;
+        currentStep = Step.ConfigureFloorPlan;
+        selectedType = LocationType.FloorPlan;
+        locationName = location.LocationName ?? "";
+        resolutionWidth = (int)(location.BackgroundImageWidth ?? 1920);
+        resolutionHeight = (int)(location.BackgroundImageHeight ?? 1080);
+        selectedLocationGroupId = location.LocationGroupId;
+        errorMessage = null;
+
+        visualBackgroundFile = null;
+        visualBackgroundBytes = null;
+        visualBackgroundPreviewUrl = !string.IsNullOrEmpty(location.BackgroundImagePath)
+            ? location.BackgroundImagePath : null;
+
+        // Parse extended data for background mode config
+        if (!string.IsNullOrEmpty(location.ExtendedData))
+        {
+            try
+            {
+                var ed = JsonSerializer.Deserialize<LocationExtendedData>(location.ExtendedData, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (ed != null)
+                {
+                    visualBackgroundMode = ed.BackgroundMode ?? "image";
+                    mapCenterLatitude = ed.MapCenterLatitude ?? 40.7128;
+                    mapCenterLongitude = ed.MapCenterLongitude ?? -74.0060;
+                    mapZoomLevel = ed.MapZoomLevel ?? 15;
+                    offlineTilePath = ed.OfflineTilePath;
+                    modelFilePath = ed.ModelFilePath;
+                    hotspotScale = ed.HotspotScale ?? 1.0;
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        // Load existing floor plan elements
+        visualElements.Clear();
+        var elements = await floorPlanService.GetElementsForLocationAsync(location.LocationId);
+        visualElements = elements.Select(e => new VisualElementItem
+        {
+            ElementId = e.FloorPlanElementId,
+            Type = e.ChildDisplayId.HasValue ? "display" : "location",
+            DisplayId = e.ChildDisplayId,
+            LocationId = e.ChildLocationId,
+            DisplayOrLocationName = e.ChildDisplay?.DisplayName ?? e.ChildLocation?.LocationName ?? "",
+            Label = e.ChildDisplay?.DisplayName ?? e.ChildLocation?.LocationName ?? "",
+            IconPath = e.IconPath,
+            Width = e.ElementWidth,
+            Height = e.ElementHeight,
+            Top = e.PositionTop,
+            Left = e.PositionLeft,
+            SortOrder = e.SortOrder,
+            Latitude = e.Latitude,
+            Longitude = e.Longitude,
+            Position3DX = e.Position3DX,
+            Position3DY = e.Position3DY,
+            Position3DZ = e.Position3DZ,
+            ShowLivePreview = e.ShowLivePreview
+        }).ToList();
+
+        LoadDataAsync();
+        StateHasChanged();
+    }
+
+    public async void OpenForEditPanorama(TblLocation location)
+    {
+        isOpen = true;
+        isEditMode = true;
+        editingLocationId = location.LocationId;
+        currentStep = Step.ConfigurePanorama;
+        selectedType = LocationType.Panorama;
+        locationName = location.LocationName ?? "";
+        resolutionWidth = (int)(location.BackgroundImageWidth ?? 1920);
+        resolutionHeight = (int)(location.BackgroundImageHeight ?? 1080);
+        selectedLocationGroupId = location.LocationGroupId;
+        errorMessage = null;
+
+        panoBackgroundPreviewUrl = !string.IsNullOrEmpty(location.BackgroundImagePath)
+            ? location.BackgroundImagePath : null;
+        panoBackgroundFile = null;
+        panoBackgroundBytes = null;
+        panoDisplayItems.Clear();
+
+        // Parse existing panorama configuration
+        if (!string.IsNullOrEmpty(location.ExtendedData))
+        {
+            try
+            {
+                var config = JsonSerializer.Deserialize<PanoramaConfiguration>(location.ExtendedData, new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (config != null)
+                {
+                    panoScaleFactor = config.ScaleFactor;
+                    // Load existing placements as individual display items
+                    foreach (var p in config.Placements)
+                    {
+                        var display = await dbContext.TblDisplays.FindAsync(p.DisplayId);
+                        panoDisplayItems.Add(new PanoDisplayItem
+                        {
+                            DisplayId = p.DisplayId,
+                            Name = display?.DisplayName ?? $"Display {p.DisplayId}",
+                            DisplayWidth = display?.DisplayWidth ?? 1920,
+                            DisplayHeight = display?.DisplayHeight ?? 1080,
+                            PositionTop = p.PositionTop,
+                            PositionLeft = p.PositionLeft,
+                            ZIndex = p.ZIndex,
+                            DisplayScale = p.DisplayScale
+                        });
+                    }
+                    // Load existing groups
+                    foreach (var g in config.Groups)
+                    {
+                        var firstDisplay = g.DisplayIds.Any() ? await dbContext.TblDisplays.FindAsync(g.DisplayIds.First()) : null;
+                        panoDisplayItems.Add(new PanoDisplayItem
+                        {
+                            ExistingDisplayIds = g.DisplayIds.ToList(),
+                            Name = g.GroupName,
+                            IsGroup = true,
+                            Count = g.DisplayIds.Count,
+                            Spacing = g.Spacing,
+                            Direction = g.Direction,
+                            DisplayWidth = firstDisplay?.DisplayWidth ?? 1920,
+                            DisplayHeight = firstDisplay?.DisplayHeight ?? 1080,
+                            PositionTop = g.PositionTop,
+                            PositionLeft = g.PositionLeft,
+                            ZIndex = g.ZIndex,
+                            DisplayScale = g.DisplayScale
+                        });
+                    }
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        LoadDataAsync();
+        StateHasChanged();
+    }
+
+    public async void OpenForEditVideoWall(TblLocation location)
+    {
+        // The caller's entity may be stale (tab lists are no-tracking snapshots), and editing from
+        // stale config re-saves the old values. Always re-read the last saved state.
+        var fresh = await dbContext.TblLocations.AsNoTracking()
+            .FirstOrDefaultAsync(l => l.LocationId == location.LocationId);
+        if (fresh != null) location = fresh;
+
+        isOpen = true;
+        isEditMode = true;
+        editingLocationId = location.LocationId;
+        currentStep = Step.ConfigureVideoWall;
+        selectedType = LocationType.VideoWall;
+        locationName = location.LocationName ?? "";
+        selectedLocationGroupId = location.LocationGroupId;
+        errorMessage = null;
+
+        wallBgFile = null;
+        wallBgBytes = null;
+        wallBgPreviewUrl = !string.IsNullOrEmpty(location.BackgroundImagePath) ? location.BackgroundImagePath : null;
+        wallBgWidth = (int)(location.BackgroundImageWidth ?? 0);
+        wallBgHeight = (int)(location.BackgroundImageHeight ?? 0);
+        wallRows.Clear();
+        wallLayers.Clear();
+        wallLogoZones.Clear();
+        wallLogoRoles.Clear();
+
+        if (!string.IsNullOrEmpty(location.ExtendedData))
+        {
+            try
+            {
+                var config = JsonSerializer.Deserialize<VideoWallConfiguration>(location.ExtendedData,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+                if (config != null)
+                {
+                    wallCounterWidthPx = config.CounterWidthPx;
+                    wallBackgroundScaleFactor = config.BackgroundScaleFactor;
+                    wallContentScaleFactor = config.ContentScaleFactor;
+                    wallWrappedOutputsEnabled = config.WrappedOutputsEnabled;
+                    wallOutputWidth  = config.OutputWidth  > 0 ? config.OutputWidth  : 3840;
+                    wallOutputHeight = config.OutputHeight > 0 ? config.OutputHeight : 2160;
+                    wallContentTopOffsetPx = config.ContentTopOffsetPx;
+                    wallLogoRoles = config.LogoRoles?.OrderBy(r => r.SortOrder).ToList() ?? new();
+                    foreach (var g in config.Layout.Groups)
+                    {
+                        if (g.AllowAirlineAllocation)
+                        {
+                            // Recover counter height from the first display in the group
+                            var firstDisplay = g.DisplayIds.Any()
+                                ? await dbContext.TblDisplays.FindAsync(g.DisplayIds.First()) : null;
+                            wallRows.Add(new WallRowItem
+                            {
+                                Name = g.GroupName,
+                                CounterCount = g.DisplayIds.Count,
+                                CounterHeightPx = firstDisplay?.DisplayHeight ?? 1080,
+                                // Backward compat: if stored config has a Gaps list use it,
+                                // otherwise initialize from the legacy Spacing value.
+                                Gaps = g.Gaps.Count > 0 ? g.Gaps.ToList() : new List<double> { g.Spacing },
+                                VerticalPositionPx = g.PositionTop,
+                                HorizontalStartPx = g.PositionLeft,
+                                DisplayScale = g.DisplayScale,
+                                ZIndex = g.ZIndex > 0 ? g.ZIndex : 10,
+                                AllocationLeftPx = g.AllocationLeftPx,
+                                AllocationRightPx = g.AllocationRightPx,
+                                ExistingDisplayIds = g.DisplayIds.ToList()
+                            });
+                        }
+                        else if (string.Equals(g.Role, "logo", StringComparison.OrdinalIgnoreCase))
+                        {
+                            // Logo zone: dimensions stored directly (no HorizontalImageLoop).
+                            var zoneDisplay = g.DisplayIds.Any()
+                                ? await dbContext.TblDisplays.FindAsync(g.DisplayIds.First()) : null;
+                            // A zone referencing a role missing from the catalog (hand-edited or
+                            // partially-imported config) gets the role recovered so the assignment
+                            // survives the round-trip instead of being silently reset.
+                            if (!string.IsNullOrWhiteSpace(g.LogoRoleKey) &&
+                                wallLogoRoles.All(r => r.Key != g.LogoRoleKey))
+                            {
+                                wallLogoRoles.Add(new LogoRoleDefinition
+                                {
+                                    Key = g.LogoRoleKey, Name = $"{g.LogoRoleKey} (recovered)",
+                                    SortOrder = wallLogoRoles.Count
+                                });
+                            }
+
+                            wallLogoZones.Add(new WallLogoZoneItem
+                            {
+                                Name               = g.GroupName,
+                                WidthPx            = (int)(zoneDisplay?.DisplayWidth  ?? 1073),
+                                HeightPx           = (int)(zoneDisplay?.DisplayHeight ?? 648),
+                                PositionTop        = g.PositionTop,
+                                PositionLeft       = g.PositionLeft,
+                                ZIndex             = g.ZIndex,
+                                LogoRoleKey        = string.IsNullOrWhiteSpace(g.LogoRoleKey) ? null : g.LogoRoleKey,
+                                ExistingDisplayIds = g.DisplayIds.ToList()
+                            });
+                        }
+                        else
+                        {
+                            // Recover layer dimensions from the single display.
+                            // DisplayWidth stores the per-tile image width; multiply by the loop
+                            // count to reconstruct the full canvas width that the user edits.
+                            var layerDisplay = g.DisplayIds.Any()
+                                ? await dbContext.TblDisplays.FindAsync(g.DisplayIds.First()) : null;
+                            var loopCount = Math.Max(1, g.HorizontalImageLoop);
+                            wallLayers.Add(new WallLayerItem
+                            {
+                                Name                = g.GroupName,
+                                Role                = g.Role ?? "custom",
+                                WidthPx             = (int)(layerDisplay?.DisplayWidth ?? 6144) * loopCount,
+                                HeightPx            = (int)(layerDisplay?.DisplayHeight ?? 700),
+                                HorizontalImageLoop = loopCount,
+                                PositionTop         = g.PositionTop,
+                                PositionLeft        = g.PositionLeft,
+                                ZIndex              = g.ZIndex,
+                                ExistingDisplayIds  = g.DisplayIds.ToList()
+                            });
+                        }
+                    }
+                }
+            }
+            catch { /* ignore parse errors */ }
+        }
+
+        LoadDataAsync();
+        StateHasChanged();
+    }
+
+    // --- File upload handlers ---
+
+    private async Task OnVisualBackgroundUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file.Size > 20 * 1024 * 1024) { errorMessage = "File too large (max 20 MB)"; return; }
+
+        visualBackgroundFile = file;
+        using var stream = file.OpenReadStream(20 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        visualBackgroundBytes = ms.ToArray();
+
+        // Auto-detect image dimensions
+        try
+        {
+            using var ms2 = new MemoryStream(visualBackgroundBytes);
+            using var img = System.Drawing.Image.FromStream(ms2);
+            resolutionWidth = img.Width;
+            resolutionHeight = img.Height;
+        }
+        catch { /* not an image format we can parse; leave dimensions as-is */ }
+
+        visualBackgroundPreviewUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(visualBackgroundBytes)}";
+        errorMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task OnModelFileUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file.Size > 50 * 1024 * 1024) { errorMessage = "Model file too large (max 50 MB)"; return; }
+
+        modelFile = file;
+        using var stream = file.OpenReadStream(50 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        modelFileBytes = ms.ToArray();
+        errorMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task OnPanoramaBackgroundUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file.Size > 20 * 1024 * 1024) { errorMessage = "File too large (max 20 MB)"; return; }
+
+        panoBackgroundFile = file;
+        using var stream = file.OpenReadStream(20 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        panoBackgroundBytes = ms.ToArray();
+
+        try
+        {
+            using var ms2 = new MemoryStream(panoBackgroundBytes);
+            using var img = System.Drawing.Image.FromStream(ms2);
+            resolutionWidth = img.Width;
+            resolutionHeight = img.Height;
+        }
+        catch { }
+
+        panoBackgroundPreviewUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(panoBackgroundBytes)}";
+        errorMessage = null;
+        StateHasChanged();
+    }
+
+    private async Task OnWallBackgroundUpload(InputFileChangeEventArgs e)
+    {
+        var file = e.File;
+        if (file.Size > 20 * 1024 * 1024) { errorMessage = "File too large (max 20 MB)"; return; }
+
+        wallBgFile = file;
+        using var stream = file.OpenReadStream(20 * 1024 * 1024);
+        using var ms = new MemoryStream();
+        await stream.CopyToAsync(ms);
+        wallBgBytes = ms.ToArray();
+
+        try
+        {
+            using var ms2 = new MemoryStream(wallBgBytes);
+            using var img = System.Drawing.Image.FromStream(ms2);
+            wallBgWidth = img.Width;
+            wallBgHeight = img.Height;
+        }
+        catch { }
+
+        wallBgPreviewUrl = $"data:{file.ContentType};base64,{Convert.ToBase64String(wallBgBytes)}";
+        errorMessage = null;
+        StateHasChanged();
+    }
+
+    // --- Floorplan element helpers ---
+
+    private void AddVisualElement()
+    {
+        int? displayId = addVisualType == "display" && addVisualDisplayId > 0 ? addVisualDisplayId : null;
+        int? locationId = addVisualType == "location" && addVisualLocationId > 0 ? addVisualLocationId : null;
+
+        if (!displayId.HasValue && !locationId.HasValue)
+            return;
+
+        var name = displayId.HasValue
+            ? allDisplays.FirstOrDefault(d => d.DisplayId == displayId.Value)?.DisplayName ?? ""
+            : allLocations.FirstOrDefault(l => l.LocationId == locationId.Value)?.LocationName ?? "";
+
+        visualElements.Add(new VisualElementItem
+        {
+            Type = addVisualType,
+            DisplayId = displayId,
+            LocationId = locationId,
+            DisplayOrLocationName = name,
+            Label = name,
+            IconPath = string.IsNullOrWhiteSpace(addVisualIconPath) ? null : addVisualIconPath,
+            Width = addVisualWidth,
+            Height = addVisualHeight,
+            Top = addVisualTop,
+            Left = addVisualLeft,
+            Latitude = (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap") ? addVisualLatitude : null,
+            Longitude = (visualBackgroundMode == "googlemap" || visualBackgroundMode == "offlinemap") ? addVisualLongitude : null,
+            Position3DX = visualBackgroundMode == "3dmodel" ? addVisual3DX : null,
+            Position3DY = visualBackgroundMode == "3dmodel" ? addVisual3DY : null,
+            Position3DZ = visualBackgroundMode == "3dmodel" ? addVisual3DZ : null,
+            ShowLivePreview = addVisualShowLivePreview,
+            SortOrder = visualElements.Count
+        });
+
+        addVisualDisplayId = 0;
+        addVisualLocationId = 0;
+        addVisualIconPath = null;
+        addVisualShowLivePreview = false;
+        addVisualTop = 50;
+        addVisualLeft = 50;
+        addVisualLatitude = 0;
+        addVisualLongitude = 0;
+        addVisual3DX = 0;
+        addVisual3DY = 0;
+        addVisual3DZ = 0;
+    }
+
+    private void RemoveVisualElement(VisualElementItem item)
+    {
+        visualElements.Remove(item);
+    }
+
+    // --- Panorama helpers ---
+
+    private void AddPanoDisplay()
+    {
+        panoDisplayItems.Add(new PanoDisplayItem { Name = $"Display {panoDisplayItems.Count + 1}" });
+    }
+
+    private void AddPanoGroup()
+    {
+        panoDisplayItems.Add(new PanoDisplayItem { Name = $"Group {panoDisplayItems.Count + 1}", IsGroup = true, Count = 4 });
+    }
+
+    private void AddWallRow()
+    {
+        wallRows.Add(new WallRowItem { Name = $"Row {wallRows.Count + 1}" });
+    }
+
+    private void AddWallLayer()
+    {
+        wallLayers.Add(new WallLayerItem { Name = $"Layer {wallLayers.Count + 1}" });
+    }
+
+    private void AddWallLogoZone()
+    {
+        wallLogoZones.Add(new WallLogoZoneItem { Name = $"Logo Zone {wallLogoZones.Count + 1}" });
+    }
+}
+
+<style>
+    .no-spinner::-webkit-outer-spin-button,
+    .no-spinner::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .no-spinner { -moz-appearance: textfield; appearance: textfield; }
+</style>

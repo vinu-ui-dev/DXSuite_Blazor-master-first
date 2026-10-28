@@ -1,0 +1,766 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+
+@* ── Sub-tab strip ────────────────────────────────────────────────────────── *@
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="lt-subtab-strip">
+        <button class="lt-subtab-btn @SubTab("types")" @onclick='() => SetSubTab("types")'>Labor Type</button>
+        <button class="lt-subtab-btn @SubTab("columns")" @onclick='() => SetSubTab("columns")'>Columns</button>
+    </div>
+
+    @if (activeSubTab == "types")
+    {
+        @* ── Labor Types sub-tab ─────────────────────────────────────────────── *@
+        <div class="dx-panel-header">
+            <h4>Labor Types</h4>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="BeginAdd">+ Add Labor Type</button>
+        </div>
+
+        @if (laborTypes is null)
+        {
+            <div style="position:relative; min-height:120px;">
+                <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+            </div>
+        }
+        else if (laborTypes.Count == 0)
+        {
+            <div style="text-align:center; padding:40px 20px;">
+                <h5>No labor types defined</h5>
+                <p class="dx-text-muted">Add a labor type to get started.</p>
+            </div>
+        }
+        else
+        {
+            <div class="dx-panel-content">
+                <div class="dx-table">
+                    <div class="dx-table-header" style="grid-template-columns: minmax(140px,1fr) 90px minmax(120px,1fr) 110px 60px 110px;">
+                        <div>Name</div>
+                        <div>Sub Role</div>
+                        <div>NetSuite Item</div>
+                        <div>Calc Mode</div>
+                        <div>Active</div>
+                        <div>Actions</div>
+                    </div>
+                    @foreach (var lt in laborTypes)
+                    {
+                        <div class="dx-table-row" style="grid-template-columns: minmax(140px,1fr) 90px minmax(120px,1fr) 110px 60px 110px;">
+                            <div>@lt.TypeName</div>
+                            <div>
+                                <span class="dx-badge @SubRoleBadgeClass(lt.SubRole)">@SubRoleLabel(lt.SubRole)</span>
+                            </div>
+                            <div style="font-size:.8rem; color:var(--dx-text-muted,#6c757d)">
+                                @(lt.NetsuiteItemName ?? lt.NetsuiteItemId ?? "—")
+                            </div>
+                            <div style="font-size:.8rem; color:var(--dx-text-muted,#6c757d)">
+                                @(lt.IsPercentageOfColumns ? $"{lt.ColumnPercentage?.ToString("G29") ?? "0"}% of columns" : lt.ColumnAssignments.Count > 0 ? "Column-based" : "Manual")
+                            </div>
+                            <div>@(lt.IsActive ? "✓" : "")</div>
+                            <div style="display:flex; gap:4px;">
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => BeginEdit(lt)">Edit</button>
+                                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => ConfirmDeleteTypeAsync(lt)">Delete</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (deleteTypeError is not null)
+        {
+            <div class="dx-alert dx-alert-danger" style="margin:8px 20px;">@deleteTypeError</div>
+        }
+    }
+    else
+    {
+        @* ── Columns sub-tab ─────────────────────────────────────────────────── *@
+        <div class="dx-panel-header">
+            <h4>Columns</h4>
+            <p class="dx-text-muted" style="font-size:.8rem; margin:0; align-self:center">
+                Drag to reorder · order controls left-to-right column position in the equipment table
+            </p>
+        </div>
+
+        @if (columns is null)
+        {
+            <div style="position:relative; min-height:120px;">
+                <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+            </div>
+        }
+        else
+        {
+            <div class="dx-panel-content" style="flex:1; overflow-y:auto;">
+                @if (columns.Count == 0 && !addingColumn)
+                {
+                    <p class="dx-text-muted" style="text-align:center; padding:24px">No columns defined yet.</p>
+                }
+
+                @foreach (var col in columns)
+                {
+                    var colId = col.ColumnId;
+                    var isDragOver = _dragOverId == colId && _draggingId != colId;
+                    <div class="lt-col-row @(isDragOver ? "lt-col-drag-over" : "")"
+                         draggable="true"
+                         @ondragstart="() => _draggingId = colId"
+                         @ondragover:preventDefault
+                         @ondragover="() => _dragOverId = colId"
+                         @ondrop="() => DropAsync(colId)"
+                         @ondragleave="() => { if (_dragOverId == colId) _dragOverId = null; }">
+                        <span class="lt-drag-handle" title="Drag to reorder">⠿</span>
+                        @if (_editingColumnId == colId)
+                        {
+                            <input class="dx-form-control lt-col-name-input" @bind="_editingColumnName"
+                                   @onkeydown="e => OnColKeyDown(e, colId)" />
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SaveColumnNameAsync(colId)">Save</button>
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelColumnEdit">Cancel</button>
+                        }
+                        else
+                        {
+                            <span class="lt-col-name">@col.Name</span>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => BeginEditColumn(col)">Rename</button>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteColumnAsync(col)">Delete</button>
+                        }
+                    </div>
+                }
+
+                @if (addingColumn)
+                {
+                    <div class="lt-col-row lt-col-add-row">
+                        <span class="lt-drag-handle" style="opacity:.3">⠿</span>
+                        <input class="dx-form-control lt-col-name-input" @bind="_newColumnName"
+                               placeholder="Column name…"
+                               @onkeydown="e => OnNewColKeyDown(e)" />
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveNewColumnAsync">Add</button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="CancelAddColumn">Cancel</button>
+                    </div>
+                }
+
+                <div style="padding:8px 0;">
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => addingColumn = true"
+                            disabled="@addingColumn">
+                        + Add Column
+                    </button>
+                </div>
+
+                @if (deleteColError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:8px">@deleteColError</div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@* ── Add / Edit Labor Type modal ──────────────────────────────────────────── *@
+@if (formVisible)
+{
+    <div class="dx-modal-overlay" @onclick="CloseForm">
+        <div class="dx-modal" style="min-width:500px; max-width:600px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>@(editId == 0 ? "Add Labor Type" : "Edit Labor Type")</span>
+                <button class="dx-modal-close" @onclick="CloseForm">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name <span style="color:var(--dx-red,#dc3545)">*</span></label>
+                    <input class="dx-form-control" @bind="formName" placeholder="e.g. Lead Tech" />
+                </div>
+
+                <!-- NetSuite Item search -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">NetSuite Item</label>
+                    @if (formNsItemId is not null)
+                    {
+                        <div class="lt-ns-chip">
+                            <span>@formNsItemName</span>
+                            <button class="lt-ns-clear" @onclick="ClearNsItem">&times;</button>
+                        </div>
+                    }
+                    else
+                    {
+                        <div style="position:relative">
+                            <input class="dx-form-control" value="@formNsSearch"
+                                   @oninput="OnNsSearchInput"
+                                   placeholder="Search NetSuite items (2+ chars)…" />
+                            @if (formNsSearching)
+                            {
+                                <div style="font-size:.8rem; color:var(--dx-text-muted,#6c757d); margin-top:3px">Searching…</div>
+                            }
+                            @if (formNsResults is not null && formNsResults.Count > 0)
+                            {
+                                <div class="ct-search-results">
+                                    @foreach (var r in formNsResults)
+                                    {
+                                        <div class="ct-search-result" @onclick="() => SelectNsItem(r)">
+                                            <div class="ct-search-result-name">@(!string.IsNullOrEmpty(r.PurchaseDescription) ? r.PurchaseDescription : r.ItemId)</div>
+                                            <div class="ct-search-result-sub">@r.ItemId</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+
+                <!-- Calculation mode -->
+                <div class="dx-form-group">
+                    <label class="lt-check-label">
+                        <input type="checkbox" @bind="formIsPct" />
+                        % of Column Totals
+                        <span style="font-size:.75rem; color:var(--dx-text-muted,#6c757d)">(hours = total column hours × %)</span>
+                    </label>
+                </div>
+
+                @if (formIsPct)
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Percentage (0–100)</label>
+                        <input type="number" step="0.1" min="0" max="100" class="dx-form-control"
+                               style="max-width:120px" @bind="formPct" />
+                    </div>
+                }
+                else if (allColumns is not null && allColumns.Count > 0)
+                {
+                    <!-- Column assignments -->
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Column Assignments</label>
+                        <div class="lt-col-checklist">
+                            @foreach (var col in allColumns)
+                            {
+                                var cid = col.ColumnId;
+                                <label class="lt-check-label">
+                                    <input type="checkbox"
+                                           checked="@(formColumnIds.Contains(cid))"
+                                           @onchange="e => ToggleColumn(cid, (bool)(e.Value ?? false))" />
+                                    @col.Name
+                                </label>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <!-- Sub Role -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Sub Role</label>
+                    <div class="lt-radio-group">
+                        <label class="lt-check-label">
+                            <input type="radio" name="subrole" value="Internal"
+                                   checked="@(formSubRole == SubRole.Internal)"
+                                   @onchange="() => formSubRole = SubRole.Internal" />
+                            Internal Only
+                        </label>
+                        <label class="lt-check-label">
+                            <input type="radio" name="subrole" value="LeadSub"
+                                   checked="@(formSubRole == SubRole.LeadSub)"
+                                   @onchange="() => formSubRole = SubRole.LeadSub" />
+                            Lead Sub <span style="font-size:.75rem; color:var(--dx-text-muted,#6c757d)">(internal in All Us + Our Leads; sub in Subs)</span>
+                        </label>
+                        <label class="lt-check-label">
+                            <input type="radio" name="subrole" value="Sub"
+                                   checked="@(formSubRole == SubRole.Sub)"
+                                   @onchange="() => formSubRole = SubRole.Sub" />
+                            Sub <span style="font-size:.75rem; color:var(--dx-text-muted,#6c757d)">(internal in All Us; sub in Our Leads + Subs)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="dx-form-row">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Internal Cost/Hr</label>
+                        <input type="number" step="0.01" min="0" class="dx-form-control" @bind="formIntCost" />
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Internal Price/Hr</label>
+                        <input type="number" step="0.01" min="0" class="dx-form-control" @bind="formIntPrice" />
+                    </div>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">
+                        Minimum Hours
+                        <span style="font-size:.75rem; color:var(--dx-text-muted,#6c757d); font-weight:400; margin-left:4px">
+                            (when staff ≥ 1, hours will never fall below this value)
+                        </span>
+                    </label>
+                    <input type="number" step="0.25" min="0" class="dx-form-control" style="max-width:130px"
+                           placeholder="None"
+                           value="@(formMinHours.HasValue ? formMinHours.Value.ToString("G") : "")"
+                           @onchange="e => formMinHours = decimal.TryParse(e.Value?.ToString(), out var v) && v > 0 ? v : null" />
+                </div>
+
+                <!-- Traveling Role -->
+                <div class="dx-form-group">
+                    <label class="lt-check-label">
+                        <input type="checkbox" @bind="formIsTravelingRole" />
+                        Traveling Role
+                    </label>
+                    <div style="font-size:.75rem; color:var(--dx-text-muted,#6c757d); margin-top:3px; margin-left:23px">
+                        When checked, this role is counted in travel cost calculations.
+                        Combined with Sub Role, determines which scenarios include travel:
+                        All Us (all traveling roles) · Our Leads (Internal + Lead Sub) · Subs (Internal only).
+                    </div>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="lt-check-label">
+                        <input type="checkbox" @bind="formIsActive" />
+                        Active
+                    </label>
+                </div>
+
+                @if (formError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@formError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseForm">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveTypeAsync">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    /* Sub-tab strip */
+    .lt-subtab-strip {
+        display: flex;
+        gap: 4px;
+        padding: 8px 20px 0;
+        border-bottom: 1px solid var(--dx-border, #dee2e6);
+        flex-shrink: 0;
+    }
+    .lt-subtab-btn {
+        background: none;
+        border: none;
+        padding: 6px 14px;
+        font-size: .88rem;
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        color: var(--dx-text-muted, #6c757d);
+        margin-bottom: -1px;
+    }
+    .lt-subtab-btn.active { color: var(--dx-blue, #0071BC); border-bottom-color: var(--dx-blue, #0071BC); font-weight: 600; }
+
+    /* Columns drag-drop list */
+    .lt-col-row {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding: 7px 0;
+        border-bottom: 1px solid var(--dx-border, #dee2e6);
+        user-select: none;
+        transition: background .1s;
+    }
+    .lt-col-row.lt-col-drag-over { background: var(--dx-blue-tint, #e8f4ff); }
+    .lt-col-add-row { background: var(--dx-bg-subtle, #f8f9fa); }
+    .lt-drag-handle { font-size: 1.1rem; color: var(--dx-text-muted, #6c757d); cursor: grab; padding: 0 4px; }
+    .lt-col-name { flex: 1; }
+    .lt-col-name-input { flex: 1; }
+
+    /* NS item chip */
+    .lt-ns-chip {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        background: var(--dx-bg-subtle, #f8f9fa);
+        border: 1px solid var(--dx-border, #dee2e6);
+        border-radius: 4px;
+        padding: 5px 10px;
+        font-size: .88rem;
+    }
+    .lt-ns-clear {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 1rem;
+        color: var(--dx-text-muted, #6c757d);
+        line-height: 1;
+        padding: 0 2px;
+    }
+    .lt-ns-clear:hover { color: var(--dx-red, #dc3545); }
+
+    /* Column checklist */
+    .lt-col-checklist {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px 0;
+        max-height: 180px;
+        overflow-y: auto;
+    }
+
+    /* Radios + checks */
+    .lt-check-label { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: .88rem; }
+    .lt-check-label input[type="checkbox"],
+    .lt-check-label input[type="radio"] { accent-color: var(--dx-blue, #0071BC); width: 15px; height: 15px; flex-shrink: 0; }
+    .lt-radio-group { display: flex; flex-direction: column; gap: 8px; }
+</style>
+
+@code {
+    private string activeSubTab = "types";
+    private string SubTab(string t) => activeSubTab == t ? "active" : "";
+    private async Task SetSubTab(string t)
+    {
+        activeSubTab = t;
+        if (t == "types" && laborTypes is null) await LoadTypesAsync();
+        if (t == "columns" && columns is null) await LoadColumnsAsync();
+    }
+
+    // ── Labor Types ──────────────────────────────────────────────────────────
+
+    private List<TblDesignLaborType>? laborTypes;
+    private List<TblDesignLaborColumn>? allColumns; // for the form column checklist
+    private string? deleteTypeError;
+
+    // Add/Edit form
+    private bool formVisible;
+    private int editId;
+    private string formName = "";
+    private string? formNsItemId;
+    private string? formNsItemName;
+    private string formNsSearch = "";
+    private List<NetsuiteItem>? formNsResults;
+    private bool formNsSearching;
+    private CancellationTokenSource? _nsCts;
+    private bool formIsPct;
+    private decimal formPct;
+    private HashSet<int> formColumnIds = [];
+    private SubRole formSubRole = SubRole.Internal;
+    private decimal formIntCost;
+    private decimal formIntPrice;
+    private bool formIsActive = true;
+    private bool formIsTravelingRole = true;
+    private decimal? formMinHours;
+    private string? formError;
+
+    // ── Columns ──────────────────────────────────────────────────────────────
+
+    private List<TblDesignLaborColumn>? columns;
+    private int? _draggingId;
+    private int? _dragOverId;
+    private int? _editingColumnId;
+    private string _editingColumnName = "";
+    private bool addingColumn;
+    private string _newColumnName = "";
+    private string? deleteColError;
+
+    // ── Lifecycle ────────────────────────────────────────────────────────────
+
+    protected override async Task OnInitializedAsync() => await LoadTypesAsync();
+
+    private async Task LoadTypesAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        laborTypes = await db.TblDesignLaborTypes
+            .Where(l => l.CustomerId == Tenant.CustomerCode)
+            .Include(l => l.ColumnAssignments)
+            .OrderBy(l => l.SortOrder)
+            .ThenBy(l => l.TypeName)
+            .ToListAsync();
+
+        allColumns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+    }
+
+    private async Task LoadColumnsAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        columns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+    }
+
+    // ── Labor Type CRUD ───────────────────────────────────────────────────────
+
+    private static string SubRoleLabel(SubRole r) => r switch
+    {
+        SubRole.Internal => "Internal",
+        SubRole.LeadSub  => "Lead Sub",
+        SubRole.Sub      => "Sub",
+        _                => r.ToString(),
+    };
+
+    private static string SubRoleBadgeClass(SubRole r) => r switch
+    {
+        SubRole.Internal => "dx-badge-gray",
+        SubRole.LeadSub  => "dx-badge-blue",
+        SubRole.Sub      => "dx-badge-orange",
+        _                => "dx-badge-gray",
+    };
+
+    private void BeginAdd()
+    {
+        editId = 0; formName = ""; formNsItemId = null; formNsItemName = null; formNsSearch = "";
+        formNsResults = null; formIsPct = false; formPct = 0; formColumnIds = [];
+        formSubRole = SubRole.Internal; formIntCost = 0; formIntPrice = 0;
+        formIsActive = true; formIsTravelingRole = true; formMinHours = null; formError = null;
+        formVisible = true;
+    }
+
+    private void BeginEdit(TblDesignLaborType lt)
+    {
+        editId = lt.LaborTypeId;
+        formName = lt.TypeName;
+        formNsItemId = lt.NetsuiteItemId;
+        formNsItemName = lt.NetsuiteItemName ?? lt.NetsuiteItemId;
+        formNsSearch = "";
+        formNsResults = null;
+        formIsPct = lt.IsPercentageOfColumns;
+        formPct = lt.ColumnPercentage ?? 0;
+        formColumnIds = lt.ColumnAssignments.Select(c => c.ColumnId).ToHashSet();
+        formSubRole = lt.SubRole;
+        formIntCost = lt.InternalCostPerHr;
+        formIntPrice = lt.InternalPricePerHr;
+        formIsActive = lt.IsActive;
+        formIsTravelingRole = lt.IsTravelingRole;
+        formMinHours = lt.MinimumHours;
+        formError = null;
+        formVisible = true;
+    }
+
+    private void CloseForm()
+    {
+        formVisible = false;
+        formError = null;
+        _nsCts?.Cancel();
+        formNsResults = null;
+    }
+
+    private async Task OnNsSearchInput(ChangeEventArgs e)
+    {
+        formNsSearch = e.Value?.ToString() ?? "";
+        _nsCts?.Cancel();
+        _nsCts = new CancellationTokenSource();
+        var cts = _nsCts;
+        formNsResults = null;
+        if (formNsSearch.Length < 2) return;
+        formNsSearching = true;
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            formNsResults = await NetsuiteService.SearchItemsAsync(formNsSearch, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { formNsResults = []; }
+        finally { formNsSearching = false; }
+        StateHasChanged();
+    }
+
+    private void SelectNsItem(NetsuiteItem item)
+    {
+        formNsItemId = item.Id;
+        formNsItemName = !string.IsNullOrEmpty(item.PurchaseDescription) ? item.PurchaseDescription : item.ItemId;
+        formNsResults = null;
+        formNsSearch = "";
+    }
+
+    private void ClearNsItem() { formNsItemId = null; formNsItemName = null; formNsSearch = ""; }
+
+    private void ToggleColumn(int columnId, bool on)
+    {
+        if (on) formColumnIds.Add(columnId);
+        else formColumnIds.Remove(columnId);
+    }
+
+    private async Task SaveTypeAsync()
+    {
+        if (string.IsNullOrWhiteSpace(formName)) { formError = "Name is required."; return; }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        TblDesignLaborType entity;
+
+        if (editId == 0)
+        {
+            var nameExists = await db.TblDesignLaborTypes.AnyAsync(l =>
+                l.CustomerId == Tenant.CustomerCode && l.TypeName == formName.Trim());
+            if (nameExists) { formError = $"A labor type named '{formName.Trim()}' already exists."; return; }
+
+            entity = new TblDesignLaborType { CustomerId = Tenant.CustomerCode };
+            db.TblDesignLaborTypes.Add(entity);
+        }
+        else
+        {
+            entity = (await db.TblDesignLaborTypes.Include(l => l.ColumnAssignments)
+                .FirstOrDefaultAsync(l => l.LaborTypeId == editId))!;
+            if (entity is null) { formError = "Record not found."; return; }
+        }
+
+        entity.TypeName            = formName.Trim();
+        entity.NetsuiteItemId      = formNsItemId;
+        entity.NetsuiteItemName    = formNsItemName;
+        entity.IsPercentageOfColumns = formIsPct;
+        entity.ColumnPercentage    = formIsPct ? formPct : null;
+        entity.SubRole             = formSubRole;
+        entity.InternalCostPerHr  = formIntCost;
+        entity.InternalPricePerHr = formIntPrice;
+        entity.IsActive            = formIsActive;
+        entity.IsTravelingRole     = formIsTravelingRole;
+        entity.MinimumHours        = formMinHours.HasValue && formMinHours.Value > 0 ? formMinHours : null;
+
+        // Sync column assignments
+        var existingColIds = entity.ColumnAssignments.Select(c => c.ColumnId).ToHashSet();
+        foreach (var ca in entity.ColumnAssignments.ToList())
+            if (!formColumnIds.Contains(ca.ColumnId))
+                db.TblDesignLaborTypeColumns.Remove(ca);
+        foreach (var cid in formColumnIds)
+            if (!existingColIds.Contains(cid))
+                entity.ColumnAssignments.Add(new TblDesignLaborTypeColumn { ColumnId = cid });
+
+        await db.SaveChangesAsync();
+        CloseForm();
+        await LoadTypesAsync();
+    }
+
+    private async Task ConfirmDeleteTypeAsync(TblDesignLaborType lt)
+    {
+        deleteTypeError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // All referencing rows are auto-seeded (no user-authored data keyed to a specific
+        // labor type that would be lost). Cascade-delete them all before removing the type.
+        var calcRows = await db.TblDesignWorksheetLaborCalculatorRows
+            .Where(r => r.LaborTypeId == lt.LaborTypeId).ToListAsync();
+        db.TblDesignWorksheetLaborCalculatorRows.RemoveRange(calcRows);
+
+        var laborRows = await db.TblDesignWorksheetLaborRows
+            .Where(r => r.LaborTypeId == lt.LaborTypeId).ToListAsync();
+        db.TblDesignWorksheetLaborRows.RemoveRange(laborRows);
+
+        var oldCatAssignments = await db.TblDesignCategoryLaborAssignments
+            .Where(a => a.LaborTypeId == lt.LaborTypeId).ToListAsync();
+        db.TblDesignCategoryLaborAssignments.RemoveRange(oldCatAssignments);
+
+        var oldItemLabors = await db.TblDesignCatalogItemLabors
+            .Where(l => l.LaborTypeId == lt.LaborTypeId).ToListAsync();
+        db.TblDesignCatalogItemLabors.RemoveRange(oldItemLabors);
+
+        var entity = await db.TblDesignLaborTypes.FindAsync(lt.LaborTypeId);
+        if (entity is not null) { db.TblDesignLaborTypes.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadTypesAsync();
+    }
+
+    // ── Columns CRUD & Drag-Drop ─────────────────────────────────────────────
+
+    private void BeginEditColumn(TblDesignLaborColumn col)
+    {
+        _editingColumnId = col.ColumnId;
+        _editingColumnName = col.Name;
+        deleteColError = null;
+    }
+
+    private void CancelColumnEdit() { _editingColumnId = null; _editingColumnName = ""; }
+
+    private async Task OnColKeyDown(KeyboardEventArgs e, int colId)
+    {
+        if (e.Key == "Enter") await SaveColumnNameAsync(colId);
+        else if (e.Key == "Escape") CancelColumnEdit();
+    }
+
+    private async Task OnNewColKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SaveNewColumnAsync();
+        else if (e.Key == "Escape") { addingColumn = false; _newColumnName = ""; }
+    }
+
+    private async Task SaveColumnNameAsync(int colId)
+    {
+        if (string.IsNullOrWhiteSpace(_editingColumnName)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var col = await db.TblDesignLaborColumns.FindAsync(colId);
+        if (col is not null) { col.Name = _editingColumnName.Trim(); await db.SaveChangesAsync(); }
+        _editingColumnId = null;
+        await LoadColumnsAsync();
+        // Keep allColumns in sync for the types form checklist
+        await RefreshAllColumnsForForm();
+    }
+
+    private void CancelAddColumn() { addingColumn = false; _newColumnName = ""; }
+
+    private async Task SaveNewColumnAsync()
+    {
+        if (string.IsNullOrWhiteSpace(_newColumnName)) return;
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var maxSort = columns?.Count > 0 ? columns.Max(c => c.SortOrder) : 0;
+        db.TblDesignLaborColumns.Add(new TblDesignLaborColumn
+        {
+            CustomerId = Tenant.CustomerCode,
+            Name = _newColumnName.Trim(),
+            SortOrder = maxSort + 10,
+        });
+        await db.SaveChangesAsync();
+        _newColumnName = "";
+        addingColumn = false;
+        await LoadColumnsAsync();
+        await RefreshAllColumnsForForm();
+    }
+
+    private async Task DeleteColumnAsync(TblDesignLaborColumn col)
+    {
+        deleteColError = null;
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var inType     = await db.TblDesignLaborTypeColumns.AnyAsync(l => l.ColumnId == col.ColumnId);
+        var inCategory = await db.TblDesignCategoryColumnAssignments.AnyAsync(a => a.ColumnId == col.ColumnId);
+        var inItem     = await db.TblDesignCatalogItemColumns.AnyAsync(c => c.ColumnId == col.ColumnId);
+
+        if (inType || inCategory || inItem)
+        {
+            deleteColError = $"Cannot delete '{col.Name}' — it is assigned to labor types, categories, or items. Remove those assignments first.";
+            return;
+        }
+
+        var entity = await db.TblDesignLaborColumns.FindAsync(col.ColumnId);
+        if (entity is not null) { db.TblDesignLaborColumns.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadColumnsAsync();
+        await RefreshAllColumnsForForm();
+    }
+
+    private async Task DropAsync(int targetId)
+    {
+        if (_draggingId is null || _draggingId == targetId || columns is null)
+        {
+            _draggingId = null; _dragOverId = null;
+            return;
+        }
+
+        var dragging = columns.FirstOrDefault(c => c.ColumnId == _draggingId);
+        var target   = columns.FirstOrDefault(c => c.ColumnId == targetId);
+        if (dragging is null || target is null) { _draggingId = null; _dragOverId = null; return; }
+
+        // Reorder: move dragging to the position of target
+        columns.Remove(dragging);
+        var targetIndex = columns.IndexOf(target);
+        columns.Insert(targetIndex, dragging);
+
+        // Reassign SortOrders (10, 20, 30…)
+        await using var db = await DbFactory.CreateDbContextAsync();
+        for (int i = 0; i < columns.Count; i++)
+        {
+            var newOrder = (i + 1) * 10;
+            if (columns[i].SortOrder != newOrder)
+            {
+                var entity = await db.TblDesignLaborColumns.FindAsync(columns[i].ColumnId);
+                if (entity is not null) entity.SortOrder = newOrder;
+                columns[i].SortOrder = newOrder;
+            }
+        }
+        await db.SaveChangesAsync();
+
+        _draggingId = null;
+        _dragOverId = null;
+        await RefreshAllColumnsForForm();
+    }
+
+    private async Task RefreshAllColumnsForForm()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        allColumns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+    }
+}

@@ -1,0 +1,306 @@
+@using DXSuite.Design.Entities
+
+<div class="lc-panel">
+    <div class="lc-header" @onclick="Toggle">
+        <span class="lc-title">Labor Calculator</span>
+        <span class="lc-chevron">@(_expanded ? "▲" : "▼")</span>
+    </div>
+
+    @if (_expanded)
+    {
+        <div class="lc-body">
+            @if (columnBasedTypes.Count == 0)
+            {
+                <p style="font-size:.85rem; color:var(--text-muted,#6c757d); margin:0">
+                    No shared labor columns have hours yet. Add hardware items with column hours to see staff allocation here.
+                </p>
+            }
+            else
+            {
+                @* Staff count grid: each row is one labor type; hours are divided proportionally by staff count *@
+                <div class="lc-section-label">Staff</div>
+                <table class="lc-grid" style="margin-bottom:16px">
+                    <thead>
+                        <tr>
+                            <th class="lc-th lc-name-col">Labor Type</th>
+                            <th class="lc-th lc-count-col"># Staff</th>
+                            <th class="lc-th lc-hrs-col">Total Hours</th>
+                            @foreach (var col in _sharedColumns)
+                            {
+                                <th class="lc-th lc-check-col" title="@col.Name">@col.Name</th>
+                            }
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @foreach (var lt in columnBasedTypes)
+                        {
+                            var ltId = lt.LaborTypeId;
+                            var pc = PersonCounts.TryGetValue(ltId, out var v) ? v : 1;
+                            var hrs = ComputedHours.TryGetValue(ltId, out var h) ? h : 0;
+                            var warn = _warnRows.Contains(ltId);
+                            var ltColIds = LaborTypeColumnMap.TryGetValue(ltId, out var ids) ? ids : [];
+                            <tr class="@(warn ? "lc-row-warn" : "")">
+                                <td class="lc-td lc-name-cell">@lt.TypeName</td>
+                                <td class="lc-td lc-count-cell">
+                                    <input type="number" class="lc-count-input" min="0"
+                                           value="@pc"
+                                           @onchange="e => OnPcChanged(ltId, e.Value?.ToString())" />
+                                </td>
+                                <td class="lc-td lc-hrs-cell">@hrs.ToString("F2")</td>
+                                @foreach (var col in _sharedColumns)
+                                {
+                                    <td class="lc-td lc-check-cell">
+                                        @if (ltColIds.Contains(col.ColumnId))
+                                        {
+                                            <span class="lc-check">✓</span>
+                                        }
+                                    </td>
+                                }
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+
+                @* Sub Rates section — only shown when at least one type has SubRole = LeadSub or Sub *@
+                @if (subTypes.Count > 0)
+                {
+                    <div class="lc-section-label">Sub Rates</div>
+                    <table class="lc-grid" style="margin-bottom:0">
+                        <thead>
+                            <tr>
+                                <th class="lc-th lc-name-col">Labor Type</th>
+                                <th class="lc-th" style="width:130px; text-align:right">Sub Cost/Hr</th>
+                                <th class="lc-th" style="width:130px; text-align:right">Sub Price/Hr</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            @foreach (var view in subRows)
+                            {
+                                <tr>
+                                    <td class="lc-td lc-name-cell">@view.LaborType.TypeName</td>
+                                    <td class="lc-td" style="text-align:right">
+                                        <div style="display:flex; align-items:center; justify-content:flex-end; gap:3px">
+                                            <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">$</span>
+                                            <input type="number" class="lc-rate-input" step="0.01" min="0"
+                                                   value="@view.Entity.SubCostPerHr.ToString("F2")"
+                                                   @onchange="e => OnSubCostChanged(view.Entity.LaborRowId, e.Value?.ToString())" />
+                                        </div>
+                                    </td>
+                                    <td class="lc-td" style="text-align:right">
+                                        <div style="display:flex; align-items:center; justify-content:flex-end; gap:3px">
+                                            <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">$</span>
+                                            <input type="number" class="lc-rate-input" step="0.01" min="0"
+                                                   value="@view.Entity.SubPricePerHr.ToString("F2")"
+                                                   @onchange="e => OnSubPriceChanged(view.Entity.LaborRowId, e.Value?.ToString())" />
+                                        </div>
+                                    </td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            }
+        </div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<TblDesignLaborType> LaborTypes { get; set; } = [];
+    /// <summary>Maps LaborTypeId to the ColumnIds it is assigned to — used to determine which types are column-based.</summary>
+    [Parameter, EditorRequired] public Dictionary<int, List<int>> LaborTypeColumnMap { get; set; } = [];
+    /// <summary>Staff count per labor type for this worksheet.</summary>
+    [Parameter, EditorRequired] public Dictionary<int, int> PersonCounts { get; set; } = [];
+    /// <summary>Computed hours per labor type — shown in the Total Hours column.</summary>
+    [Parameter, EditorRequired] public Dictionary<int, decimal> ComputedHours { get; set; } = [];
+    /// <summary>Raw (unallocated) hours per column from the hardware items — used to detect unstaffed columns.</summary>
+    [Parameter, EditorRequired] public Dictionary<int, decimal> RawColumnHours { get; set; } = [];
+    [Parameter, EditorRequired] public List<WorksheetEditor.LaborRowView> LaborRows { get; set; } = [];
+    /// <summary>All labor columns for the customer — needed to look up names for the shared-column headers.</summary>
+    [Parameter, EditorRequired] public List<TblDesignLaborColumn> AllColumns { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback<(int LaborTypeId, int Count)> OnPersonCountChanged { get; set; }
+    [Parameter, EditorRequired] public EventCallback<(int LaborRowId, decimal SubCostPerHr, decimal SubPricePerHr)> OnSubRateChanged { get; set; }
+
+    private bool _expanded;
+
+    private List<TblDesignLaborType> columnBasedTypes = [];
+    private List<TblDesignLaborType> subTypes = [];
+    private List<WorksheetEditor.LaborRowView> subRows = [];
+    // Labor type IDs whose columns have hours but no staff — shown with a red warning row
+    private HashSet<int> _warnRows = [];
+    // Columns used by 2+ labor types that also have hours from the hardware list
+    private List<TblDesignLaborColumn> _sharedColumns = [];
+    private HashSet<int> _sharedColumnIds = [];
+
+    protected override void OnParametersSet()
+    {
+        // Count how many labor types reference each column
+        var columnUseCounts = new Dictionary<int, int>();
+        foreach (var (_, colIds) in LaborTypeColumnMap)
+            foreach (var colId in colIds)
+                columnUseCounts[colId] = columnUseCounts.GetValueOrDefault(colId) + 1;
+
+        // Shared columns: used by 2+ labor types AND have at least some hours from hardware
+        _sharedColumns = AllColumns
+            .Where(c => columnUseCounts.GetValueOrDefault(c.ColumnId) >= 2
+                     && RawColumnHours.TryGetValue(c.ColumnId, out var h) && h > 0)
+            .OrderBy(c => c.SortOrder)
+            .ToList();
+        _sharedColumnIds = _sharedColumns.Select(c => c.ColumnId).ToHashSet();
+
+        // Only include labor types that draw from at least one shared column with hours.
+        // Types that exclusively own all their columns don't need person-count splitting.
+        columnBasedTypes = LaborTypes
+            .Where(l => !l.IsPercentageOfColumns
+                     && LaborTypeColumnMap.TryGetValue(l.LaborTypeId, out var colIds)
+                     && colIds.Any(colId => _sharedColumnIds.Contains(colId)))
+            .ToList();
+
+        subTypes = LaborTypes.Where(l => l.SubRole == SubRole.LeadSub || l.SubRole == SubRole.Sub).ToList();
+        var subTypeIds = subTypes.Select(l => l.LaborTypeId).ToHashSet();
+        subRows = LaborRows.Where(v => subTypeIds.Contains(v.LaborType.LaborTypeId)).ToList();
+
+        // Columns that have at least one labor type with staff > 0 (i.e., covered)
+        var coveredColumnIds = new HashSet<int>();
+        foreach (var (ltId, colIds) in LaborTypeColumnMap)
+        {
+            var pc = PersonCounts.TryGetValue(ltId, out var c) ? c : 1;
+            if (pc <= 0) continue;
+            foreach (var colId in colIds) coveredColumnIds.Add(colId);
+        }
+
+        // A labor type row warns if any of its shared columns has raw hours but zero total staff
+        _warnRows = columnBasedTypes
+            .Where(lt => LaborTypeColumnMap.TryGetValue(lt.LaborTypeId, out var colIds)
+                         && colIds.Any(colId =>
+                             _sharedColumnIds.Contains(colId)
+                             && RawColumnHours.TryGetValue(colId, out var h) && h > 0
+                             && !coveredColumnIds.Contains(colId)))
+            .Select(lt => lt.LaborTypeId)
+            .ToHashSet();
+    }
+
+    private void Toggle() => _expanded = !_expanded;
+
+    private void OnPcChanged(int ltId, string? raw)
+    {
+        // 0 is valid — it excludes this labor type from all column hour pools
+        var count = int.TryParse(raw, out var v) ? Math.Max(0, v) : 1;
+        _ = OnPersonCountChanged.InvokeAsync((ltId, count));
+    }
+
+    private void OnSubCostChanged(int laborRowId, string? raw)
+    {
+        var cost = decimal.TryParse(raw, out var v) ? Math.Max(0, v) : 0;
+        var view = subRows.FirstOrDefault(r => r.Entity.LaborRowId == laborRowId);
+        if (view is null) return;
+        _ = OnSubRateChanged.InvokeAsync((laborRowId, cost, view.Entity.SubPricePerHr));
+    }
+
+    private void OnSubPriceChanged(int laborRowId, string? raw)
+    {
+        var price = decimal.TryParse(raw, out var v) ? Math.Max(0, v) : 0;
+        var view = subRows.FirstOrDefault(r => r.Entity.LaborRowId == laborRowId);
+        if (view is null) return;
+        _ = OnSubRateChanged.InvokeAsync((laborRowId, view.Entity.SubCostPerHr, price));
+    }
+}
+
+<style>
+    .lc-panel {
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 6px;
+        margin-bottom: 16px;
+        background: #fff;
+    }
+
+    .lc-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 8px 14px;
+        cursor: pointer;
+        user-select: none;
+        background: var(--surface, #f8f9fa);
+        border-radius: 6px 6px 0 0;
+    }
+
+    .lc-header:hover { background: #eef0f2; }
+
+    .lc-title {
+        font-size: .85rem;
+        font-weight: 600;
+        color: var(--text, #212529);
+    }
+
+    .lc-chevron {
+        font-size: .7rem;
+        color: var(--text-muted, #6c757d);
+    }
+
+    .lc-body {
+        padding: 14px;
+        border-top: 1px solid var(--border, #dee2e6);
+    }
+
+    .lc-section-label {
+        font-size: .7rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+        color: var(--text-muted, #6c757d);
+        margin-bottom: 6px;
+    }
+
+    .lc-grid {
+        border-collapse: collapse;
+        font-size: .8rem;
+    }
+
+    .lc-th {
+        padding: 4px 10px;
+        text-align: left;
+        font-weight: 600;
+        background: var(--surface, #f8f9fa);
+        border: 1px solid var(--border, #dee2e6);
+        white-space: nowrap;
+    }
+
+    .lc-td {
+        padding: 3px 6px;
+        border: 1px solid var(--border, #dee2e6);
+        vertical-align: middle;
+    }
+
+    .lc-name-col  { min-width: 160px; }
+    .lc-count-col { width: 80px; text-align: center; }
+    .lc-hrs-col   { width: 110px; text-align: right; }
+    .lc-name-cell { font-weight: 500; }
+    .lc-count-cell { text-align: center; }
+    .lc-hrs-cell  { text-align: right; font-variant-numeric: tabular-nums; color: var(--text-muted, #6c757d); }
+
+    /* Shared-column checkmark columns */
+    .lc-check-col  { width: 90px; text-align: center; font-size: .72rem; max-width: 120px; overflow: hidden; text-overflow: ellipsis; }
+    .lc-check-cell { text-align: center; }
+    .lc-check { color: var(--dx-blue, #0071BC); font-size: .95rem; font-weight: 700; }
+
+    /* Row warning: column has hours but no staff assigned to cover it */
+    .lc-row-warn td { background: #fee2e2 !important; }
+
+    .lc-count-input {
+        width: 56px;
+        text-align: center;
+        padding: 2px 4px;
+        font-size: .8rem;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px;
+    }
+
+    .lc-rate-input {
+        width: 90px;
+        text-align: right;
+        padding: 2px 4px;
+        font-size: .8rem;
+        border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px;
+    }
+</style>

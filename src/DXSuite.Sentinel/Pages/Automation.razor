@@ -1,0 +1,156 @@
+@page "/Automation"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Sentinel.Components
+@using DXSuite.Sentinel.Services
+@inject ISessionState sessionState
+@inject ISentinelAvailabilityService sentinelAvailability
+@inject IStringLocalizer<Automation> L
+@rendermode InteractiveServer
+
+@if (isLoading)
+{
+    <!-- Blank until the async permission check resolves, to avoid an Unauthorized flash -->
+}
+else if (isAuthorized == false)
+{
+    <div class="unauthorized-wrapper">
+        <h1>Unauthorized</h1>
+        <p>You do not have permission to view this page.</p>
+        <a href="/">Return Home</a>
+    </div>
+}
+else if (!sentinelAvailable)
+{
+    <section class="Sub-Header">
+        <div class="Head-flex">
+            <h2>@L["Header_Automation"]</h2>
+        </div>
+    </section>
+
+    <section class="Body">
+        <div class="automation-container">
+            <div class="unavailable-message">
+                <h4>@L["Label_SentinelUnavailable"]</h4>
+                <p>@L["Label_SentinelUnavailableDescription"]</p>
+            </div>
+        </div>
+    </section>
+}
+else
+{
+    <section class="Sub-Header">
+        <div class="Head-flex">
+            <h2>@L["Header_Automation"]</h2>
+        </div>
+    </section>
+
+    <section class="Body">
+        <div class="automation-container">
+            <div class="tab-navigation">
+                <button class="tab-button @(activeTab == "itsm" ? "active" : "")"
+                        @onclick="@(() => activeTab = "itsm")">
+                    @L["Tab_ITSM"]
+                </button>
+                <button class="tab-button @(activeTab == "policies" ? "active" : "")"
+                        @onclick="@(() => activeTab = "policies")">
+                    @L["Tab_GuardrailPolicies"]
+                </button>
+            </div>
+
+            @if (activeTab == "itsm")
+            {
+                <SentinelItsmTab />
+            }
+            @if (activeTab == "policies")
+            {
+                <SentinelPoliciesTab />
+            }
+        </div>
+    </section>
+}
+
+@code {
+    private bool isAuthorized;
+    private bool isLoading = true;
+    private bool sentinelAvailable;
+    private string activeTab = "itsm";
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await sessionState.HasPermissionAsync(PermissionKeys.PageSentinelAutomation);
+        sentinelAvailable = sentinelAvailability.IsAvailable;
+        isLoading = false;
+    }
+}
+
+<style>
+    .automation-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        padding: 20px;
+        height: calc(100vh - 200px);
+    }
+
+    .tab-navigation {
+        display: flex;
+        gap: 0;
+        margin-bottom: 0;
+        background-color: #f0f0f0;
+        padding: 0;
+    }
+
+    .tab-button {
+        padding: 12px 24px;
+        border: none;
+        background-color: transparent;
+        cursor: pointer;
+        font-size: 1rem;
+        font-weight: 600;
+        color: #666;
+        transition: all 0.2s;
+    }
+
+    .tab-button:hover {
+        background-color: #e0e0e0;
+        color: #333;
+    }
+
+    .tab-button.active {
+        background-color: #e0e0e0;
+        color: #0071BC;
+        border-bottom: 2px solid #0071BC;
+    }
+
+    .tab-panel {
+        background-color: white;
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+        flex: 1;
+    }
+
+    .unavailable-message {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        padding: 60px 20px;
+        color: #666;
+        text-align: center;
+    }
+
+    .unavailable-message h4 {
+        margin-bottom: 8px;
+        color: #444;
+    }
+
+    .unauthorized-wrapper {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        height: 60vh;
+        color: #666;
+    }
+</style>

@@ -1,0 +1,12 @@
+@using DXSuite.Pulse.Services
+@inject IPulseService PulseService
+
+<div class="dx-card">
+    <div class="dx-card-body">
+        <h5 style="font-weight:600; margin-bottom:8px;">Pulse Health</h5>
+        <p>
+            <span class="dx-badge dx-badge-green" style="margin-right:8px;">Healthy</span>
+            @PulseService.GetStatus()
+        </p>
+    </div>
+</div>

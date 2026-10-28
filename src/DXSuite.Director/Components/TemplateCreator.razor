@@ -1,0 +1,1265 @@
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.EntityFrameworkCore
+@using Newtonsoft.Json
+@using System.Text.Json
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using static DXSuite.Director.Models.Types
+@using DXSuite.Director.Services
+@using System.Xml
+@using SkiaSharp
+@inject NavigationManager navMan;
+@inject IServiceScopeFactory scopeFactory;
+@inject IConfiguration config;
+@inject IWebHostEnvironment env;
+@inject ITenantMediaPathResolver MediaPaths
+@inject CanvasImageGenerationService ImageGenerator;
+@inject IFontService FontService;
+@inject IContentModerationService ModerationService;
+@inject IAssetApprovalService ApprovalService;
+@inject IApprovalChainService ApprovalChainService;
+@inject ISessionState SessionState;
+@inject IUploadIdentityService UploadIdentity
+@inject IContentMetadataService ContentMetadataService
+@inject ILogger<TemplateCreator> Logger;
+@inject IPublicationInvalidator PublicationInvalidator
+@rendermode InteractiveServer
+
+<!-- Collapsible Header — hidden when rendered inside a modal (ShowCollapsibleHeader=false) -->
+@if (ShowCollapsibleHeader)
+{
+    <div class="collapsible-header @(isConfigExpanded ? "open" : "")" @onclick="ToggleExpanded">
+        <h3>Template Creator</h3>
+        <span class="toggle-icon">@(isConfigExpanded ? "▼" : "▶")</span>
+    </div>
+}
+
+@if (isConfigExpanded)
+{
+    <div class="template-background">
+        <div class="template-container">
+            <!-- Left Configuration Panel -->
+            <div class="config-panel">
+
+                <!-- Background Image Section -->
+                <div class="form-section">
+                    <h5>Background Image</h5>
+                    <div class="dropdown" style="width: 100%;">
+                        <button class="dx-btn dx-btn-gray dropdown-toggle w-100" type="button" @onclick="() => showBackgroundDropdown = !showBackgroundDropdown">
+                            @if (selectedBackgroundImage != null)
+                            {
+                                <span>@Path.GetFileName(selectedBackgroundImage.DiskPath)</span>
+                            }
+                            else
+                            {
+                                <span>Select Background...</span>
+                            }
+                        </button>
+                        @if (showBackgroundDropdown)
+                        {
+                            <div class="dropdown-menu show w-100" style="max-height: 300px; overflow-y: auto;">
+                                @foreach (var bgImage in backgroundImages)
+                                {
+                                    <div class="dropdown-item d-flex justify-content-between align-items-center" style="padding: 5px 10px;">
+                                        <div class="d-flex align-items-center" @onclick="() => SelectBackgroundImage(bgImage)" style="cursor: pointer; flex: 1; gap: 10px;">
+                                            <img src="@bgImage.WebPath" style="width: 106px; height: 60px; object-fit: cover; border-radius: 3px; border: 1px solid #ddd;" />
+                                            <span style="margin-right:10px;">@Path.GetFileName(bgImage.DiskPath)</span>
+                                        </div>
+                                        <button class="dx-btn dx-btn-red" @onclick="() => ShowDeleteBackgroundConfirmation(bgImage)" @onclick:stopPropagation="true">
+                                            ✕
+                                        </button>
+                                    </div>
+                                }
+                                <div class="dropdown-divider"></div>
+                                <button class="dropdown-item" @onclick="OpenBackgroundImageUploader">
+                                    Add new image...
+                                </button>
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                <!-- Messages Section with Tabs -->
+                <div class="form-section">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5 style="margin: 0;">Messages</h5>
+                        <div class="form-group" style="margin: 0; width: 150px;">
+                            <label style="font-size: 12px; margin-bottom: 3px;">Text Color:</label>
+                            <select class="dx-form-control form-control-sm" @bind="sharedTextColor" @bind:after="UpdateBothTextColors">
+                                <option value="white">White</option>
+                                <option value="black">Black</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <!-- Tab Navigation -->
+                    <div class="tab-nav">
+                        <button class="tab-button @(activeMessageTab == 1 ? "active" : "")" @onclick="() => activeMessageTab = 1">
+                            Message 1
+                        </button>
+                        <button class="tab-button @(activeMessageTab == 2 ? "active" : "")" @onclick="() => activeMessageTab = 2">
+                            Message 2
+                        </button>
+                        <button class="tab-button @(activeMessageTab == 3 ? "active" : "")" @onclick="() => activeMessageTab = 3">
+                            Message 3
+                        </button>
+                    </div>
+
+                    <!-- Tab Content -->
+                    <div class="tab-content">
+                        @if (activeMessageTab == 1)
+                        {
+                            <div class="form-group">
+                                <label>Text (max 50 characters):</label>
+                                <input type="text" class="dx-form-control" @bind="message1Text" maxlength="50" />
+                            </div>
+                            <div class="form-group" style="display: flex; gap: 15px; align-items: center;">
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message1Show" />
+                                    Show Message
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message1Bold" />
+                                    Bold
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message1Italic" />
+                                    Italic
+                                </label>
+                            </div>
+                            @if (!message1EditPosition)
+                            {
+                                <button class="dx-btn dx-btn-blue" style="width: 100%; margin-top: 10px;" @onclick="() => message1EditPosition = true">
+                                    EDIT POSITION
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="form-group">
+                                    <label>Top Position (px):</label>
+                                    <input type="number" class="dx-form-control" @bind="message1Top" />
+                                </div>
+                            }
+                        }
+                        else if (activeMessageTab == 2)
+                        {
+                            <div class="form-group">
+                                <label>Text (max 50 characters):</label>
+                                <input type="text" class="dx-form-control" @bind="message2Text" maxlength="50" />
+                            </div>
+                            <div class="form-group" style="display: flex; gap: 15px; align-items: center;">
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message2Show" />
+                                    Show Message
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message2Bold" />
+                                    Bold
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message2Italic" />
+                                    Italic
+                                </label>
+                            </div>
+                            @if (!message2EditPosition)
+                            {
+                                <button class="dx-btn dx-btn-blue" style="width: 100%; margin-top: 10px;" @onclick="() => message2EditPosition = true">
+                                    EDIT POSITION
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="form-group">
+                                    <label>Top Position (px):</label>
+                                    <input type="number" class="dx-form-control" @bind="message2Top" />
+                                </div>
+                            }
+                        }
+                        else if (activeMessageTab == 3)
+                        {
+                            <div class="form-group">
+                                <label>Text (max 50 characters):</label>
+                                <input type="text" class="dx-form-control" @bind="message3Text" maxlength="50" />
+                            </div>
+                            <div class="form-group" style="display: flex; gap: 15px; align-items: center;">
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message3Show" />
+                                    Show Message
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message3Bold" />
+                                    Bold
+                                </label>
+                                <label style="margin: 0;">
+                                    <input type="checkbox" @bind="message3Italic" />
+                                    Italic
+                                </label>
+                            </div>
+                            @if (!message3EditPosition)
+                            {
+                                <button class="dx-btn dx-btn-blue" style="width: 100%; margin-top: 10px;" @onclick="() => message3EditPosition = true">
+                                    EDIT POSITION
+                                </button>
+                            }
+                            else
+                            {
+                                <div class="form-group">
+                                    <label>Top Position (px):</label>
+                                    <input type="number" class="dx-form-control" @bind="message3Top" />
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <!-- Schedule Section (only for file-based workflows without Display) -->
+                @if (Display == null)
+                {
+                    <div class="form-section">
+                        <h5>Schedule</h5>
+                        <div class="schedule-grid">
+                            <div class="form-group">
+                                <label>Start Date:</label>
+                                <input type="date" class="dx-form-control" @bind="scheduleStartDate" />
+                            </div>
+                            <div class="form-group">
+                                <label>End Date:</label>
+                                <input type="date" class="dx-form-control" @bind="scheduleEndDate" />
+                            </div>
+                            <div class="form-group">
+                                <label>Start Time:</label>
+                                <input type="time" class="dx-form-control" @bind="scheduleStartTime" />
+                            </div>
+                            <div class="form-group">
+                                <label>End Time:</label>
+                                <input type="time" class="dx-form-control" @bind="scheduleEndTime" />
+                            </div>
+                        </div>
+                    </div>
+                }
+
+                @if (ShowsUploadingAs)
+                {
+                    <UploadingAsSection @ref="uploadingAs" LocationId="@Location!.LocationId" OnChanged="StateHasChanged" />
+                }
+                @if (UploadBlockReason is { } blockReason)
+                {
+                    <div class="dx-text-red" style="font-size:0.8rem; margin-bottom:6px;">@blockReason</div>
+                }
+
+                <!-- Submit Button -->
+                <button class="dx-btn dx-btn-blue w-100" @onclick="GenerateTemplateImage" disabled="@(isGenerating || UploadBlockReason != null)" title="@UploadBlockReason">
+                    @if (isGenerating)
+                    {
+                        <span>Generating...</span>
+                    }
+                    else
+                    {
+                        <span>Generate Image</span>
+                    }
+                </button>
+            </div>
+
+            <!-- Right Visualization Panel -->
+            <div class="visualization-panel">
+                <h3>Preview (1920x1080)</h3>
+                <div class="preview-wrapper">
+                    <div class="preview-container" style="width: 1920px; height: 1080px; transform: scale(0.26); transform-origin: top left; position: relative; border: 1px solid #ccc; background-color: #000;">
+                        @if (selectedBackgroundImage != null)
+                        {
+                            <img src="@selectedBackgroundImage.WebPath" style="width: 100%; height: 100%; object-fit: cover; position: absolute; top: 0; left: 0;" />
+                        }
+
+                        @if (message1Show && !string.IsNullOrWhiteSpace(message1Text))
+                        {
+                            <div style="position: absolute; left: 0; right: 0; top: @(message1Top)px; color: @message1Color; font-size: 72px; font-family: Arial; font-weight: @(message1Bold ? "bold" : "normal"); font-style: @(message1Italic ? "italic" : "normal"); text-shadow: 3px 3px 6px rgba(@(message1Color == "white" ? "0,0,0" : "255,255,255"),0.8); text-align: center; line-height: 1;">
+                                @message1Text
+                            </div>
+                        }
+
+                        @if (message2Show && !string.IsNullOrWhiteSpace(message2Text))
+                        {
+                            <div style="position: absolute; left: 0; right: 0; top: @(message2Top)px; color: @message2Color; font-size: 72px; font-family: Arial; font-weight: @(message2Bold ? "bold" : "normal"); font-style: @(message2Italic ? "italic" : "normal"); text-shadow: 3px 3px 6px rgba(@(message2Color == "white" ? "0,0,0" : "255,255,255"),0.8); text-align: center; line-height: 1;">
+                                @message2Text
+                            </div>
+                        }
+
+                        @if (message3Show && !string.IsNullOrWhiteSpace(message3Text))
+                        {
+                            <div style="position: absolute; left: 0; right: 0; top: @(message3Top)px; color: @message3Color; font-size: 72px; font-family: Arial; font-weight: @(message3Bold ? "bold" : "normal"); font-style: @(message3Italic ? "italic" : "normal"); text-shadow: 3px 3px 6px rgba(@(message3Color == "white" ? "0,0,0" : "255,255,255"),0.8); text-align: center; line-height: 1;">
+                                @message3Text
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<!-- Background Image Upload Modal -->
+<MediaAssetUploader @ref="backgroundUploaderModal" OnAssetSubmit="OnBackgroundImageUploaded" />
+
+<!-- Content Moderation Modal -->
+<ContentModerationModal @ref="moderationModal"
+                        OnCancel="HandleModerationCancel"
+                        OnSubmitForApproval="HandleModerationApproval" />
+
+<!-- Delete Confirmation Modal -->
+@if (showDeleteConfirmation)
+{
+    <div class="tc-modal-backdrop" @onclick="CloseDeleteConfirmation">
+        <div class="tc-modal-content" @onclick:stopPropagation="true">
+            <div class="tc-modal-header">
+                <h4>Delete Background Image</h4>
+                <button class="tc-modal-close" @onclick="CloseDeleteConfirmation">&times;</button>
+            </div>
+            <div class="tc-modal-body">
+                <p>Are you sure you want to delete this background image?</p>
+                <p class="text-muted">@(imageToDelete != null ? Path.GetFileName(imageToDelete.DiskPath) : "")</p>
+            </div>
+            <div class="tc-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseDeleteConfirmation">CANCEL</button>
+                <button class="dx-btn dx-btn-red" @onclick="DeleteBackgroundImage">DELETE</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    /* Collapsible Header */
+    .collapsible-header {
+        background-color: #ccc;
+        color: white;
+        padding: 15px 20px;
+        border-radius: 8px;
+        cursor: pointer;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        transition: background-color 0.2s;
+        user-select: none;
+    }
+
+    .collapsible-header.open {
+        border-bottom-left-radius: 0;
+        border-bottom-right-radius: 0;
+    }
+
+    .collapsible-header:hover {
+        background-color: #005a94;
+        color: white;
+    }
+
+    .collapsible-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        color: #333;
+        transition: color 0.2s;
+    }
+
+    .collapsible-header:hover h3 {
+        color: white;
+    }
+
+    .collapsible-header:hover .toggle-icon {
+        color: white;
+    }
+
+    .toggle-icon {
+        font-size: 1.2rem;
+        font-weight: bold;
+        color: #333;
+        transition: color 0.2s;
+    }
+
+    .template-background {
+        background-color: #ccc;
+        border-bottom-left-radius: 8px;
+        border-bottom-right-radius: 8px;
+    }
+
+    .template-container {
+        display: flex;
+        gap: 20px;
+    }
+
+    .config-panel {
+        flex: 2;
+        padding: 20px;
+        background-color: #CCCCCC;
+        border-radius: 8px;
+    }
+
+    .config-panel h3 {
+        margin-bottom: 20px;
+        color: #333;
+    }
+
+    .form-section {
+        margin-bottom: 20px;
+        padding: 15px;
+        background-color: #f9f9f9;
+        border-radius: 6px;
+    }
+
+    .form-section h5 {
+        margin-bottom: 10px;
+        color: #555;
+        font-weight: 600;
+    }
+
+    .form-group {
+        margin-bottom: 10px;
+    }
+
+    .form-group label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 5px;
+        color: #666;
+    }
+
+    .visualization-panel {
+        flex: 1;
+        padding: 20px;
+    }
+
+    .visualization-panel h3 {
+        margin-bottom: 20px;
+        color: #333;
+    }
+
+    .preview-wrapper {
+        width: 500px;
+        height: 281px;
+        overflow: hidden;
+    }
+
+    .preview-container {
+        border: 2px solid #000;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    }
+
+    .dropdown {
+        position: relative;
+    }
+
+    .dropdown-menu.show {
+        display: block;
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        margin-top: 2px;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+        z-index: 100;
+    }
+
+    /* Modal Styles (prefixed with tc- to avoid conflicts) */
+    .tc-modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+    }
+
+    .tc-modal-content {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        max-width: 500px;
+        width: 90%;
+    }
+
+    .tc-modal-header {
+        padding: 1.5rem;
+        border-bottom: 1px solid #eee;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .tc-modal-header h4 {
+        margin: 0;
+        color: #333;
+        font-weight: 600;
+    }
+
+    .tc-modal-close {
+        background: none;
+        border: none;
+        font-size: 1.5rem;
+        cursor: pointer;
+        color: #666;
+    }
+
+    .tc-modal-body {
+        padding: 2rem 1.5rem;
+    }
+
+    .tc-modal-footer {
+        padding: 1rem 1.5rem;
+        border-top: 1px solid #eee;
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+    }
+
+    /* Tab Styles */
+    .tab-nav {
+        display: flex;
+        gap: 5px;
+        margin-bottom: 15px;
+        border-bottom: 2px solid #ddd;
+    }
+
+    .tab-button {
+        padding: 10px 20px;
+        background: none;
+        border: none;
+        border-bottom: 2px solid transparent;
+        cursor: pointer;
+        font-weight: 500;
+        color: #666;
+        transition: all 0.2s;
+        margin-bottom: -2px;
+    }
+
+    .tab-button:hover {
+        color: #333;
+        background-color: #f5f5f5;
+    }
+
+    .tab-button.active {
+        color: var(--dx-blue);
+        border-bottom-color: var(--dx-blue);
+        background-color: transparent;
+    }
+
+    .tab-content {
+        padding-top: 10px;
+    }
+
+    /* Schedule Grid */
+    .schedule-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 10px;
+    }
+
+    .schedule-grid .form-group {
+        margin-bottom: 0;
+    }
+
+    /* Blue Checkboxes */
+    .template-container input[type="checkbox"] {
+        appearance: none;
+        -webkit-appearance: none;
+        width: 18px;
+        height: 18px;
+        border: 2px solid #999;
+        border-radius: 3px;
+        background-color: white;
+        cursor: pointer;
+        position: relative;
+        vertical-align: middle;
+    }
+
+    .template-container input[type="checkbox"]:checked {
+        background-color: var(--dx-blue);
+        border-color: var(--dx-blue);
+    }
+
+    .template-container input[type="checkbox"]:checked::after {
+        content: '\2713';
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        color: white;
+        font-size: 12px;
+        font-weight: bold;
+    }
+
+    .template-container input[type="checkbox"]:hover {
+        border-color: var(--dx-blue);
+    }
+</style>
+
+@code {
+    /// <summary>
+    /// The location to save generated images to
+    /// </summary>
+    [Parameter] public TblLocation? Location { get; set; }
+
+    /// <summary>
+    /// Optional display - when provided, a TblAsset record will be created
+    /// </summary>
+    [Parameter] public TblDisplay? Display { get; set; }
+
+    /// <summary>
+    /// Optional constraint ID for background images folder
+    /// </summary>
+    [Parameter] public int BackgroundConstraintId { get; set; } = 1;
+
+    /// <summary>
+    /// Event callback when an image is successfully generated (file path)
+    /// </summary>
+    [Parameter] public EventCallback<string> OnImageGenerated { get; set; }
+
+    /// <summary>
+    /// Event callback when a TblAsset is created (only when Display is provided)
+    /// </summary>
+    [Parameter] public EventCallback<TblAsset> OnAssetCreated { get; set; }
+
+    /// <summary>
+    /// When false (e.g. inside a modal), the collapsible header is hidden and the creator opens fully expanded.
+    /// </summary>
+    [Parameter] public bool ShowCollapsibleHeader { get; set; } = true;
+
+    // Background images
+    private List<MediaFile> backgroundImages = new List<MediaFile>();
+    private MediaFile? selectedBackgroundImage = null;
+    private bool showBackgroundDropdown = false;
+    private bool showDeleteConfirmation = false;
+    private MediaFile? imageToDelete = null;
+
+    // Message configuration
+    private int activeMessageTab = 1;
+    private string sharedTextColor = "black";
+
+    private string message1Text = "";
+    private bool message1Show = true;
+    private string message1Color = "black";
+    private bool message1Bold = false;
+    private bool message1Italic = false;
+    private int message1Top = 400;
+    private bool message1EditPosition = false;
+
+    private string message2Text = "";
+    private bool message2Show = true;
+    private string message2Color = "black";
+    private bool message2Bold = false;
+    private bool message2Italic = false;
+    private int message2Top = 500;
+    private bool message2EditPosition = false;
+
+    private string message3Text = "";
+    private bool message3Show = true;
+    private string message3Color = "black";
+    private bool message3Bold = false;
+    private bool message3Italic = false;
+    private int message3Top = 600;
+    private bool message3EditPosition = false;
+
+    // Schedule
+    private DateTime? scheduleStartDate = null;
+    private DateTime? scheduleEndDate = null;
+    private TimeOnly? scheduleStartTime = null;
+    private TimeOnly? scheduleEndTime = null;
+
+    // Override Content
+    private bool overrideContent = false;
+
+    // State — expanded by default when ShowCollapsibleHeader is false (e.g. modal context)
+    private bool isConfigExpanded = false;
+    private bool isGenerating = false;
+    private MediaAssetUploader? backgroundUploaderModal;
+    private string? baseDirectory;
+    private ContentModerationModal? moderationModal;
+    private bool pendingApproval = false;
+    private ModerationResult? currentModerationResult = null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!ShowCollapsibleHeader)
+            isConfigExpanded = true;
+        baseDirectory = MediaPaths.GetRoot();
+        await LoadBackgroundImages();
+    }
+
+    /// <summary>
+    /// Programmatically expand or collapse the template creator
+    /// </summary>
+    public void SetExpanded(bool expanded)
+    {
+        isConfigExpanded = expanded;
+        StateHasChanged();
+    }
+
+    private void ToggleExpanded()
+    {
+        isConfigExpanded = !isConfigExpanded;
+    }
+
+    private void UpdateBothTextColors()
+    {
+        message1Color = sharedTextColor;
+        message2Color = sharedTextColor;
+        message3Color = sharedTextColor;
+        StateHasChanged();
+    }
+
+    private async Task LoadBackgroundImages()
+    {
+        try
+        {
+            if (baseDirectory == null || Location == null) return;
+
+            // Background images are in the constraint folder
+            string backgroundDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString(), BackgroundConstraintId.ToString());
+
+            if (!Directory.Exists(backgroundDirectory))
+            {
+                Directory.CreateDirectory(backgroundDirectory);
+                return;
+            }
+
+            var tempImages = new List<MediaFile>();
+
+            foreach (string file in Directory.GetFiles(backgroundDirectory)
+                .Where(s => !s.EndsWith(".metadata") && !s.EndsWith(".db")))
+            {
+                var imageFile = new MediaFile
+                {
+                    WebPath = $"/MediaAssets/{Location.LocationId}/{BackgroundConstraintId}/{Path.GetFileName(file)}",
+                    DiskPath = file,
+                    Metadata = new List<MetadataField>()
+                };
+
+                tempImages.Add(imageFile);
+            }
+
+            backgroundImages = tempImages.OrderBy(x => Path.GetFileName(x.DiskPath)).ToList();
+
+            // Select first image by default
+            if (backgroundImages.Any() && selectedBackgroundImage == null)
+            {
+                selectedBackgroundImage = backgroundImages.First();
+            }
+
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading background images");
+        }
+    }
+
+    private void SelectBackgroundImage(MediaFile image)
+    {
+        selectedBackgroundImage = image;
+        showBackgroundDropdown = false;
+        StateHasChanged();
+    }
+
+    private void OpenBackgroundImageUploader()
+    {
+        showBackgroundDropdown = false;
+
+        var uploadConfig = new MediaUploadConfig
+        {
+            UploadFolder = baseDirectory,
+            LocationId = Location?.LocationId ?? 0,
+            ConstraintId = BackgroundConstraintId,
+            ExpectedWidth = 1920,
+            ExpectedHeight = 1080,
+            EditMediaFile = null,
+            AddToSql = false,
+            IsSchedulable = false
+        };
+
+        backgroundUploaderModal?.Open(uploadConfig);
+    }
+
+    private async Task OnBackgroundImageUploaded()
+    {
+        await LoadBackgroundImages();
+        StateHasChanged();
+    }
+
+    private void ShowDeleteBackgroundConfirmation(MediaFile image)
+    {
+        imageToDelete = image;
+        showDeleteConfirmation = true;
+        showBackgroundDropdown = false;
+        StateHasChanged();
+    }
+
+    private async Task DeleteBackgroundImage()
+    {
+        if (imageToDelete != null)
+        {
+            try
+            {
+                if (File.Exists(imageToDelete.DiskPath))
+                {
+                    File.Delete(imageToDelete.DiskPath);
+                }
+
+                if (File.Exists(imageToDelete.DiskPath + ".metadata"))
+                {
+                    File.Delete(imageToDelete.DiskPath + ".metadata");
+                }
+
+                if (selectedBackgroundImage == imageToDelete)
+                {
+                    selectedBackgroundImage = null;
+                }
+
+                await LoadBackgroundImages();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error deleting background image");
+            }
+        }
+
+        CloseDeleteConfirmation();
+    }
+
+    private void CloseDeleteConfirmation()
+    {
+        showDeleteConfirmation = false;
+        imageToDelete = null;
+        StateHasChanged();
+    }
+
+    private UploadingAsSection? uploadingAs;
+
+    // Only a display-bound template creates an asset row, which is what carries an owner and tags.
+    private bool ShowsUploadingAs => Display != null && Location != null && Location.LocationId > 0;
+
+    private string? UploadBlockReason => ShowsUploadingAs && uploadingAs is { IsBlocked: true } section ? section.BlockReason : null;
+
+    private PreparedUpload? preparedUpload;
+
+    private async Task GenerateTemplateImage()
+    {
+        if (selectedBackgroundImage == null)
+        {
+            return;
+        }
+
+        if (Location == null)
+        {
+            return;
+        }
+
+        preparedUpload = null;
+        if (ShowsUploadingAs)
+        {
+            preparedUpload = await UploadIdentity.PrepareAsync(SessionState.User?.UserId ?? 0, Location.LocationId,
+                uploadingAs?.PickedGroupId, uploadingAs?.Picks);
+            if (!preparedUpload.IsValid)
+            {
+                Logger.LogWarning("Template upload refused: {Error}", preparedUpload.Error);
+                if (uploadingAs != null)
+                    await uploadingAs.ReloadAfterRefusalAsync(preparedUpload.Error);
+                return;
+            }
+        }
+
+        // Content moderation check (skip if already approved for submission OR the role
+        // holds the approval/moderation bypass permission)
+        if (!pendingApproval && !await SessionState.HasPermissionAsync(PermissionKeys.ContentApprovalBypass))
+        {
+            var moderationContext = new ModerationContext
+            {
+                UserId = SessionState.User?.UserId,
+                DisplayId = Display?.DisplayId,
+                LocationId = Location?.LocationId
+            };
+
+            // Text moderation
+            var textsToScan = new List<string>();
+            if (!string.IsNullOrWhiteSpace(message1Text)) textsToScan.Add(message1Text);
+            if (!string.IsNullOrWhiteSpace(message2Text)) textsToScan.Add(message2Text);
+            if (!string.IsNullOrWhiteSpace(message3Text)) textsToScan.Add(message3Text);
+
+            if (textsToScan.Any())
+            {
+                var moderationResult = await ModerationService.ScanTextAsync(moderationContext, textsToScan.ToArray());
+
+                if (moderationResult?.IsInappropriate == true)
+                {
+                    currentModerationResult = moderationResult;
+                    moderationModal?.Open(moderationResult);
+                    return;
+                }
+                else if (moderationResult == null && Display?.EnableContentApproval == true)
+                {
+                    pendingApproval = true;
+                }
+            }
+
+            // Image moderation — scan the background image if text passed and LLM is available
+            if (!pendingApproval && selectedBackgroundImage != null)
+            {
+                var ext = Path.GetExtension(selectedBackgroundImage.DiskPath).ToLowerInvariant();
+                var mimeType = ext switch
+                {
+                    ".jpg" or ".jpeg" => "image/jpeg",
+                    ".gif" => "image/gif",
+                    ".webp" => "image/webp",
+                    ".bmp" => "image/bmp",
+                    _ => "image/png"
+                };
+
+                var imageBytes = await File.ReadAllBytesAsync(selectedBackgroundImage.DiskPath);
+                var imageResult = await ModerationService.ScanImageAsync(imageBytes, mimeType, moderationContext);
+
+                if (imageResult?.IsInappropriate == true)
+                {
+                    currentModerationResult = imageResult;
+                    moderationModal?.Open(imageResult);
+                    return;
+                }
+                else if (imageResult == null && Display?.EnableContentApproval == true)
+                {
+                    pendingApproval = true;
+                }
+            }
+        }
+
+        isGenerating = true;
+        StateHasChanged();
+
+        try
+        {
+            // Load background image as bytes
+            var bgImageBytes = await File.ReadAllBytesAsync(selectedBackgroundImage.DiskPath);
+
+            // Create canvas with background and text overlays using SkiaSharp
+            var imageInfo = new SKImageInfo(1920, 1080);
+            using var surface = SKSurface.Create(imageInfo);
+            var canvas = surface.Canvas;
+            canvas.Clear(SKColors.Black);
+
+            // Draw background image
+            using var bgImage = SKImage.FromEncodedData(bgImageBytes);
+            if (bgImage != null)
+            {
+                canvas.DrawImage(bgImage, new SKRect(0, 0, 1920, 1080));
+            }
+
+            // Draw message 1
+            if (message1Show && !string.IsNullOrWhiteSpace(message1Text))
+            {
+                DrawMessage(canvas, message1Text, message1Top, message1Color, message1Bold, message1Italic);
+            }
+
+            // Draw message 2
+            if (message2Show && !string.IsNullOrWhiteSpace(message2Text))
+            {
+                DrawMessage(canvas, message2Text, message2Top, message2Color, message2Bold, message2Italic);
+            }
+
+            // Draw message 3
+            if (message3Show && !string.IsNullOrWhiteSpace(message3Text))
+            {
+                DrawMessage(canvas, message3Text, message3Top, message3Color, message3Bold, message3Italic);
+            }
+
+            // Save image
+            using var snapshot = surface.Snapshot();
+            using var data = snapshot.Encode(SKEncodedImageFormat.Png, 100);
+            var imageBytes = data.ToArray();
+
+            // Save to location root folder
+            var locationPath = Path.Combine(baseDirectory!, "MediaAssets", Location.LocationId.ToString());
+            Directory.CreateDirectory(locationPath);
+
+            var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+            var fileName = $"Template_{timestamp}.png";
+            var filePath = Path.Combine(locationPath, fileName);
+
+            // The manifest builder treats a media file with no asset row as legacy content that
+            // predates approvals, so it would serve this unapproved in the window before the rows
+            // land. The image is staged where the location watcher cannot see it and revealed below.
+            var stagingFolder = Path.Combine(baseDirectory!, "MediaAssets", "_staging", Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(stagingFolder);
+            var stagedPath = Path.Combine(stagingFolder, fileName);
+
+            await File.WriteAllBytesAsync(stagedPath, imageBytes);
+
+            // Create metadata file (for file-based workflows)
+            await CreateMetadataFile(stagedPath);
+
+            // If Display is provided, create a TblAsset record
+            if (Display != null)
+            {
+                var webPath = $"/MediaAssets/{Location.LocationId}/{fileName}";
+                var newAsset = new TblAsset
+                {
+                    LocationId = Location.LocationId,
+                    AssetName = fileName,
+                    AssetPath = webPath,
+                    AssetTypeId = (int)Types.AssetType.Image,
+                    AssetHeight = 1080,
+                    AssetWidth = 1920,
+                    ConstraintId = 0,
+                    AssetGroupId = 1,
+                    Duration = 7,
+                    SortOrder = 0,
+                    CreateDate = DateTime.UtcNow,
+                    IsDeleted = false,
+                    UploadedByUserId = preparedUpload?.OwnerUserId,
+                    UploadedByUserGroupId = preparedUpload?.OwnerGroupId
+                };
+
+                using (var scope = scopeFactory.CreateScope())
+                {
+                    var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                    dbContext.TblAssets.Add(newAsset);
+                    await dbContext.SaveChangesAsync();
+                    PublicationInvalidator.AssetsChanged([newAsset.LocationId]);
+
+                    foreach (var (key, values) in preparedUpload?.Tags ?? new Dictionary<string, List<string>>())
+                        await ContentMetadataService.SetMetadataAsync(newAsset.AssetId, key, values, SessionState.User?.UserId);
+
+                    // Create approval record for hotel content when EnableContentApproval is on
+                    if (Display != null && Display.EnableContentApproval && SessionState.User != null)
+                    {
+                        // Flagged content = Pending, Safe content = Auto-approved
+                        var approvalStatus = pendingApproval ? ApprovalStatus.Pending : ApprovalStatus.Approved;
+
+                        await CreateApprovalRecord(newAsset.AssetId, dbContext, approvalStatus);
+                        PublicationInvalidator.AssetsChanged([newAsset.LocationId]);
+
+                        // Submit to approval chain if one exists for this location
+                        if (Display.LocationId > 0)
+                        {
+                            var lastApproval = await dbContext.TblAssetApprovals
+                                .FirstOrDefaultAsync(a => a.AssetId == newAsset.AssetId);
+                            if (lastApproval != null)
+                            {
+                                var passedModeration = approvalStatus == ApprovalStatus.Approved;
+                                var chainRequest = await ApprovalChainService.SubmitToChainAsync(lastApproval.AssetApprovalId, Display.LocationId, passedModeration,
+                                    uploadingUserId: null, pickedRuleId: preparedUpload?.PickedRuleId);
+                            }
+                        }
+                    }
+                }
+
+                // Notify parent that asset was created
+                await OnAssetCreated.InvokeAsync(newAsset);
+            }
+
+            // Reveal the image now that its rows exist. The sidecar moves first so the gate never
+            // sees the image without the approval state that belongs to it.
+            if (File.Exists(stagedPath + ".metadata"))
+            {
+                if (File.Exists(filePath + ".metadata")) File.Delete(filePath + ".metadata");
+                File.Move(stagedPath + ".metadata", filePath + ".metadata");
+            }
+            if (File.Exists(filePath)) File.Delete(filePath);
+            File.Move(stagedPath, filePath);
+
+            try { Directory.Delete(stagingFolder, recursive: true); } catch { }
+
+            // Notify parent component (file path callback)
+            await OnImageGenerated.InvokeAsync(filePath);
+
+            // Reset form after successful generation
+            ResetForm();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error generating template image");
+        }
+        finally
+        {
+            isGenerating = false;
+            var wasPendingApproval = pendingApproval;
+            pendingApproval = false;
+            currentModerationResult = null;
+
+            StateHasChanged();
+        }
+    }
+
+    private void DrawMessage(SKCanvas canvas, string text, int topPosition, string color, bool isBold, bool isItalic)
+    {
+        var fontStyle = SKFontStyle.Normal;
+        if (isBold && isItalic)
+            fontStyle = SKFontStyle.BoldItalic;
+        else if (isBold)
+            fontStyle = SKFontStyle.Bold;
+        else if (isItalic)
+            fontStyle = SKFontStyle.Italic;
+
+        using var paint = new SKPaint
+        {
+            Color = color == "white" ? SKColors.White : SKColors.Black,
+            IsAntialias = true,
+            TextSize = 72,
+            Typeface = SKTypeface.FromFamilyName("Arial", fontStyle),
+            TextAlign = SKTextAlign.Center
+        };
+
+        // Calculate proper baseline offset using font metrics
+        var fontMetrics = paint.FontMetrics;
+        var baselineOffset = -fontMetrics.Ascent;
+
+        // Add shadow (black for white text, white for black text)
+        var shadowColor = color == "white" ? new SKColor(0, 0, 0, 204) : new SKColor(255, 255, 255, 204);
+        paint.ImageFilter = SKImageFilter.CreateDropShadow(3, 3, 6, 6, shadowColor);
+
+        canvas.DrawText(text, 960, topPosition + baselineOffset, paint);
+    }
+
+    private void ResetForm()
+    {
+        selectedBackgroundImage = null;
+        activeMessageTab = 1;
+        sharedTextColor = "black";
+        message1Text = "";
+        message1Show = true;
+        message1Color = "black";
+        message1Bold = false;
+        message1Italic = false;
+        message1Top = 400;
+        message1EditPosition = false;
+        message2Text = "";
+        message2Show = true;
+        message2Color = "black";
+        message2Bold = false;
+        message2Italic = false;
+        message2Top = 500;
+        message2EditPosition = false;
+        message3Text = "";
+        message3Show = true;
+        message3Color = "black";
+        message3Bold = false;
+        message3Italic = false;
+        message3Top = 600;
+        message3EditPosition = false;
+        scheduleStartDate = null;
+        scheduleEndDate = null;
+        scheduleStartTime = null;
+        scheduleEndTime = null;
+        overrideContent = false;
+    }
+
+    private void HandleModerationCancel()
+    {
+        // User cancelled, stop generation
+        pendingApproval = false;
+        currentModerationResult = null;
+        isGenerating = false;
+        StateHasChanged();
+    }
+
+    private async Task HandleModerationApproval()
+    {
+        // User chose to submit for approval, proceed with generation
+        pendingApproval = true;
+
+        await GenerateTemplateImage(); // Re-enter method, skips moderation check
+    }
+
+    private async Task CreateApprovalRecord(int assetId, IDirectorDBContext dbContext, ApprovalStatus status)
+    {
+        if (SessionState.User == null) return;
+
+        string metadataTag = "TEMPLATE";
+
+        // Store moderation context in ExtendedData
+        var extendedData = new
+        {
+            metadataTag = metadataTag,
+            moderationReason = currentModerationResult?.Reason ?? (status == ApprovalStatus.Approved ? "Content approved by AI moderation" : "Content flagged"),
+            policyViolation = currentModerationResult?.PolicyViolation ?? "None",
+            flaggedTexts = new[]
+            {
+                message1Text,
+                message2Text,
+                message3Text
+            }.Where(t => !string.IsNullOrWhiteSpace(t)).ToArray(),
+            source = "TemplateCreator",
+            generatedDate = DateTime.UtcNow,
+            autoApproved = status == ApprovalStatus.Approved
+        };
+
+        var approval = new TblAssetApproval
+        {
+            AssetId = assetId,
+            UploadedByUserId = SessionState.User.UserId,
+            ApprovalStatus = (int)status,
+            SubmittedDate = DateTime.UtcNow,
+            ExtendedData = System.Text.Json.JsonSerializer.Serialize(extendedData)
+        };
+
+        // For auto-approved content, set reviewed fields to indicate AI approval
+        if (status == ApprovalStatus.Approved)
+        {
+            approval.ReviewedByUserId = SessionState.User.UserId; // Same user who uploaded
+            approval.ReviewedDate = DateTime.UtcNow;
+            approval.ReviewNotes = "Automatically approved by AI content moderation";
+        }
+
+        dbContext.TblAssetApprovals.Add(approval);
+        await dbContext.SaveChangesAsync();
+    }
+
+    private async Task CreateMetadataFile(string imagePath)
+    {
+        try
+        {
+            var metadataPath = imagePath + ".metadata";
+
+            using (var writer = new StreamWriter(metadataPath))
+            {
+                await writer.WriteLineAsync("<usermetadata>");
+
+                // Location
+                await writer.WriteLineAsync($"  <field name=\"Location\" datatype=\"ovx_String\" value=\"{Location!.LocationId}\" />");
+
+                // FileName
+                await writer.WriteLineAsync($"  <field name=\"FileName\" datatype=\"ovx_String\" value=\"{Path.GetFileName(imagePath)}\" />");
+
+                // Schedule dates if provided
+                if (scheduleStartDate.HasValue)
+                {
+                    await writer.WriteLineAsync($"  <field name=\"StartDate\" datatype=\"ovx_String\" value=\"{scheduleStartDate.Value:yyyy-MM-dd}\" />");
+                }
+
+                if (scheduleEndDate.HasValue)
+                {
+                    await writer.WriteLineAsync($"  <field name=\"EndDate\" datatype=\"ovx_String\" value=\"{scheduleEndDate.Value:yyyy-MM-dd}\" />");
+                }
+
+                // Schedule times if provided
+                if (scheduleStartTime.HasValue)
+                {
+                    await writer.WriteLineAsync($"  <field name=\"StartTime\" datatype=\"ovx_String\" value=\"{scheduleStartTime.Value:HH:mm:ss}\" />");
+                }
+
+                if (scheduleEndTime.HasValue)
+                {
+                    await writer.WriteLineAsync($"  <field name=\"EndTime\" datatype=\"ovx_String\" value=\"{scheduleEndTime.Value:HH:mm:ss}\" />");
+                }
+
+                // Override Content
+                await writer.WriteLineAsync($"  <field name=\"Override\" datatype=\"ovx_String\" value=\"{(overrideContent ? "True" : "False")}\" />");
+
+                await writer.WriteLineAsync("</usermetadata>");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating metadata file");
+        }
+    }
+}

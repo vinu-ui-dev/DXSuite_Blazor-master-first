@@ -1,0 +1,110 @@
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@using Microsoft.Extensions.DependencyInjection
+@inject ITenantContext TenantContext
+
+<div class="dx-card">
+    <div class="dx-card-header">
+        Vendor Access Log
+        <span class="dx-text-muted" style="font-size:0.85rem; font-weight:400; margin-left:8px;">
+            Platform operator access to this tenant — last 100 events
+        </span>
+    </div>
+    <div class="dx-card-body">
+
+        @if (auditService == null)
+        {
+            <div class="dx-alert dx-alert-info">
+                Platform identity is not configured for this deployment. Vendor access logging is inactive.
+            </div>
+        }
+        else if (loading)
+        {
+            <p class="dx-text-muted">Loading...</p>
+        }
+        else if (notices.Count == 0)
+        {
+            <p class="dx-text-muted">No vendor access events recorded for this tenant.</p>
+        }
+        else
+        {
+            <table class="dx-table dx-collapse">
+                <thead>
+                    <tr>
+                        <th>Time (UTC)</th>
+                        <th>Operator</th>
+                        <th>Event</th>
+                        <th>Ticket</th>
+                        <th>Reason</th>
+                        <th>Resource</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var n in notices)
+                    {
+                        <tr>
+                            <td style="white-space:nowrap;">@n.EventTime.ToString("yyyy-MM-dd HH:mm")</td>
+                            <td class="dx-col-primary">@(n.OperatorDisplayName ?? "—")</td>
+                            <td><span class="dx-badge @EventBadgeClass(n.EventType)">@FormatEventType(n.EventType)</span></td>
+                            <td class="dx-col-hide">@(n.TicketRef ?? "—")</td>
+                            <td class="dx-col-break" style="max-width:240px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@n.Reason">
+                                @(n.Reason ?? "—")
+                            </td>
+                            <td class="dx-col-hide" style="max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@n.ResourcePath">
+                                @(n.ResourcePath ?? "—")
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        }
+
+    </div>
+</div>
+
+@code {
+    // Resolved manually because [Inject] throws for unregistered services even on a
+    // nullable property, and platform identity is only registered when the Platform
+    // connection string is configured.
+    [Inject] private IServiceProvider services { get; set; } = default!;
+    private IPlatformAuditService? auditService;
+
+    private List<TblTenantAccessNotice> notices = new();
+    private bool loading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        auditService = services.GetService<IPlatformAuditService>();
+        if (auditService == null) { loading = false; return; }
+        try
+        {
+            notices = await auditService.GetTenantAccessNoticesAsync(TenantContext.TenantId, take: 100);
+        }
+        catch
+        {
+            // A configured but unreachable Platform DB degrades to the inactive message
+            // instead of killing the circuit.
+            auditService = null;
+        }
+        loading = false;
+    }
+
+    private static string FormatEventType(string eventType) => eventType switch
+    {
+        AuditEventType.ElevationRequested  => "Requested",
+        AuditEventType.ElevationApproved   => "Approved",
+        AuditEventType.ElevationRevoked    => "Revoked",
+        AuditEventType.ElevationUsed       => "Access",
+        _                                  => eventType
+    };
+
+    private static string EventBadgeClass(string eventType) => eventType switch
+    {
+        AuditEventType.ElevationRequested  => "dx-badge-info",
+        AuditEventType.ElevationApproved   => "dx-badge-success",
+        AuditEventType.ElevationRevoked    => "dx-badge-danger",
+        AuditEventType.ElevationUsed       => "dx-badge-warning",
+        _                                  => "dx-badge-secondary"
+    };
+}

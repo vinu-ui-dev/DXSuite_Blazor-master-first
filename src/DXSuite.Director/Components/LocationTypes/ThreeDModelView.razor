@@ -1,0 +1,120 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@inject IJSRuntime JSRuntime
+@inject IServiceScopeFactory scopeFactory
+@implements IAsyncDisposable
+
+<div style="position:relative;">
+    <div id="@_containerId" class="three-container" style="width:100%; position:relative;"></div>
+    <button class="three-save-camera-btn" @onclick="SaveCameraPosition" title="Save current camera position as default">
+        <i class="fa fa-camera me-1"></i> Save Camera
+    </button>
+</div>
+
+@code {
+    [Parameter] public int LocationId { get; set; }
+    [Parameter] public List<TblFloorPlanElement> Elements { get; set; } = new();
+    [Parameter] public Dictionary<int, string> ActiveIcons { get; set; } = new();
+    [Parameter] public LocationExtendedData? Config { get; set; }
+    [Parameter] public EventCallback<TblFloorPlanElement> OnElementClicked { get; set; }
+    [Parameter] public EventCallback<int> OnLocationNavigate { get; set; }
+
+    private string _containerId = $"three-{Guid.NewGuid():N}";
+    private DotNetObjectReference<ThreeDModelView>? _dotNetRef;
+    private bool _initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            await JSRuntime.InvokeVoidAsync("threeDInterop.fitToViewport", _containerId);
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await InitScene();
+            _initialized = true;
+        }
+        else if (_initialized)
+        {
+            await UpdateHotspots();
+        }
+    }
+
+    private async Task InitScene()
+    {
+        var modelUrl = Config?.ModelFilePath ?? "";
+        var cameraJson = Config?.ModelCameraJson;
+
+        await JSRuntime.InvokeVoidAsync("threeDInterop.initScene",
+            _containerId, _dotNetRef, modelUrl, cameraJson);
+
+        await UpdateHotspots();
+    }
+
+    private async Task UpdateHotspots()
+    {
+        var hotspots = Elements
+            .Where(e => e.Position3DX.HasValue && e.Position3DY.HasValue && e.Position3DZ.HasValue)
+            .Select(e =>
+            {
+                var activeIcon = ActiveIcons.GetValueOrDefault(e.FloorPlanElementId);
+                var iconUrl = activeIcon ?? e.IconPath;
+                var label = e.IconLabel ?? e.ChildDisplay?.DisplayName ?? e.ChildLocation?.LocationName ?? "";
+                var type = e.ChildDisplayId.HasValue ? "display" : "location";
+                return new
+                {
+                    elementId = e.FloorPlanElementId,
+                    x = e.Position3DX!.Value,
+                    y = e.Position3DY!.Value,
+                    z = e.Position3DZ!.Value,
+                    label,
+                    type,
+                    iconUrl
+                };
+            }).ToArray();
+
+        var scale = Config?.HotspotScale ?? 1.0;
+        await JSRuntime.InvokeVoidAsync("threeDInterop.setHotspots", _containerId, hotspots, scale);
+    }
+
+    [JSInvokable]
+    public async Task OnHotspotClicked(int elementId)
+    {
+        var element = Elements.FirstOrDefault(e => e.FloorPlanElementId == elementId);
+        if (element == null) return;
+
+        if (element.ChildLocationId.HasValue)
+            await OnLocationNavigate.InvokeAsync(element.ChildLocationId.Value);
+        else
+            await OnElementClicked.InvokeAsync(element);
+    }
+
+    private async Task SaveCameraPosition()
+    {
+        var json = await JSRuntime.InvokeAsync<string?>("threeDInterop.getCameraState", _containerId);
+        if (string.IsNullOrEmpty(json)) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var location = await db.TblLocations.FirstOrDefaultAsync(l => l.LocationId == LocationId);
+        if (location == null) return;
+
+        location.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(location.ExtendedData, ed =>
+        {
+            ed.ModelCameraJson = json;
+        });
+        await db.SaveChangesAsync();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JSRuntime.InvokeVoidAsync("threeDInterop.dispose", _containerId); } catch { }
+        _dotNetRef?.Dispose();
+    }
+}
+
+<style>
+    .three-container { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; background-color: #f5f5f5; }
+    .three-save-camera-btn { position: absolute; top: 8px; right: 8px; padding: 4px 10px; font-size: 12px; font-family: "BAHNSCHRIFT"; background: rgba(255,255,255,0.9); border: 1px solid #ccc; border-radius: 4px; cursor: pointer; z-index: 10; }
+    .three-save-camera-btn:hover { background: #e3f2fd; }
+</style>

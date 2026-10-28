@@ -1,0 +1,140 @@
+<style>
+    .concourse-container {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto auto;
+        gap: 15px;
+        margin-bottom: 20px;
+        width: 100%;
+        max-width: 100%;
+        overflow: hidden;
+    }
+
+    .display-panel {
+        border: 2px solid #0071BC;
+        border-radius: 8px;
+        padding: 15px;
+        background-color: #f8f9fa;
+        display: flex;
+        flex-direction: column;
+        min-height: 200px;
+    }
+
+    .display-title {
+        background-color: #0071BC;
+        color: white;
+        padding: 10px 15px;
+        margin: -15px -15px 15px -15px;
+        border-radius: 6px 6px 0 0;
+        font-weight: bold;
+        text-align: center;
+        font-size: 14px;
+    }
+
+    .display-content {
+        flex: 1;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background-color: white;
+        border-radius: 4px;
+        border: 1px solid #dee2e6;
+        min-height: 150px;
+        overflow: hidden;
+    }
+</style>
+
+<div class="section-container" style="background-color:#f5f5f5; border-radius: 5px; padding: 20px;">
+    <div class="section-header" style="background-color:unset; border:unset;">
+        <div class="section-title">
+            <h3>Concourse Entry Displays</h3>
+        </div>
+    </div>
+
+    <div style="margin-bottom: 20px;">
+        <button class="toggleButton" @onclick="ToggleDisplaySection" style="width: 100%; background-color: #0071BC; color: white; border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold;">
+            @(isDisplaySectionVisible ? "HIDE DISPLAY PREVIEWS" : "SHOW DISPLAY PREVIEWS")
+            <i class="fa-solid @(isDisplaySectionVisible ? "fa-caret-up" : "fa-caret-down")"></i>
+        </button>
+    </div>
+
+    <div class="concourse-container" style="@(isDisplaySectionVisible ? "" : "display: none;")">
+        <div class="display-panel">
+            <div class="display-title">Concourse A East</div>
+            <div class="display-content">
+                @if (Location != null)
+                {
+                    <PlaylistDisplay_ConcourseEntry Location="Location"
+                                   PlaylistName="ConcourseAEast"
+                                   ContentHeight="512"
+                                   ContentWidth="3328"
+                                   ScaleFactor="0.25"
+                                   ConstraintId="1" />
+                }
+            </div>
+        </div>
+
+        <div class="display-panel">
+            <div class="display-title">Concourse A West</div>
+            <div class="display-content">
+                @if (Location != null)
+                {
+                    <PlaylistDisplay_ConcourseEntry Location="Location"
+                                   PlaylistName="ConcourseAWest"
+                                   ContentHeight="512"
+                                   ContentWidth="3328"
+                                   ScaleFactor="0.25"
+                                   ConstraintId="2" />
+                }
+            </div>
+        </div>
+
+        <div class="display-panel">
+            <div class="display-title">Concourse B East</div>
+            <div class="display-content">
+                @if (Location != null)
+                {
+                    <PlaylistDisplay_ConcourseEntry Location="Location"
+                                   PlaylistName="ConcourseBEast"
+                                   ContentHeight="512"
+                                   ContentWidth="3328"
+                                   ScaleFactor="0.25"
+                                   ConstraintId="3" />
+                }
+            </div>
+        </div>
+
+        <div class="display-panel">
+            <div class="display-title">Concourse B West</div>
+            <div class="display-content">
+                @if (Location != null)
+                {
+                    <PlaylistDisplay_ConcourseEntry Location="Location"
+                                   PlaylistName="ConcourseBWest"
+                                   ContentHeight="512"
+                                   ContentWidth="3328"
+                                   ScaleFactor="0.25"
+                                   ConstraintId="4" />
+                }
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top: 20px;">
+        @if (Location != null)
+        {
+            <ConcourseAssetPlaylist Location="Location" PlaylistName="Concourse Entry Content" />
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+
+    private bool isDisplaySectionVisible = false;
+
+    private void ToggleDisplaySection()
+    {
+        isDisplaySectionVisible = !isDisplaySectionVisible;
+    }
+}

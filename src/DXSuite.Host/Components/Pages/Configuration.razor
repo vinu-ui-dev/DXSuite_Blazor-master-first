@@ -1,0 +1,85 @@
+@page "/configuration"
+@using DXSuite.Shared.Module
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Models
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.Extensions.Options
+@inject IReadOnlyList<IBlazorModule> Modules
+@inject ITenantContext TenantContext
+@inject ISessionState sessionState
+@inject IOptions<FeatureFlags> featureFlagsOptions
+@rendermode InteractiveServer
+
+<PageTitle>Configuration</PageTitle>
+
+@if (sessionLoaded && allTabs.Count == 0)
+{
+    <div style="text-align:center; margin-top:80px;">
+        <h3>Access Denied</h3>
+        <p>You do not have permission to access configuration.</p>
+    </div>
+}
+else
+{
+    <div style="display:flex; flex-direction:column; height:calc(100vh - 5.5rem);">
+        <h2 style="margin-bottom:16px; flex-shrink:0;">Configuration</h2>
+
+        @* Tab bar on desktop; the select replaces it below the tablet breakpoint *@
+        <div class="dx-tab-nav dx-tab-nav-collapsible" style="flex-shrink:0;">
+            @foreach (var tab in allTabs)
+            {
+                <button class="dx-tab-btn @(activeTab == tab ? "active" : "")"
+                        @onclick="@(() => activeTab = tab)">
+                    @tab.Label
+                </button>
+            }
+        </div>
+        <select class="dx-form-control dx-tab-select" style="flex-shrink:0;" @bind="activeTabKey">
+            @foreach (var tab in allTabs)
+            {
+                <option value="@tab.Key">@tab.Label</option>
+            }
+        </select>
+
+        <div class="dx-tab-content dx-tab-content-standalone" style="flex:1; min-height:0; overflow:hidden;">
+            @if (activeTab is not null)
+            {
+                <DynamicComponent Type="@activeTab.ComponentType" />
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<ConfigTab> allTabs = new();
+    private ConfigTab? activeTab;
+    private bool sessionLoaded;
+
+    // Select-friendly view of activeTab (options bind by key, not object)
+    private string? activeTabKey
+    {
+        get => activeTab?.Key;
+        set => activeTab = allTabs.FirstOrDefault(t => t.Key == value);
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+            await sessionState.SessionLoaded.Task;
+
+        // The real Admin role bypasses permission checks (custom roles based on Admin do
+        // not — their tab access stays permission-driven); other roles see granted tabs only.
+        var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
+
+        var featureFlags = featureFlagsOptions.Value;
+        allTabs = Modules
+            .Where(m => m.IsAvailableForTenant(TenantContext))
+            .SelectMany(m => m.GetConfigTabs())
+            .Where(t => perms == null || perms.Contains(PermissionKeys.ForConfigTab(t.Key)))
+            .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
+            .OrderBy(t => t.Order)
+            .ToList();
+        activeTab = allTabs.FirstOrDefault();
+        sessionLoaded = true;
+    }
+}

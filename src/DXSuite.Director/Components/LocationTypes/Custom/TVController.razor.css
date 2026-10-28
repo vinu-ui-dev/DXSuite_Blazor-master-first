@@ -1,0 +1,49 @@
+.body {
+    overflow: hidden;
+    position: relative;
+}
+.scroll-container {
+    width: 94vw;
+    height: 100%;
+    overflow-x: auto;
+    overflow-y: auto;
+    white-space: nowrap;
+    position: relative;
+}
+
+.image-container {
+    position: relative;
+    display: inline-block;
+    height: 100%;
+    width: auto;
+    background-size:cover;
+}
+
+    .image-container img {
+        height: 100%;
+        width: auto;
+        display: block;
+    }
+
+.background-display-button {
+    position: absolute;
+    z-index: 9;
+    background-color: limegreen;
+    padding: 108px 1400px;
+    border: none;
+    cursor: pointer;
+}
+
+.display-button {
+    position: absolute;
+    z-index: 10;
+    transform: translate(-50%, -50%);
+    background-color: transparent;
+    color: white;
+    border: none;
+    width: 123px;
+    height: 218px;
+    font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
+    border: none;
+    cursor: pointer;
+}

@@ -1,0 +1,150 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Catalog Items</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAdd">+ Add Item</button>
+        </div>
+    </div>
+
+    @if (items is null)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (items.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No catalog items yet</h5>
+            <p class="dx-text-muted">Add items from NetSuite to get started.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: minmax(180px,2fr) 120px minmax(120px,1fr) 120px 90px 200px;">
+                    <div>Description</div>
+                    <div>Manufacturer</div>
+                    <div>Category</div>
+                    <div>NS Item ID</div>
+                    <div>Last Sync</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var item in items)
+                {
+                    var snap = GetSnapshot(item.SnapshotJson);
+                    <div class="dx-table-row" style="grid-template-columns: minmax(180px,2fr) 120px minmax(120px,1fr) 120px 90px 200px;">
+                        <div>@(snap?.PurchaseDescription ?? item.NetsuiteItemId)</div>
+                        <div>@(snap?.Manufacturer is { Length: > 0 } m ? m : "—")</div>
+                        <div>@(item.Category?.Name ?? "—")</div>
+                        <div class="dx-text-muted" style="font-size:.8rem">@item.NetsuiteItemId</div>
+                        <div style="font-size:.8rem">@(item.LastSyncDate?.ToString("MM/dd/yy") ?? "—")</div>
+                        <div style="display:flex; gap:4px; flex-wrap:nowrap; overflow:hidden;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenEdit(item.ItemId)">Edit</button>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => RefreshAsync(item)" disabled="@(refreshing == item.ItemId)">
+                                @(refreshing == item.ItemId ? "…" : "Refresh")
+                            </button>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteAsync(item)">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+
+    @if (refreshError is not null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin:8px 20px;">@refreshError</div>
+    }
+</div>
+
+@if (modalItemId.HasValue || modalIsAdd)
+{
+    <AddItemModal ItemId="modalItemId" OnClose="OnModalClose" />
+}
+
+@code {
+    private List<TblDesignCatalogItem>? items;
+    private int? refreshing;
+    private string? refreshError;
+    private int? modalItemId;
+    private bool modalIsAdd;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        items = await db.TblDesignCatalogItems
+            .Where(i => i.CustomerId == Tenant.CustomerCode)
+            .Include(i => i.Category)
+            .OrderBy(i => i.Category!.Name)
+            .ThenBy(i => i.NetsuiteItemId)
+            .ToListAsync();
+    }
+
+    private void OpenAdd() { modalIsAdd = true; modalItemId = null; }
+    private void OpenEdit(int itemId) { modalItemId = itemId; modalIsAdd = false; }
+
+    private async Task OnModalClose()
+    {
+        modalIsAdd = false;
+        modalItemId = null;
+        await LoadAsync();
+    }
+
+    private async Task RefreshAsync(TblDesignCatalogItem item)
+    {
+        refreshing = item.ItemId;
+        refreshError = null;
+        try
+        {
+            var results = await NetsuiteService.SearchItemsAsync(item.NetsuiteItemId);
+            var match = results.FirstOrDefault(r => r.Id == item.NetsuiteItemId);
+            if (match is not null)
+            {
+                await using var db = await DbFactory.CreateDbContextAsync();
+                var entity = await db.TblDesignCatalogItems.FindAsync(item.ItemId);
+                if (entity is not null)
+                {
+                    entity.SnapshotJson = System.Text.Json.JsonSerializer.Serialize(match);
+                    entity.LastSyncDate = DateTime.UtcNow;
+                    await db.SaveChangesAsync();
+                }
+            }
+            else
+            {
+                refreshError = $"Item '{item.NetsuiteItemId}' not found in NetSuite.";
+            }
+        }
+        catch (Exception ex)
+        {
+            refreshError = $"Refresh failed: {ex.Message}";
+        }
+        finally
+        {
+            refreshing = null;
+        }
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(TblDesignCatalogItem item)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.TblDesignCatalogItems.FindAsync(item.ItemId);
+        if (entity is not null) { db.TblDesignCatalogItems.Remove(entity); await db.SaveChangesAsync(); }
+        await LoadAsync();
+    }
+
+    private static NetsuiteItem? GetSnapshot(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<NetsuiteItem>(json); }
+        catch { return null; }
+    }
+}

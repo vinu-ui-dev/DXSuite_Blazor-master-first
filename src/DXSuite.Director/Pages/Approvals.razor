@@ -1,0 +1,1066 @@
+@page "/Approvals"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Director.Components
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@inject IApprovalChainService approvalChainService
+@inject IAssetApprovalService assetApprovalService
+@inject IUserGroupService userGroupService
+@inject IJSRuntime JSRuntime
+@rendermode InteractiveServer
+
+@if(isLoading)
+{
+    <div class="loading-overlay">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    @if (isAuthorized == false)
+    {
+        <div class="unauthorized-wrapper">
+            <h1>Unauthorized</h1>
+            <p>You do not have permission to access this page.</p>
+            <a href="/director">Return Home</a>
+        </div>
+    }
+    else
+    {
+        <div class="dx-page-header">
+            <h2>CONTENT APPROVALS <DXSuite.Shared.Components.HelpLink Page="director/approvals" Title="Approvals help" /></h2>
+        </div>
+
+        <section style="padding: 20px; margin-top: 20px;">
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <div class="alert @(statusMessageClass) alert-dismissible fade show" role="alert">
+                    @statusMessage
+                    <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+                </div>
+            }
+
+            <!-- Tab bar on desktop; the select replaces it below the tablet breakpoint -->
+            <div class="appr-tabs dx-tab-nav-collapsible">
+                @if (isApprovalGroupMember || isGlobalAdmin)
+                {
+                    <button class="appr-tab @(activeTab == "my-queue" ? "active" : "")"
+                            @onclick="@(() => SwitchTab("my-queue"))">
+                        My Queue @if (myQueueItems.Count > 0) { <span class="appr-badge">@myQueueItems.Count</span> }
+                    </button>
+                }
+                @if (isGlobalAdmin)
+                {
+                    <button class="appr-tab @(activeTab == "all-pending" ? "active" : "")"
+                            @onclick="@(() => SwitchTab("all-pending"))">
+                        All Pending @if (allPendingItems.Count > 0) { <span class="appr-badge">@allPendingItems.Count</span> }
+                    </button>
+                }
+                <button class="appr-tab @(activeTab == "my-submissions" ? "active" : "")"
+                        @onclick="@(() => SwitchTab("my-submissions"))">
+                    My Submissions @if (mySubmissions.Count > 0) { <span class="appr-badge">@mySubmissions.Count</span> }
+                </button>
+            </div>
+            <select class="dx-form-control dx-tab-select" @bind="activeTab" @bind:after="OnTabChanged">
+                @if (isApprovalGroupMember || isGlobalAdmin)
+                {
+                    <option value="my-queue">My Queue@(myQueueItems.Count > 0 ? $" ({myQueueItems.Count})" : "")</option>
+                }
+                @if (isGlobalAdmin)
+                {
+                    <option value="all-pending">All Pending@(allPendingItems.Count > 0 ? $" ({allPendingItems.Count})" : "")</option>
+                }
+                <option value="my-submissions">My Submissions@(mySubmissions.Count > 0 ? $" ({mySubmissions.Count})" : "")</option>
+            </select>
+
+            <!-- My Queue Tab -->
+            @if (activeTab == "my-queue")
+            {
+                @if (myQueueItems.Count == 0)
+                {
+                    <div class="dx-alert dx-alert-info" role="alert">
+                        <h4 class="alert-heading">No Pending Items</h4>
+                        <p>There are no items in your approval queue at this time.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover appr-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 110px;">Preview</th>
+                                    <th>Asset Name</th>
+                                    <th class="appr-col-optional">Location</th>
+                                    <th class="appr-col-optional">Uploaded By</th>
+                                    <th class="appr-col-secondary" style="width: 130px;">Your Group</th>
+                                    <th class="appr-col-secondary" style="width: 80px;">Stage</th>
+                                    <th class="appr-col-optional" style="width: 150px;">Submitted</th>
+                                    <th style="width: 210px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in myQueueItems.Skip((queueCurrentPage - 1) * PageSize).Take(PageSize))
+                                {
+                                    <tr>
+                                        <td class="appr-thumb-cell">
+                                            <a href="@item.AssetPath" target="_blank" class="appr-thumb-link">
+                                                @if (IsVideo(item.AssetPath))
+                                                {
+                                                    <video class="appr-thumb-img" muted preload="metadata">
+                                                        <source src="@item.AssetPath" type="video/mp4" />
+                                                    </video>
+                                                }
+                                                else
+                                                {
+                                                    <img class="appr-thumb-img" src="@item.AssetPath" alt="@(item.AssetName ?? "")" loading="lazy" />
+                                                }
+                                            </a>
+                                        </td>
+                                        <td><strong>@(item.AssetName ?? $"Asset #{item.AssetId}")</strong></td>
+                                        <td class="appr-col-optional">@(item.LocationName ?? "--")</td>
+                                        <td class="appr-col-optional">@(item.UploadedByName ?? "Unknown")</td>
+                                        <td class="appr-col-secondary"><span class="appr-group-badge">@(item.GroupName ?? "--")</span></td>
+                                        <td class="appr-col-secondary">
+                                            @if (item.TotalStages > 0)
+                                            {
+                                                <span class="appr-stage-indicator">@item.CurrentStageOrder / @item.TotalStages</span>
+                                            }
+                                        </td>
+                                        <td class="appr-col-optional">@item.SubmittedDate.ToString("MMM d, yyyy h:mm tt")</td>
+                                        <td>
+                                            <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                                                <button class="dx-btn dx-btn-green appr-action-btn"
+                                                        @onclick="() => ApproveChainItem(item)">
+                                                    Approve
+                                                </button>
+                                                <button class="dx-btn dx-btn-red appr-action-btn"
+                                                        @onclick="() => DeclineChainItem(item)">
+                                                    Decline
+                                                </button>
+                                                <button class="dx-btn dx-btn-gray appr-action-btn"
+                                                        @onclick="() => ViewRequestDetail(item.ApprovalRequestId)">
+                                                    Detail
+                                                </button>
+                                            </div>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <ApprPager TotalItems="myQueueItems.Count" CurrentPage="queueCurrentPage"
+                               PageSize="PageSize" OnPageChange="SetQueuePage" />
+                }
+            }
+
+            <!-- All Pending Tab (GlobalAdmin only) -->
+            @if (activeTab == "all-pending" && isGlobalAdmin)
+            {
+                @if (allPendingItems.Count == 0)
+                {
+                    <div class="dx-alert dx-alert-info" role="alert">
+                        <h4 class="alert-heading">No Pending Items</h4>
+                        <p>There are no items pending approval across any group.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="table-responsive">
+                        <table class="table table-hover appr-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 110px;">Preview</th>
+                                    <th>Asset Name</th>
+                                    <th class="appr-col-optional">Location</th>
+                                    <th class="appr-col-optional">Uploaded By</th>
+                                    <th class="appr-col-secondary" style="width: 130px;">Group</th>
+                                    <th class="appr-col-secondary" style="width: 80px;">Stage</th>
+                                    <th class="appr-col-optional" style="width: 150px;">Submitted</th>
+                                    <th style="width: 120px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in allPendingItems.Skip((pendingCurrentPage - 1) * PageSize).Take(PageSize))
+                                {
+                                    <tr>
+                                        <td class="appr-thumb-cell">
+                                            <a href="@item.AssetPath" target="_blank" class="appr-thumb-link">
+                                                @if (IsVideo(item.AssetPath))
+                                                {
+                                                    <video class="appr-thumb-img" muted preload="metadata">
+                                                        <source src="@item.AssetPath" type="video/mp4" />
+                                                    </video>
+                                                }
+                                                else
+                                                {
+                                                    <img class="appr-thumb-img" src="@item.AssetPath" alt="@(item.AssetName ?? "")" loading="lazy" />
+                                                }
+                                            </a>
+                                        </td>
+                                        <td><strong>@(item.AssetName ?? $"Asset #{item.AssetId}")</strong></td>
+                                        <td class="appr-col-optional">@(item.LocationName ?? "--")</td>
+                                        <td class="appr-col-optional">@(item.UploadedByName ?? "Unknown")</td>
+                                        <td class="appr-col-secondary"><span class="appr-group-badge">@(item.GroupName ?? "--")</span></td>
+                                        <td class="appr-col-secondary">
+                                            @if (item.TotalStages > 0)
+                                            {
+                                                <span class="appr-stage-indicator">@item.CurrentStageOrder / @item.TotalStages</span>
+                                            }
+                                        </td>
+                                        <td class="appr-col-optional">@item.SubmittedDate.ToString("MMM d, yyyy h:mm tt")</td>
+                                        <td>
+                                            <button class="dx-btn dx-btn-gray appr-action-btn"
+                                                    @onclick="() => ViewRequestDetail(item.ApprovalRequestId)">
+                                                Detail
+                                            </button>
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <ApprPager TotalItems="allPendingItems.Count" CurrentPage="pendingCurrentPage"
+                               PageSize="PageSize" OnPageChange="SetPendingPage" />
+                }
+            }
+
+            <!-- My Submissions Tab -->
+            @if (activeTab == "my-submissions")
+            {
+                @if (mySubmissions.Count == 0)
+                {
+                    <div class="dx-alert dx-alert-info" role="alert">
+                        <h4 class="alert-heading">No Submissions</h4>
+                        <p>You have not submitted any content for approval.</p>
+                    </div>
+                }
+                else
+                {
+                    <div class="appr-filter-bar">
+                        <div class="appr-filter-group">
+                            <label class="appr-filter-label">Status</label>
+                            <select class="dx-form-control appr-filter-select"
+                                    @onchange="OnSubmissionFilterChange">
+                                <option value="all">All</option>
+                                <option value="0">Pending</option>
+                                <option value="1">Approved</option>
+                                <option value="2">Declined</option>
+                            </select>
+                        </div>
+                        <span class="appr-filter-count">@FilteredSubmissions.Count result@(FilteredSubmissions.Count != 1 ? "s" : "")</span>
+                    </div>
+                    <div class="table-responsive">
+                        <table class="table table-hover appr-table">
+                            <thead>
+                                <tr>
+                                    <th>Asset Name</th>
+                                    <th class="appr-col-optional">Location</th>
+                                    <th style="width: 130px;">Status</th>
+                                    <th class="appr-col-optional" style="width: 150px;">Submitted</th>
+                                    <th class="appr-col-optional" style="width: 150px;">Reviewed</th>
+                                    <th style="width: 220px;">Actions</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var sub in FilteredSubmissions.Skip((submissionsCurrentPage - 1) * PageSize).Take(PageSize))
+                                {
+                                    <tr>
+                                        <td><strong>@(sub.AssetName ?? $"Asset #{sub.AssetId}")</strong></td>
+                                        <td class="appr-col-optional">@(sub.LocationName ?? "--")</td>
+                                        <td>
+                                            @{
+                                                var statusLabel = sub.ApprovalStatus switch { 0 => "Pending", 1 => "Approved", 2 => "Declined", _ => "Unknown" };
+                                                var statusCss = sub.ApprovalStatus switch { 0 => "appr-sb-pending", 1 => "appr-sb-approved", 2 => "appr-sb-declined", _ => "" };
+                                            }
+                                            <span class="appr-status-badge @statusCss">@statusLabel</span>
+                                            @if (sub.IsAutoApproved)
+                                            {
+                                                <span class="appr-auto-badge" title="Approved automatically by AI content moderation">AI Auto</span>
+                                            }
+                                        </td>
+                                        <td class="appr-col-optional">@sub.SubmittedDate.ToString("MMM d, yyyy h:mm tt")</td>
+                                        <td class="appr-col-optional">@(sub.ReviewedDate?.ToString("MMM d, yyyy h:mm tt") ?? "--")</td>
+                                        <td>
+                                            @if (sub.ApprovalStatus == 2)
+                                            {
+                                                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                                                    <button class="dx-btn dx-btn-blue appr-action-btn"
+                                                            @onclick="() => OpenResubmitModal(sub)">
+                                                        Re-submit
+                                                    </button>
+                                                    @if (sub.DeclinedDate.HasValue)
+                                                    {
+                                                        var retDays = sub.DeclinedContentRetentionDays ?? 3;
+                                                        var expiry = sub.DeclinedDate.Value.AddDays(retDays);
+                                                        var daysLeft = Math.Max(0, (int)Math.Ceiling((expiry - DateTime.UtcNow).TotalDays));
+                                                        <span class="appr-expiry-countdown">Auto-deletes in @daysLeft day@(daysLeft != 1 ? "s" : "")</span>
+                                                    }
+                                                </div>
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                    <ApprPager TotalItems="FilteredSubmissions.Count" CurrentPage="submissionsCurrentPage"
+                               PageSize="PageSize" OnPageChange="SetSubmissionsPage" />
+                }
+            }
+
+            <!-- Re-submit Modal -->
+            @if (showResubmitModal && resubmitTarget != null)
+            {
+                <div class="dx-modal-overlay">
+                    <div class="dx-modal" style="max-width: 800px; width: 100%;">
+                        <div class="modal-header">
+                            <h5 class="modal-title" style="font-family: var(--dx-font-family);">Re-submit Content</h5>
+                            <button type="button" class="btn-close" @onclick="CloseResubmitModal"></button>
+                        </div>
+                        <div class="modal-body">
+                            <div style="font-weight: 600; margin-bottom: 12px;">@(resubmitTarget.AssetName ?? $"Asset #{resubmitTarget.AssetId}")</div>
+
+                            @if (resubmitComments.Count > 0)
+                            {
+                                <h6 class="appr-section-label">Discussion</h6>
+                                <div class="appr-comment-thread" style="margin-bottom: 12px;">
+                                    @foreach (var comment in resubmitComments)
+                                    {
+                                        <div class="appr-comment-item">
+                                            <span class="appr-comment-user">@comment.UserName</span>
+                                            <span class="appr-comment-type-badge appr-ctb-@comment.CommentType">@comment.CommentType</span>
+                                            <span class="appr-comment-timestamp">@comment.CreatedDate.ToString("MMM d, h:mm tt")</span>
+                                            <div class="appr-comment-body">@comment.CommentText</div>
+                                        </div>
+                                    }
+                                </div>
+                            }
+
+                            <h6 class="appr-section-label">Why are you re-submitting? (required)</h6>
+                            <textarea class="dx-form-control" rows="3" maxlength="2000"
+                                      placeholder="Explain what was changed or why the content should be reconsidered..."
+                                      @bind="resubmitComment"></textarea>
+                            <small class="form-text text-muted">@(resubmitComment?.Length ?? 0) / 2000</small>
+                        </div>
+                        <div class="modal-footer">
+                            <button class="dx-btn dx-btn-gray" @onclick="CloseResubmitModal">Cancel</button>
+                            <button class="dx-btn dx-btn-blue" @onclick="ConfirmResubmit"
+                                    disabled="@(string.IsNullOrWhiteSpace(resubmitComment))">Re-submit</button>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <!-- Request Detail Panel -->
+            @if (selectedDetail != null)
+            {
+                <div class="appr-detail-panel">
+                    <div class="appr-detail-header">
+                        <h5>Approval Detail — @(selectedDetail.AssetName ?? $"Asset #{selectedDetail.AssetApprovalId}")</h5>
+                        <button class="btn-close" @onclick="CloseDetail"></button>
+                    </div>
+                    <div class="appr-detail-meta">
+                        <span><strong>Location:</strong> @(selectedDetail.LocationName ?? "--")</span>
+                        <span><strong>Uploaded by:</strong> @(selectedDetail.UploadedByName ?? "--")</span>
+                        <span><strong>Status:</strong> <span class="appr-status-@selectedDetail.Status">@selectedDetail.Status</span></span>
+                        <span><strong>Submitted:</strong> @selectedDetail.SubmittedDate.ToString("MMM d, yyyy h:mm tt")</span>
+                    </div>
+                    <h6 class="appr-section-label" style="margin-top: 16px;">Stage Progression</h6>
+                    <div class="appr-stages-timeline">
+                        @foreach (var stage in selectedDetail.Stages)
+                        {
+                            <div class="appr-stage-block @(stage.IsCurrentStage ? "appr-stage-current" : "")">
+                                <div class="appr-stage-title">
+                                    Stage @(stage.StageOrder + 1)
+                                    @if (!string.IsNullOrEmpty(stage.StageName)) { <span>(@stage.StageName)</span> }
+                                    — @stage.IntraStageOperator
+                                    @if (stage.IsCurrentStage) { <span class="appr-current-label">CURRENT</span> }
+                                </div>
+                                @foreach (var group in stage.Groups)
+                                {
+                                    <div class="appr-group-detail">
+                                        <span class="appr-group-name">@group.GroupName</span>
+                                        <span class="appr-queue-status appr-qs-@group.QueueStatus">@group.QueueStatus</span>
+                                        @if (!string.IsNullOrEmpty(group.ActingUserName))
+                                        {
+                                            <span class="appr-actor">by @group.ActingUserName</span>
+                                        }
+                                        @if (group.ActionDate.HasValue)
+                                        {
+                                            <span class="appr-action-date">@group.ActionDate.Value.ToString("MMM d, h:mm tt")</span>
+                                        }
+                                        @if (!string.IsNullOrEmpty(group.Notes))
+                                        {
+                                            <span class="appr-notes">"@group.Notes"</span>
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    @if (detailComments.Count > 0)
+                    {
+                        <h6 class="appr-section-label" style="margin-top: 16px;">Comments</h6>
+                        <div class="appr-comment-thread">
+                            @foreach (var comment in detailComments)
+                            {
+                                <div class="appr-comment-item">
+                                    <span class="appr-comment-user">@comment.UserName</span>
+                                    <span class="appr-comment-type-badge appr-ctb-@comment.CommentType">@comment.CommentType</span>
+                                    <span class="appr-comment-timestamp">@comment.CreatedDate.ToString("MMM d, h:mm tt")</span>
+                                    <div class="appr-comment-body">@comment.CommentText</div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+        </section>
+    }
+}
+
+<ApprovalActionModal @ref="approvalActionModal" OnConfirm="HandleModalConfirm" />
+
+@code {
+    private const int PageSize = 20;
+
+    private bool isLoading = true;
+    private bool isAuthorized = false;
+    private bool isGlobalAdmin = false;
+    private bool isApprovalGroupMember = false;
+    private bool hasSubmissions = false;
+    private string activeTab = "my-queue";
+    private string? statusMessage;
+    private string statusMessageClass = "alert-info";
+
+    private List<ApprovalQueueItem> myQueueItems = new();
+    private List<ApprovalQueueItem> allPendingItems = new();
+
+    private ApprovalRequestDetail? selectedDetail;
+    private List<ApprovalCommentDto> detailComments = new();
+
+    private ApprovalActionModal? approvalActionModal;
+
+    private List<SubmissionItem> mySubmissions = new();
+
+    private bool _isLoadingQueues = false;
+
+    private bool showResubmitModal = false;
+    private SubmissionItem? resubmitTarget;
+    private string? resubmitComment;
+    private List<ApprovalCommentDto> resubmitComments = new();
+
+    // Pagination state per tab
+    private int queueCurrentPage = 1;
+    private int pendingCurrentPage = 1;
+    private int submissionsCurrentPage = 1;
+
+    // My Submissions status filter
+    private string submissionStatusFilter = "all";
+
+    private List<SubmissionItem> FilteredSubmissions =>
+        submissionStatusFilter == "all"
+            ? mySubmissions
+            : mySubmissions.Where(s => s.ApprovalStatus.ToString() == submissionStatusFilter).ToList();
+
+    private void OnSubmissionFilterChange(ChangeEventArgs e)
+    {
+        submissionStatusFilter = e.Value?.ToString() ?? "all";
+        submissionsCurrentPage = 1;
+    }
+
+    // Named page-change handlers avoid inline block lambdas in Razor attributes
+    private void SetQueuePage(int p) { queueCurrentPage = p; StateHasChanged(); }
+    private void SetPendingPage(int p) { pendingCurrentPage = p; StateHasChanged(); }
+    private void SetSubmissionsPage(int p) { submissionsCurrentPage = p; StateHasChanged(); }
+
+    protected override async Task OnInitializedAsync()
+    {
+        await sessionState.SessionLoaded.Task;
+
+        isGlobalAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+
+        if (isGlobalAdmin)
+        {
+            isAuthorized = true;
+        }
+        else if (sessionState.User != null)
+        {
+            var groups = await userGroupService.GetGroupsForUserAsync(sessionState.User.UserId);
+            isApprovalGroupMember = groups.Count > 0;
+
+            mySubmissions = await approvalChainService.GetSubmissionsForUserAsync(sessionState.User.UserId);
+            hasSubmissions = mySubmissions.Count > 0;
+
+            isAuthorized = isApprovalGroupMember || hasSubmissions;
+        }
+
+        if (isAuthorized)
+        {
+            await LoadAllQueues();
+
+            if (!isApprovalGroupMember && !isGlobalAdmin && hasSubmissions)
+            {
+                activeTab = "my-submissions";
+            }
+        }
+
+        isLoading = false;
+    }
+
+    private async Task LoadAllQueues()
+    {
+        if (_isLoadingQueues) return;
+        _isLoadingQueues = true;
+
+        try
+        {
+            if (sessionState.User != null)
+            {
+                myQueueItems = await approvalChainService.GetPendingItemsForUserAsync(sessionState.User.UserId);
+                mySubmissions = await approvalChainService.GetSubmissionsForUserAsync(sessionState.User.UserId);
+
+                foreach (var sub in mySubmissions.Where(s => s.ApprovalStatus == 2))
+                {
+                    var approval = await assetApprovalService.GetApprovalByIdAsync(sub.AssetApprovalId);
+                    if (approval?.Asset != null)
+                    {
+                        var chain = await approvalChainService.GetChainForLocationAsync(approval.Asset.LocationId);
+                        sub.DeclinedContentRetentionDays = chain?.DeclinedContentRetentionDays ?? 3;
+                    }
+                }
+            }
+
+            if (isGlobalAdmin)
+            {
+                allPendingItems = await approvalChainService.GetAllPendingItemsAsync();
+            }
+        }
+        finally
+        {
+            _isLoadingQueues = false;
+        }
+    }
+
+    private async Task SwitchTab(string tab)
+    {
+        activeTab = tab;
+        await OnTabChanged();
+    }
+
+    private async Task OnTabChanged()
+    {
+        // Reset to first page whenever switching views
+        queueCurrentPage = 1;
+        pendingCurrentPage = 1;
+        submissionsCurrentPage = 1;
+        await LoadAllQueues();
+    }
+
+    private async Task ApproveChainItem(ApprovalQueueItem item)
+    {
+        if (sessionState.User == null || approvalActionModal == null) return;
+
+        var comments = await approvalChainService.GetCommentsAsync(item.AssetApprovalId);
+        await approvalActionModal.Open("approve", item.AssetName, item.QueueEntryId,
+            sessionState.User.UserId, item.GroupId, item.AssetApprovalId, item.ApprovalRequestId, comments);
+    }
+
+    private async Task DeclineChainItem(ApprovalQueueItem item)
+    {
+        if (sessionState.User == null || approvalActionModal == null) return;
+
+        var comments = await approvalChainService.GetCommentsAsync(item.AssetApprovalId);
+        await approvalActionModal.Open("decline", item.AssetName, item.QueueEntryId,
+            sessionState.User.UserId, item.GroupId, item.AssetApprovalId, item.ApprovalRequestId, comments);
+    }
+
+    private async Task HandleModalConfirm(ApprovalActionModalResult modal)
+    {
+        ApprovalActionResult result;
+
+        if (modal.ActionType == "approve")
+        {
+            result = await approvalChainService.ApproveAsync(modal.QueueEntryId, modal.UserId, modal.GroupId, modal.Notes);
+            statusMessageClass = result.Success ? "alert-success" : "alert-warning";
+        }
+        else
+        {
+            result = await approvalChainService.DeclineAsync(modal.QueueEntryId, modal.UserId, modal.GroupId, modal.Notes);
+            statusMessageClass = result.Outcome == "chain-declined" ? "alert-warning" : "alert-info";
+        }
+
+        if (!string.IsNullOrWhiteSpace(modal.Notes))
+        {
+            await approvalChainService.AddCommentAsync(
+                modal.AssetApprovalId, modal.ApprovalRequestId, modal.UserId,
+                modal.Notes.Trim(), modal.ActionType);
+        }
+
+        statusMessage = result.Message;
+        await LoadAllQueues();
+        StateHasChanged();
+    }
+
+    private async Task ViewRequestDetail(int approvalRequestId)
+    {
+        selectedDetail = await approvalChainService.GetRequestDetailAsync(approvalRequestId);
+        if (selectedDetail != null)
+        {
+            detailComments = await approvalChainService.GetCommentsAsync(selectedDetail.AssetApprovalId);
+        }
+        StateHasChanged();
+    }
+
+    private void CloseDetail()
+    {
+        selectedDetail = null;
+        detailComments = new();
+    }
+
+    private async Task OpenResubmitModal(SubmissionItem item)
+    {
+        resubmitTarget = item;
+        resubmitComment = null;
+        resubmitComments = await approvalChainService.GetCommentsAsync(item.AssetApprovalId);
+        showResubmitModal = true;
+        StateHasChanged();
+    }
+
+    private void CloseResubmitModal()
+    {
+        showResubmitModal = false;
+        resubmitTarget = null;
+    }
+
+    private async Task ConfirmResubmit()
+    {
+        if (resubmitTarget == null || sessionState.User == null || string.IsNullOrWhiteSpace(resubmitComment)) return;
+
+        await approvalChainService.AddCommentAsync(
+            resubmitTarget.AssetApprovalId, null, sessionState.User.UserId,
+            resubmitComment.Trim(), "resubmit");
+
+        await assetApprovalService.ResubmitAsync(resubmitTarget.AssetApprovalId, sessionState.User.UserId, resubmitComment.Trim());
+
+        var approval = await assetApprovalService.GetApprovalByIdAsync(resubmitTarget.AssetApprovalId);
+        if (approval?.Asset != null)
+        {
+            await approvalChainService.SubmitToChainAsync(resubmitTarget.AssetApprovalId, approval.Asset.LocationId);
+        }
+
+        showResubmitModal = false;
+        resubmitTarget = null;
+
+        statusMessage = "Content has been re-submitted for approval.";
+        statusMessageClass = "alert-success";
+
+        await LoadAllQueues();
+        StateHasChanged();
+    }
+
+    // Infer video from extension since ApprovalQueueItem does not carry AssetTypeId
+    private static bool IsVideo(string? path) =>
+        path != null && (path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase) ||
+                         path.EndsWith(".webm", StringComparison.OrdinalIgnoreCase) ||
+                         path.EndsWith(".mov", StringComparison.OrdinalIgnoreCase));
+}
+
+<style>
+    /* --- Full-page loading spinner --- */
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255, 255, 255, 0.85);
+        z-index: 9999;
+    }
+
+    /* --- Tabs (desktop; phones use the dx-tab-select) --- */
+    .appr-tabs {
+        display: flex;
+        gap: 4px;
+        margin-bottom: 16px;
+        border-bottom: 2px solid var(--dx-border-color);
+    }
+    .appr-tab {
+        background: none;
+        border: none;
+        padding: 10px 20px;
+        font-family: var(--dx-font-family);
+        font-size: 14px;
+        color: var(--dx-text-muted);
+        cursor: pointer;
+        border-bottom: 2px solid transparent;
+        margin-bottom: -2px;
+        transition: color var(--dx-transition);
+        white-space: nowrap;
+    }
+    .appr-tab.active {
+        color: var(--dx-blue);
+        border-bottom-color: var(--dx-blue);
+    }
+    .appr-tab:hover { color: var(--dx-text-primary); }
+    .appr-badge {
+        background: var(--dx-blue);
+        color: white;
+        border-radius: 10px;
+        padding: 1px 7px;
+        font-size: 11px;
+        margin-left: 4px;
+    }
+
+    /* --- Filter bar (My Submissions) --- */
+    .appr-filter-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 12px;
+    }
+    .appr-filter-group { display: flex; align-items: center; gap: 6px; }
+    .appr-filter-label {
+        font-family: var(--dx-font-family);
+        font-size: 12px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: var(--dx-text-muted);
+    }
+    .appr-filter-select { width: auto; min-width: 120px; }
+    .appr-filter-count {
+        font-size: 12px;
+        color: var(--dx-text-muted);
+        margin-left: auto;
+    }
+
+    /* --- Table --- */
+    .appr-table {
+        font-size: 13px;
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        overflow: hidden;
+    }
+    .appr-table thead th {
+        background: var(--dx-bg-alt);
+        border-bottom: 2px solid var(--dx-border-color);
+        font-family: var(--dx-font-family);
+        font-weight: 600;
+        font-size: 12px;
+        text-transform: uppercase;
+        color: var(--dx-text-muted);
+        padding: 8px 12px;
+        white-space: nowrap;
+    }
+    .appr-table tbody td {
+        vertical-align: middle;
+        padding: 6px 12px;
+        border-bottom: 1px solid #eee;
+    }
+
+    /* --- Thumbnail --- */
+    .appr-thumb-cell { width: 110px; padding: 6px 8px !important; }
+    .appr-thumb-link {
+        display: block;
+        width: 94px;
+        height: 70px;
+        overflow: hidden;
+        border-radius: var(--dx-border-radius);
+        border: 1px solid var(--dx-border-color);
+        background: #f8f8f8;
+    }
+    .appr-thumb-img {
+        display: block;
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+    }
+
+    /* --- Action buttons (compact) --- */
+    .appr-action-btn { padding: 5px 12px; font-size: 12px; }
+
+    /* --- Inline badges --- */
+    .appr-group-badge {
+        background: #e8f5e9;
+        color: #2e7d32;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+    }
+    .appr-stage-indicator {
+        background: #e3f2fd;
+        color: #1565c0;
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+    }
+
+    /* --- Status badges --- */
+    .appr-status-badge {
+        padding: 3px 10px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+    }
+    .appr-sb-pending  { background: #fff3cd; color: #856404; }
+    .appr-sb-approved { background: #d4edda; color: #155724; }
+    .appr-sb-declined { background: #f8d7da; color: #721c24; }
+
+    .appr-auto-badge {
+        display: inline-block;
+        background: #e8eaf6;
+        color: #3949ab;
+        padding: 2px 7px;
+        border-radius: 8px;
+        font-size: 10px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+        margin-left: 6px;
+        vertical-align: middle;
+    }
+    .appr-expiry-countdown {
+        font-size: 11px;
+        color: var(--dx-red);
+        font-style: italic;
+    }
+
+    /* --- Pagination --- */
+    .appr-pager {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 4px;
+        padding: 10px 0 4px;
+    }
+    .appr-pager-btn {
+        min-width: 32px;
+        height: 32px;
+        padding: 0 8px;
+        font-size: 13px;
+        font-family: var(--dx-font-family);
+        background: #fff;
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        cursor: pointer;
+        color: var(--dx-text-primary);
+        transition: background-color var(--dx-transition), color var(--dx-transition);
+    }
+    .appr-pager-btn:hover:not(:disabled) { background: var(--dx-bg-alt); }
+    .appr-pager-btn.active {
+        background: var(--dx-blue);
+        border-color: var(--dx-blue);
+        color: #fff;
+        font-weight: 700;
+    }
+    .appr-pager-btn:disabled { opacity: 0.4; cursor: default; }
+    .appr-pager-info {
+        font-size: 12px;
+        color: var(--dx-text-muted);
+        margin-right: 8px;
+    }
+
+    /* --- Detail panel --- */
+    .appr-detail-panel {
+        background: #fafafa;
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 20px;
+        margin-top: 16px;
+    }
+    .appr-detail-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 12px;
+    }
+    .appr-detail-header h5 { margin: 0; font-family: var(--dx-font-family); }
+    .appr-detail-meta {
+        display: flex;
+        gap: 20px;
+        flex-wrap: wrap;
+        font-size: 13px;
+        margin-bottom: 8px;
+    }
+    .appr-section-label {
+        font-family: var(--dx-font-family);
+        font-size: 13px;
+        color: var(--dx-text-muted);
+    }
+    .appr-status-pending { color: #e65100; font-weight: 600; }
+    .appr-status-approved { color: #2e7d32; font-weight: 600; }
+    .appr-status-declined { color: var(--dx-red); font-weight: 600; }
+
+    /* --- Stage timeline --- */
+    .appr-stages-timeline { display: flex; flex-direction: column; gap: 8px; }
+    .appr-stage-block {
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 10px 14px;
+        background: #fff;
+    }
+    .appr-stage-current { border-color: var(--dx-blue); background: #f0f7ff; }
+    .appr-stage-title {
+        font-family: var(--dx-font-family);
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+    }
+    .appr-current-label {
+        background: var(--dx-blue);
+        color: white;
+        padding: 1px 6px;
+        border-radius: 8px;
+        font-size: 10px;
+        margin-left: 6px;
+    }
+    .appr-group-detail {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-size: 13px;
+        padding: 3px 0 3px 16px;
+        flex-wrap: wrap;
+    }
+    .appr-group-name { font-weight: 600; min-width: 120px; }
+    .appr-queue-status {
+        padding: 2px 6px;
+        border-radius: 8px;
+        font-size: 11px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+    }
+    .appr-qs-pending     { background: #fff3cd; color: #856404; }
+    .appr-qs-approved    { background: #d4edda; color: #155724; }
+    .appr-qs-declined    { background: #f8d7da; color: #721c24; }
+    .appr-qs-superseded  { background: #f5f5f5; color: #9e9e9e; }
+    .appr-qs-not-reached { background: #fafafa; color: #bbb; }
+    .appr-actor       { color: var(--dx-text-muted); font-style: italic; }
+    .appr-action-date { color: #888; font-size: 12px; }
+    .appr-notes       { color: #555; font-style: italic; }
+
+    /* --- Comment thread --- */
+    .appr-comment-thread {
+        max-height: 250px;
+        overflow-y: auto;
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 8px 12px;
+        background: #fff;
+    }
+    .appr-comment-item { padding: 6px 0; border-bottom: 1px solid #f0f0f0; }
+    .appr-comment-item:last-child { border-bottom: none; }
+    .appr-comment-user { font-weight: 600; font-size: 13px; color: var(--dx-text-primary); }
+    .appr-comment-type-badge {
+        font-size: 10px;
+        font-weight: 600;
+        font-family: var(--dx-font-family);
+        padding: 1px 6px;
+        border-radius: 8px;
+        text-transform: uppercase;
+        margin-left: 6px;
+    }
+    .appr-ctb-submit   { background: #e3f2fd; color: #1565c0; }
+    .appr-ctb-resubmit { background: #fff3cd; color: #856404; }
+    .appr-ctb-approve  { background: #d4edda; color: #155724; }
+    .appr-ctb-decline  { background: #f8d7da; color: #721c24; }
+    .appr-ctb-general  { background: #f5f5f5; color: #666; }
+    .appr-comment-timestamp { font-size: 11px; color: #999; margin-left: 8px; }
+    .appr-comment-body {
+        font-size: 13px;
+        color: #444;
+        margin-top: 4px;
+        padding-left: 4px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+    }
+
+    /* Unbroken strings (filenames, UPNs) must never widen the layout */
+    .appr-table td,
+    .appr-detail-header h5 {
+        overflow-wrap: anywhere;
+    }
+
+    /* --- Responsive layout --- */
+    /* The full tables need ~1000px; progressively drop informational columns so
+       the name, status and actions stay reachable without horizontal scroll. */
+    @@media (max-width: 768px) {
+        .appr-col-optional {
+            display: none;
+        }
+    }
+
+    /* Below 640px each row renders as a stacked card: thumbnail and name with
+       inline badges, actions on their own full-width row. */
+    @@media (max-width: 640px) {
+        .appr-table thead {
+            display: none;
+        }
+
+        .appr-table tbody tr {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 10px;
+            padding: 10px 8px;
+            border-bottom: 1px solid var(--dx-border-color);
+        }
+
+        .appr-table tbody td {
+            display: block;
+            border: none;
+            padding: 0;
+            min-width: 0;
+            max-width: 100%;
+        }
+
+        /* Actions column is last in every table; give it its own row */
+        .appr-table tbody td:last-child {
+            flex-basis: 100%;
+            margin-top: 6px;
+        }
+
+        /* Keep the columns dropped at wider breakpoints dropped in card mode too */
+        .appr-table tbody td.appr-col-optional {
+            display: none;
+        }
+    }
+
+    @@media (max-width: 520px) {
+        .appr-col-secondary,
+        .appr-table tbody td.appr-col-secondary {
+            display: none;
+        }
+
+        /* Inline th widths sized for the full column set; let the survivors flex */
+        .appr-table th {
+            width: auto !important;
+        }
+    }
+
+    /* --- Touch devices --- */
+    /* Approve/Decline and pager controls are the page's primary actions; keep them
+       at a usable tap size on tablets/phones. */
+    @@media (pointer: coarse) {
+        .appr-action-btn {
+            min-height: 44px;
+            padding: 8px 14px;
+        }
+
+        .appr-pager-btn {
+            min-width: 44px;
+            height: 44px;
+        }
+    }
+</style>

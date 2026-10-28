@@ -1,0 +1,236 @@
+@using DXSuite.Director.Models
+
+<div class="epe-editor">
+    @for (var i = 0; i < Profiles.Count; i++)
+    {
+        var profile = Profiles[i];
+        var idx = i;
+        <div class="epe-card @(draggedIndex == idx ? "epe-dragging" : "") @(dropTargetIndex == idx ? "epe-drop-target" : "")"
+             draggable="true"
+             @ondragstart="() => draggedIndex = idx"
+             @ondragover:preventDefault
+             @ondragover="() => dropTargetIndex = idx"
+             @ondrop="() => OnDrop(idx)"
+             @ondragend="() => { draggedIndex = null; dropTargetIndex = null; }">
+
+            <div class="epe-card-header">
+                <span class="epe-drag-handle" title="Drag to reorder">≡</span>
+                <span class="epe-card-title">Profile @(idx + 1)</span>
+                <button class="epe-delete" title="Remove profile" @onclick="() => RemoveProfile(idx)">×</button>
+            </div>
+
+            <div class="epe-card-body">
+                <div class="epe-row">
+                    <label class="epe-label">Resolution</label>
+                    <div class="epe-radio-group">
+                        <label class="epe-radio">
+                            <input type="radio" name="res-@profile.Id" value="all"
+                                   checked="@(profile.ResolutionMode == "all")"
+                                   @onchange="e => OnResolutionModeChanged(profile, e)" />
+                            All
+                        </label>
+                        <label class="epe-radio">
+                            <input type="radio" name="res-@profile.Id" value="max"
+                                   checked="@(profile.ResolutionMode == "max")"
+                                   @onchange="e => OnResolutionModeChanged(profile, e)" />
+                            Max
+                        </label>
+                        <label class="epe-radio">
+                            <input type="radio" name="res-@profile.Id" value="custom"
+                                   checked="@(profile.ResolutionMode == "custom")"
+                                   @onchange="e => OnResolutionModeChanged(profile, e)" />
+                            Custom
+                        </label>
+                    </div>
+                </div>
+
+                @if (profile.ResolutionMode == "max")
+                {
+                    <div class="epe-row">
+                        <label class="epe-label"></label>
+                        <div class="epe-dim-inputs">
+                            <input type="number" class="epe-input" placeholder="Max W" min="1"
+                                   value="@profile.MaxWidth"
+                                   @onchange="e => { profile.MaxWidth = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                            <span>×</span>
+                            <input type="number" class="epe-input" placeholder="Max H" min="1"
+                                   value="@profile.MaxHeight"
+                                   @onchange="e => { profile.MaxHeight = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                            <span class="epe-unit">px</span>
+                        </div>
+                    </div>
+                }
+
+                @if (profile.ResolutionMode == "custom")
+                {
+                    <div class="epe-row">
+                        <label class="epe-label"></label>
+                        <div class="epe-dim-inputs">
+                            <input type="number" class="epe-input" placeholder="Width" min="1"
+                                   value="@profile.CustomWidth"
+                                   @onchange="e => { profile.CustomWidth = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                            <span>×</span>
+                            <input type="number" class="epe-input" placeholder="Height" min="1"
+                                   value="@profile.CustomHeight"
+                                   @onchange="e => { profile.CustomHeight = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                            <span class="epe-unit">px</span>
+                        </div>
+                    </div>
+                }
+
+                <div class="epe-row">
+                    <label class="epe-label">Max Bitrate</label>
+                    <div class="epe-inline">
+                        <input type="number" class="epe-input" placeholder="No limit" min="100"
+                               value="@profile.MaxBitrateKbps"
+                               @onchange="e => { profile.MaxBitrateKbps = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                        <span class="epe-unit">Kbps</span>
+                        @if (profile.MaxBitrateKbps.HasValue)
+                        {
+                            <span class="epe-hint">(@((profile.MaxBitrateKbps.Value / 1000.0).ToString("F1")) Mbps)</span>
+                        }
+                    </div>
+                </div>
+
+                <div class="epe-row">
+                    <label class="epe-label">Max FPS</label>
+                    <div class="epe-inline">
+                        <input type="number" class="epe-input" placeholder="No limit" min="1" max="120"
+                               value="@profile.MaxFps"
+                               @onchange="e => { profile.MaxFps = ParseNullableInt(e.Value?.ToString()); _ = NotifyChanged(); }" />
+                        <span class="epe-unit">fps</span>
+                    </div>
+                </div>
+
+                <div class="epe-row">
+                    <label class="epe-label">Codec</label>
+                    <select class="epe-select"
+                            value="@profile.Codec"
+                            @onchange="e => OnCodecChanged(profile, e)">
+                        <option value="h264">H.264</option>
+                        <option value="h265">H.265</option>
+                        <option value="auto">Auto (source codec)</option>
+                    </select>
+                </div>
+
+                <div class="epe-row">
+                    <label class="epe-label">Strip Audio</label>
+                    <label class="dx-toggle" title="@(profile.StripAudio ? "Audio will be removed on re-encode" : "Audio will be preserved on re-encode")">
+                        <input type="checkbox" checked="@profile.StripAudio"
+                               @onchange="e => { profile.StripAudio = (bool)e.Value!; _ = NotifyChanged(); }" />
+                        <span class="dx-toggle-slider"></span>
+                    </label>
+                    <span class="epe-hint">@(profile.StripAudio ? "Audio removed on re-encode" : "Audio preserved (default)")</span>
+                </div>
+            </div>
+        </div>
+    }
+
+    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddProfile">+ Add Profile</button>
+</div>
+
+<style>
+    .epe-editor { display: flex; flex-direction: column; gap: 10px; }
+    .epe-card {
+        border: 1px solid var(--dx-border);
+        border-radius: 6px;
+        background: var(--dx-bg);
+        cursor: grab;
+    }
+    .epe-card.epe-dragging { opacity: 0.5; }
+    .epe-card.epe-drop-target { border-color: var(--dx-blue); box-shadow: 0 0 0 2px rgba(0,100,200,0.2); }
+    .epe-card-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        background: var(--dx-bg-alt);
+        border-bottom: 1px solid var(--dx-border);
+        border-radius: 6px 6px 0 0;
+    }
+    .epe-drag-handle { color: var(--dx-text-muted); font-size: 1.1rem; cursor: grab; user-select: none; }
+    .epe-card-title { font-weight: 600; font-size: 0.9rem; flex: 1; }
+    .epe-delete { background: none; border: none; color: var(--dx-text-muted); font-size: 1.2rem; cursor: pointer; padding: 0 4px; line-height: 1; }
+    .epe-delete:hover { color: #dc3545; }
+    .epe-card-body { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .epe-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+    .epe-label { font-size: 0.85rem; color: var(--dx-text-muted); width: 90px; flex-shrink: 0; }
+    .epe-radio-group { display: flex; gap: 12px; }
+    .epe-radio { display: flex; align-items: center; gap: 4px; font-size: 0.9rem; cursor: pointer; }
+    .epe-dim-inputs { display: flex; align-items: center; gap: 6px; }
+    .epe-input { width: 80px; padding: 4px 6px; border: 1px solid var(--dx-border); border-radius: 4px; font-size: 0.9rem; background: var(--dx-bg); color: var(--dx-text-primary); }
+    .epe-unit { font-size: 0.85rem; color: var(--dx-text-muted); }
+    .epe-hint { font-size: 0.8rem; color: var(--dx-text-muted); }
+    .epe-select { padding: 4px 8px; border: 1px solid var(--dx-border); border-radius: 4px; font-size: 0.9rem; background: var(--dx-bg); color: var(--dx-text-primary); }
+    .epe-inline { display: flex; align-items: center; gap: 6px; }
+</style>
+
+@code {
+    [Parameter] public List<EncodingProfile> Profiles { get; set; } = new();
+    [Parameter] public EventCallback<List<EncodingProfile>> ProfilesChanged { get; set; }
+
+    private int? draggedIndex;
+    private int? dropTargetIndex;
+
+    private void OnResolutionModeChanged(EncodingProfile p, ChangeEventArgs e)
+    {
+        p.ResolutionMode = e.Value?.ToString() ?? "all";
+        _ = NotifyChanged();
+    }
+
+    private void OnCodecChanged(EncodingProfile p, ChangeEventArgs e)
+    {
+        p.Codec = e.Value?.ToString() ?? "h264";
+        _ = NotifyChanged();
+    }
+
+    private async Task NotifyChanged()
+    {
+        RenumberSortOrder();
+        await ProfilesChanged.InvokeAsync(Profiles);
+    }
+
+    private void AddProfile()
+    {
+        var maxOrder = Profiles.Count > 0 ? Profiles.Max(p => p.SortOrder) : 0;
+        Profiles.Add(new EncodingProfile { SortOrder = maxOrder + 1 });
+        _ = NotifyChanged();
+    }
+
+    private void RemoveProfile(int idx)
+    {
+        if (idx >= 0 && idx < Profiles.Count)
+        {
+            Profiles.RemoveAt(idx);
+            _ = NotifyChanged();
+        }
+    }
+
+    private void OnDrop(int targetIdx)
+    {
+        if (draggedIndex.HasValue && draggedIndex.Value != targetIdx
+            && draggedIndex.Value >= 0 && draggedIndex.Value < Profiles.Count
+            && targetIdx >= 0 && targetIdx < Profiles.Count)
+        {
+            var item = Profiles[draggedIndex.Value];
+            Profiles.RemoveAt(draggedIndex.Value);
+            Profiles.Insert(targetIdx, item);
+            RenumberSortOrder();
+            _ = NotifyChanged();
+        }
+        draggedIndex = null;
+        dropTargetIndex = null;
+    }
+
+    private void RenumberSortOrder()
+    {
+        for (int i = 0; i < Profiles.Count; i++)
+            Profiles[i].SortOrder = i + 1;
+    }
+
+    private static int? ParseNullableInt(string? s)
+    {
+        if (string.IsNullOrWhiteSpace(s)) return null;
+        return int.TryParse(s, out var v) ? v : null;
+    }
+}

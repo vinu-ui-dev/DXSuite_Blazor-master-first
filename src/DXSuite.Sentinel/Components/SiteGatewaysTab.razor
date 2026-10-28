@@ -1,0 +1,700 @@
+@using DXSuite.Sentinel.Entities
+@using DXSuite.Sentinel.Services.Gateway
+@using DXSuite.Sentinel.Services.Mqtt
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.EntityFrameworkCore
+@inject ISentinelDBContext sentinelDb
+@inject IGatewayConnectionManager gatewayManager
+@inject ITenantContext tenant
+@inject SentinelMqttOptions mqttOptions
+@inject ILogger<SiteGatewaysTab> Logger
+@implements IDisposable
+
+<div class="tab-panel">
+    <div class="panel-header">
+        <h3>Sentinel Agents <DXSuite.Shared.Components.HelpLink Page="connectors/gateway-setup" Title="Agent setup help" /></h3>
+        <div class="header-actions">
+            <button class="dx-btn dx-btn-outline-blue" @onclick="StartBulkEnroll">BULK ENROLL</button>
+            <button class="dx-btn dx-btn-blue" @onclick="StartAddGateway">ADD AGENT</button>
+        </div>
+    </div>
+    <div class="panel-content">
+        @if (showGatewayForm)
+        {
+            <div class="sentinel-inline-form">
+                <h4>@(editingGateway?.GatewayId > 0 ? "Edit Gateway" : "New Gateway")</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Site Name</label>
+                        <input class="dx-form-control" @bind="editingGateway!.SiteName" placeholder="e.g. Toronto Office" />
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            <input type="checkbox" class="dx-checkbox" @bind="editingGateway!.IsEnabled" /> Enabled
+                        </label>
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveGateway">SAVE</button>
+                    @if (editingGateway?.GatewayId > 0)
+                    {
+                        <button class="dx-btn dx-btn-outline-blue" @onclick="RegenerateApiKey">REGENERATE TOKEN</button>
+                    }
+                    <button class="dx-btn dx-btn-gray" @onclick="CancelGatewayForm">CANCEL</button>
+                </div>
+                @if (!string.IsNullOrEmpty(gatewayMessage))
+                {
+                    <div class="form-message @(gatewayMessageIsError ? "error" : "success")">@gatewayMessage</div>
+                }
+                @if (!string.IsNullOrEmpty(generatedApiKey))
+                {
+                    <div class="api-key-display">
+                        <div class="api-key-warning">Configure the gateway agent with these settings. Copy the pairing token now — it will not be shown again.</div>
+                        <div class="provision-grid">
+                            <span class="detail-label">Broker</span>
+                            <span class="detail-value">@mqttOptions.Host:@mqttOptions.Port</span>
+                            <span class="detail-label">Tenant ID</span>
+                            <span class="detail-value">@tenant.TenantId</span>
+                            <span class="detail-label">Gateway ID</span>
+                            <span class="detail-value">@editingGateway?.GatewayId</span>
+                        </div>
+                        <div class="provision-token-label">Pairing token</div>
+                        <code class="api-key-value">@generatedApiKey</code>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (showEnrollForm)
+        {
+            <div class="sentinel-inline-form">
+                <h4>Bulk enrollment token</h4>
+                <p class="enroll-help">Install the agent on many machines with one token. Each machine claims its own gateway identity on first run. The token is shown once.</p>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Label</label>
+                        <input class="dx-form-control" @bind="newTokenLabel" placeholder="e.g. Store workstations 2026" />
+                    </div>
+                    <div class="form-group">
+                        <label>Default roles</label>
+                        <input class="dx-form-control" @bind="newTokenRoles" placeholder="selfmonitor,tasks" />
+                    </div>
+                    <div class="form-group">
+                        <label>Expires in (days)</label>
+                        <input type="number" class="dx-form-control" @bind="newTokenExpiryDays" />
+                    </div>
+                    <div class="form-group">
+                        <label>Max uses (blank = unlimited)</label>
+                        <input type="number" class="dx-form-control" @bind="newTokenMaxUses" />
+                    </div>
+                </div>
+                <div class="form-actions">
+                    <button class="dx-btn dx-btn-blue" @onclick="GenerateEnrollToken">GENERATE TOKEN</button>
+                    <button class="dx-btn dx-btn-gray" @onclick="() => showEnrollForm = false">CLOSE</button>
+                </div>
+                @if (!string.IsNullOrEmpty(enrollMessage))
+                {
+                    <div class="form-message @(enrollMessageIsError ? "error" : "success")">@enrollMessage</div>
+                }
+                @if (!string.IsNullOrEmpty(generatedEnrollToken))
+                {
+                    <div class="api-key-display">
+                        <div class="api-key-warning">Copy this token now — it will not be shown again. Pass it to the installer (e.g. <code>msiexec /i … ENROLLTOKEN=…</code>).</div>
+                        <div class="provision-grid">
+                            <span class="detail-label">Broker</span>
+                            <span class="detail-value">@mqttOptions.Host:@mqttOptions.Port</span>
+                            <span class="detail-label">Tenant ID</span>
+                            <span class="detail-value">@tenant.TenantId</span>
+                        </div>
+                        <div class="provision-token-label">Enrollment token</div>
+                        <code class="api-key-value">@generatedEnrollToken</code>
+                    </div>
+                }
+
+                @if (enrollTokens != null && enrollTokens.Any())
+                {
+                    <h5 class="token-list-title">Active tokens</h5>
+                    <table class="token-table">
+                        <thead><tr><th>Label</th><th>Roles</th><th>Uses</th><th>Expires</th><th></th></tr></thead>
+                        <tbody>
+                            @foreach (var t in enrollTokens)
+                            {
+                                <tr class="@(IsTokenInactive(t) ? "token-inactive" : "")">
+                                    <td>@t.Label</td>
+                                    <td>@(t.DefaultRoles ?? "—")</td>
+                                    <td>@t.UseCount@(t.MaxUses.HasValue ? $" / {t.MaxUses}" : "")</td>
+                                    <td>@(t.ExpiresUtc?.ToString("MMM dd yyyy") ?? "never")@(t.IsRevoked ? " (revoked)" : "")</td>
+                                    <td>@if (!t.IsRevoked) { <button class="action-link danger" @onclick="() => RevokeToken(t)">revoke</button> }</td>
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        }
+
+        @if (gateways != null && gateways.Any())
+        {
+            <div class="gateway-cards">
+                @foreach (var gw in gateways)
+                {
+                    var isOnline = gatewayManager.IsGatewayOnline(gw.GatewayId);
+                    var deviceCount = gatewayDeviceCounts.GetValueOrDefault(gw.GatewayId, 0);
+                    <div class="gateway-card">
+                        <div class="gateway-card-header">
+                            <div class="gateway-card-title">
+                                <h4>@gw.SiteName</h4>
+                                <span class="active-badge @(isOnline ? "badge-green" : "badge-gray")">
+                                    @(isOnline ? "Connected" : "Offline")
+                                </span>
+                            </div>
+                            <span class="active-badge @(gw.IsEnabled ? "badge-green" : "badge-gray")">
+                                @(gw.IsEnabled ? "Enabled" : "Disabled")
+                            </span>
+                        </div>
+
+                        <div class="gateway-card-details">
+                            <div class="detail-row">
+                                <span class="detail-label">IP Address:</span>
+                                <span class="detail-value">@(gw.IpAddress ?? "—")</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Version:</span>
+                                <span class="detail-value">@(gw.Version ?? "—")</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Last Heartbeat:</span>
+                                <span class="detail-value">@(gw.LastHeartbeat?.ToString("MMM dd, HH:mm:ss") ?? "Never")</span>
+                            </div>
+                            <div class="detail-row">
+                                <span class="detail-label">Assigned Devices:</span>
+                                <span class="detail-value">@deviceCount</span>
+                            </div>
+                        </div>
+
+                        <div class="gateway-card-actions">
+                            <button class="action-link" @onclick="@(() => EditGateway(gw))">Edit</button>
+                            <button class="action-link danger" @onclick="@(() => DeleteGateway(gw))">Delete</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+        else
+        {
+            <div class="no-devices">
+                <h4>No site gateways configured</h4>
+                <p>Add a gateway to enable remote network probing for devices at remote sites.</p>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private List<SiteGateway>? gateways;
+    private SiteGateway? editingGateway;
+    private bool showGatewayForm = false;
+    private string? gatewayMessage;
+    private bool gatewayMessageIsError = false;
+    private string? generatedApiKey;
+    private Dictionary<int, int> gatewayDeviceCounts = new();
+    private Timer? refreshTimer;
+
+    // Bulk enrollment
+    private bool showEnrollForm;
+    private string newTokenLabel = "";
+    private string newTokenRoles = "selfmonitor,tasks";
+    private int newTokenExpiryDays = 30;
+    private int? newTokenMaxUses;
+    private string? generatedEnrollToken;
+    private string? enrollMessage;
+    private bool enrollMessageIsError;
+    private List<SentinelEnrollmentToken>? enrollTokens;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadGateways();
+        refreshTimer = new Timer(_ => _ = InvokeAsync(RefreshStatus), null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
+    }
+
+    private async Task LoadGateways()
+    {
+        try
+        {
+            gateways = await sentinelDb.SiteGateways
+                .AsNoTracking()
+                .OrderBy(g => g.SiteName)
+                .ToListAsync();
+
+            gatewayDeviceCounts = await sentinelDb.DeviceInstances
+                .AsNoTracking()
+                .Where(d => d.SiteGatewayId != null)
+                .GroupBy(d => d.SiteGatewayId!.Value)
+                .Select(g => new { GatewayId = g.Key, Count = g.Count() })
+                .ToDictionaryAsync(x => x.GatewayId, x => x.Count);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading gateways");
+        }
+    }
+
+    private async Task RefreshStatus()
+    {
+        try
+        {
+            // Re-read heartbeat/status from DB so UI reflects gateway agent updates
+            gateways = await sentinelDb.SiteGateways
+                .AsNoTracking()
+                .OrderBy(g => g.SiteName)
+                .ToListAsync();
+            StateHasChanged();
+        }
+        catch { /* best effort refresh */ }
+    }
+
+    private async Task StartBulkEnroll()
+    {
+        showEnrollForm = true;
+        showGatewayForm = false;
+        generatedEnrollToken = null;
+        enrollMessage = null;
+        await LoadTokens();
+    }
+
+    private async Task LoadTokens()
+    {
+        try
+        {
+            enrollTokens = await sentinelDb.SentinelEnrollmentTokens
+                .AsNoTracking()
+                .Where(t => t.CustomerId == "RAD")
+                .OrderByDescending(t => t.CreateDate)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading enrollment tokens");
+            enrollTokens = new();
+        }
+    }
+
+    private async Task GenerateEnrollToken()
+    {
+        if (string.IsNullOrWhiteSpace(newTokenLabel))
+        {
+            enrollMessage = "Label is required.";
+            enrollMessageIsError = true;
+            return;
+        }
+        try
+        {
+            var tokenValue = GatewayApiKeyHelper.GenerateApiKey();
+            var token = new SentinelEnrollmentToken
+            {
+                CustomerId = "RAD",
+                Label = newTokenLabel.Trim(),
+                TokenHash = GatewayApiKeyHelper.ComputeApiKeyHash(tokenValue),
+                DefaultRoles = string.IsNullOrWhiteSpace(newTokenRoles) ? null : newTokenRoles.Trim(),
+                ExpiresUtc = newTokenExpiryDays > 0 ? DateTime.UtcNow.AddDays(newTokenExpiryDays) : null,
+                MaxUses = newTokenMaxUses is > 0 ? newTokenMaxUses : null,
+                UseCount = 0,
+                IsRevoked = false,
+                CreateDate = DateTime.UtcNow
+            };
+            sentinelDb.SentinelEnrollmentTokens.Add(token);
+            await sentinelDb.SaveChangesAsync();
+            generatedEnrollToken = tokenValue;
+            enrollMessage = "Token generated.";
+            enrollMessageIsError = false;
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error generating enrollment token");
+            enrollMessage = $"Error: {ex.Message}";
+            enrollMessageIsError = true;
+        }
+    }
+
+    private async Task RevokeToken(SentinelEnrollmentToken t)
+    {
+        try
+        {
+            var existing = await sentinelDb.SentinelEnrollmentTokens.FindAsync(t.TokenId);
+            if (existing != null)
+            {
+                existing.IsRevoked = true;
+                await sentinelDb.SaveChangesAsync();
+            }
+            await LoadTokens();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error revoking enrollment token");
+        }
+    }
+
+    private static bool IsTokenInactive(SentinelEnrollmentToken t) =>
+        t.IsRevoked
+        || (t.ExpiresUtc.HasValue && t.ExpiresUtc < DateTime.UtcNow)
+        || (t.MaxUses.HasValue && t.UseCount >= t.MaxUses.Value);
+
+    private void StartAddGateway()
+    {
+        editingGateway = new SiteGateway
+        {
+            CustomerId = "RAD",
+            Status = "disconnected",
+            IsEnabled = true,
+            CreateDate = DateTime.UtcNow
+        };
+        showGatewayForm = true;
+        gatewayMessage = null;
+        generatedApiKey = null;
+    }
+
+    private void EditGateway(SiteGateway gw)
+    {
+        editingGateway = new SiteGateway
+        {
+            GatewayId = gw.GatewayId,
+            CustomerId = gw.CustomerId,
+            SiteName = gw.SiteName,
+            IsEnabled = gw.IsEnabled,
+            ApiKeyHash = gw.ApiKeyHash,
+            Status = gw.Status,
+            CreateDate = gw.CreateDate
+        };
+        showGatewayForm = true;
+        gatewayMessage = null;
+        generatedApiKey = null;
+    }
+
+    private async Task SaveGateway()
+    {
+        if (editingGateway == null) return;
+
+        try
+        {
+            if (editingGateway.GatewayId > 0)
+            {
+                var existing = await sentinelDb.SiteGateways.FindAsync(editingGateway.GatewayId);
+                if (existing != null)
+                {
+                    existing.SiteName = editingGateway.SiteName;
+                    existing.IsEnabled = editingGateway.IsEnabled;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                // New gateway — generate API key
+                var apiKey = GatewayApiKeyHelper.GenerateApiKey();
+                editingGateway.ApiKeyHash = GatewayApiKeyHelper.ComputeApiKeyHash(apiKey);
+                sentinelDb.SiteGateways.Add(editingGateway);
+                generatedApiKey = apiKey;
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            gatewayMessage = "Gateway saved successfully.";
+            gatewayMessageIsError = false;
+
+            if (editingGateway.GatewayId > 0 && generatedApiKey == null)
+            {
+                // Edit mode with no new key — close form
+                showGatewayForm = false;
+            }
+
+            await LoadGateways();
+        }
+        catch (Exception ex)
+        {
+            gatewayMessage = $"Error saving gateway: {ex.Message}";
+            gatewayMessageIsError = true;
+        }
+    }
+
+    private async Task RegenerateApiKey()
+    {
+        if (editingGateway == null || editingGateway.GatewayId <= 0) return;
+
+        try
+        {
+            var existing = await sentinelDb.SiteGateways.FindAsync(editingGateway.GatewayId);
+            if (existing != null)
+            {
+                var apiKey = GatewayApiKeyHelper.GenerateApiKey();
+                existing.ApiKeyHash = GatewayApiKeyHelper.ComputeApiKeyHash(apiKey);
+                existing.LastEditDate = DateTime.UtcNow;
+                await sentinelDb.SaveChangesAsync();
+
+                generatedApiKey = apiKey;
+                gatewayMessage = "Pairing token regenerated. Copy the new token — the old one is now invalid.";
+                gatewayMessageIsError = false;
+            }
+        }
+        catch (Exception ex)
+        {
+            gatewayMessage = $"Error regenerating API key: {ex.Message}";
+            gatewayMessageIsError = true;
+        }
+    }
+
+    private async Task DeleteGateway(SiteGateway gw)
+    {
+        try
+        {
+            var existing = await sentinelDb.SiteGateways.FindAsync(gw.GatewayId);
+            if (existing != null)
+            {
+                sentinelDb.SiteGateways.Remove(existing);
+                await sentinelDb.SaveChangesAsync();
+            }
+
+            await LoadGateways();
+        }
+        catch (Exception ex)
+        {
+            gatewayMessage = $"Error deleting gateway: {ex.Message}";
+            gatewayMessageIsError = true;
+        }
+    }
+
+    private void CancelGatewayForm()
+    {
+        showGatewayForm = false;
+        editingGateway = null;
+        gatewayMessage = null;
+        generatedApiKey = null;
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}
+
+<style>
+    .panel-header {
+        margin-bottom: 20px;
+    }
+
+    .sentinel-inline-form {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .sentinel-inline-form h4 {
+        margin: 0 0 16px 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+        color: #333;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .form-group {
+        flex: 1;
+        min-width: 200px;
+        margin-bottom: 8px;
+    }
+
+    .form-group label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 4px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .form-group .dx-form-control {
+        font-size: 14px;
+        margin-top: 0;
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .form-message {
+        margin-top: 10px;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 13px;
+    }
+
+    .form-message.success {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    .form-message.error {
+        background: #ffebee;
+        color: #c62828;
+    }
+
+    .api-key-display {
+        margin-top: 12px;
+        padding: 12px;
+        background: #fff8e1;
+        border: 1px solid #ffcc02;
+        border-radius: 6px;
+    }
+
+    .api-key-warning {
+        font-size: 13px;
+        font-weight: 600;
+        color: #e65100;
+        margin-bottom: 8px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .provision-grid {
+        display: grid;
+        grid-template-columns: max-content 1fr;
+        gap: 4px 16px;
+        margin-bottom: 10px;
+        font-size: 13px;
+    }
+
+    .provision-token-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 4px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .api-key-value {
+        display: block;
+        background: #333;
+        color: #4caf50;
+        padding: 10px;
+        border-radius: 4px;
+        font-size: 13px;
+        word-break: break-all;
+        user-select: all;
+    }
+
+    .gateway-cards {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+        gap: 16px;
+    }
+
+    .gateway-card {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 16px;
+    }
+
+    .gateway-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .gateway-card-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .gateway-card-title h4 {
+        margin: 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+    }
+
+    .gateway-card-details {
+        margin-bottom: 12px;
+    }
+
+    .detail-row {
+        display: flex;
+        gap: 8px;
+        padding: 3px 0;
+        font-size: 13px;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 120px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .detail-value {
+        color: #333;
+    }
+
+    .active-badge {
+        padding: 3px 8px;
+        border-radius: 12px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .badge-green { background: #e8f5e9; color: #2e7d32; }
+    .badge-gray { background: #f5f5f5; color: #616161; }
+
+    .gateway-card-actions {
+        display: flex;
+        gap: 12px;
+        padding-top: 12px;
+        border-top: 1px solid #f0f0f0;
+    }
+
+    .action-link {
+        color: #0071BC;
+        text-decoration: none;
+        font-size: 13px;
+        font-family: "BAHNSCHRIFT";
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0;
+    }
+
+    .action-link:hover {
+        text-decoration: underline;
+    }
+
+    .header-actions { display: flex; gap: 8px; align-items: center; }
+    .enroll-help { font-size: 13px; color: #666; margin: 0 0 12px; }
+    .token-list-title { margin: 18px 0 8px; font-size: 14px; color: #333; }
+    .token-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .token-table th { text-align: left; color: #777; font-weight: 600; border-bottom: 2px solid #e0e0e0; padding: 6px 8px; }
+    .token-table td { border-bottom: 1px solid #eee; padding: 6px 8px; }
+    .token-inactive { color: #aaa; }
+
+    .action-link.danger {
+        color: #c62828;
+    }
+
+    .no-devices {
+        text-align: center;
+        padding: 40px 20px;
+        color: #666;
+    }
+
+    .no-devices h4 {
+        margin-bottom: 8px;
+    }
+</style>

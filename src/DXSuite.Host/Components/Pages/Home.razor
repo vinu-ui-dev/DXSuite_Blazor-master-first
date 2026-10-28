@@ -1,0 +1,115 @@
+@page "/"
+@using System.Reflection
+@using DXSuite.Shared.Module
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Services
+@inject IReadOnlyList<IBlazorModule> Modules
+@inject ITenantContext TenantContext
+@inject ISessionState SessionState
+@inject IServiceScopeFactory ScopeFactory
+@inject NavigationManager NavigationManager
+@inject PostLoginNavigationState PostLoginState
+
+<PageTitle>DXSuite</PageTitle>
+
+@{
+    var availableModules = Modules.Where(m => m.IsAvailableForTenant(TenantContext)).ToList();
+
+    // Only surface modules with a user-facing presence (nav items or a home dashboard card).
+    var summaryModules = availableModules
+        .Where(m => m.GetNavItems().Any() || m.GetHomeDashboardComponent() != null)
+        .ToList();
+
+    var dashboardModules = availableModules
+        .Where(m => m.GetHomeDashboardComponent() != null)
+        .ToList();
+
+    var appVersion = Assembly.GetEntryAssembly()?.GetName().Version?.ToString(3) ?? "—";
+}
+
+<div style="display:flex; gap:16px; align-items:stretch;">
+
+    @* ── Active Modules summary card (left) ──────────────────────────────── *@
+    <div class="dx-card" style="flex:1; min-width:0;">
+        <div class="dx-card-body">
+            <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+                <h5 style="font-weight:600; margin:0;">
+                    <i class="bi bi-box-seam" style="margin-right:8px;"></i>Active Modules
+                </h5>
+                <span style="font-size:0.8rem; color:var(--dx-text-muted);">App v@(appVersion)</span>
+            </div>
+
+            <table style="width:100%; border-collapse:collapse; font-size:0.9rem;">
+                <thead>
+                    <tr style="border-bottom:1px solid var(--dx-border, #e5e7eb);">
+                        <th style="text-align:left; padding:6px 8px; font-weight:600; color:var(--dx-text-muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em;">Module</th>
+                        <th style="text-align:left; padding:6px 8px; font-weight:600; color:var(--dx-text-muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em;">Version</th>
+                        <th style="text-align:left; padding:6px 8px; font-weight:600; color:var(--dx-text-muted); font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em;">Quick link</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    @foreach (var module in summaryModules)
+                    {
+                        var nav = module.GetNavItems().FirstOrDefault();
+                        <tr style="border-bottom:1px solid var(--dx-border, #f3f4f6);">
+                            <td style="padding:8px 8px;">
+                                @if (nav is not null)
+                                {
+                                    <i class="bi @nav.Icon" style="margin-right:8px; color:var(--dx-text-muted);"></i>
+                                }
+                                else
+                                {
+                                    <i class="bi bi-box" style="margin-right:8px; color:var(--dx-text-muted);"></i>
+                                }
+                                <strong>@module.Name</strong>
+                            </td>
+                            <td style="padding:8px 8px; color:var(--dx-text-muted);">
+                                @(string.IsNullOrEmpty(module.Version) ? "—" : module.Version)
+                            </td>
+                            <td style="padding:8px 8px;">
+                                @if (nav is not null)
+                                {
+                                    <a href="@nav.Href" style="font-size:0.85rem;">@nav.Label →</a>
+                                }
+                            </td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    @* ── Per-module dashboard cards (right column) ────────────────────────── *@
+    @if (dashboardModules.Any())
+    {
+        <div style="flex:1; min-width:0; display:flex; flex-direction:column; gap:16px;">
+            @foreach (var module in dashboardModules)
+            {
+                var dashType = module.GetHomeDashboardComponent()!;
+                <DynamicComponent Type="@dashType" />
+            }
+        </div>
+    }
+
+</div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        if (PostLoginState.LandingPageRedirectDone) return;
+        PostLoginState.LandingPageRedirectDone = true;
+
+        if (!SessionState.SessionLoaded.Task.IsCompleted)
+            await SessionState.SessionLoaded.Task;
+
+        if (SessionState.User == null) return;
+
+        using var scope = ScopeFactory.CreateScope();
+        var prefs = scope.ServiceProvider.GetRequiredService<IUserPreferenceService>();
+        var landingPage = await prefs.GetDefaultLandingPageAsync(SessionState.User.UserId);
+
+        if (!string.IsNullOrEmpty(landingPage))
+            NavigationManager.NavigateTo(landingPage);
+    }
+}

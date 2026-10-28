@@ -1,0 +1,190 @@
+@rendermode InteractiveServer
+@using DXSuite.SLC.Data
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+
+@if (isVisible)
+{
+    <div class="modal fade show" style="display:block;" tabindex="-1">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Snapshot History - @currentDeviceId</h5>
+                    <button type="button" class="btn-close" @onclick="Close"></button>
+                </div>
+                <div class="modal-body">
+                    <div class="row mb-3">
+                        <div class="col-auto">
+                            <label class="form-label">From</label>
+                            <input type="datetime-local" class="form-control form-control-sm"
+                                   @bind="startDate" @bind:format="yyyy-MM-ddTHH:mm" />
+                        </div>
+                        <div class="col-auto">
+                            <label class="form-label">To</label>
+                            <input type="datetime-local" class="form-control form-control-sm"
+                                   @bind="endDate" @bind:format="yyyy-MM-ddTHH:mm" />
+                        </div>
+                        <div class="col-auto d-flex align-items-end">
+                            <button class="btn btn-primary btn-sm" @onclick="SearchAsync" disabled="@isLoading">
+                                @if (isLoading) { <span>Loading...</span> } else { <span>Search</span> }
+                            </button>
+                        </div>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(errorMessage))
+                    {
+                        <div class="alert alert-danger py-2">@errorMessage</div>
+                    }
+
+                    @if (snapshots.Count == 0 && !isLoading)
+                    {
+                        <div class="text-center text-muted py-4">No snapshots found in the selected range.</div>
+                    }
+                    else if (snapshots.Count > 0)
+                    {
+                        <div class="text-center mb-2" style="font-size:0.85rem; color:#666;">
+                            @(currentIndex + 1) of @snapshots.Count
+                            &nbsp;|&nbsp;
+                            @snapshots[currentIndex].Heartbeat.ToString("MMM d, yyyy h:mm:ss tt")
+                        </div>
+                        <div style="text-align:center; background:#111; padding:8px; border-radius:4px; min-height:200px; display:flex; align-items:center; justify-content:center;">
+                            @{
+                                var snap = snapshots[currentIndex];
+                            }
+                            @if (!string.IsNullOrEmpty(snap.ValueVarchar))
+                            {
+                                <img src="@snap.ValueVarchar" alt="Snapshot" style="max-width:100%; max-height:60vh;" />
+                            }
+                            else if (snap.ValueVarbinary != null && snap.ValueVarbinary.Length > 0)
+                            {
+                                <img src="@GetImageSource(snap.ValueVarbinary, "image/png")" alt="Snapshot" style="max-width:100%; max-height:60vh;" />
+                            }
+                            else
+                            {
+                                <span style="color:#888; font-style:italic;">No image data available for this snapshot.</span>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="modal-footer">
+                    @if (snapshots.Count > 1)
+                    {
+                        <button class="btn btn-secondary btn-sm" @onclick="Previous" disabled="@(currentIndex >= snapshots.Count - 1)">Previous</button>
+                        <button class="btn btn-primary btn-sm" @onclick="Next" disabled="@(currentIndex <= 0)">Next</button>
+                    }
+                    <button class="btn btn-secondary" @onclick="Close">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    private bool isVisible = false;
+    private string? currentDeviceId;
+    private bool isLoading = false;
+    private string? errorMessage;
+
+    private DateTime startDate = DateTime.Now.AddHours(-24);
+    private DateTime endDate = DateTime.Now;
+
+    private List<ViewAllScreenshot> snapshots = new();
+    private int currentIndex = 0;
+
+    public async Task Open(string deviceId)
+    {
+        currentDeviceId = deviceId;
+        endDate = DateTime.Now;
+        startDate = endDate.AddHours(-24);
+        snapshots = new();
+        currentIndex = 0;
+        errorMessage = null;
+        isVisible = true;
+        StateHasChanged();
+
+        await SearchAsync();
+    }
+
+    public void Close()
+    {
+        isVisible = false;
+        StateHasChanged();
+    }
+
+    private async Task SearchAsync()
+    {
+        if (currentDeviceId is null) return;
+
+        // Enforce 24-hour maximum range to prevent excessive data loads.
+        if ((endDate - startDate).TotalHours > 24)
+        {
+            errorMessage = "Date range cannot exceed 24 hours.";
+            return;
+        }
+
+        if (endDate <= startDate)
+        {
+            errorMessage = "End date must be after start date.";
+            return;
+        }
+
+        errorMessage = null;
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            using var scope = ScopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<SlcPulseDbContext>();
+
+            snapshots = await db.ViewAllScreenshots
+                .AsNoTracking()
+                .Where(s => s.DeviceId == currentDeviceId
+                         && s.MonitorItemId == 10
+                         && s.Heartbeat >= startDate
+                         && s.Heartbeat <= endDate)
+                .OrderByDescending(s => s.Heartbeat)
+                .Take(20)
+                .ToListAsync();
+
+            currentIndex = 0;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load snapshots: {ex.Message}";
+            snapshots = new();
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    // Navigate to an older snapshot (higher index = earlier in time, since list is ordered desc).
+    private void Previous()
+    {
+        if (currentIndex < snapshots.Count - 1)
+        {
+            currentIndex++;
+            StateHasChanged();
+        }
+    }
+
+    // Navigate to a newer snapshot (lower index = later in time).
+    private void Next()
+    {
+        if (currentIndex > 0)
+        {
+            currentIndex--;
+            StateHasChanged();
+        }
+    }
+
+    private string GetImageSource(byte[] bytes, string contentType = "image/png")
+    {
+        if (bytes == null || bytes.Length == 0) return string.Empty;
+        return $"data:{contentType};base64,{Convert.ToBase64String(bytes)}";
+    }
+}

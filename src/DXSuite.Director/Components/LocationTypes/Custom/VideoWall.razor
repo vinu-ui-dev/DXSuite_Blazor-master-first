@@ -1,0 +1,860 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory scopeFactory
+@inject IPixeraAllocationService _allocationService
+@inject IWallContentBroadcastService wallBroadcast
+@inject DXSuite.Shared.Multitenancy.ITenantContext TenantContext
+@inject NavigationManager navMan
+@inject IDisplayOverrideService displayOverrides
+@implements IDisposable
+@rendermode InteractiveServer
+
+@if (Location != null)
+{
+    @* Drawer lives outside the section so it is never clipped by page layout containers.
+       position:fixed makes it float over the entire viewport independently. *@
+    <div class="vw-drawer @(sidebarOpen ? "vw-drawer-open" : "")">
+
+        @* Pull tab — always visible at the right edge of the drawer.
+           When the drawer is off-screen, only this 32px strip protrudes into the viewport. *@
+        <button class="vw-drawer-tab" @onclick="() => sidebarOpen = !sidebarOpen"
+                title="@(sidebarOpen ? "Close display panel" : "Open display panel")">
+            <i class="bi @(sidebarOpen ? "bi-chevron-left" : "bi-chevron-right")"></i>
+            <span>DISPLAYS</span>
+        </button>
+
+        @* Drawer header *@
+        <div class="vw-drawer-header">Display Controls</div>
+
+        @* Scrollable body — always rendered so open/close is a pure CSS slide *@
+        <div class="vw-drawer-body dx-scrollable">
+            @if (displays != null && config != null)
+            {
+                var counterGroups = config.Layout.Groups.Where(g => g.AllowAirlineAllocation).OrderBy(g => g.ZIndex).ToList();
+                var layerGroups   = config.Layout.Groups.Where(g => !g.AllowAirlineAllocation).OrderBy(g => g.ZIndex).ToList();
+                @if (counterGroups.Any())
+                {
+                    <p class="vw-sb-section-label">Counter Rows</p>
+                    @foreach (var grp in counterGroups)
+                    {
+                        @foreach (var sbId in grp.DisplayIds)
+                        {
+                            var sbDisp = displays.FirstOrDefault(d => d.DisplayId == sbId);
+                            if (sbDisp == null) continue;
+                            <div class="vw-sb-display-row">
+                                <span class="vw-sb-display-name dx-text-muted">@sbDisp.DisplayName</span>
+                                <div class="vw-sb-display-actions">
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                            @onclick="@(() => navMan.NavigateTo("/display/" + sbDisp.DisplayId))">
+                                        EDIT
+                                    </button>
+                                    @if (sbDisp.DisplayMode == (int)Types.DisplayMode.Override)
+                                    {
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                @onclick="() => BackToSchedule(sbDisp.DisplayId)">
+                                            Cancel Override
+                                        </button>
+                                    }
+                                    else if (SelectedAsset != null)
+                                    {
+                                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                                @onclick="() => OnOverride(sbDisp.DisplayId)">
+                                            Override
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+                @if (layerGroups.Any())
+                {
+                    <p class="vw-sb-section-label" style="margin-top:12px;">Wall Layers</p>
+                    @foreach (var grp in layerGroups)
+                    {
+                        <p class="vw-sb-group-label">@grp.GroupName <span class="dx-text-muted" style="font-weight:400;">(@grp.Role)</span></p>
+                        @foreach (var sbId in grp.DisplayIds)
+                        {
+                            var sbDisp = displays.FirstOrDefault(d => d.DisplayId == sbId);
+                            if (sbDisp == null) continue;
+                            <div class="vw-sb-display-row">
+                                <span class="vw-sb-display-name dx-text-muted">@sbDisp.DisplayName</span>
+                                <div class="vw-sb-display-actions">
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                            @onclick="@(() => navMan.NavigateTo("/display/" + sbDisp.DisplayId))">
+                                        EDIT
+                                    </button>
+                                    @if (sbDisp.DisplayMode == (int)Types.DisplayMode.Override)
+                                    {
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                                @onclick="() => BackToSchedule(sbDisp.DisplayId)">
+                                            Cancel Override
+                                        </button>
+                                    }
+                                    else if (SelectedAsset != null)
+                                    {
+                                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                                @onclick="() => OnOverride(sbDisp.DisplayId)">
+                                            Override
+                                        </button>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+            }
+        </div>
+    </div>
+
+    <section class="body">
+        <div class="vw-scroll-container">
+            @* Stage holds two independently-scaled layers: the context background image (BackgroundScale)
+               and the content overlay (ContentScale). It spans whichever extends further so neither clips. *@
+            <div class="vw-background-container" style="@GetStageStyle()">
+
+                @* Context background image — physical-space orientation, scaled independently of content *@
+                <div class="vw-background-layer" style="@GetBackgroundLayerStyle()"></div>
+
+                @* Content overlay *@
+                <div class="vw-content-overlay" style="@GetContentOverlayStyle()">
+                    @if (displays != null && config != null)
+                    {
+                        @* Individual placements (non-group) *@
+                        @foreach (var placement in config.Layout.Placements.OrderBy(p => p.ZIndex))
+                        {
+                            var display = displays.FirstOrDefault(d => d.DisplayId == placement.DisplayId);
+                            if (display == null) continue;
+                            var effectiveScale = contentScale * placement.DisplayScale;
+
+                            <div style="position:absolute; top:@(placement.PositionTop * contentScale)px; left:@(placement.PositionLeft * contentScale)px; z-index:@placement.ZIndex; display:inline-block;">
+                                <div class="vw-display-wrapper">
+                                    @* First tap on touch reveals the name and action banners; the second tap acts *@
+                                    <div class="vw-display-hit" style="position:relative; display:inline-block; vertical-align:top;"
+                                         @onmouseover="(() => hoverDisplayId = display.DisplayId)"
+                                         @onmouseout="(() => hoverDisplayId = null)"
+                                         @onclick="(() => hoverDisplayId = display.DisplayId)">
+                                        <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display" ScaleFactor="@effectiveScale" />
+                                        @RenderHoverActions(display)
+                                    </div>
+                                    @RenderOverrideBanner(display)
+                                </div>
+                            </div>
+                        }
+
+                        @* Wall layer groups — rendered first (low z-index), no hover overlays *@
+                        @foreach (var group in config.Layout.Groups.Where(g => !g.AllowAirlineAllocation).OrderBy(g => g.ZIndex))
+                        {
+                            int idx = 0;
+                            var effectiveScale = contentScale * group.DisplayScale;
+
+                            @foreach (var displayId in group.DisplayIds)
+                            {
+                                var display = displays.FirstOrDefault(d => d.DisplayId == displayId);
+                                if (display == null) { idx++; continue; }
+
+                                var displayW = (display.DisplayWidth > 0 ? display.DisplayWidth : 1920) * effectiveScale;
+                                var displayH = (display.DisplayHeight > 0 ? display.DisplayHeight : 1080) * effectiveScale;
+
+                                double top, left;
+                                if (group.Direction == "vertical")
+                                {
+                                    // Accumulate top using the cyclic gap pattern
+                                    double accTop = group.PositionTop * contentScale;
+                                    for (int k = 0; k < idx; k++)
+                                    {
+                                        var prev = displays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[k]);
+                                        double ph = (prev?.DisplayHeight > 0 ? prev.DisplayHeight : 1080) * effectiveScale;
+                                        accTop += ph + group.GetGapAfter(k) * contentScale;
+                                    }
+                                    top  = accTop;
+                                    left = group.PositionLeft * contentScale;
+                                }
+                                else
+                                {
+                                    // Accumulate left using the cyclic gap pattern
+                                    double accLeft = group.PositionLeft * contentScale;
+                                    for (int k = 0; k < idx; k++)
+                                    {
+                                        var prev = displays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[k]);
+                                        double pw = (prev?.DisplayWidth > 0 ? prev.DisplayWidth : 1920) * effectiveScale;
+                                        accLeft += pw + group.GetGapAfter(k) * contentScale;
+                                    }
+                                    top  = group.PositionTop * contentScale;
+                                    left = accLeft;
+                                }
+
+                                // HorizontalImageLoop > 1 tiles the display N times side-by-side
+                                // to fill the full canvas width. Each tile is one image-width apart.
+                                var loopCount = Math.Max(1, group.HorizontalImageLoop);
+                                @for (int tile = 0; tile < loopCount; tile++)
+                                {
+                                    double tileLeft = left + tile * displayW;
+                                    <div style="position:absolute; top:@(top)px; left:@(tileLeft)px; z-index:@group.ZIndex; display:inline-block;">
+                                        <div class="vw-display-wrapper">
+                                            <div style="position:relative; display:inline-block; vertical-align:top;">
+                                                @* PreviewMode intentionally omitted so background-role videos play live
+                                                   (muted/looping) in the admin view. Live playback software-decodes the
+                                                   full wall video per tile — if that proves too heavy for deployment,
+                                                   restore PreviewMode="@(group.Role == "background")" to show thumbnails. *@
+                                                <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display" ScaleFactor="@effectiveScale" />
+                                            </div>
+                                            @* Override banner only on the first tile to avoid duplication *@
+                                            @if (tile == 0) { @RenderOverrideBanner(display) }
+                                        </div>
+                                    </div>
+                                }
+
+                                idx++;
+                            }
+                        }
+
+                        @* Per-cluster airline mask overlays — z=50, above wall-layer groups and below logo zones and counters.
+                           TOP is read from the group's PositionTop (unlike Pixera which uses top:0/bottom:0 to fill the viewport). *@
+                        @if (_allocation != null)
+                        {
+                            foreach (var cluster in _allocation.Clusters)
+                            {
+                                if (string.IsNullOrEmpty(cluster.MaskPath)) continue;
+                                var mb = GetClusterBoundsInView(cluster);
+                                if (mb.Width <= 0) continue;
+                                var mbStyle = $"position:absolute; top:{mb.Top}px; left:{mb.Left}px; width:{mb.Width}px; height:{mb.Height}px; z-index:50; border:none; pointer-events:none; {LayerRenderMode.OpacityCss(cluster.MaskOpacityPct)}";
+                                if (IsHtmlOrWebPath(cluster.MaskPath))
+                                {
+                                    <iframe src="@cluster.MaskPath" style="@mbStyle" scrolling="no"></iframe>
+                                }
+                                else if (LayerRenderMode.IsVideo(cluster.MaskPath))
+                                {
+                                    <div style="@(mbStyle + " overflow:hidden;")">
+                                        <video src="@cluster.MaskPath" autoplay loop muted playsinline
+                                               style="width:100%; height:100%; @LayerRenderMode.VideoCss(cluster.MaskMode)"></video>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div style="@(mbStyle + $" {LayerRenderMode.ImageCss(cluster.MaskPath, cluster.MaskMode)}")"></div>
+                                }
+                            }
+                        }
+
+                        @* Logo zone overlays — z=60, above masks but below counter displays.
+                           LeftPx / TopPx from the allocation are raw canvas pixels; multiply by contentScale for preview coordinates. *@
+                        @if (_allocation?.LogoZones != null)
+                        {
+                            foreach (var zone in _allocation.LogoZones)
+                            {
+                                if (string.IsNullOrEmpty(zone.LogoPath)) continue;
+                                var zl = zone.LeftPx   * contentScale;
+                                var zt = zone.TopPx    * contentScale;
+                                var zw = zone.WidthPx  * contentScale;
+                                var zh = zone.HeightPx * contentScale;
+                                var zStyle = $"position:absolute; top:{zt}px; left:{zl}px; width:{zw}px; height:{zh}px; z-index:60; border:none; pointer-events:none;";
+                                if (IsHtmlOrWebPath(zone.LogoPath))
+                                {
+                                    <iframe src="@zone.LogoPath" style="@zStyle" scrolling="no"></iframe>
+                                }
+                                else
+                                {
+                                    <div style="@(zStyle + $" background-image:url('{zone.LogoPath}'); background-size:contain; background-repeat:no-repeat; background-position:center;")"></div>
+                                }
+                            }
+                        }
+
+                        @* Counter-row groups — rendered after wall layers so they sit on top and receive hover events *@
+                        @foreach (var group in config.Layout.Groups.Where(g => g.AllowAirlineAllocation).OrderBy(g => g.ZIndex))
+                        {
+                            int idx = 0;
+                            var effectiveScale = contentScale * group.DisplayScale;
+
+                            @foreach (var displayId in group.DisplayIds)
+                            {
+                                var display = displays.FirstOrDefault(d => d.DisplayId == displayId);
+                                if (display == null) { idx++; continue; }
+
+                                var displayW = (display.DisplayWidth > 0 ? display.DisplayWidth : 1920) * effectiveScale;
+                                var displayH = (display.DisplayHeight > 0 ? display.DisplayHeight : 1080) * effectiveScale;
+
+                                double top, left;
+                                if (group.Direction == "vertical")
+                                {
+                                    // Accumulate top using the cyclic gap pattern
+                                    double accTop = group.PositionTop * contentScale;
+                                    for (int k = 0; k < idx; k++)
+                                    {
+                                        var prev = displays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[k]);
+                                        double ph = (prev?.DisplayHeight > 0 ? prev.DisplayHeight : 1080) * effectiveScale;
+                                        accTop += ph + group.GetGapAfter(k) * contentScale;
+                                    }
+                                    top  = accTop;
+                                    left = group.PositionLeft * contentScale;
+                                }
+                                else
+                                {
+                                    // Accumulate left using the cyclic gap pattern
+                                    double accLeft = group.PositionLeft * contentScale;
+                                    for (int k = 0; k < idx; k++)
+                                    {
+                                        var prev = displays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[k]);
+                                        double pw = (prev?.DisplayWidth > 0 ? prev.DisplayWidth : 1920) * effectiveScale;
+                                        accLeft += pw + group.GetGapAfter(k) * contentScale;
+                                    }
+                                    top  = group.PositionTop * contentScale;
+                                    left = accLeft;
+                                }
+
+                                @* Counter rows use elevated z-index so they always sit above wall layers for hover interaction *@
+                                <div style="position:absolute; top:@(top)px; left:@(left)px; z-index:@(group.ZIndex + 100); display:inline-block;">
+                                    <div class="vw-cluster-badge" style="@GetClusterBadgeStyle(group.GroupName, idx)">
+                                        @GetClusterLabel(group.GroupName, idx)
+                                    </div>
+                                    <div class="vw-display-wrapper">
+                                        @* First tap on touch reveals the name and action banners; the second tap acts *@
+                                        <div class="vw-display-hit" style="position:relative; display:inline-block; vertical-align:top;"
+                                             @onmouseover="(() => hoverDisplayId = display.DisplayId)"
+                                             @onmouseout="(() => hoverDisplayId = null)"
+                                             @onclick="(() => hoverDisplayId = display.DisplayId)">
+                                            <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display" ScaleFactor="@effectiveScale" />
+                                            @RenderHoverActions(display)
+                                        </div>
+                                        @RenderOverrideBanner(display)
+                                    </div>
+                                </div>
+
+                                idx++;
+                            }
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+
+    private IList<TblDisplay>? displays;
+    private VideoWallConfiguration? config;
+    private double contentScale = 0.4;
+    private double backgroundScale = 0.15;
+    private int? hoverDisplayId;
+    private bool sidebarOpen = false;
+
+    // Canvas bounds for each counter display (contentScale-adjusted pixels), used to position
+    // per-cluster mask and logo zone overlays at the correct wall coordinates.
+    private Dictionary<int, (double Top, double Left, double Right, double Bottom)> _counterDisplayCanvas = new();
+    private AllocationResult? _allocation;
+
+    private Timer? _refreshTimer;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            ParseConfig();
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            await RefreshData(db);
+
+            // Change notices arrive by broadcast; the timer is a slow safety net
+            // for a missed publish, no longer the primary refresh path.
+            _refreshTimer = new Timer(async _ => await RefreshWallContentAsync(), null,
+                TimeSpan.FromSeconds(60), TimeSpan.FromSeconds(60));
+
+            if (TenantContext.IsPopulated)
+            {
+                _broadcastSub = wallBroadcast.Subscribe(
+                    TenantContext.TenantId, Location.LocationId, HandleWallContentChangeAsync);
+            }
+        }
+    }
+
+    private IDisposable? _broadcastSub;
+
+    // A change notice with an activation instant is held until that instant so every
+    // output of the wall applies the refresh together (synchronized transitions);
+    // without one it applies immediately (standard mode and operator edits).
+    private async Task HandleWallContentChangeAsync(WallContentChange change)
+    {
+        if (change.ActivateAtUtc is DateTime activateAt)
+        {
+            var delay = activateAt - DateTime.UtcNow;
+            if (delay > TimeSpan.Zero) await Task.Delay(delay);
+        }
+        await RefreshWallContentAsync();
+    }
+
+    private async Task RefreshWallContentAsync()
+    {
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            await RefreshData(db);
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (ObjectDisposedException) { }
+    }
+
+    public void Dispose()
+    {
+        _refreshTimer?.Dispose();
+        _broadcastSub?.Dispose();
+    }
+
+    private void ParseConfig()
+    {
+        if (!string.IsNullOrEmpty(Location?.ExtendedData))
+        {
+            try
+            {
+                config = JsonSerializer.Deserialize<VideoWallConfiguration>(Location.ExtendedData,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+            }
+            catch { }
+        }
+        config ??= new VideoWallConfiguration();
+        // ContentScaleFactor scales the content layer (counter rows, wall layers, logo zones); these share
+        // one scale because they must stay pixel-aligned to form a coherent wall. BackgroundScaleFactor
+        // independently scales the context background image, letting a background of any native resolution
+        // be sized to sit behind the content. The two are tuned so the background's on-screen width matches
+        // the content's: BackgroundImageWidth × BackgroundScaleFactor ≈ content width × ContentScaleFactor.
+        contentScale = config.ContentScaleFactor;
+        backgroundScale = config.BackgroundScaleFactor;
+    }
+
+    // The stage is the positioning context for both layers. It spans whichever layer extends further so
+    // neither the background image (BackgroundScale) nor the content (ContentScale) is clipped when the
+    // two are tuned to different sizes.
+    private string GetStageStyle()
+    {
+        var (contentW, contentH) = GetContentExtent();
+        var (bgW, bgH) = GetBackgroundExtent();
+        var w = Math.Max(contentW, bgW);
+        var h = Math.Max(contentH, bgH);
+        var style = "position:relative; overflow:hidden; background-color:#1a1a2e;";
+        if (w > 0 && h > 0)
+            style += $" width:{w}px; height:{h}px;";
+        return style;
+    }
+
+    // Background image rendered as its own layer, sized by BackgroundScaleFactor and stretched to fill
+    // (background-size:100% 100%), independent of the content scale. z-index:0 keeps it behind all content.
+    private string GetBackgroundLayerStyle()
+    {
+        if (string.IsNullOrEmpty(config?.BackgroundImagePath) || !(Location?.BackgroundImageWidth > 0))
+            return "display:none;";
+        var (bgW, bgH) = GetBackgroundExtent();
+        return $"position:absolute; top:0; left:0; z-index:0; width:{bgW}px; height:{bgH}px; " +
+               $"background-image:url('{config.BackgroundImagePath}'); background-size:100% 100%; background-repeat:no-repeat;";
+    }
+
+    // Background image's on-screen size at the current BackgroundScaleFactor. Falls back to a 16:9 height
+    // when the stored image height is unknown.
+    private (double W, double H) GetBackgroundExtent()
+    {
+        if (!(Location?.BackgroundImageWidth > 0)) return (0, 0);
+        var bgW = Location.BackgroundImageWidth.Value * backgroundScale;
+        var bgH = (Location.BackgroundImageHeight ?? 0) > 0
+            ? Location.BackgroundImageHeight!.Value * backgroundScale
+            : bgW * (9.0 / 16.0);
+        return (bgW, bgH);
+    }
+
+    // Rightmost/bottommost on-screen extent of the content layer (placements, counter rows, wall layers,
+    // logo zones) at the current ContentScaleFactor, replicating the accumulation used during render.
+    private (double W, double H) GetContentExtent()
+    {
+        double maxRight = 0, maxBottom = 0;
+        if (config == null || displays == null) return (0, 0);
+
+        foreach (var p in config.Layout.Placements)
+        {
+            var d = displays.FirstOrDefault(x => x.DisplayId == p.DisplayId);
+            if (d == null) continue;
+            var es = contentScale * p.DisplayScale;
+            var w = (d.DisplayWidth  > 0 ? d.DisplayWidth  : 1920) * es;
+            var h = (d.DisplayHeight > 0 ? d.DisplayHeight : 1080) * es;
+            maxRight  = Math.Max(maxRight,  p.PositionLeft * contentScale + w);
+            maxBottom = Math.Max(maxBottom, p.PositionTop  * contentScale + h);
+        }
+
+        foreach (var group in config.Layout.Groups)
+        {
+            var es = contentScale * (group.DisplayScale > 0 ? group.DisplayScale : 1.0);
+            var loopCount = Math.Max(1, group.HorizontalImageLoop);
+            bool vertical = group.Direction == "vertical";
+            double accLeft = group.PositionLeft * contentScale;
+            double accTop  = group.PositionTop  * contentScale;
+            for (int idx = 0; idx < group.DisplayIds.Count; idx++)
+            {
+                var d  = displays.FirstOrDefault(x => x.DisplayId == group.DisplayIds[idx]);
+                var dw = (d?.DisplayWidth  > 0 ? d.DisplayWidth  : 1920) * es;
+                var dh = (d?.DisplayHeight > 0 ? d.DisplayHeight : 1080) * es;
+                if (vertical)
+                {
+                    maxRight  = Math.Max(maxRight,  group.PositionLeft * contentScale + dw);
+                    maxBottom = Math.Max(maxBottom, accTop + dh);
+                    accTop += dh + group.GetGapAfter(idx) * contentScale;
+                }
+                else
+                {
+                    // HorizontalImageLoop tiles the display rightward, so the extent spans all tiles.
+                    maxRight  = Math.Max(maxRight,  accLeft + dw * loopCount);
+                    maxBottom = Math.Max(maxBottom, group.PositionTop * contentScale + dh);
+                    accLeft += dw + group.GetGapAfter(idx) * contentScale;
+                }
+            }
+        }
+
+        if (_allocation?.LogoZones != null)
+        {
+            foreach (var z in _allocation.LogoZones)
+            {
+                maxRight  = Math.Max(maxRight,  (z.LeftPx + z.WidthPx)  * contentScale);
+                maxBottom = Math.Max(maxBottom, (z.TopPx  + z.HeightPx) * contentScale);
+            }
+        }
+
+        // The overlay itself is shifted by the content top offset; grow the stage to match.
+        return (maxRight, maxBottom + (config?.ContentTopOffsetPx ?? 0) * contentScale);
+    }
+
+    // ContentTopOffsetPx aligns the whole content block against the context background
+    // in admin surfaces only — element PositionTop values are content-relative and go
+    // to the wall untouched.
+    private string GetContentOverlayStyle()
+    {
+        var topPx = (config?.ContentTopOffsetPx ?? 0) * contentScale;
+        return $"position:absolute; top:{topPx}px; left:0;";
+    }
+
+    // Phase 3: implement via IClusterResolutionService once airline-to-counter scheduling is wired.
+    private string GetClusterBadgeStyle(string groupName, int counterIndex) => "display:none;";
+    private string GetClusterLabel(string groupName, int counterIndex) => "";
+
+    private RenderFragment RenderHoverActions(TblDisplay display) => __builder =>
+    {
+        @* Touch affordance: marks the display as editable on coarse-pointer devices *@
+        <div class="vw-touch-chip" aria-hidden="true">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+                <path d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z" />
+            </svg>
+        </div>
+        if (display.DisplayId == hoverDisplayId && SelectedAsset != null)
+        {
+            <div class="vw-hover-overlay" style="border: 2px dashed red;"></div>
+            <div class="vw-top-banner">@(display.DisplayName?.ToUpper())</div>
+            <div class="vw-bottom-banner" @onclick="@(() => OnOverride(display.DisplayId))">OVERRIDE</div>
+        }
+        else if (display.DisplayId == hoverDisplayId)
+        {
+            <div class="vw-hover-overlay" style="border: 2px solid #16FF00;"></div>
+            <div class="vw-top-banner">@(display.DisplayName?.ToUpper())</div>
+            <div class="vw-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT CONTENT</div>
+        }
+    };
+
+    private RenderFragment RenderOverrideBanner(TblDisplay display) => __builder =>
+    {
+        if (display.DisplayMode == (int)Types.DisplayMode.Override)
+        {
+            <div class="vw-override-banner" @onclick="(() => BackToSchedule(display.DisplayId))">CANCEL OVERRIDE</div>
+        }
+    };
+
+    private async Task RefreshData(IDirectorDBContext db)
+    {
+        if (Location != null)
+        {
+            displays = await db.TblDisplays
+                .Where(x => x.LocationId == Location.LocationId)
+                .Include(d => d.OverrideAsset)
+                .Include(e => e.TblScheduleEvents)
+                .Include(f => f.Constraint)
+                .ToListAsync();
+
+            ComputeCounterDisplayPositions();
+            try { _allocation = await _allocationService.GetCurrentAllocationAsync(Location.LocationId, DateTime.Now); }
+            catch { _allocation = null; }
+        }
+    }
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset == null) return;
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+        {
+            await RefreshData(db);
+            StateHasChanged();
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        if (await displayOverrides.ReturnToScheduleAsync(displayId))
+        {
+            await RefreshData(db);
+            StateHasChanged();
+        }
+    }
+
+    /// <summary>
+    /// Builds a map of counter display ID → canvas bounds (contentScale-adjusted pixels) by
+    /// walking each AllowAirlineAllocation group and accumulating PositionLeft, display widths,
+    /// and cyclic gaps. Must be called after displays and config are loaded.
+    /// </summary>
+    private void ComputeCounterDisplayPositions()
+    {
+        _counterDisplayCanvas.Clear();
+        if (config == null || displays == null) return;
+        foreach (var group in config.Layout.Groups.Where(g => g.AllowAirlineAllocation))
+        {
+            var es = contentScale * (group.DisplayScale > 0 ? group.DisplayScale : 1.0);
+            double accLeft = group.PositionLeft * contentScale;
+            for (int idx = 0; idx < group.DisplayIds.Count; idx++)
+            {
+                var dispId = group.DisplayIds[idx];
+                var disp = displays.FirstOrDefault(d => d.DisplayId == dispId);
+                var dw = (disp?.DisplayWidth > 0 ? disp.DisplayWidth : 1920) * es;
+                var dh = (disp?.DisplayHeight > 0 ? disp.DisplayHeight : 1080) * es;
+                var top = group.PositionTop * contentScale;
+                _counterDisplayCanvas[dispId] = (top, accLeft, accLeft + dw, top + dh);
+                accLeft += dw + group.GetGapAfter(idx) * contentScale;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Returns a cluster's mask-overlay bounds in VideoWall preview coordinates.
+    /// The horizontal extent comes straight from the allocation (LeftPx/WidthPx ×
+    /// content scale) so the admin view shows exactly the coverage the wall
+    /// renders — including allocation bounds, the 50/50 gap split, and the legacy
+    /// edge rules — instead of re-deriving an approximation from display rects.
+    /// The vertical extent stays display-derived (the allocation carries no row
+    /// height). IsRightmost mirrors the layer shell's extend-to-the-wall-edge
+    /// behavior, which the allocation suppresses when an authored bound pins the
+    /// last cluster.
+    /// </summary>
+    private (double Top, double Left, double Width, double Height) GetClusterBoundsInView(DisplayCluster cluster)
+    {
+        if (_counterDisplayCanvas.Count == 0) return (0, 0, 0, 0);
+        var orderedIds = _counterDisplayCanvas
+            .OrderBy(kv => kv.Value.Left)
+            .Select(kv => kv.Key)
+            .Distinct()
+            .ToList();
+        var clusterIds = orderedIds.Skip(cluster.StartIndex).Take(cluster.Count).ToList();
+        var positions = clusterIds
+            .Where(id => _counterDisplayCanvas.ContainsKey(id))
+            .Select(id => _counterDisplayCanvas[id])
+            .ToList();
+        if (positions.Count == 0) return (0, 0, 0, 0);
+
+        var top    = positions.Min(p => p.Top);
+        var bottom = positions.Max(p => p.Bottom);
+
+        var left  = cluster.LeftPx * contentScale;
+        var right = (cluster.LeftPx + cluster.WidthPx) * contentScale;
+
+        // Extend to the background's RENDERED right edge (dims × backgroundScale). Multiplying
+        // by contentScale instead only works when the two scale factors happen to match and the
+        // dims are canvas-space; walls whose background dims are view-space with a 1.0
+        // background scale (e.g. East Backwall) fell short of the wall end.
+        if (cluster.IsRightmost)
+        {
+            var (bgW, _) = GetBackgroundExtent();
+            if (bgW > 0) right = Math.Max(right, bgW);
+        }
+
+        return (top, left, right - left, bottom - top);
+    }
+
+    private static bool IsHtmlOrWebPath(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        (path.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("http://",  StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+}
+
+<style>
+    /* ── Drawer shell ───────────────────────────────────────────────────────── */
+    .vw-drawer {
+        position: fixed;
+        top: 3.5rem;            /* clear the sticky dx-navbar (height: 3.5rem, z-index: 5000) */
+        left: -260px;           /* fully hidden off the left viewport edge when closed */
+        bottom: 0;
+        width: 260px;
+        z-index: 1000;
+        display: flex;
+        flex-direction: column;
+        background: #fff;
+        border-right: 1px solid var(--dx-border-color, #ddd);
+        box-shadow: 4px 0 20px rgba(0,0,0,0.13);
+        transition: left 0.25s ease;
+    }
+
+    .vw-drawer.vw-drawer-open {
+        left: 0;
+    }
+
+    /* ── Pull tab ───────────────────────────────────────────────────────────── */
+    /* Sits at the right edge of the drawer — protrudes 32px into the viewport
+       even when the drawer itself is fully off-screen. */
+    .vw-drawer-tab {
+        position: absolute;
+        top: 50%;
+        right: -32px;
+        transform: translateY(-50%);
+        width: 32px;
+        padding: 14px 0;
+        background: var(--dx-blue, #0071BC);
+        color: #fff;
+        border: none;
+        border-radius: 0 6px 6px 0;
+        cursor: pointer;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 6px;
+        transition: background 0.15s;
+    }
+
+    .vw-drawer-tab:hover {
+        background: #005a96;
+    }
+
+    .vw-drawer-tab i {
+        font-size: 13px;
+    }
+
+    .vw-drawer-tab span {
+        font-size: 9px;
+        font-weight: 700;
+        letter-spacing: 1.2px;
+        text-transform: uppercase;
+        writing-mode: vertical-rl;
+        text-orientation: mixed;
+        transform: rotate(180deg);  /* read bottom-to-top */
+    }
+
+    /* ── Drawer header ──────────────────────────────────────────────────────── */
+    .vw-drawer-header {
+        flex-shrink: 0;
+        background: var(--dx-blue, #0071BC);
+        color: #fff;
+        font-size: 13px;
+        font-weight: 600;
+        padding: 10px 14px;
+        letter-spacing: 0.3px;
+    }
+
+    /* ── Scrollable body ────────────────────────────────────────────────────── */
+    .vw-drawer-body {
+        flex: 1;                /* fills remaining drawer height */
+        overflow-y: auto;
+        padding: 10px 12px;
+        min-height: 0;          /* required for flex child overflow-y to work */
+    }
+
+    /* ── Content styles (unchanged from previous iteration) ─────────────────── */
+    .vw-sb-section-label {
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.8px;
+        color: var(--dx-blue, #0071BC);
+        margin: 0 0 6px;
+        padding-bottom: 3px;
+        border-bottom: 1px solid var(--dx-border-color, #ddd);
+    }
+
+    .vw-sb-group-label {
+        font-size: 11px;
+        font-weight: 600;
+        color: var(--dx-text-primary, #333);
+        margin: 6px 0 2px;
+    }
+
+    /* Name and actions share one line; actions wrap under only when they don't fit */
+    .vw-sb-display-row {
+        padding: 4px 0 4px 8px;
+        border-bottom: 1px solid var(--dx-bg-alt, #f0f0f0);
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 4px 8px;
+        flex-wrap: wrap;
+    }
+
+    .vw-sb-display-name {
+        font-size: 11px;
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .vw-sb-display-actions {
+        display: flex;
+        gap: 4px;
+        flex-wrap: wrap;
+    }
+
+    .vw-sb-display-actions .dx-btn {
+        font-size: 10px;
+        padding: 2px 8px;
+    }
+
+    /* ── Wall preview ───────────────────────────────────────────────────────── */
+    .vw-scroll-container { overflow-x: auto; overflow-y: hidden; }
+    .vw-background-container { display: inline-block; }
+    .vw-background-layer { pointer-events: none; }
+    .vw-content-overlay { pointer-events: auto; }
+    .vw-display-wrapper { display: flex; flex-direction: column; align-items: center; }
+    .vw-hover-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 100; pointer-events: none; }
+    .vw-top-banner { position: absolute; top: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; text-align: center; font-size: 11px; padding: 2px 4px; z-index: 101; pointer-events: none; font-weight: bold; letter-spacing: 0.5px; }
+    .vw-bottom-banner { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,113,188,0.9); color: white; text-align: center; font-size: 11px; padding: 4px; z-index: 101; cursor: pointer; font-weight: bold; }
+    .vw-bottom-banner:hover { background: rgba(0,90,150,1); }
+
+    /* Mobile-scale only: mark editable displays with a corner chip and hairline
+       outline, and give the action banners a real tap-sized target. Desktop/HD
+       rendering is unchanged. */
+    .vw-touch-chip {
+        display: none;
+        position: absolute;
+        top: 3px;
+        right: 3px;
+        z-index: 102;
+        width: 22px;
+        height: 22px;
+        align-items: center;
+        justify-content: center;
+        background: rgba(0, 0, 0, 0.45);
+        color: #fff;
+        border-radius: 4px;
+        pointer-events: none;
+    }
+
+    @@media (max-width: 768px) {
+        .vw-touch-chip { display: flex; }
+
+        .vw-display-hit {
+            outline: 1px dashed rgba(255, 255, 255, 0.55);
+            outline-offset: -1px;
+        }
+
+        .vw-bottom-banner { padding: 10px 4px; }
+    }
+    .vw-override-banner { background: #dc3545; color: white; text-align: center; font-size: 11px; padding: 3px 8px; cursor: pointer; margin-top: 2px; border-radius: 3px; font-weight: bold; }
+    .vw-override-banner:hover { background: #c82333; }
+    .vw-cluster-badge { position: absolute; top: -18px; left: 0; right: 0; text-align: center; font-size: 10px; font-weight: bold; color: white; background: rgba(0,0,0,0.5); border-radius: 3px 3px 0 0; padding: 1px 4px; pointer-events: none; }
+</style>

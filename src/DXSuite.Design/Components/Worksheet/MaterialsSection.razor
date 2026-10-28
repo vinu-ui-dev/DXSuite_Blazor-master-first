@@ -1,0 +1,226 @@
+@using DXSuite.Design.Entities
+@using DXSuite.Design.Models
+
+<div class="mats-wrapper">
+    <div class="mats-header">
+        @{ var totalCost = WorksheetRows.Sum(r => r.Cost * r.Qty); var totalSell = WorksheetRows.Sum(r => r.SellPrice * r.Qty); }
+        <div style="display:flex; align-items:center; gap:8px">
+            <h4 class="lit-section-title" style="margin:0">Materials</h4>
+            <span class="lit-group-sep"></span>
+            <span class="lit-group-totals">
+                <span class="lit-group-total-label">Cost</span>
+                <span class="lit-group-total-val">$@totalCost.ToString("N0")</span>
+                <span class="lit-group-total-label">Sell</span>
+                <span class="lit-group-total-val">$@totalSell.ToString("N0")</span>
+            </span>
+        </div>
+        <div class="ms-desc-controls">
+            <label class="ms-desc-label" title="Include description row before Materials in NetSuite push">
+                <input type="checkbox"
+                       checked="@(SectionDescription?.IsEnabled ?? false)"
+                       @onchange="() => OnToggleSectionDescription.InvokeAsync()" />
+                <span>Desc.</span>
+            </label>
+            <button class="ms-desc-btn" @onclick="() => OnEditSectionDescription.InvokeAsync()"
+                    title="Edit description row">✎</button>
+        </div>
+    </div>
+
+    @foreach (var cat in Categories.OrderBy(c => c.SortOrder))
+    {
+        var catId = cat.CategoryId;
+        var catItems = ItemsByCategory[catId].OrderBy(i => i.SortOrder).ToList();
+        var catRows = WorksheetRows.Where(r => catItems.Any(i => i.ItemId == r.ItemId)).ToList();
+        var catCost = catRows.Sum(r => r.Cost * r.Qty);
+        var catSell = catRows.Sum(r => r.SellPrice * r.Qty);
+        var expanded = _expandedCategories.Contains(catId);
+        var showAll = _showAllCategories.Contains(catId);
+
+        var visibleItems = showAll ? catItems : catItems.Where(i => catRows.Any(r => r.ItemId == i.ItemId)).ToList();
+
+        <div class="mats-cat-card">
+            <div class="mats-cat-header" @onclick="() => ToggleExpanded(catId)">
+                <span class="mats-expand-icon">@(expanded ? "▾" : "▸")</span>
+                <strong class="mats-cat-name">@cat.Name</strong>
+                <span class="mats-cat-totals">$@catCost.ToString("N0") / $@catSell.ToString("N0")</span>
+            </div>
+
+            @if (expanded)
+            {
+                <div class="mats-cat-body">
+                    @if (visibleItems.Count > 0)
+                    {
+                        <table class="lit-table mats-table">
+                            <thead>
+                                <tr class="lit-header-row">
+                                    <th class="lit-th" style="width:120px">Model / SKU</th>
+                                    <th class="lit-th">Name</th>
+                                    <th class="lit-th lit-num" style="width:70px">Qty</th>
+                                    <th class="lit-th lit-num" style="width:90px">Unit Cost</th>
+                                    <th class="lit-th lit-num" style="width:90px">Unit Sell</th>
+                                    <th class="lit-th lit-num" style="width:100px">Ext. Cost</th>
+                                    <th class="lit-th lit-num" style="width:100px">Ext. Sell</th>
+                                    <th class="lit-th" style="width:84px; text-align:center">Loc</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var item in visibleItems)
+                                {
+                                    var row = catRows.FirstOrDefault(r => r.ItemId == item.ItemId);
+                                    var qty = row?.Qty ?? 0;
+                                    var cost = row?.Cost ?? item.DefaultCost;
+                                    var sell = row?.SellPrice ?? item.DefaultSellPrice;
+                                    var hasQty = qty > 0;
+
+                                    <tr class="lit-row @(hasQty ? "" : "mats-row-zero")">
+                                        <td class="lit-td" style="font-size:.8rem; color:var(--dx-text-muted,#6c757d)">@item.ModelNumber</td>
+                                        <td class="lit-td">@item.Name</td>
+                                        <td class="lit-td lit-num">
+                                            <input type="number" min="0" class="lit-input lit-num mats-qty-input"
+                                                   value="@qty"
+                                                   @onchange="e => OnQtyChanged(e, item, row)" />
+                                        </td>
+                                        <td class="lit-td lit-num">@cost.ToString("N2")</td>
+                                        <td class="lit-td lit-num">@sell.ToString("N2")</td>
+                                        <td class="lit-td lit-num">@((cost * qty).ToString("N2"))</td>
+                                        <td class="lit-td lit-num">@((sell * qty).ToString("N2"))</td>
+                                        <td class="lit-td" style="text-align:center; position:relative">
+                                            @if (hasQty && row is not null)
+                                            {
+                                                <LocationPickerPopover
+                                                    CurrentLocationId="@row.LocationId"
+                                                    CurrentLocationName="@row.LocationName"
+                                                    DefaultLocationId="@WorksheetDefaultLocationId"
+                                                    DefaultLocationName="@WorksheetDefaultLocationName"
+                                                    Locations="CachedLocations"
+                                                    OnSelect="args => OnUpdateRowLocation.InvokeAsync((item.ItemId, args.Id, args.Name))" />
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    }
+                    else if (!showAll)
+                    {
+                        <div style="padding:8px 4px; font-size:.85rem; color:var(--dx-text-muted,#6c757d)">
+                            No items with qty &gt; 0. Click "Show all" to view all items.
+                        </div>
+                    }
+
+                    <div class="mats-show-all">
+                        <button class="dx-btn dx-btn-outline-gray dx-btn-sm" @onclick="() => ToggleShowAll(catId)">
+                            @if (showAll)
+                            { <text>▴ Hide zero-qty items</text> }
+                            else
+                            { <text>▾ Show all @catItems.Count items</text> }
+                        </button>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+<style>
+    .mats-wrapper { margin-bottom: 24px; }
+    .mats-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 0 8px;
+    }
+    .mats-cat-card {
+        border: 1px solid var(--dx-border, #dee2e6);
+        border-radius: 4px;
+        margin-bottom: 6px;
+        overflow: hidden;
+    }
+    .mats-cat-header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        cursor: pointer;
+        user-select: none;
+        background: var(--dx-bg-subtle, #f8f9fa);
+    }
+    .mats-cat-header:hover { background: var(--dx-hover, #e9ecef); }
+    .mats-expand-icon { font-size: .75rem; color: var(--dx-text-muted, #6c757d); width: 12px; flex-shrink: 0; }
+    .mats-cat-name { flex: 1; }
+    .mats-cat-totals { font-size: .8rem; color: var(--dx-text-muted, #6c757d); }
+    .mats-cat-body { padding: 8px 12px 12px; }
+    .mats-table { width: 100%; margin-bottom: 6px; }
+    .mats-qty-input { width: 60px; }
+    .mats-row-zero { opacity: .5; }
+    .mats-show-all { margin-top: 6px; }
+
+    /* Reuse the same desc-control styles as Misc/Travel/Labor */
+    .ms-desc-controls { display: flex; align-items: center; gap: 5px; }
+    .ms-desc-label {
+        display: flex; align-items: center; gap: 4px;
+        font-size: .75rem; color: var(--text-muted, #6c757d);
+        cursor: pointer; user-select: none;
+    }
+    .ms-desc-label input[type=checkbox] { accent-color: var(--dx-blue, #0071BC); }
+    .ms-desc-btn {
+        background: none; border: 1px solid var(--border, #dee2e6);
+        border-radius: 3px; padding: 1px 6px; font-size: .8rem;
+        cursor: pointer; color: var(--text-muted, #6c757d); line-height: 1.4;
+    }
+    .ms-desc-btn:hover { border-color: var(--dx-blue, #0071BC); color: var(--dx-blue, #0071BC); }
+</style>
+
+@code {
+    [Parameter] public List<TblDesignMaterialsCategory> Categories { get; set; } = [];
+    [Parameter] public ILookup<int, TblDesignMaterialsItem> ItemsByCategory { get; set; } = Enumerable.Empty<TblDesignMaterialsItem>().ToLookup(i => i.CategoryId);
+    [Parameter] public List<TblDesignWorksheetMaterialsRow> WorksheetRows { get; set; } = [];
+    [Parameter] public Dictionary<int, TblDesignWorksheetMaterialsCategoryConfig> CategoryConfigs { get; set; } = [];
+    [Parameter] public EventCallback<TblDesignWorksheetMaterialsRow> OnRowUpserted { get; set; }
+    [Parameter] public EventCallback<int> OnRowDeleted { get; set; }
+    [Parameter] public EventCallback<TblDesignWorksheetMaterialsCategoryConfig> OnConfigChanged { get; set; }
+    [Parameter] public TblDesignWorksheetSectionDescription? SectionDescription { get; set; }
+    [Parameter] public EventCallback OnToggleSectionDescription { get; set; }
+    [Parameter] public EventCallback OnEditSectionDescription { get; set; }
+    [Parameter] public EventCallback<(int ItemId, string? LocationId, string? LocationName)> OnUpdateRowLocation { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationId { get; set; }
+    [Parameter] public string? WorksheetDefaultLocationName { get; set; }
+    [Parameter] public List<NetsuiteLocation>? CachedLocations { get; set; }
+
+    private HashSet<int> _expandedCategories = [];
+    private HashSet<int> _showAllCategories = [];
+
+    private void ToggleExpanded(int catId)
+    {
+        if (!_expandedCategories.Add(catId))
+            _expandedCategories.Remove(catId);
+    }
+
+    private void ToggleShowAll(int catId)
+    {
+        if (!_showAllCategories.Add(catId))
+            _showAllCategories.Remove(catId);
+    }
+
+    private async Task OnQtyChanged(ChangeEventArgs e, TblDesignMaterialsItem item, TblDesignWorksheetMaterialsRow? existingRow)
+    {
+        if (!int.TryParse(e.Value?.ToString(), out var newQty) || newQty < 0)
+            newQty = 0;
+
+        if (newQty == 0 && existingRow is not null)
+        {
+            await OnRowDeleted.InvokeAsync(item.ItemId);
+        }
+        else if (newQty > 0)
+        {
+            var row = existingRow ?? new TblDesignWorksheetMaterialsRow
+            {
+                ItemId = item.ItemId,
+                Cost = item.DefaultCost,
+                SellPrice = item.DefaultSellPrice,
+            };
+            row.Qty = newQty;
+            await OnRowUpserted.InvokeAsync(row);
+        }
+    }
+}

@@ -1,0 +1,1161 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Connectors.Services.Llm
+@using DXSuite.Shared.Services
+@using Microsoft.EntityFrameworkCore
+@inject IDirectorDBContext directorDb
+@inject ILlmGateway llmGateway
+@inject LlmApiKeyProtector apiKeyProtector
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+    <div class="dx-tab-nav" style="flex-shrink:0;">
+        <button class="dx-tab-btn @(activeSubTab == "providers" ? "active" : "")"
+                @onclick="@(() => activeSubTab = "providers")">Providers</button>
+        <button class="dx-tab-btn @(activeSubTab == "prompts" ? "active" : "")"
+                @onclick="@(() => activeSubTab = "prompts")">Prompts</button>
+    </div>
+
+    @if (activeSubTab == "providers")
+    {
+        <div class="dx-panel-header" style="border-radius: 0; flex-shrink:0;">
+            <h4>LLM Providers <DXSuite.Shared.Components.HelpLink Page="administration/llm-providers" Title="LLM providers help" /></h4>
+            <button class="dx-btn dx-btn-blue" @onclick="StartAddProvider">ADD PROVIDER</button>
+        </div>
+        <div style="padding:20px; flex:1; min-height:0; overflow-y:auto;">
+            @if (showProviderForm)
+            {
+                <div class="llm-inline-form">
+                    <h4>@(editingProvider?.ConfigId > 0 ? "Edit Provider" : "New Provider")</h4>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>Display Name</label>
+                            <input class="dx-form-control" @bind="editingProvider!.DisplayName" @bind:event="oninput" @bind:after="OnDisplayNameInput" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Provider ID</label>
+                            <input class="dx-form-control" @bind="editingProvider!.ProviderId" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Provider Type</label>
+                            <select class="dx-form-control" @bind="editingProviderType">
+                                <option value="openai-compatible">OpenAI Compatible</option>
+                                <option value="ollama">Ollama</option>
+                                <option value="anthropic">Anthropic (Claude)</option>
+                                <option value="gemini">Google Gemini</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div class="llm-form-row">
+                        @if (editingProviderType != "gemini")
+                        {
+                            <div class="dx-form-group">
+                                <label>Base URL</label>
+                                <input class="dx-form-control" @bind="editingProvider!.BaseUrl" placeholder="@GetBaseUrlPlaceholder()" />
+                            </div>
+                        }
+                        @if (editingProviderType != "ollama")
+                        {
+                            <div class="dx-form-group">
+                                <label>API Key</label>
+                                <input type="password" class="dx-form-control" @bind="editingProvider!.ApiKey" />
+                            </div>
+                        }
+                    </div>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>Model</label>
+                            <input class="dx-form-control" @bind="editingProvider!.Model" placeholder="@GetModelPlaceholder()" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Max Tokens</label>
+                            <input type="number" class="dx-form-control" @bind="editingProvider!.MaxTokens" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Temperature</label>
+                            <input type="number" class="dx-form-control" step="0.1" min="0" max="2" @bind="editingProvider!.DefaultTemperature" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Timeout (s)</label>
+                            <input type="number" class="dx-form-control" @bind="editingProvider!.TimeoutSeconds" />
+                        </div>
+                    </div>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>
+                                <input type="checkbox" class="dx-checkbox" @bind="editingProvider!.IsDefault" /> Default Provider
+                            </label>
+                        </div>
+                        <div class="dx-form-group">
+                            <label>
+                                <input type="checkbox" class="dx-checkbox" @bind="editingProvider!.IsEnabled" /> Enabled
+                            </label>
+                        </div>
+                    </div>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>Credential Expiration <span style="font-weight:normal;color:#999;">(optional)</span></label>
+                            <input type="date" class="dx-form-control" @bind="editingCredentialExpiresAt" />
+                        </div>
+                    </div>
+                    <div class="llm-form-actions">
+                        <button class="dx-btn dx-btn-blue" @onclick="SaveProvider">SAVE</button>
+                        <button class="dx-btn dx-btn-gray" @onclick="CancelProviderForm">CANCEL</button>
+                    </div>
+                    @if (!string.IsNullOrEmpty(formMessage))
+                    {
+                        <div class="@(formMessageIsError ? "dx-alert dx-alert-danger" : "dx-alert dx-alert-success")">@formMessage</div>
+                    }
+                </div>
+            }
+
+            @if (providers != null && providers.Any())
+            {
+                <div class="llm-provider-grid">
+                    @foreach (var provider in providers)
+                    {
+                        <div class="llm-provider-card @(showProviderForm && editingProvider?.ConfigId == provider.ConfigId && provider.ConfigId > 0 ? "llm-provider-card--editing" : "")">
+                            <div class="provider-header">
+                                <div class="provider-title">
+                                    <h4>@provider.DisplayName</h4>
+                                    <span class="dx-badge provider-type-badge @GetTypeBadgeClass(provider.ProviderType)">@GetTypeLabel(provider.ProviderType)</span>
+                                    @if (provider.IsDefault)
+                                    {
+                                        <span class="dx-badge dx-badge-orange">DEFAULT</span>
+                                    }
+                                </div>
+                                <span class="dx-badge @(provider.IsEnabled ? "dx-badge-green" : "dx-badge-gray")">
+                                    @(provider.IsEnabled ? "Enabled" : "Disabled")
+                                </span>
+                            </div>
+                            <div class="provider-details">
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Provider ID:</span>
+                                    <span class="detail-value">@provider.ProviderId</span>
+                                </div>
+                                @if (!string.IsNullOrEmpty(provider.BaseUrl))
+                                {
+                                    <div class="provider-detail-row">
+                                        <span class="detail-label">Base URL:</span>
+                                        <span class="detail-value">@provider.BaseUrl</span>
+                                    </div>
+                                }
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">API Key:</span>
+                                    <span class="detail-value">@(!string.IsNullOrEmpty(provider.ApiKey) ? "••••••••" : "Not set")</span>
+                                </div>
+                                @if (provider.CredentialExpiresAt.HasValue)
+                                {
+                                    <div class="provider-detail-row">
+                                        <span class="detail-label">Credential Expires:</span>
+                                        <span class="detail-value">
+                                            @provider.CredentialExpiresAt.Value.ToString("MMM dd, yyyy")
+                                            @if (provider.CredentialExpiresAt.Value < DateTime.UtcNow)
+                                            {
+                                                <span class="dx-badge dx-badge-red" style="margin-left:6px;">expired</span>
+                                            }
+                                            else if (provider.CredentialExpiresAt.Value < DateTime.UtcNow.AddDays(14))
+                                            {
+                                                <span class="dx-badge dx-badge-orange" style="margin-left:6px;">expiring soon</span>
+                                            }
+                                        </span>
+                                    </div>
+                                }
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Model:</span>
+                                    <span class="detail-value">@provider.Model</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Max Tokens:</span>
+                                    <span class="detail-value">@provider.MaxTokens</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Temperature:</span>
+                                    <span class="detail-value">@provider.DefaultTemperature</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Timeout:</span>
+                                    <span class="detail-value">@(provider.TimeoutSeconds)s</span>
+                                </div>
+                            </div>
+                            <div class="provider-actions">
+                                <button class="dx-btn dx-btn-blue" @onclick="@(() => TestConnection(provider))"
+                                        disabled="@(testingProviderId == provider.ProviderId)">
+                                    @(testingProviderId == provider.ProviderId ? "TESTING..." : "TEST CONNECTION")
+                                </button>
+                                @if (testResults.ContainsKey(provider.ProviderId))
+                                {
+                                    <span class="test-result @(testResults[provider.ProviderId] ? "result-success" : "result-failed")">
+                                        @(testResults[provider.ProviderId] ? "Connected" : "Failed")
+                                    </span>
+                                }
+                                <div class="provider-edit-actions">
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => EditProvider(provider))">Edit</button>
+                                    <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="@(() => DeleteProvider(provider))">Delete</button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else if (providers != null)
+            {
+                <div style="text-align:center; padding:40px 20px; color:#666;">
+                    <h4>No LLM providers configured</h4>
+                    <p>Click ADD PROVIDER to configure an AI provider for device diagnostics and age assessment.</p>
+                </div>
+            }
+        </div>
+    }
+
+    @if (activeSubTab == "prompts")
+    {
+        <div class="dx-panel-header" style="border-radius: 0; flex-shrink:0;">
+            <h4>LLM Prompts</h4>
+            <button class="dx-btn dx-btn-blue" @onclick="StartAddPrompt">ADD PROMPT</button>
+        </div>
+        <div style="padding:20px; flex:1; min-height:0; overflow-y:auto;">
+            @if (showPromptForm)
+            {
+                <div class="llm-inline-form">
+                    <h4>@(editingPrompt?.PromptId > 0 ? "Edit Prompt" : "New Prompt")</h4>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>Display Name</label>
+                            <input class="dx-form-control" @bind="editingPrompt!.DisplayName" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Use Case</label>
+                            @if (editingPrompt?.PromptId > 0)
+                            {
+                                <input class="dx-form-control" value="@GetUseCaseDisplayName(editingPrompt.UseCaseId)" readonly />
+                            }
+                            else
+                            {
+                                <select class="dx-form-control" @bind="selectedUseCaseId" @bind:after="OnUseCaseChanged">
+                                    <option value="">-- Select Use Case --</option>
+                                    @foreach (var uc in GetAvailableUseCases())
+                                    {
+                                        <option value="@uc.Id">@uc.DisplayName</option>
+                                    }
+                                </select>
+                            }
+                        </div>
+                    </div>
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>Provider</label>
+                            <select class="dx-form-control" @bind="editingPromptProviderId">
+                                <option value="">Default Provider</option>
+                                @if (providers != null)
+                                {
+                                    @foreach (var p in providers.Where(p => p.IsEnabled))
+                                    {
+                                        <option value="@p.ProviderId">@p.DisplayName</option>
+                                    }
+                                }
+                            </select>
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Temperature</label>
+                            <input type="number" class="dx-form-control" step="0.1" min="0" max="2" @bind="editingPrompt!.Temperature" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Max Tokens</label>
+                            <input type="number" class="dx-form-control" @bind="editingPrompt!.MaxTokens" />
+                        </div>
+                        <div class="dx-form-group">
+                            <label>Response Format</label>
+                            <select class="dx-form-control" @bind="editingPrompt!.ResponseFormat">
+                                <option value="">Plain Text</option>
+                                <option value="json">JSON</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    @{ var useCase = LlmUseCases.All.FirstOrDefault(u => u.Id == (editingPrompt?.UseCaseId ?? selectedUseCaseId)); }
+                    @if (useCase != null && useCase.Variables.Length > 0)
+                    {
+                        <div class="prompt-variables">
+                            <label>Available Variables</label>
+                            <div class="variable-chips">
+                                @foreach (var v in useCase.Variables)
+                                {
+                                    <button class="variable-chip" @onclick="@(() => InsertVariable(v.Token))" title="@v.Description">
+                                        @v.Token
+                                    </button>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    <div class="dx-form-group" style="min-width:100%">
+                        <label>System Prompt</label>
+                        <textarea class="form-control prompt-editor" @bind="editingPrompt!.SystemPrompt" rows="12"></textarea>
+                    </div>
+
+                    <div class="llm-form-row">
+                        <div class="dx-form-group">
+                            <label>
+                                <input type="checkbox" class="dx-checkbox" @bind="editingPrompt!.IsEnabled" /> Enabled
+                            </label>
+                        </div>
+                    </div>
+                    <div class="llm-form-actions">
+                        <button class="dx-btn dx-btn-blue" @onclick="SavePrompt">SAVE</button>
+                        <button class="dx-btn dx-btn-gray" @onclick="CancelPromptForm">CANCEL</button>
+                        @if (editingPrompt?.PromptId > 0 || !string.IsNullOrEmpty(editingPrompt?.UseCaseId))
+                        {
+                            <button class="dx-btn dx-btn-blue" @onclick="TestPrompt" disabled="@testingPrompt" style="margin-left:auto">
+                                @(testingPrompt ? "TESTING..." : "TEST PROMPT")
+                            </button>
+                        }
+                    </div>
+                    @if (!string.IsNullOrEmpty(promptFormMessage))
+                    {
+                        <div class="@(promptFormMessageIsError ? "dx-alert dx-alert-danger" : "dx-alert dx-alert-success")">@promptFormMessage</div>
+                    }
+                    @if (promptTestResult != null)
+                    {
+                        <div class="prompt-test-results">
+                            <span class="test-result @(promptTestResult.TextPass ? "result-success" : "result-failed")">
+                                Text: @(promptTestResult.TextPass ? "Pass" : "Fail")
+                            </span>
+                            @if (promptTestResult.VisionPass.HasValue)
+                            {
+                                <span class="test-result @(promptTestResult.VisionPass.Value ? "result-success" : "result-failed")">
+                                    Vision: @(promptTestResult.VisionPass.Value ? "Pass" : "Fail")
+                                </span>
+                            }
+                            else
+                            {
+                                <span class="test-result" style="color:#999">
+                                    Vision: N/A
+                                </span>
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (prompts != null && prompts.Any())
+            {
+                <div class="prompt-card-grid">
+                    @foreach (var prompt in prompts)
+                    {
+                        <div class="prompt-card @(showPromptForm && editingPrompt?.PromptId == prompt.PromptId && prompt.PromptId > 0 ? "prompt-card--editing" : "")">
+                            <div class="prompt-card-header">
+                                <div class="prompt-card-title">
+                                    <h4>@prompt.DisplayName</h4>
+                                    <span class="dx-badge use-case-badge">@prompt.UseCaseId</span>
+                                </div>
+                                <span class="dx-badge @(prompt.IsEnabled ? "dx-badge-green" : "dx-badge-gray")">
+                                    @(prompt.IsEnabled ? "Enabled" : "Disabled")
+                                </span>
+                            </div>
+                            <div class="prompt-card-details">
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Provider:</span>
+                                    <span class="detail-value">@(GetProviderDisplayName(prompt.ProviderId) ?? "Default Provider")</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Temperature:</span>
+                                    <span class="detail-value">@prompt.Temperature</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Max Tokens:</span>
+                                    <span class="detail-value">@prompt.MaxTokens</span>
+                                </div>
+                                <div class="provider-detail-row">
+                                    <span class="detail-label">Format:</span>
+                                    <span class="detail-value">@(prompt.ResponseFormat ?? "Plain Text")</span>
+                                </div>
+                                <div class="prompt-card-badges">
+                                    @if (prompt.SupportsText)
+                                    {
+                                        <span class="dx-badge dx-badge-green">Text</span>
+                                    }
+                                    @if (prompt.SupportsVision)
+                                    {
+                                        <span class="dx-badge dx-badge-green">Vision</span>
+                                    }
+                                </div>
+                                @if (prompt.LastTestedDate.HasValue)
+                                {
+                                    <div class="provider-detail-row">
+                                        <span class="detail-label">Last Tested:</span>
+                                        <span class="detail-value">@prompt.LastTestedDate.Value.ToString("g")</span>
+                                    </div>
+                                }
+                            </div>
+                            <div class="provider-actions">
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="@(() => EditPrompt(prompt))">Edit</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+            else if (prompts != null)
+            {
+                <div style="text-align:center; padding:40px 20px; color:#666;">
+                    <h4>No prompts configured</h4>
+                    <p>Click ADD PROMPT to create a prompt configuration for an LLM use case.</p>
+                </div>
+            }
+        </div>
+    }
+</div>
+
+@code {
+    private string activeSubTab = "providers";
+
+    // Provider state
+    private List<TblLlmProviderConfiguration>? providers;
+    private TblLlmProviderConfiguration? editingProvider;
+    private string editingProviderType = "anthropic";
+    private DateTime? editingCredentialExpiresAt;
+    private bool showProviderForm = false;
+    private string? formMessage;
+    private bool formMessageIsError = false;
+    private string? testingProviderId;
+    private Dictionary<string, bool> testResults = new();
+
+    // Prompt state
+    private List<TblLlmPromptConfiguration>? prompts;
+    private TblLlmPromptConfiguration? editingPrompt;
+    private string selectedUseCaseId = "";
+    private string editingPromptProviderId = "";
+    private bool showPromptForm = false;
+    private string? promptFormMessage;
+    private bool promptFormMessageIsError = false;
+    private bool testingPrompt = false;
+    private PromptTestResult? promptTestResult;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadProviders();
+        await LoadPrompts();
+    }
+
+    // ── Provider Methods ──
+
+    private async Task LoadProviders()
+    {
+        try
+        {
+            providers = await directorDb.TblLlmProviderConfigurations
+                .AsNoTracking()
+                .OrderByDescending(p => p.IsDefault)
+                .ThenBy(p => p.DisplayName)
+                .ToListAsync();
+        }
+        catch
+        {
+            providers = new List<TblLlmProviderConfiguration>();
+        }
+    }
+
+    private void StartAddProvider()
+    {
+        editingProvider = new TblLlmProviderConfiguration
+        {
+            ProviderType = "anthropic",
+            MaxTokens = 2000,
+            DefaultTemperature = 0.1f,
+            TimeoutSeconds = 30,
+            IsEnabled = true,
+            CreateDate = DateTime.UtcNow
+        };
+        editingProviderType = "anthropic";
+        editingCredentialExpiresAt = null;
+        showProviderForm = true;
+        formMessage = null;
+    }
+
+    private void EditProvider(TblLlmProviderConfiguration provider)
+    {
+        editingProvider = new TblLlmProviderConfiguration
+        {
+            ConfigId = provider.ConfigId,
+            ProviderId = provider.ProviderId,
+            ProviderType = provider.ProviderType,
+            DisplayName = provider.DisplayName,
+            BaseUrl = provider.BaseUrl,
+            ApiKey = apiKeyProtector.Decrypt(provider.ApiKey),
+            Model = provider.Model,
+            MaxTokens = provider.MaxTokens,
+            DefaultTemperature = provider.DefaultTemperature,
+            TimeoutSeconds = provider.TimeoutSeconds,
+            IsDefault = provider.IsDefault,
+            IsEnabled = provider.IsEnabled,
+            CreateDate = provider.CreateDate
+        };
+        editingProviderType = provider.ProviderType;
+        editingCredentialExpiresAt = provider.CredentialExpiresAt;
+        showProviderForm = true;
+        formMessage = null;
+    }
+
+    private async Task SaveProvider()
+    {
+        if (editingProvider == null) return;
+
+        if (string.IsNullOrWhiteSpace(editingProvider.DisplayName) ||
+            string.IsNullOrWhiteSpace(editingProvider.ProviderId) ||
+            string.IsNullOrWhiteSpace(editingProvider.Model))
+        {
+            formMessage = "Display Name, Provider ID, and Model are required.";
+            formMessageIsError = true;
+            return;
+        }
+
+        try
+        {
+            editingProvider.ProviderType = editingProviderType;
+
+            if (editingProvider.IsDefault)
+            {
+                var currentDefaults = await directorDb.TblLlmProviderConfigurations
+                    .Where(p => p.IsDefault && p.ConfigId != editingProvider.ConfigId)
+                    .ToListAsync();
+                foreach (var d in currentDefaults)
+                {
+                    d.IsDefault = false;
+                }
+            }
+
+            if (editingProvider.ConfigId > 0)
+            {
+                var existing = await directorDb.TblLlmProviderConfigurations.FindAsync(editingProvider.ConfigId);
+                if (existing != null)
+                {
+                    existing.ProviderId = editingProvider.ProviderId;
+                    existing.ProviderType = editingProvider.ProviderType;
+                    existing.DisplayName = editingProvider.DisplayName;
+                    existing.BaseUrl = editingProvider.BaseUrl;
+                    existing.ApiKey = apiKeyProtector.Encrypt(editingProvider.ApiKey);
+                    existing.Model = editingProvider.Model;
+                    existing.MaxTokens = editingProvider.MaxTokens;
+                    existing.DefaultTemperature = editingProvider.DefaultTemperature;
+                    existing.TimeoutSeconds = editingProvider.TimeoutSeconds;
+                    existing.IsDefault = editingProvider.IsDefault;
+                    existing.IsEnabled = editingProvider.IsEnabled;
+                    existing.CredentialExpiresAt = editingCredentialExpiresAt;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                editingProvider.ApiKey = apiKeyProtector.Encrypt(editingProvider.ApiKey);
+                editingProvider.CredentialExpiresAt = editingCredentialExpiresAt;
+                editingProvider.CreateDate = DateTime.UtcNow;
+                directorDb.TblLlmProviderConfigurations.Add(editingProvider);
+            }
+
+            await directorDb.SaveChangesAsync();
+            showProviderForm = false;
+            formMessage = null;
+            await LoadProviders();
+        }
+        catch (Exception ex)
+        {
+            formMessage = $"Error saving provider: {ex.Message}";
+            formMessageIsError = true;
+        }
+    }
+
+    private async Task DeleteProvider(TblLlmProviderConfiguration provider)
+    {
+        try
+        {
+            var existing = await directorDb.TblLlmProviderConfigurations.FindAsync(provider.ConfigId);
+            if (existing != null)
+            {
+                directorDb.TblLlmProviderConfigurations.Remove(existing);
+                await directorDb.SaveChangesAsync();
+            }
+            await LoadProviders();
+        }
+        catch (Exception ex)
+        {
+            formMessage = $"Error deleting provider: {ex.Message}";
+            formMessageIsError = true;
+        }
+    }
+
+    private void CancelProviderForm()
+    {
+        showProviderForm = false;
+        editingProvider = null;
+        formMessage = null;
+    }
+
+    private async Task TestConnection(TblLlmProviderConfiguration provider)
+    {
+        testingProviderId = provider.ProviderId;
+        testResults.Remove(provider.ProviderId);
+        StateHasChanged();
+
+        try
+        {
+            var result = await llmGateway.TestConnectionAsync(provider.ProviderId);
+            testResults[provider.ProviderId] = result;
+        }
+        catch
+        {
+            testResults[provider.ProviderId] = false;
+        }
+
+        testingProviderId = null;
+    }
+
+    private void OnDisplayNameInput()
+    {
+        if (editingProvider == null || editingProvider.ConfigId > 0) return;
+        var name = editingProvider.DisplayName ?? "";
+        editingProvider.ProviderId = name.ToLowerInvariant()
+            .Replace(" ", "-")
+            .Replace("(", "")
+            .Replace(")", "");
+    }
+
+    private string GetBaseUrlPlaceholder() => editingProviderType switch
+    {
+        "anthropic" => "https://api.anthropic.com",
+        "openai-compatible" => "https://api.openai.com/v1",
+        "ollama" => "http://localhost:11434",
+        _ => ""
+    };
+
+    private string GetModelPlaceholder() => editingProviderType switch
+    {
+        "anthropic" => "claude-sonnet-4-5-20250929",
+        "gemini" => "gemini-2.0-flash",
+        "openai-compatible" => "gpt-4o",
+        "ollama" => "llama3",
+        _ => ""
+    };
+
+    private string GetTypeLabel(string providerType) => providerType switch
+    {
+        "anthropic" => "Anthropic",
+        "gemini" => "Gemini",
+        "openai-compatible" => "OpenAI",
+        "ollama" => "Ollama",
+        _ => providerType
+    };
+
+    private string GetTypeBadgeClass(string providerType) => providerType switch
+    {
+        "anthropic" => "badge-anthropic",
+        "gemini" => "badge-gemini",
+        "openai-compatible" => "badge-openai",
+        "ollama" => "badge-ollama",
+        _ => ""
+    };
+
+    // ── Prompt Methods ──
+
+    private async Task LoadPrompts()
+    {
+        try
+        {
+            prompts = await directorDb.TblLlmPromptConfigurations
+                .AsNoTracking()
+                .OrderBy(p => p.DisplayName)
+                .ToListAsync();
+        }
+        catch
+        {
+            prompts = new List<TblLlmPromptConfiguration>();
+        }
+    }
+
+    private void StartAddPrompt()
+    {
+        editingPrompt = new TblLlmPromptConfiguration
+        {
+            IsEnabled = true,
+            Temperature = 0.1f,
+            MaxTokens = 1000
+        };
+        selectedUseCaseId = "";
+        editingPromptProviderId = "";
+        showPromptForm = true;
+        promptFormMessage = null;
+        promptTestResult = null;
+    }
+
+    private void EditPrompt(TblLlmPromptConfiguration prompt)
+    {
+        editingPrompt = new TblLlmPromptConfiguration
+        {
+            PromptId = prompt.PromptId,
+            UseCaseId = prompt.UseCaseId,
+            DisplayName = prompt.DisplayName,
+            ProviderId = prompt.ProviderId,
+            SystemPrompt = prompt.SystemPrompt,
+            Temperature = prompt.Temperature,
+            MaxTokens = prompt.MaxTokens,
+            ResponseFormat = prompt.ResponseFormat,
+            SupportsText = prompt.SupportsText,
+            SupportsVision = prompt.SupportsVision,
+            LastTestedDate = prompt.LastTestedDate,
+            IsEnabled = prompt.IsEnabled,
+            CreateDate = prompt.CreateDate
+        };
+        selectedUseCaseId = prompt.UseCaseId;
+        editingPromptProviderId = prompt.ProviderId ?? "";
+        showPromptForm = true;
+        promptFormMessage = null;
+        promptTestResult = null;
+    }
+
+    private void OnUseCaseChanged()
+    {
+        if (editingPrompt == null || editingPrompt.PromptId > 0) return;
+
+        var useCase = LlmUseCases.All.FirstOrDefault(u => u.Id == selectedUseCaseId);
+        if (useCase != null)
+        {
+            editingPrompt.UseCaseId = useCase.Id;
+            editingPrompt.DisplayName = useCase.DisplayName;
+            editingPrompt.SystemPrompt = useCase.DefaultPrompt;
+            editingPrompt.Temperature = useCase.DefaultTemperature;
+            editingPrompt.MaxTokens = useCase.DefaultMaxTokens;
+            editingPrompt.ResponseFormat = useCase.DefaultResponseFormat;
+        }
+    }
+
+    private async Task SavePrompt()
+    {
+        if (editingPrompt == null) return;
+
+        if (string.IsNullOrWhiteSpace(editingPrompt.DisplayName) ||
+            string.IsNullOrWhiteSpace(editingPrompt.UseCaseId) ||
+            string.IsNullOrWhiteSpace(editingPrompt.SystemPrompt))
+        {
+            promptFormMessage = "Display Name, Use Case, and System Prompt are required.";
+            promptFormMessageIsError = true;
+            return;
+        }
+
+        try
+        {
+            editingPrompt.ProviderId = string.IsNullOrEmpty(editingPromptProviderId) ? null : editingPromptProviderId;
+
+            if (editingPrompt.PromptId > 0)
+            {
+                var existing = await directorDb.TblLlmPromptConfigurations.FindAsync(editingPrompt.PromptId);
+                if (existing != null)
+                {
+                    existing.DisplayName = editingPrompt.DisplayName;
+                    existing.ProviderId = editingPrompt.ProviderId;
+                    existing.SystemPrompt = editingPrompt.SystemPrompt;
+                    existing.Temperature = editingPrompt.Temperature;
+                    existing.MaxTokens = editingPrompt.MaxTokens;
+                    existing.ResponseFormat = editingPrompt.ResponseFormat;
+                    existing.IsEnabled = editingPrompt.IsEnabled;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                editingPrompt.CreateDate = DateTime.UtcNow;
+                directorDb.TblLlmPromptConfigurations.Add(editingPrompt);
+            }
+
+            await directorDb.SaveChangesAsync();
+            showPromptForm = false;
+            promptFormMessage = null;
+            await LoadPrompts();
+        }
+        catch (Exception ex)
+        {
+            promptFormMessage = $"Error saving prompt: {ex.Message}";
+            promptFormMessageIsError = true;
+        }
+    }
+
+    private void CancelPromptForm()
+    {
+        showPromptForm = false;
+        editingPrompt = null;
+        promptFormMessage = null;
+        promptTestResult = null;
+    }
+
+    // Minimal 1x1 red PNG for vision capability testing
+    private const string TestImageBase64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
+
+    private async Task TestPrompt()
+    {
+        if (editingPrompt == null) return;
+
+        testingPrompt = true;
+        promptTestResult = null;
+        promptFormMessage = null;
+        StateHasChanged();
+
+        var providerId = string.IsNullOrEmpty(editingPromptProviderId) ? null : editingPromptProviderId;
+        var systemPrompt = (editingPrompt.SystemPrompt ?? "")
+            .Replace("{message_text}", "Hello, welcome to our hotel");
+        bool textPass = false;
+        bool? visionPass = null;
+
+        // Text test
+        try
+        {
+            var request = new LlmCompletionRequest
+            {
+                ProviderId = providerId,
+                SystemPrompt = systemPrompt,
+                UserPrompt = "Evaluate this text: Hello, welcome to our hotel",
+                Temperature = editingPrompt.Temperature,
+                MaxTokens = editingPrompt.MaxTokens,
+                ResponseFormat = editingPrompt.ResponseFormat
+            };
+
+            var response = await llmGateway.CompleteAsync(request);
+            textPass = response.Success;
+        }
+        catch
+        {
+            textPass = false;
+        }
+
+        // Vision test — sends a 1x1 PNG alongside text via multimodal content
+        try
+        {
+            var visionRequest = new LlmCompletionRequest
+            {
+                ProviderId = providerId,
+                SystemPrompt = systemPrompt,
+                UserPrompt = "Describe what you see in this image.",
+                Temperature = editingPrompt.Temperature,
+                MaxTokens = editingPrompt.MaxTokens,
+                MultimodalContent = new List<LlmMessageContent>
+                {
+                    new() { Type = "text", Content = "Describe what you see in this image." },
+                    new() { Type = "image_url", Content = TestImageBase64, MimeType = "image/png" }
+                }
+            };
+
+            var visionResponse = await llmGateway.CompleteAsync(visionRequest);
+            visionPass = visionResponse.Success;
+        }
+        catch
+        {
+            visionPass = false;
+        }
+
+        promptTestResult = new PromptTestResult { TextPass = textPass, VisionPass = visionPass };
+
+        // Update test metadata
+        editingPrompt.SupportsText = textPass;
+        editingPrompt.SupportsVision = visionPass == true;
+        editingPrompt.LastTestedDate = DateTime.UtcNow;
+
+        // Persist test results if the prompt already exists
+        if (editingPrompt.PromptId > 0)
+        {
+            try
+            {
+                var existing = await directorDb.TblLlmPromptConfigurations.FindAsync(editingPrompt.PromptId);
+                if (existing != null)
+                {
+                    existing.SupportsText = textPass;
+                    existing.SupportsVision = visionPass == true;
+                    existing.LastTestedDate = DateTime.UtcNow;
+                    await directorDb.SaveChangesAsync();
+                }
+            }
+            catch (Exception ex)
+            {
+                promptFormMessage = $"Test ran but failed to save results: {ex.Message}";
+                promptFormMessageIsError = true;
+            }
+        }
+
+        testingPrompt = false;
+    }
+
+    private void InsertVariable(string token)
+    {
+        if (editingPrompt == null) return;
+        editingPrompt.SystemPrompt = (editingPrompt.SystemPrompt ?? "") + token;
+    }
+
+    private IEnumerable<LlmUseCase> GetAvailableUseCases()
+    {
+        var usedIds = prompts?.Select(p => p.UseCaseId).ToHashSet() ?? new HashSet<string>();
+        return LlmUseCases.All.Where(uc => !usedIds.Contains(uc.Id));
+    }
+
+    private string GetUseCaseDisplayName(string useCaseId)
+    {
+        return LlmUseCases.All.FirstOrDefault(u => u.Id == useCaseId)?.DisplayName ?? useCaseId;
+    }
+
+    private string? GetProviderDisplayName(string? providerId)
+    {
+        if (string.IsNullOrEmpty(providerId)) return null;
+        return providers?.FirstOrDefault(p => p.ProviderId == providerId)?.DisplayName ?? providerId;
+    }
+
+    private class PromptTestResult
+    {
+        public bool TextPass { get; set; }
+        public bool? VisionPass { get; set; }
+    }
+}
+
+<style>
+    /* Inline form container — uses CSS vars to match system theme */
+    .llm-inline-form {
+        background: var(--dx-bg-alt);
+        border: 1px solid var(--dx-border-color);
+        border-radius: var(--dx-border-radius);
+        padding: 20px;
+        margin-bottom: 20px;
+    }
+
+    .llm-inline-form h4 {
+        margin: 0 0 16px 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+        color: #333;
+    }
+
+    .llm-form-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+    }
+
+    .llm-form-row .dx-form-group {
+        flex: 1;
+        min-width: 200px;
+    }
+
+    .llm-form-actions {
+        display: flex;
+        gap: 8px;
+        margin-top: 12px;
+    }
+
+    .llm-provider-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+        gap: 16px;
+    }
+
+    .llm-provider-card {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 16px;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .llm-provider-card--editing {
+        border: 2px solid var(--dx-blue);
+        box-shadow: 0 0 0 3px rgba(0, 113, 188, 0.12);
+    }
+
+    .provider-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .provider-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .provider-header h4 {
+        margin: 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+        text-transform: uppercase;
+    }
+
+    /* provider-type-badge — color-only overrides; base styling comes from dx-badge */
+    .badge-anthropic {
+        background: #fce4ec;
+        color: #c62828;
+    }
+
+    .badge-gemini {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    .badge-openai {
+        background: #e3f2fd;
+        color: #1565c0;
+    }
+
+    .badge-ollama {
+        background: #f3e5f5;
+        color: #6a1b9a;
+    }
+
+    .provider-details {
+        margin-bottom: 12px;
+    }
+
+    .provider-detail-row {
+        display: flex;
+        gap: 8px;
+        padding: 3px 0;
+        font-size: 13px;
+    }
+
+    .detail-label {
+        font-weight: 600;
+        color: #666;
+        min-width: 90px;
+    }
+
+    .detail-value {
+        color: #333;
+        word-break: break-all;
+    }
+
+    .provider-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding-top: 8px;
+        border-top: 1px solid #f0f0f0;
+        flex-wrap: wrap;
+        margin-top: auto;
+    }
+
+    .provider-edit-actions {
+        margin-left: auto;
+        display: flex;
+        gap: 8px;
+    }
+
+    .test-result {
+        font-size: 13px;
+        font-weight: 600;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .result-success { color: #2e7d32; }
+    .result-failed { color: #c62828; }
+
+    /* Prompt-specific styles */
+    .prompt-card-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(min(380px, 100%), 1fr));
+        gap: 16px;
+    }
+
+    .prompt-card {
+        background: #fff;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 16px;
+    }
+
+    .prompt-card--editing {
+        border: 2px solid var(--dx-blue);
+        box-shadow: 0 0 0 3px rgba(0, 113, 188, 0.12);
+    }
+
+    .prompt-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        margin-bottom: 12px;
+    }
+
+    .prompt-card-title {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+    }
+
+    .prompt-card-title h4 {
+        margin: 0;
+        font-family: "BAHNSCHRIFT";
+        font-size: 16px;
+        text-transform: uppercase;
+    }
+
+    /* use-case-badge — color override only; base sizing from dx-badge */
+    .use-case-badge {
+        background: #e3f2fd;
+        color: #1565c0;
+    }
+
+    .prompt-card-details {
+        margin-bottom: 12px;
+    }
+
+    .prompt-card-badges {
+        display: flex;
+        gap: 6px;
+        padding: 4px 0;
+    }
+
+
+    .prompt-variables {
+        margin-bottom: 12px;
+    }
+
+    .prompt-variables label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 6px;
+        font-family: "BAHNSCHRIFT";
+    }
+
+    .variable-chips {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .variable-chip {
+        background: #e3f2fd;
+        color: #1565c0;
+        border: 1px solid #90caf9;
+        border-radius: 14px;
+        padding: 4px 12px;
+        font-size: 12px;
+        font-family: monospace;
+        cursor: pointer;
+        transition: background 0.15s;
+    }
+
+    .variable-chip:hover {
+        background: #bbdefb;
+    }
+
+    .prompt-editor {
+        font-family: "Consolas", "Courier New", monospace !important;
+        min-height: 200px;
+        line-height: 1.5;
+        resize: vertical;
+    }
+
+    .prompt-test-results {
+        display: flex;
+        gap: 16px;
+        margin-top: 10px;
+        padding: 8px 12px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+</style>

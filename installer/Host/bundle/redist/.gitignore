@@ -1,0 +1,5 @@
+# The .NET Hosting Bundle payload is large and supplied at build time, not committed.
+# Keep this folder (and its docs) in source control, but ignore the binaries.
+*
+!.gitignore
+!README.md

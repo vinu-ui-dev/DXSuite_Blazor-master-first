@@ -1,0 +1,668 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Aviation.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Components.Schedulers
+@using Microsoft.EntityFrameworkCore
+@using System.Text
+@using System.Globalization
+@using Microsoft.Extensions.Options
+@inject IServiceScopeFactory scopeFactory;
+@inject IDirectorDBContext directorContext;
+@inject IDbContextFactory<AviationDbContext> aviationDbFactory
+@inject NavigationManager navMan;
+@inject IOptions<AirlineSchedulingConfig> AirlineConfig;
+@inject IPublicationInvalidator publicationInvalidator
+@inject IScheduleEventService scheduleEventService
+@rendermode InteractiveServer
+
+
+@if (Location != null)
+{
+    <section class="display-body">
+        <div class="container">
+            <!-- Current Airline Status Grid -->
+            @if (airlineStatusList != null && airlineStatusList.Any())
+            {
+                <div style="background-color: #CCCCCC; border-radius: 4px; padding: 20px; margin-bottom: 30px;">
+                    <h3 style="margin-bottom: 20px; color: #333333; font-weight: bold;">Current Airline Status</h3>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px;">
+                        @foreach (var airlineLocation in GetAirlineLocationStatuses())
+                        {
+                            <div class="airline-status-card" style="background-color: #ffffff; border-radius: 2px; padding: 15px; border-left: 4px solid @(airlineLocation.Status == 1 ? "#39B54A" : "#990000"); display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 4px rgba(0,0,0,0.1); cursor: pointer; transition: all 0.3s ease;"
+                                 @onclick="() => OpenStatusChangeModal(airlineLocation)"
+                                 title="Click to manually open/close this airline location"
+                                 onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 4px 12px rgba(0,0,0,0.15)'; this.style.backgroundColor='#F8F9FA';"
+                                 onmouseout="this.style.transform='translateY(0px)'; this.style.boxShadow='0 2px 4px rgba(0,0,0,0.1)'; this.style.backgroundColor='#ffffff';">
+                                <div>
+                                    <strong style="color: #333333;">@airlineLocation.CarrierName</strong>
+                                    <br />
+                                    <small style="color: #4D4D4D;">@airlineLocation.AirlineCode</small>
+                                    <br />
+                                    <small style="color: #666666; font-weight: bold;">@airlineLocation.LocationName</small>
+                                </div>
+                                <div style="text-align: right;">
+                                    <span class="status-badge" style="background-color: @(airlineLocation.Status == 1 ? "#39B54A" : "#990000"); color: white; padding: 5px 12px; border-radius: 15px; font-size: 12px; font-weight: bold;">
+                                        @(airlineLocation.Status == 1 ? "OPEN" : "CLOSED")
+                                    </span>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+
+            <!-- Schedule Management Header -->
+            <div style="background-color: #CCCCCC; border-radius: 4px; padding: 20px; margin-bottom: 20px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <h2 style="color: #333333; font-weight: bold; margin: 0;">Schedule Management</h2>
+                    <button class="dx-btn dx-btn-blue" @onclick="() => CreateNewSchedule()" style="font-size: 16px; padding: 10px 20px;">
+                        @(isCreatingScheduleEvent ? "CANCEL SCHEDULE ENTRY" : "NEW SCHEDULE ENTRY")
+                    </button>
+                </div>
+                <p style="color: #4D4D4D; margin: 8px 0 0 0;">Create and manage airline operating schedules for automated status control</p>
+
+                @if (newScheduleEvent != null && isCreatingScheduleEvent)
+                {
+                    <ScheduleEditor_AirlineLocation @ref="scheduleEditor"
+                                                    Location="Location"
+                                                    ScheduleEvent="newScheduleEvent"
+                                                    OnSaveScheduleEntry="SaveScheduleEntry" />
+                }
+            </div>
+
+            @if (scheduleEvents is not null && scheduleEvents.Any())
+            {
+                <div style="margin-bottom: 30px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px;">
+                        <h3 style="color: #333333; font-weight: bold; margin: 0;">Current Schedule Entries</h3>
+
+                        <!-- Airline Filter Dropdown -->
+                        <div class="dropdown">
+                            <button class="dx-btn dx-btn-blue"
+                                    style="min-width: 200px; justify-content: space-between;"
+                                    @onclick="ShowAirlineFilter">
+                                @(!string.IsNullOrWhiteSpace(selectedAirlineFilterName) ? selectedAirlineFilterName : "Filter by Airline")
+                                <svg class="dropdown-icon @(showAirlineFilter ? "rotate" : "")" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M7 10l5 5 5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                            </button>
+
+                            @if (showAirlineFilter)
+                            {
+                                <div class="dropdown-menu show language-dropdown-menu" style="min-width: 200px;">
+                                    <!-- Clear Filter Button -->
+                                    <div class="px-3 pb-2 text-center">
+                                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="ClearAirlineFilter">
+                                            Show All Airlines
+                                        </button>
+                                    </div>
+
+                                    <!-- Airline List -->
+                                    <div class="language-dropdown-list">
+                                        @foreach (var airline in GetUniqueAirlines())
+                                        {
+                                            <button class="dropdown-item language-dropdown-item"
+                                                    @onclick="() => SelectAirlineFilter(airline.Key, airline.Value)">
+                                                <span class="scrolling-text">@airline.Value (@airline.Key)</span>
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div style="display: flex; flex-direction: column; gap: 20px;">
+                        @foreach (TblScheduleEvent eventItem in GetFilteredScheduleEvents())
+                        {
+                            <!-- Schedule Entry Card -->
+                            <div style="background-color: #ffffff; border-radius: 4px; border: 1px solid #CCC; box-shadow: 0 2px 4px rgba(0,0,0,0.1); overflow: hidden; @(newScheduleEvent == eventItem ? "border-color: #0071BC; box-shadow: 0 4px 8px rgba(0,113,188,0.3);" : "")">
+
+                                <!-- Card Header -->
+                                <div style="background-color: #CCCCCC; padding: 20px; border-bottom: 1px solid #B3B3B3;">
+                                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                                        <div>
+                                            <h4 style="margin: 0; font-weight: bold; color: #333333;">@CarrierNameFor(eventItem.AirlineCode)</h4>
+                                            <small style="color: #4D4D4D;">Airline Code: @eventItem.AirlineCode</small>
+                                            <br />
+                                            <small style="color: #666666; font-weight: bold;">@GetScheduleLocationName(eventItem)</small>
+                                        </div>
+                                        <div style="display: flex; gap: 10px;">
+                                            @if (newScheduleEvent == eventItem)
+                                            {
+                                                <button class="dx-btn dx-btn-gray" style="padding: 8px 16px;" @onclick="() => newScheduleEvent = null">Cancel</button>
+                                            }
+                                            else
+                                            {
+                                                <button class="dx-btn dx-btn-blue" style="padding: 8px 16px;" @onclick="() => EditScheduleEntry(eventItem)">Edit</button>
+                                            }
+                                            <button class="dx-btn dx-btn-red" style="padding: 8px 16px;" @onclick="async () => await DeleteScheduleEntry(eventItem.ScheduleEventId)">Delete</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Card Body -->
+                                <div style="padding: 20px;">
+                                    <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 25px; align-items: start;">
+
+                                        <!-- Date Range -->
+                                        <div>
+                                            <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Date Range</h6>
+                                            @if(eventItem.StartDate is not null || eventItem.EndDate is not null)
+                                            {
+                                                <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                    <div style="margin-bottom: 8px;">
+                                                        <small style="color: #4D4D4D; font-weight: bold;">Start:</small>
+                                                        <div style="color: #333333;">@((eventItem.StartDate != null) ? eventItem.StartDate.Value.ToString("MMM d, yyyy") : "No limit")</div>
+                                                    </div>
+                                                    <div>
+                                                        <small style="color: #4D4D4D; font-weight: bold;">End:</small>
+                                                        <div style="color: #333333;">@((eventItem.EndDate != null) ? eventItem.EndDate.Value.ToString("MMM d, yyyy") : "No limit")</div>
+                                                    </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">Always active</div>
+                                            }
+                                        </div>
+
+                                        <!-- Time Range -->
+                                        <div>
+                                            <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Time Range</h6>
+                                            @if (eventItem.StartTime is not null || eventItem.EndTime is not null)
+                                            {
+                                                <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                    <div style="margin-bottom: 8px;">
+                                                        <small style="color: #4D4D4D; font-weight: bold;">Open:</small>
+                                                        <div style="color: #333333; font-weight: bold;">@((eventItem.StartTime != null) ? eventItem.StartTime.Value.ToString("h:mm tt") : "Start of day")</div>
+                                                    </div>
+                                                    <div>
+                                                        <small style="color: #4D4D4D; font-weight: bold;">Close:</small>
+                                                        <div style="color: #333333; font-weight: bold;">@((eventItem.EndTime != null) ? eventItem.EndTime.Value.ToString("h:mm tt") : "End of day")</div>
+                                                    </div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">All day</div>
+                                            }
+                                        </div>
+
+                                        <!-- Active Days -->
+                                        <div>
+                                            <h6 style="color: #333333; margin-bottom: 12px; font-weight: bold;">Active Days</h6>
+                                            @if (HasAnyDaySelected(eventItem))
+                                            {
+                                                <div style="background-color: #F2F2F2; border-radius: 2px; padding: 15px;">
+                                                    <div style="color: #333333; font-weight: bold; text-align: center;">@GetDayString(eventItem)</div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div style="color: #4D4D4D; font-style: italic; text-align: center; padding: 15px;">Active everyday</div>
+                                            }
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <!-- Expanded Edit Section -->
+                                @if (newScheduleEvent == eventItem)
+                                {
+                                    <div style="border-top: 1px solid #CCC; background-color: #F2F2F2; padding: 25px;">
+                                        @if (newScheduleEvent != null)
+                                        {
+                                            <ScheduleEditor_AirlineLocation @ref="scheduleEditor"
+                                                                            Location="Location"
+                                                                            ScheduleEvent="newScheduleEvent"
+                                                                            OnSaveScheduleEntry="SaveScheduleEntry" />
+                                        }
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    </section>
+}
+
+<!-- Manual Status Change Modal -->
+@if (showStatusChangeModal && selectedAirlineLocationForStatusChange != null)
+{
+    <div class="modal fade show" style="display: block; background-color: rgba(0,0,0,0.5);" tabindex="-1">
+        <div class="modal-dialog modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title">Manual Status Override</h5>
+                </div>
+                <div class="modal-body">
+                    <div style="text-align: center; padding: 20px;">
+                        <div style="margin-bottom: 20px;">
+                            <strong style="font-size: 18px;">@selectedAirlineLocationForStatusChange.CarrierName</strong>
+                            <br />
+                            <small style="color: #6c757d;">(@selectedAirlineLocationForStatusChange.AirlineCode)</small>
+                            <br />
+                            <small style="color: #666666; font-weight: bold;">@selectedAirlineLocationForStatusChange.LocationName</small>
+                        </div>
+
+                        <div style="margin-bottom: 20px;">
+                            <span style="color: #333333;">Current Status: </span>
+                            <span class="status-badge" style="background-color: @(selectedAirlineLocationForStatusChange.Status == 1 ? "#39B54A" : "#990000"); color: white; padding: 3px 8px; border-radius: 12px; font-size: 12px; font-weight: bold;">
+                                @(selectedAirlineLocationForStatusChange.Status == 1 ? "OPEN" : "CLOSED")
+                            </span>
+                        </div>
+
+                        <div style="margin-bottom: 20px;">
+                            <p style="color: #333333;">
+                                Are you sure you want to manually @(selectedAirlineLocationForStatusChange.Status == 1 ? "CLOSE" : "OPEN") this airline location?
+                            </p>
+                            <small style="color: #4D4D4D;">
+                                This will override the current status until the next scheduled transition.
+                            </small>
+                        </div>
+                    </div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="dx-btn dx-btn-gray" @onclick="CloseStatusChangeModal">Cancel</button>
+                    <button type="button" class="@(selectedAirlineLocationForStatusChange.Status == 1 ? "dx-btn dx-btn-red" : "dx-btn dx-btn-green")" @onclick="ConfirmStatusChange">
+                        @(selectedAirlineLocationForStatusChange.Status == 1 ? "CLOSE" : "OPEN")
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public DXSuite.Director.Entities.TblLocation? Location { get; set; }
+
+    // Helper class for airline location status
+    public class AirlineLocationStatus
+    {
+        public string AirlineCode { get; set; } = "";
+        public string CarrierName { get; set; } = "";
+        public string LocationName { get; set; } = "";
+        public int Status { get; set; }
+        public bool IsLocation1 { get; set; } // true for Terminal/1st Floor, false for Gateway/2nd Floor
+    }
+
+    public bool isCreatingScheduleEvent = false;
+    private TblScheduleEvent? newScheduleEvent;
+    private ScheduleEditor_AirlineLocation? scheduleEditor;
+    private bool hasScheduleEvents = false;
+
+    private List<TblScheduleEvent>? scheduleEvents;
+    private Dictionary<string, string>? airlineLookup;
+    private List<TblAirline>? airlineStatusList;
+
+    // Modal properties
+    private bool showStatusChangeModal = false;
+    private TblAirline? selectedAirlineForStatusChange;
+    private AirlineLocationStatus? selectedAirlineLocationForStatusChange;
+
+    // Airline filter properties
+    private bool showAirlineFilter = false;
+    private string selectedAirlineFilterCode = "";
+    private string selectedAirlineFilterName = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location == null) return;
+
+        await using var aviationDb = await aviationDbFactory.CreateDbContextAsync();
+
+        airlineLookup = await aviationDb.TblAirlines
+            .Where(x => x.Tpenabled1 == true || x.Tpenabled2 == true)
+            .AsNoTracking()
+            .ToDictionaryAsync(a => a.AirlineCode, a => a.CarrierName);
+
+        airlineStatusList = await aviationDb.TblAirlines
+            .Where(x => x.Tpenabled1 == true || x.Tpenabled2 == true)
+            .OrderBy(x => x.CarrierName)
+            .ToListAsync();
+
+        scheduleEvents = await directorContext.TblScheduleEvents
+            .Where(x => x.ScheduleEventTypeId == 2 && x.LocationId == Location.LocationId)
+            .ToListAsync();
+    }
+
+    private string CarrierNameFor(string? code) =>
+        !string.IsNullOrWhiteSpace(code) && airlineLookup != null && airlineLookup.TryGetValue(code, out var name)
+            ? name
+            : code ?? "";
+
+    private string GetScheduleLocationName(TblScheduleEvent scheduleEvent)
+    {
+        var config = AirlineConfig.Value;
+
+        if (scheduleEvent.DisplayId == config.TerminalDisplayId)
+        {
+            return "Terminal/1st Floor";
+        }
+        else if (scheduleEvent.DisplayId == config.GarageDisplayId)
+        {
+            return "Gateway/2nd Floor";
+        }
+        else
+        {
+            return "Terminal/1st Floor";
+        }
+    }
+
+    private void ShowScheduleEvents()
+    {
+        if (scheduleEvents?.Count() > 0)
+        {
+            hasScheduleEvents = true;
+        }
+        else
+        {
+            hasScheduleEvents = false;
+        }
+    }
+
+    private void CreateNewSchedule()
+    {
+        isCreatingScheduleEvent = !isCreatingScheduleEvent;
+
+        if (Location != null && isCreatingScheduleEvent)
+        {
+            var config = AirlineConfig.Value;
+            newScheduleEvent = new TblScheduleEvent()
+            {
+                DisplayId = config.TerminalDisplayId,
+                LocationId = Location.LocationId,
+                ScheduleEventTypeId = 2,
+                ContentAssignment = "{\"Content\":[]}"
+            };
+        }
+        else
+        {
+            newScheduleEvent = null;
+        }
+    }
+
+    private async Task SaveScheduleEntry()
+    {
+        if (newScheduleEvent is not null && scheduleEditor is not null && Location is not null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+                var selectedAirlineCode = scheduleEditor.GetSelectedAirlineCode();
+
+                if (!string.IsNullOrEmpty(selectedAirlineCode))
+                {
+                    newScheduleEvent.AirlineCode = selectedAirlineCode;
+
+                    if (newScheduleEvent.ScheduleEventId == 0)
+                    {
+                        dataContext.TblScheduleEvents.Add(newScheduleEvent);
+                    }
+                    else
+                    {
+                        var existingEvent = await dataContext.TblScheduleEvents.FirstOrDefaultAsync(x => x.ScheduleEventId == newScheduleEvent.ScheduleEventId);
+                        if (existingEvent != null)
+                        {
+                            existingEvent.StartDate = newScheduleEvent.StartDate;
+                            existingEvent.StartTime = newScheduleEvent.StartTime;
+                            existingEvent.EndDate = newScheduleEvent.EndDate;
+                            existingEvent.EndTime = newScheduleEvent.EndTime;
+                            existingEvent.Sunday = newScheduleEvent.Sunday;
+                            existingEvent.Monday = newScheduleEvent.Monday;
+                            existingEvent.Tuesday = newScheduleEvent.Tuesday;
+                            existingEvent.Wednesday = newScheduleEvent.Wednesday;
+                            existingEvent.Thursday = newScheduleEvent.Thursday;
+                            existingEvent.Friday = newScheduleEvent.Friday;
+                            existingEvent.Saturday = newScheduleEvent.Saturday;
+                            existingEvent.AirlineCode = selectedAirlineCode;
+                        }
+                        else
+                        {
+                            dataContext.TblScheduleEvents.Add(newScheduleEvent);
+                        }
+                    }
+
+                    var savedDisplayId = (await dataContext.TblScheduleEvents.AsNoTracking()
+                        .Where(e => e.ScheduleEventId == newScheduleEvent.ScheduleEventId)
+                        .Select(e => (int?)e.DisplayId)
+                        .FirstOrDefaultAsync()) ?? newScheduleEvent.DisplayId;
+                    publicationInvalidator.DisplayScheduleChanged(savedDisplayId);
+                    if (savedDisplayId != newScheduleEvent.DisplayId)
+                        publicationInvalidator.DisplayScheduleChanged(newScheduleEvent.DisplayId);
+
+                    scheduleEvents = await dataContext.TblScheduleEvents
+                        .Where(x => x.ScheduleEventTypeId == 2 && x.LocationId == Location.LocationId)
+                        .ToListAsync();
+
+                    newScheduleEvent = null;
+                    isCreatingScheduleEvent = false;
+                    StateHasChanged();
+                }
+            }
+        }
+    }
+
+    private void EditScheduleEntry(TblScheduleEvent editEvent)
+    {
+        isCreatingScheduleEvent = false;
+        newScheduleEvent = editEvent;
+    }
+
+    private async Task DeleteScheduleEntry(int scheduleEventId)
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            if (await scheduleEventService.DeleteEventAsync(scheduleEventId))
+            {
+
+                scheduleEvents = await dataContext.TblScheduleEvents
+                    .Where(x => x.ScheduleEventTypeId == 2 && x.LocationId == Location.LocationId)
+                    .ToListAsync();
+
+                StateHasChanged();
+            }
+        }
+    }
+
+    private string GetDayString(TblScheduleEvent scheduleEvent)
+    {
+        StringBuilder result = new StringBuilder();
+        int totalDays = 0;
+        if (scheduleEvent.Sunday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Sunday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Monday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Monday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Tuesday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Tuesday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Wednesday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Wednesday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Thursday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Thursday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Friday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Friday) + ", ");
+            totalDays++;
+        }
+        if (scheduleEvent.Saturday)
+        {
+            result.AppendLine(CultureInfo.CurrentCulture.DateTimeFormat.GetAbbreviatedDayName(DayOfWeek.Saturday) + ", ");
+            totalDays++;
+        }
+        if (totalDays == 7)
+            return "Daily";
+        else
+            return result.ToString().Trim().TrimEnd(',');
+    }
+
+    private bool HasAnyDaySelected(TblScheduleEvent scheduleEvent)
+    {
+        return scheduleEvent.Sunday || scheduleEvent.Monday || scheduleEvent.Tuesday ||
+               scheduleEvent.Wednesday || scheduleEvent.Thursday || scheduleEvent.Friday || scheduleEvent.Saturday;
+    }
+
+    private void ShowAirlineFilter()
+    {
+        showAirlineFilter = !showAirlineFilter;
+    }
+
+    private void SelectAirlineFilter(string airlineCode, string airlineName)
+    {
+        selectedAirlineFilterCode = airlineCode;
+        selectedAirlineFilterName = airlineName;
+        showAirlineFilter = false;
+        StateHasChanged();
+    }
+
+    private void ClearAirlineFilter()
+    {
+        selectedAirlineFilterCode = "";
+        selectedAirlineFilterName = "";
+        showAirlineFilter = false;
+        StateHasChanged();
+    }
+
+    private List<TblScheduleEvent> GetFilteredScheduleEvents()
+    {
+        if (scheduleEvents == null) return new List<TblScheduleEvent>();
+
+        if (string.IsNullOrWhiteSpace(selectedAirlineFilterCode))
+        {
+            return scheduleEvents;
+        }
+
+        return scheduleEvents.Where(se => se.AirlineCode == selectedAirlineFilterCode).ToList();
+    }
+
+    private Dictionary<string, string> GetUniqueAirlines()
+    {
+        if (scheduleEvents == null || airlineLookup == null) return new Dictionary<string, string>();
+
+        return scheduleEvents
+            .Where(se => !string.IsNullOrWhiteSpace(se.AirlineCode) && airlineLookup.ContainsKey(se.AirlineCode))
+            .Select(se => new { Code = se.AirlineCode!, Name = airlineLookup[se.AirlineCode!] })
+            .Distinct()
+            .OrderBy(a => a.Name)
+            .ToDictionary(a => a.Code, a => a.Name);
+    }
+
+    private List<AirlineLocationStatus> GetAirlineLocationStatuses()
+    {
+        var locationStatuses = new List<AirlineLocationStatus>();
+
+        if (airlineStatusList == null) return locationStatuses;
+
+        foreach (var airline in airlineStatusList)
+        {
+            if (airline.Tpenabled1 == true)
+            {
+                locationStatuses.Add(new AirlineLocationStatus
+                {
+                    AirlineCode = airline.AirlineCode,
+                    CarrierName = airline.CarrierName,
+                    LocationName = "Terminal/1st Floor",
+                    Status = airline.CarrierStatus1 ?? 2,
+                    IsLocation1 = true
+                });
+            }
+
+            if (airline.Tpenabled2 == true)
+            {
+                locationStatuses.Add(new AirlineLocationStatus
+                {
+                    AirlineCode = airline.AirlineCode,
+                    CarrierName = airline.CarrierName,
+                    LocationName = "Gateway/2nd Floor",
+                    Status = airline.CarrierStatus2 ?? 2,
+                    IsLocation1 = false
+                });
+            }
+        }
+
+        return locationStatuses.OrderBy(x => x.CarrierName).ThenBy(x => x.LocationName).ToList();
+    }
+
+    private void OpenStatusChangeModal(AirlineLocationStatus airlineLocation)
+    {
+        selectedAirlineLocationForStatusChange = airlineLocation;
+        showStatusChangeModal = true;
+    }
+
+    private void CloseStatusChangeModal()
+    {
+        showStatusChangeModal = false;
+        selectedAirlineForStatusChange = null;
+        selectedAirlineLocationForStatusChange = null;
+    }
+
+    private async Task ConfirmStatusChange()
+    {
+        if (selectedAirlineLocationForStatusChange == null) return;
+
+        try
+        {
+            await using var aviationDb = await aviationDbFactory.CreateDbContextAsync();
+
+            var airlineToUpdate = await aviationDb.TblAirlines
+                .FirstOrDefaultAsync(a => a.AirlineCode == selectedAirlineLocationForStatusChange.AirlineCode);
+
+            if (airlineToUpdate != null)
+            {
+                var newStatus = selectedAirlineLocationForStatusChange.Status == 1 ? 2 : 1;
+
+                if (selectedAirlineLocationForStatusChange.IsLocation1)
+                {
+                    airlineToUpdate.CarrierStatus1 = newStatus;
+                }
+                else
+                {
+                    airlineToUpdate.CarrierStatus2 = newStatus;
+                }
+
+                await aviationDb.SaveChangesAsync();
+
+                if (airlineStatusList != null)
+                {
+                    var localAirline = airlineStatusList.FirstOrDefault(a => a.AirlineCode == selectedAirlineLocationForStatusChange.AirlineCode);
+                    if (localAirline != null)
+                    {
+                        if (selectedAirlineLocationForStatusChange.IsLocation1)
+                        {
+                            localAirline.CarrierStatus1 = newStatus;
+                        }
+                        else
+                        {
+                            localAirline.CarrierStatus2 = newStatus;
+                        }
+                    }
+                }
+
+                CloseStatusChangeModal();
+                StateHasChanged();
+            }
+        }
+        catch (Exception ex)
+        {
+            CloseStatusChangeModal();
+        }
+    }
+}

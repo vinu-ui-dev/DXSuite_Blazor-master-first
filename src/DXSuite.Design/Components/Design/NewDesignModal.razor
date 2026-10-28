@@ -1,0 +1,189 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+@inject ISessionState Session
+
+<div class="dx-modal-overlay" @onclick="Cancel">
+    <div class="dx-modal" style="min-width:540px" @onclick:stopPropagation>
+        <div class="dx-modal-header">
+            <span>New Design</span>
+            <button class="dx-modal-close" @onclick="Cancel">&times;</button>
+        </div>
+        <div class="dx-modal-body">
+            @if (step == 1)
+            {
+                <!-- Step 1: Search for a NetSuite Opportunity -->
+                <p style="font-size:.875rem; color:var(--text-muted,#6c757d); margin-bottom:12px">
+                    Search for the NetSuite Opportunity this design is for, or skip to create a blank design.
+                </p>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Search Opportunities</label>
+                    <div class="ct-search-wrap">
+                        <input class="dx-form-control" @oninput="OnSearchInput"
+                               value="@searchTerm"
+                               placeholder="Customer name, opportunity number…" />
+                        @if (searching)
+                        {
+                            <div style="font-size:.8rem; margin-top:4px; color:var(--text-muted,#6c757d)">Searching…</div>
+                        }
+                        @if (searchResults is not null && searchResults.Count > 0)
+                        {
+                            <div class="ct-search-results">
+                                @foreach (var opp in searchResults)
+                                {
+                                    <div class="ct-search-result" @onclick="() => SelectOpportunity(opp)">
+                                        <div class="ct-search-result-name">@opp.Entity — @opp.TranId</div>
+                                        <div class="ct-search-result-sub">@opp.Title · @opp.SalesRep · @opp.EntityStatus</div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else if (searchResults is not null && searchResults.Count == 0 && !searching)
+                        {
+                            <div style="font-size:.8rem; margin-top:4px; color:var(--text-muted,#6c757d)">No results.</div>
+                        }
+                        @if (searchError is not null)
+                        {
+                            <div class="dx-alert dx-alert-danger" style="margin-top:6px">@searchError</div>
+                        }
+                    </div>
+                </div>
+            }
+            else
+            {
+                <!-- Step 2: Name the Design -->
+                @if (selectedOpp is not null)
+                {
+                    <div class="ct-selected-chip" style="margin-bottom:16px">
+                        <div>
+                            <div class="ct-selected-chip-name">@selectedOpp.Entity — @selectedOpp.TranId</div>
+                            <div class="ct-selected-chip-sub">@selectedOpp.Title · @selectedOpp.SalesRep</div>
+                        </div>
+                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="BackToSearch">Change</button>
+                    </div>
+                }
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Design Name</label>
+                    <input class="dx-form-control" @bind="designName"
+                           placeholder="e.g. Acme Corp - Main Conference Room" />
+                </div>
+                @if (saveError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:6px">@saveError</div>
+                }
+            }
+        </div>
+        <div class="dx-modal-footer">
+            <button class="dx-btn dx-btn-gray" @onclick="Cancel">Cancel</button>
+            @if (step == 1)
+            {
+                <button class="dx-btn dx-btn-gray" @onclick="SkipToBlank">Skip (Blank Design)</button>
+            }
+            else
+            {
+                <button class="dx-btn dx-btn-gray" @onclick="BackToSearch">Back</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@saving">
+                    @(saving ? "Creating…" : "Create Design")
+                </button>
+            }
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventCallback<int?> OnClose { get; set; }
+
+    private int step = 1;
+    private string searchTerm = "";
+    private List<NetsuiteOpportunity>? searchResults;
+    private bool searching;
+    private string? searchError;
+    private CancellationTokenSource? _debounceCts;
+
+    private NetsuiteOpportunity? selectedOpp;
+    private string designName = "";
+    private bool saving;
+    private string? saveError;
+
+    private async Task OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var cts = _debounceCts;
+
+        if (searchTerm.Length < 2) { searchResults = null; return; }
+        searching = true; searchError = null;
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            searchResults = await NetsuiteService.SearchOpportunitiesAsync(searchTerm, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { searchError = $"Search failed: {ex.Message}"; searchResults = null; }
+        finally { searching = false; }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectOpportunity(NetsuiteOpportunity opp)
+    {
+        selectedOpp = opp;
+        designName = string.IsNullOrEmpty(opp.Entity) ? opp.TranId
+            : $"{opp.Entity} - {opp.TranId}";
+        step = 2;
+    }
+
+    private void SkipToBlank()
+    {
+        selectedOpp = null;
+        designName = "";
+        step = 2;
+    }
+
+    private void BackToSearch()
+    {
+        step = 1;
+        selectedOpp = null;
+        searchResults = null;
+        searchTerm = "";
+    }
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(designName)) { saveError = "Name is required."; return; }
+        saving = true; saveError = null;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var design = new TblDesign
+            {
+                CustomerId = Tenant.CustomerCode,
+                Name = designName.Trim(),
+                NetsuiteOpportunityId = selectedOpp?.Id ?? string.Empty,
+                NetsuiteOpportunityData = selectedOpp is not null
+                    ? System.Text.Json.JsonSerializer.Serialize(selectedOpp)
+                    : null,
+                CreatedBy = Session.User?.UserId.ToString() ?? string.Empty,
+            };
+            db.TblDesigns.Add(design);
+            await db.SaveChangesAsync();
+
+            // Every design starts with the AVIXA default requirement categories; users tailor them per design.
+            for (int i = 0; i < TblDesignRequirementCategory.DefaultNames.Length; i++)
+            {
+                db.TblDesignRequirementCategories.Add(new TblDesignRequirementCategory
+                {
+                    DesignId = design.DesignId,
+                    Name = TblDesignRequirementCategory.DefaultNames[i],
+                    SortOrder = (i + 1) * 10,
+                });
+            }
+            await db.SaveChangesAsync();
+            saving = false;
+            await OnClose.InvokeAsync(design.DesignId);
+        }
+        catch (Exception ex) { saveError = $"Failed to create design: {ex.Message}"; saving = false; }
+    }
+
+    private async Task Cancel() => await OnClose.InvokeAsync(null);
+}

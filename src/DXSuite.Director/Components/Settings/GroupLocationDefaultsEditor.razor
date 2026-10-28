@@ -1,0 +1,196 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@inject IUserGroupLocationDefaultService defaultService
+@inject IServiceScopeFactory scopeFactory
+
+<div class="gld-editor">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">Video Wall Defaults</h6>
+        <small class="dx-text-muted">Default asset library per video wall location</small>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-bottom:8px; padding:6px 10px; font-size:0.85rem;">@errorMessage</div>
+    }
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="dx-alert dx-alert-success" style="margin-bottom:8px; padding:6px 10px; font-size:0.85rem;">@successMessage</div>
+    }
+
+    @if (defaults.Any())
+    {
+        <table class="table table-sm table-bordered mb-2">
+            <thead class="thead-light">
+                <tr>
+                    <th>Location</th>
+                    <th>Default Library</th>
+                    <th>Background Mode</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var d in defaults)
+                {
+                    <tr>
+                        <td>@(d.Location?.LocationName ?? $"#{d.LocationId}")</td>
+                        <td>@(d.DefaultConstraint?.ConstraintName ?? $"#{d.DefaultConstraintId}")</td>
+                        <td>@d.BackgroundMode</td>
+                        <td>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" style="padding:4px 10px;"
+                                    @onclick="@(() => DeleteDefault(d.UserGroupLocationDefaultId))">
+                                DELETE
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p class="dx-text-muted" style="font-size:0.85rem; margin-bottom:8px;">No video wall defaults configured for this group.</p>
+    }
+
+    <div class="dx-card">
+        <div class="dx-card-body" style="padding:8px 16px;">
+            <div class="row align-items-end g-2">
+                <div class="col-md-4">
+                    <div class="dx-form-group" style="margin-bottom:0;">
+                        <label class="dx-form-label" style="font-size:0.8rem;">Wall Location</label>
+                        <select class="dx-form-control" @bind="selectedLocationId">
+                            <option value="0">Select a video wall…</option>
+                            @foreach (var loc in videoWallLocations)
+                            {
+                                <option value="@loc.LocationId">@loc.LocationName</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-4">
+                    <div class="dx-form-group" style="margin-bottom:0;">
+                        <label class="dx-form-label" style="font-size:0.8rem;">Default Library</label>
+                        <select class="dx-form-control" @bind="selectedConstraintId">
+                            <option value="0">Select a library…</option>
+                            @foreach (var c in constraints)
+                            {
+                                <option value="@c.ConstraintId">@(c.ConstraintName ?? $"Library #{c.ConstraintId}")</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <div class="dx-form-group" style="margin-bottom:0;">
+                        <label class="dx-form-label" style="font-size:0.8rem;">Background Mode</label>
+                        <select class="dx-form-control" @bind="selectedBackgroundMode">
+                            <option value="fill-width">Fill Width</option>
+                            <option value="fill-height">Fill Height</option>
+                            <option value="tile">Tile</option>
+                            <option value="fit">Fit</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-2">
+                    <button class="dx-btn dx-btn-blue w-100"
+                            disabled="@(selectedLocationId == 0 || selectedConstraintId == 0)"
+                            @onclick="AddDefault">
+                        ADD
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter] public int UserGroupId { get; set; }
+
+    private List<TblUserGroupLocationDefault> defaults = new();
+    private List<TblLocation> videoWallLocations = new();
+    private List<TblConstraint> constraints = new();
+
+    private int selectedLocationId;
+    private int selectedConstraintId;
+    private string selectedBackgroundMode = "fill-width";
+
+    private string? errorMessage;
+    private string? successMessage;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (UserGroupId > 0)
+        {
+            await LoadAll();
+        }
+    }
+
+    private async Task LoadAll()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        // Load VideoWall locations only
+        var videoWallTypeId = await db.TblLocationTypes
+            .AsNoTracking()
+            .Where(t => t.LocationTypeName == "VideoWall")
+            .Select(t => t.LocationTypeId)
+            .FirstOrDefaultAsync();
+
+        videoWallLocations = videoWallTypeId > 0
+            ? await db.TblLocations.AsNoTracking()
+                .Where(l => l.LocationTypeId == videoWallTypeId)
+                .OrderBy(l => l.LocationName)
+                .ToListAsync()
+            : new();
+
+        constraints = await db.TblConstraints.AsNoTracking()
+            .OrderBy(c => c.ConstraintName)
+            .ToListAsync();
+
+        defaults = await defaultService.GetDefaultsForGroupAsync(UserGroupId);
+        errorMessage = null;
+    }
+
+    private async Task AddDefault()
+    {
+        if (selectedLocationId == 0 || selectedConstraintId == 0) return;
+
+        try
+        {
+            await defaultService.UpsertAsync(UserGroupId, selectedLocationId, selectedConstraintId, null, selectedBackgroundMode, null, "fill-width");
+            successMessage = "Default saved.";
+            errorMessage = null;
+            selectedLocationId = 0;
+            selectedConstraintId = 0;
+            selectedBackgroundMode = "fill-width";
+            await LoadAll();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+            successMessage = null;
+        }
+    }
+
+    private async Task DeleteDefault(int id)
+    {
+        try
+        {
+            await defaultService.DeleteAsync(id);
+            successMessage = "Default removed.";
+            errorMessage = null;
+            await LoadAll();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error: {ex.Message}";
+            successMessage = null;
+        }
+    }
+}
+
+<style>
+    .gld-editor { font-size: 13px; }
+    .gld-editor .table th { font-size: 12px; font-weight: 600; }
+</style>

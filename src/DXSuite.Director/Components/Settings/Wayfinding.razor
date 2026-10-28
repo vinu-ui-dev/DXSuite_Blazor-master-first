@@ -1,0 +1,165 @@
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Models.Atrius
+@using DXSuite.Director.Services.Atrius
+@inject IServiceScopeFactory scopeFactory;
+@inject IAtriusControl atrius;
+@inject IDbContextFactory<DirectorDbContext> directorDbFactory
+@inject IStringLocalizer<Wayfinding> L
+@inject IStringLocalizer<SharedResources> LS
+
+<div class="container mt-4">
+    <div class="row mb-2">
+        <div class="col-12">
+            <label class="form-check-label d-block fw-bold">@L["Label_AtriusWayfinding"]</label>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-9">
+            <div class="d-flex align-items-center gap-2 mt-2">
+                <button class="dx-btn dx-btn-blue" @onclick="() => ResyncButton()">@LS["Button_Refresh"]</button>
+                @if(resyncResponse == null){
+                    <small class="text-muted ms-2">@L["Label_LastRefreshed"]: --/--/---- --:--</small>
+                }
+                else{
+                    <label class="form-check-label d-block fw-bold">@resyncResponse.Status</label>
+                    <small class="text-muted ms-2">@L["Label_LastRefreshed"]: @resyncResponse.LastSync</small>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="row mb-2">
+        <div class="col-12">
+            <label class="form-check-label d-block fw-bold">@L["Label_OverheadWayfinding"]</label>
+        </div>
+    </div>
+
+    <div class="row mb-3">
+        <div class="col-md-3">
+            <label for="airportCode">@L["Label_AdminPin"]</label>
+            <input type="text" id="airportCode" class="dx-form-control" autocomplete="off" @bind="selectedAirportPin" readonly />
+        </div>
+        <div class="col-md-7 position-relative">
+            <label for="airportCode">@L["Label_UpdatePin"]</label>
+            <div class="input-group">
+                <input type="text" id="airlinePin" class="dx-form-control" autocomplete="off" @bind="selectedPin" placeholder="@L["Placeholder_EnterPin"]" />
+                <div class="input-group-append">
+                    <button class="dx-btn dx-btn-blue" type="button" @onclick="() => SavePin(selectedPin)">SAVE</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="row mb-3">
+            <div class="col-md-10">
+                <div class="alert alert-danger mt-2">@errorMessage</div>
+            </div>
+        </div>
+    }
+
+</div>
+
+
+@code {
+    private TblParameter? pinCodeParam = new();
+    private ResyncResponse? resyncResponse = null;
+    private string? selectedAirportPin;
+    private bool? airlineWithPin = false;
+    private string? selectedPin = "";
+
+    private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var directorDb = await directorDbFactory.CreateDbContextAsync();
+
+        pinCodeParam = await directorDb.TblParameters.FirstOrDefaultAsync(x => x.KeyName == "PinCode");
+
+        APICallResponse atriusResponse = await atrius.GetLastSync();
+        if(atriusResponse != null){
+            if(atriusResponse.StatusCode == System.Net.HttpStatusCode.OK){
+                if(atriusResponse.DataObject != null){
+                    if (atriusResponse.DataObject is ResyncResponse){
+                        resyncResponse = atriusResponse.DataObject;
+                        if (resyncResponse.ErrorMessage != null)
+                        {
+                            errorMessage = resyncResponse.ErrorMessage;
+                        }
+                    }
+                }
+            }
+        }
+
+        if (pinCodeParam is null)
+        {
+            pinCodeParam = new TblParameter
+                {
+                    KeyName = "PinCode",
+                    Value = "1234"
+                };
+
+            selectedAirportPin = "1234";
+            directorDb.TblParameters.Add(pinCodeParam);
+            await directorDb.SaveChangesAsync();
+        }
+        else
+        {
+            selectedAirportPin = pinCodeParam.Value;
+        }
+
+        StateHasChanged();
+    }
+
+    private async Task SavePin(string pin)
+    {
+        errorMessage = "";
+
+        if (string.IsNullOrWhiteSpace(pin) || pin.Length != 4 || !pin.All(char.IsDigit))
+        {
+            errorMessage = L["Message_PinMustBeFourDigits"];
+            return;
+        }
+
+        await using var directorDb = await directorDbFactory.CreateDbContextAsync();
+
+        // Re-fetch the parameter to get a tracked entity
+        var param = await directorDb.TblParameters.FirstOrDefaultAsync(x => x.KeyName == "PinCode");
+        if (param != null)
+        {
+            param.Value = pin;
+            await directorDb.SaveChangesAsync();
+            pinCodeParam = param;
+        }
+
+        selectedAirportPin = pin;
+        selectedPin = "";
+
+        StateHasChanged();
+    }
+
+    private async Task ResyncButton()
+    {
+        APICallResponse atriusResponse = await atrius.ResyncData();
+        if (atriusResponse != null)
+        {
+            if (atriusResponse.StatusCode == System.Net.HttpStatusCode.OK)
+            {
+                if (atriusResponse.DataObject != null)
+                {
+                    if (atriusResponse.DataObject is ResyncResponse)
+                    {
+                        resyncResponse = atriusResponse.DataObject;
+                        if(resyncResponse.ErrorMessage != null){
+                            errorMessage = resyncResponse.ErrorMessage;
+                        }
+                    }
+                }
+            }
+        }
+        StateHasChanged();
+    }
+}

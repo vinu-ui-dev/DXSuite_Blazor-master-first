@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_UserGroups">
+    <value>Groupes d'utilisateurs</value>
+  </data>
+  <data name="Button_AddGroup">
+    <value>Ajouter un groupe</value>
+  </data>
+  <data name="Label_EditGroup">
+    <value>Modifier le groupe</value>
+  </data>
+  <data name="Label_NewGroup">
+    <value>Nouveau groupe</value>
+  </data>
+  <data name="Label_GroupName">
+    <value>Nom du groupe</value>
+  </data>
+  <data name="Label_ExternalId">
+    <value>ID externe</value>
+  </data>
+  <data name="Label_MembersOf">
+    <value>Membres de « {0} »</value>
+  </data>
+  <data name="Label_SelectUserToAdd">
+    <value>— Sélectionner un utilisateur —</value>
+  </data>
+  <data name="Label_NoMembers">
+    <value>Aucun membre pour le moment.</value>
+  </data>
+  <data name="Column_Members">
+    <value>membres</value>
+  </data>
+  <data name="Label_Inactive">
+    <value>Inactif</value>
+  </data>
+  <data name="Label_Members">
+    <value>Membres</value>
+  </data>
+</root>

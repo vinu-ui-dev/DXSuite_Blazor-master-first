@@ -1,0 +1,520 @@
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Models
+@using DXSuite.Shared.Module
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services.Identity
+@using Microsoft.Extensions.Options
+@inject ISessionState sessionState
+@inject IRolePermissionService roleService
+@inject IReadOnlyList<IBlazorModule> Modules
+@inject ITenantContext tenantContext
+@inject IOptions<FeatureFlags> featureFlagsOptions
+@inject IServiceProvider serviceProvider
+@inject ILogger<RolesListView> Logger
+
+@if (sessionState.ActualRoleId != (int)Roles.Role.Admin)
+{
+    <div style="text-align:center; margin-top:80px;">
+        <h3>Access Denied</h3>
+        <p>Only administrators can manage roles.</p>
+    </div>
+}
+else
+{
+    <div class="sr-layout @(isAddingNew || selectedRole != null ? "sr-has-selection" : "")">
+        <!-- Left Panel: Role List -->
+        <div class="sr-list-panel">
+            <div class="sr-list-header">
+                <span class="sr-list-title">Roles</span>
+                <button class="dx-btn dx-btn-blue sr-add-btn" @onclick="StartAddRole">Add Role</button>
+            </div>
+
+            <div class="sr-role-list">
+                @foreach (var role in roles)
+                {
+                    <div class="sr-role-item @(selectedRole?.RoleId == role.RoleId && !isAddingNew ? "sr-selected" : "")"
+                         @onclick="@(() => SelectRole(role))">
+                        <div class="sr-role-info">
+                            <span class="sr-role-name">@FormatRoleName(role)</span>
+                            <span class="sr-type-badge @(role.IsSystem ? "sr-type-system" : "sr-type-custom")">
+                                @(role.IsSystem ? "System" : "Custom")
+                            </span>
+                        </div>
+                        <div class="sr-role-meta">
+                            <span class="sr-user-count">@(userCounts.GetValueOrDefault(role.RoleId)) user(s)</span>
+                            @if (!role.IsSystem && role.BaseRole != null)
+                            {
+                                <span class="sr-base-role">based on @FormatRoleName(role.BaseRole)</span>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+
+        <!-- Right Panel: Detail/Edit Form -->
+        <div class="sr-detail-panel">
+            @if (isAddingNew || selectedRole != null)
+            {
+                @* Phones show either the list or the detail; this returns to the list *@
+                <button class="dx-btn dx-btn-gray dx-btn-sm sr-back-btn"
+                        @onclick="@(() => { selectedRole = null; isAddingNew = false; })">
+                    &#8592; Back to roles
+                </button>
+                <div class="sr-detail-header">
+                    <h5 class="sr-detail-name">@(isAddingNew ? "New Role" : $"Edit Role: {FormatRoleName(selectedRole!)}")</h5>
+                </div>
+
+                @if (isAdminSelected)
+                {
+                    <div class="sr-locked-banner">
+                        The Admin role always has full access to every tab and feature and cannot be modified.
+                    </div>
+                }
+
+                <div class="sr-section">
+                    <label>Role Name</label>
+                    <input class="dx-form-control" @bind="editName" disabled="@(!CanEditIdentity)" />
+                </div>
+
+                <div class="sr-section">
+                    <label>Description</label>
+                    <input class="dx-form-control" @bind="editDescription" disabled="@isAdminSelected" />
+                </div>
+
+                @if (isAddingNew || selectedRole?.IsSystem == false)
+                {
+                    <div class="sr-section">
+                        <label>Base Role</label>
+                        <select class="dx-form-control" @bind="editBaseRoleId">
+                            @foreach (var builtIn in roles.Where(r => r.IsSystem))
+                            {
+                                <option value="@builtIn.RoleId">@FormatRoleName(builtIn)</option>
+                            }
+                        </select>
+                        <div class="sr-hint">
+                            The built-in role this custom role inherits from for everything not
+                            covered by the tab and feature grants below.
+                        </div>
+                    </div>
+                }
+
+                <div class="sr-section">
+                    <label>Settings Tabs</label>
+                    <div class="sr-checkbox-grid">
+                        @foreach (var tab in settingsTabs)
+                        {
+                            var key = PermissionKeys.ForSettingsTab(tab.Key);
+                            <label class="sr-checkbox-label">
+                                <input type="checkbox" class="dx-checkbox"
+                                       checked="@(isAdminSelected || selectedKeys.Contains(key))"
+                                       disabled="@isAdminSelected"
+                                       @onchange="@(e => ToggleKey(key, e))" />
+                                @tab.Label
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="sr-section">
+                    <label>Configuration Tabs</label>
+                    <div class="sr-checkbox-grid">
+                        @foreach (var tab in configTabs)
+                        {
+                            var key = PermissionKeys.ForConfigTab(tab.Key);
+                            <label class="sr-checkbox-label">
+                                <input type="checkbox" class="dx-checkbox"
+                                       checked="@(isAdminSelected || selectedKeys.Contains(key))"
+                                       disabled="@isAdminSelected"
+                                       @onchange="@(e => ToggleKey(key, e))" />
+                                @tab.Label
+                            </label>
+                        }
+                    </div>
+                </div>
+
+                <div class="sr-section">
+                    <label>Feature Permissions</label>
+                    @foreach (var def in PermissionKeys.FeaturePermissions)
+                    {
+                        <label class="sr-checkbox-label sr-feature-row" title="@def.Description">
+                            <input type="checkbox" class="dx-checkbox"
+                                   checked="@(isAdminSelected || selectedKeys.Contains(def.Key))"
+                                   disabled="@isAdminSelected"
+                                   @onchange="@(e => ToggleKey(def.Key, e))" />
+                            <span>
+                                @def.Label
+                                <span class="sr-feature-desc">@def.Description</span>
+                            </span>
+                        </label>
+                    }
+                </div>
+
+                @if (!isAdminSelected)
+                {
+                    <div class="sr-section sr-actions">
+                        <button class="dx-btn dx-btn-blue" @onclick="SaveRole">Save</button>
+                        @if (!isAddingNew && selectedRole?.IsSystem == false)
+                        {
+                            @if (deleteArmed)
+                            {
+                                <button class="dx-btn dx-btn-red" @onclick="DeleteRole">Confirm Delete</button>
+                                <button class="dx-btn dx-btn-gray" @onclick="@(() => deleteArmed = false)">Cancel</button>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-red" @onclick="@(() => deleteArmed = true)">Delete</button>
+                            }
+                        }
+                        @if (isAddingNew)
+                        {
+                            <button class="dx-btn dx-btn-gray" @onclick="CancelAdd">Cancel</button>
+                        }
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(statusMessage))
+                {
+                    <div class="alert @(statusIsError ? "alert-danger" : "alert-success") mt-2" style="padding: 8px;">@statusMessage</div>
+                }
+            }
+            else
+            {
+                <div class="sr-no-selection">Select a role to view or edit its access.</div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private List<TblUserRole> roles = new();
+    private Dictionary<int, int> userCounts = new();
+    private List<SettingsTab> settingsTabs = new();
+    private List<ConfigTab> configTabs = new();
+
+    private TblUserRole? selectedRole;
+    private bool isAddingNew;
+    private bool deleteArmed;
+
+    private string editName = "";
+    private string? editDescription;
+    private int editBaseRoleId = (int)Roles.Role.Contributor;
+    private HashSet<string> selectedKeys = new();
+
+    private string? statusMessage;
+    private bool statusIsError;
+
+    private bool isAdminSelected => !isAddingNew && selectedRole?.RoleId == (int)Roles.Role.Admin;
+    private bool CanEditIdentity => isAddingNew || selectedRole?.IsSystem == false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+            await sessionState.SessionLoaded.Task;
+
+        if (sessionState.ActualRoleId != (int)Roles.Role.Admin)
+            return;
+
+        // Same visibility filters as Settings.razor / Configuration.razor, so admins only
+        // configure grants for tabs that actually exist in this deployment. The Roles tab
+        // itself is excluded — it is Admin-only and never grantable.
+        var featureFlags = featureFlagsOptions.Value;
+        var moduleNames = Modules.Select(m => m.Name).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tenantFeatures = tenantContext.IsPopulated ? tenantContext.Features : new TenantFeatureFlags();
+        var platformAvailable = serviceProvider.GetService<IPlatformAuditService>() != null;
+
+        settingsTabs = Modules
+            .SelectMany(m => m.GetSettingsTabs())
+            .Where(t => t.Key != PermissionKeys.RolesSettingsTabKey)
+            .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
+            .Where(t => t.TenantFeature == null || typeof(TenantFeatureFlags).GetProperty(t.TenantFeature)?.GetValue(tenantFeatures) is true)
+            .Where(t => t.Module == null || moduleNames.Contains(t.Module))
+            .Where(t => !t.RequiresPlatform || platformAvailable)
+            .OrderBy(t => t.Order)
+            .ToList();
+
+        configTabs = Modules
+            .Where(m => m.IsAvailableForTenant(tenantContext))
+            .SelectMany(m => m.GetConfigTabs())
+            .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
+            .OrderBy(t => t.Order)
+            .ToList();
+
+        await LoadRolesAsync();
+        selectedRole = roles.FirstOrDefault();
+        if (selectedRole != null)
+            SelectRole(selectedRole);
+    }
+
+    private async Task LoadRolesAsync()
+    {
+        roles = await roleService.GetAllRolesAsync();
+        userCounts = await roleService.GetAssignedUserCountsAsync();
+
+        // GetAllRolesAsync is no-tracking, so BaseRole navs aren't fixed up; resolve them
+        // from the loaded list for display.
+        foreach (var role in roles.Where(r => r.BaseRoleId != null))
+            role.BaseRole = roles.FirstOrDefault(r => r.RoleId == role.BaseRoleId);
+    }
+
+    private void SelectRole(TblUserRole role)
+    {
+        selectedRole = role;
+        isAddingNew = false;
+        deleteArmed = false;
+        statusMessage = null;
+        editName = role.RoleName;
+        editDescription = role.RoleDescription;
+        editBaseRoleId = role.BaseRoleId ?? (int)Roles.Role.Contributor;
+        selectedKeys = role.Permissions.Select(p => p.PermissionKey).ToHashSet();
+    }
+
+    private void StartAddRole()
+    {
+        selectedRole = null;
+        isAddingNew = true;
+        deleteArmed = false;
+        statusMessage = null;
+        editName = "";
+        editDescription = null;
+        editBaseRoleId = (int)Roles.Role.Contributor;
+        selectedKeys = new HashSet<string>();
+    }
+
+    private void CancelAdd()
+    {
+        isAddingNew = false;
+        statusMessage = null;
+        selectedRole = roles.FirstOrDefault();
+        if (selectedRole != null)
+            SelectRole(selectedRole);
+    }
+
+    private void ToggleKey(string key, ChangeEventArgs e)
+    {
+        deleteArmed = false;
+        if (e.Value is true)
+            selectedKeys.Add(key);
+        else
+            selectedKeys.Remove(key);
+    }
+
+    private async Task SaveRole()
+    {
+        deleteArmed = false;
+        try
+        {
+            if (isAddingNew)
+            {
+                var created = await roleService.CreateRoleAsync(editName, editDescription, editBaseRoleId, selectedKeys);
+                await LoadRolesAsync();
+                isAddingNew = false;
+                selectedRole = roles.FirstOrDefault(r => r.RoleId == created.RoleId);
+                if (selectedRole != null)
+                    SelectRole(selectedRole);
+                SetStatus($"Role '{created.RoleName}' created.", isError: false);
+            }
+            else if (selectedRole != null)
+            {
+                var roleId = selectedRole.RoleId;
+                await roleService.UpdateRoleAsync(
+                    roleId,
+                    selectedRole.IsSystem ? selectedRole.RoleName : editName,
+                    editDescription,
+                    selectedRole.IsSystem ? null : editBaseRoleId,
+                    selectedKeys);
+                await LoadRolesAsync();
+                selectedRole = roles.FirstOrDefault(r => r.RoleId == roleId);
+                if (selectedRole != null)
+                    SelectRole(selectedRole);
+                SetStatus("Role saved.", isError: false);
+            }
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or ArgumentException)
+        {
+            SetStatus(ex.Message, isError: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save role");
+            SetStatus("An unexpected error occurred while saving the role.", isError: true);
+        }
+    }
+
+    private async Task DeleteRole()
+    {
+        if (selectedRole == null || selectedRole.IsSystem)
+            return;
+
+        deleteArmed = false;
+        try
+        {
+            var name = selectedRole.RoleName;
+            var result = await roleService.DeleteRoleAsync(selectedRole.RoleId);
+            if (!result.Deleted)
+            {
+                SetStatus($"Cannot delete: {result.AssignedUserCount} user(s) are assigned to this role. Reassign them first.", isError: true);
+                return;
+            }
+
+            await LoadRolesAsync();
+            selectedRole = roles.FirstOrDefault();
+            if (selectedRole != null)
+                SelectRole(selectedRole);
+            SetStatus($"Role '{name}' deleted.", isError: false);
+        }
+        catch (Exception ex) when (ex is InvalidOperationException)
+        {
+            SetStatus(ex.Message, isError: true);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to delete role");
+            SetStatus("An unexpected error occurred while deleting the role.", isError: true);
+        }
+    }
+
+    private void SetStatus(string message, bool isError)
+    {
+        statusMessage = message;
+        statusIsError = isError;
+    }
+
+    private static string FormatRoleName(TblUserRole role) => role.RoleName switch
+    {
+        "NewUser" => "New User",
+        _ => role.RoleName
+    };
+}
+
+<style>
+    .sr-layout {
+        display: flex;
+        gap: 0;
+        min-height: 600px;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    .sr-list-panel {
+        width: 38%;
+        min-width: 280px;
+        border-right: 1px solid #e0e0e0;
+        display: flex;
+        flex-direction: column;
+        background: #fafafa;
+    }
+
+    .sr-list-header {
+        padding: 12px;
+        border-bottom: 1px solid #e0e0e0;
+        background: #f0f0f0;
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .sr-list-title { font-weight: 600; font-size: 14px; }
+    .sr-add-btn { white-space: nowrap; padding: 6px 14px; font-size: 13px; }
+    .sr-role-list { flex: 1; overflow-y: auto; max-height: 580px; }
+
+    .sr-role-item {
+        padding: 10px 14px;
+        cursor: pointer;
+        border-bottom: 1px solid #eee;
+        transition: background-color 0.15s;
+    }
+
+    .sr-role-item:hover { background-color: #e8f0fe; }
+
+    .sr-role-item.sr-selected {
+        background-color: #d4e4fc;
+        border-left: 3px solid #0071BC;
+    }
+
+    .sr-role-info { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+
+    .sr-role-name {
+        font-weight: 500;
+        font-size: 14px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .sr-type-badge { font-size: 11px; padding: 2px 8px; border-radius: 10px; font-weight: 600; }
+    .sr-type-system { background: #e3f2fd; color: #1565c0; }
+    .sr-type-custom { background: #e8f5e9; color: #2e7d32; }
+    .sr-role-meta { display: flex; gap: 10px; align-items: center; }
+    .sr-user-count { font-size: 12px; color: #666; }
+    .sr-base-role { font-size: 12px; color: #666; font-style: italic; }
+
+    .sr-detail-panel { flex: 1; padding: 20px; overflow-y: auto; max-height: 620px; }
+
+    .sr-detail-header { margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #e0e0e0; }
+    .sr-detail-name { margin: 0; font-family: "BAHNSCHRIFT", sans-serif; }
+    .sr-section { margin-bottom: 14px; }
+    .sr-section > label { font-weight: 600; font-size: 13px; margin-bottom: 4px; display: block; }
+    .sr-hint { font-size: 12px; color: #666; margin-top: 4px; }
+
+    .sr-locked-banner {
+        background: #e3f2fd;
+        border: 1px solid #bbdefb;
+        border-radius: 4px;
+        padding: 8px 12px;
+        font-size: 13px;
+        color: #1565c0;
+        margin-bottom: 14px;
+    }
+
+    .sr-checkbox-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+        gap: 4px 16px;
+    }
+
+    .sr-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        cursor: pointer;
+        font-weight: normal !important;
+        font-size: 13px;
+        margin-bottom: 2px;
+    }
+
+    .sr-checkbox-label input { accent-color: #0071BC; }
+
+    .sr-feature-row { align-items: flex-start; margin-bottom: 6px; }
+    .sr-feature-row input { margin-top: 3px; }
+    .sr-feature-desc { display: block; font-size: 12px; color: #666; }
+
+    .sr-actions { display: flex; gap: 8px; }
+    .sr-no-selection { display: flex; align-items: center; justify-content: center; height: 100%; color: #999; font-size: 15px; }
+    .sr-back-btn { display: none; }
+
+    /* Phones show one column: the list until a role is picked, then the detail with a back button */
+    @@media (max-width: 768px) {
+        .sr-layout { min-height: 0; }
+
+        .sr-list-panel {
+            width: 100%;
+            min-width: 0;
+            border-right: none;
+        }
+
+        .sr-detail-panel { display: none; }
+
+        .sr-layout.sr-has-selection .sr-list-panel { display: none; }
+
+        .sr-layout.sr-has-selection .sr-detail-panel {
+            display: block;
+            max-height: none;
+        }
+
+        .sr-back-btn { display: inline-flex; margin-bottom: 12px; }
+    }
+</style>

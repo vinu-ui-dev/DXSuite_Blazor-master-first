@@ -1,0 +1,236 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+
+<div class="dx-modal-overlay">
+    <div class="dx-modal" style="min-width:520px">
+        <div class="dx-modal-header">
+            <span>Manage Requirement Categories</span>
+            <button class="dx-modal-close" @onclick="Close">&times;</button>
+        </div>
+
+        <div class="dx-modal-body">
+            <p class="dx-text-muted" style="font-size:.8rem; margin-top:0">
+                Categories are specific to this design. Drag to reorder — the order sets the numbering
+                used on screen and in the exported document.
+            </p>
+
+            @foreach (var cat in cats)
+            {
+                var catId = cat.CategoryId;
+                var isDragOver = _dragOverId == catId && _draggingId != catId;
+                <div class="mc-row @(isDragOver ? "mc-drag-over" : "")"
+                     draggable="true"
+                     @ondragstart="() => _draggingId = catId"
+                     @ondragover:preventDefault
+                     @ondragover="() => _dragOverId = catId"
+                     @ondrop="() => DropAsync(catId)"
+                     @ondragleave="() => { if (_dragOverId == catId) _dragOverId = null; }">
+                    <span class="mc-drag-handle" title="Drag to reorder">⠿</span>
+                    @if (_editingId == catId)
+                    {
+                        <input class="dx-form-control mc-name-input" @bind="_editingName"
+                               @onkeydown="e => OnEditKeyDown(e, catId)" />
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SaveRenameAsync(catId)">Save</button>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => _editingId = null">Cancel</button>
+                    }
+                    else
+                    {
+                        <span class="mc-name">@cat.Name</span>
+                        <span class="mc-count">@RequirementCount(catId) req@(RequirementCount(catId) == 1 ? "" : "s")</span>
+                        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => BeginRename(cat)">Rename</button>
+                        <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => DeleteAsync(cat)"
+                                disabled="@(RequirementCount(catId) > 0)"
+                                title="@(RequirementCount(catId) > 0 ? "Move or delete its requirements first" : "Delete category")">Delete</button>
+                    }
+                </div>
+            }
+
+            @if (adding)
+            {
+                <div class="mc-row">
+                    <span class="mc-drag-handle" style="opacity:.3">⠿</span>
+                    <input class="dx-form-control mc-name-input" @bind="_newName"
+                           placeholder="Category name…" @onkeydown="OnNewKeyDown" />
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveNewAsync">Add</button>
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => { adding = false; _newName = string.Empty; }">Cancel</button>
+                </div>
+            }
+            else
+            {
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" style="margin-top:8px" @onclick="() => adding = true">
+                    <i class="bi bi-plus-lg"></i> Add Category
+                </button>
+            }
+
+            @if (error is not null)
+            {
+                <div class="dx-alert dx-alert-danger" style="margin-top:10px">@error</div>
+            }
+        </div>
+
+        <div class="dx-modal-footer">
+            <button class="dx-btn dx-btn-blue" @onclick="Close">Done</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int DesignId { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnClose { get; set; }
+
+    private List<TblDesignRequirementCategory> cats = [];
+    private Dictionary<int, int> reqCounts = [];
+    private int? _draggingId;
+    private int? _dragOverId;
+    private int? _editingId;
+    private string _editingName = string.Empty;
+    private bool adding;
+    private string _newName = string.Empty;
+    private string? error;
+
+    protected override async Task OnInitializedAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        cats = await db.TblDesignRequirementCategories
+            .Where(c => c.DesignId == DesignId)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+        reqCounts = await db.TblDesignRequirements
+            .Where(r => r.DesignId == DesignId)
+            .GroupBy(r => r.CategoryId)
+            .Select(g => new { g.Key, Count = g.Count() })
+            .ToDictionaryAsync(g => g.Key, g => g.Count);
+    }
+
+    private int RequirementCount(int categoryId) => reqCounts.GetValueOrDefault(categoryId);
+
+    private void BeginRename(TblDesignRequirementCategory cat)
+    {
+        _editingId = cat.CategoryId;
+        _editingName = cat.Name;
+        error = null;
+    }
+
+    private async Task OnEditKeyDown(KeyboardEventArgs e, int catId)
+    {
+        if (e.Key == "Enter") await SaveRenameAsync(catId);
+        else if (e.Key == "Escape") _editingId = null;
+    }
+
+    private async Task OnNewKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") await SaveNewAsync();
+        else if (e.Key == "Escape") { adding = false; _newName = string.Empty; }
+    }
+
+    private async Task SaveRenameAsync(int catId)
+    {
+        var name = _editingName.Trim();
+        if (string.IsNullOrEmpty(name)) { error = "Name is required."; return; }
+        if (cats.Any(c => c.CategoryId != catId && c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"A category named '{name}' already exists on this design.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var entity = await db.TblDesignRequirementCategories.FindAsync(catId);
+        if (entity is not null)
+        {
+            entity.Name = name;
+            await db.SaveChangesAsync();
+        }
+        _editingId = null;
+        error = null;
+        await LoadAsync();
+    }
+
+    private async Task SaveNewAsync()
+    {
+        var name = _newName.Trim();
+        if (string.IsNullOrEmpty(name)) { error = "Name is required."; return; }
+        if (cats.Any(c => c.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        {
+            error = $"A category named '{name}' already exists on this design.";
+            return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var maxSort = cats.Count > 0 ? cats.Max(c => c.SortOrder) : 0;
+        db.TblDesignRequirementCategories.Add(new TblDesignRequirementCategory
+        {
+            DesignId = DesignId,
+            Name = name,
+            SortOrder = maxSort + 10,
+        });
+        await db.SaveChangesAsync();
+        adding = false;
+        _newName = string.Empty;
+        error = null;
+        await LoadAsync();
+    }
+
+    private async Task DeleteAsync(TblDesignRequirementCategory cat)
+    {
+        // Guard against stale counts — the DB check is authoritative
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var hasReqs = await db.TblDesignRequirements.AnyAsync(r => r.CategoryId == cat.CategoryId);
+        if (hasReqs)
+        {
+            error = $"Cannot delete '{cat.Name}' — it still has requirements. Move or delete them first.";
+            return;
+        }
+
+        var entity = await db.TblDesignRequirementCategories.FindAsync(cat.CategoryId);
+        if (entity is not null)
+        {
+            db.TblDesignRequirementCategories.Remove(entity);
+            await db.SaveChangesAsync();
+        }
+        error = null;
+        await LoadAsync();
+    }
+
+    private async Task DropAsync(int targetId)
+    {
+        if (_draggingId is null || _draggingId == targetId)
+        {
+            _draggingId = null; _dragOverId = null;
+            return;
+        }
+
+        var dragging = cats.FirstOrDefault(c => c.CategoryId == _draggingId);
+        var target = cats.FirstOrDefault(c => c.CategoryId == targetId);
+        _draggingId = null; _dragOverId = null;
+        if (dragging is null || target is null) return;
+
+        cats.Remove(dragging);
+        cats.Insert(cats.IndexOf(target), dragging);
+
+        // Reassign SortOrders (10, 20, 30…)
+        await using var db = await DbFactory.CreateDbContextAsync();
+        for (int i = 0; i < cats.Count; i++)
+        {
+            var newOrder = (i + 1) * 10;
+            if (cats[i].SortOrder != newOrder)
+            {
+                var entity = await db.TblDesignRequirementCategories.FindAsync(cats[i].CategoryId);
+                if (entity is not null) entity.SortOrder = newOrder;
+                cats[i].SortOrder = newOrder;
+            }
+        }
+        await db.SaveChangesAsync();
+    }
+
+    private Task Close() => OnClose.InvokeAsync();
+}
+
+<style>
+    .mc-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--dx-border-color, #dee2e6); border-radius: 6px; margin-bottom: 6px; background: #fff; }
+    .mc-row.mc-drag-over { outline: 2px dashed var(--dx-blue, #0071BC); outline-offset: 1px; }
+    .mc-drag-handle { cursor: grab; color: var(--dx-text-muted, #6c757d); user-select: none; }
+    .mc-name { flex: 1; font-size: .9rem; }
+    .mc-count { font-size: .75rem; color: var(--dx-text-muted, #6c757d); white-space: nowrap; }
+    .mc-name-input { flex: 1; }
+</style>

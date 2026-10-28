@@ -1,0 +1,48 @@
+@using DXSuite.Design.Models
+
+@* Shown when a saved config references items that no longer exist in the catalog.
+   Lets the user skip the missing items and load anyway, or cancel. *@
+
+@if (Visible)
+{
+    <div class="dx-modal-overlay" @onclick="() => OnClose.InvokeAsync()">
+        <div class="dx-modal" style="max-width:520px" @onclick:stopPropagation>
+            <div class="dx-modal-header">
+                <span>Config Load — Missing Items</span>
+                <button class="dx-modal-close" @onclick="() => OnClose.InvokeAsync()">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p style="margin:0 0 12px">
+                    Some items in <strong>@ConfigName</strong> are no longer in the catalog.
+                    They will be skipped if you load anyway.
+                </p>
+                @foreach (var grp in MissingItems.GroupBy(m => m.Section))
+                {
+                    <div style="margin-bottom:10px">
+                        <div style="font-weight:600; font-size:.85rem; margin-bottom:4px">@grp.Key</div>
+                        <ul style="margin:0; padding-left:20px; font-size:.84rem; color:var(--text-muted,#6c757d)">
+                            @foreach (var item in grp)
+                            {
+                                <li>@item.Description</li>
+                            }
+                        </ul>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer" style="display:flex; gap:8px; justify-content:flex-end">
+                <button class="dx-btn dx-btn-outline-gray" @onclick="() => OnClose.InvokeAsync()">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="() => OnLoadAnyway.InvokeAsync()">
+                    Skip missing &amp; load
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public bool Visible { get; set; }
+    [Parameter] public string ConfigName { get; set; } = "";
+    [Parameter] public List<WorksheetConfigMissingItem> MissingItems { get; set; } = [];
+    [Parameter] public EventCallback OnLoadAnyway { get; set; }
+    [Parameter] public EventCallback OnClose { get; set; }
+}

@@ -1,0 +1,313 @@
+@using DXSuite.Director.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+
+@using DXSuite.Director.Models
+@using System.Xml
+@inject IServiceScopeFactory scopeFactory;
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject NavigationManager navMan;
+@inject ILogger<AssetPlaylist> Logger
+@rendermode InteractiveServer
+
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="section-container" style="background-color:#f5f5f5; border-radius: 5px; padding: 20px">
+            <div class="section-header" style="background-color:unset; border:unset;">
+                <div class="section-title">
+                    <h3>@((!string.IsNullOrEmpty(PlaylistName)) ? PlaylistName : "Playlist")</h3>
+                </div>
+                <div style="display:flex; gap: 10px;">
+                    @* <button class="dx-btn dx-btn-blue" style="align-content:space-between;"  onclick="@(() => mediaUploaderModal.Open(baseDirectory, Location.LocationId, 0, null, false, true))">ADD MEDIA +</button> *@
+                    <button class="dx-btn dx-btn-blue" style="align-content:space-between;" onclick="@(() => OpenMediaUploader(null))">ADD MEDIA +</button>
+                    <button class="dx-btn dx-btn-green" style="align-content:space-between;" onclick="@(() => OpenMediaCreator())">CREATE MEDIA +</button>
+                </div>
+            </div>
+            <div class="asset-container">
+                <div class="d-flex" style="background-color:#CCC; border-radius: 5px;">
+                    <div class="playlistAsset-Container">
+                        @* DEFAULT CONTENT IN SCROLLING CONTAINER *@
+                        @if (MediaFiles.Count() == 0)
+                        {
+                            <h5>Click ADD MEDIA + to begin assigning content.</h5>
+                        }
+                        else
+                        {
+                            @foreach (var mediaFile in MediaFiles)
+                            {
+                                <div class="playlistAsset" style="width:300px;">
+                                    <article class="collapsed" id="@mediaFile.DiskPath" name="mediaAsset">
+                                        <div style="position:relative;">
+                                            @if (mediaFile.IsExpired)
+                                            {
+                                                @if ((mediaFile.WebPath.ToUpper().Contains(".MP4")) || (mediaFile.WebPath.ToUpper().Contains(".AVI")))
+                                                {
+                                                    <div style="opacity:0.8;">
+                                                        <video src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain; background-color:white;" controlslist="nodownload noplaybackrate" />
+                                                    </div>
+                                                }
+                                                else
+                                                {
+
+                                                    <div style="opacity:0.5;">
+                                                        <img src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain; background-color:white;" name="@mediaFile.WebPath" />
+                                                    </div>
+
+                                                }
+                                                <div style="position:absolute; top:50%; left:50%; transform: translate(-50%, -50%); color:white; text-shadow: 3px 3px 5px rgba(0, 0, 0, 0.7);">
+                                                    <h3 style="text-align:center;">CONTENT EXPIRED</h3>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                @if ((mediaFile.WebPath.ToUpper().Contains(".MP4")) || (mediaFile.WebPath.ToUpper().Contains(".AVI")))
+                                                {
+                                                    <div>
+                                                        <video src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain; background-color:white;" controlslist="nodownload noplaybackrate" />
+                                                    </div>
+                                                }
+                                                else
+                                                {
+
+                                                    <div>
+                                                        <img src="@mediaFile.WebPath" style="object-position:center center; width:100%; height:100%; object-fit:contain; background-color:white;" name="@mediaFile.WebPath" />
+                                                    </div>
+
+                                                }
+                                            }
+                                        </div>
+                                        <div style="padding:10px; line-height: 20px; background-color:white; border-bottom-left-radius:5px; border-bottom-right-radius:5px;">
+                                            <table width="100%">
+                                                <tr>
+                                                    <td width="30%"></td>
+                                                    <td width="35%">START</td>
+                                                    <td width="35%">END</td>
+                                                </tr>
+                                                <tr>
+                                                    <td width="30%">DATE</td>
+                                                    <td width="35%" class="assigned" id="@String.Format("{0}_{1}", mediaFile.DiskPath, "StartDate")">
+                                                        @{
+                                                            var startDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartDate");
+                                                            string startDate = (startDateField != null && DateTime.TryParse(startDateField.Value, out DateTime parsedStartDate))
+                                                            ? parsedStartDate.ToString("MM/dd/yyyy")
+                                                            : "Now";
+                                                        }
+                                                        @startDate
+                                                    </td>
+                                                    <td width="35%" class="assigned" id="@String.Format("{0}_{1}", mediaFile.DiskPath, "EndDate")">
+                                                        @{
+                                                            var endDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndDate");
+                                                            string endDate = (endDateField != null && DateTime.TryParse(endDateField.Value, out DateTime parsedEndDate))
+                                                            ? parsedEndDate.ToString("MM/dd/yyyy")
+                                                            : "Never";
+                                                        }
+                                                        @endDate
+                                                    </td>
+                                                </tr>
+                                                <tr>
+                                                    <td width="30%">TIME</td>
+                                                    <td width="35%" class="assigned" id="@String.Format("{0}_{1}", mediaFile.DiskPath, "StartTime")">
+                                                        @{
+                                                            var startTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime")?.Value;
+                                                            var startTime = DateTime.TryParse(startTimeMetadata, out DateTime parsedStartTime) ? parsedStartTime.ToString("h:mm tt") : "All Day";
+                                                        }
+                                                        @startTime
+                                                    </td>
+
+                                                    <td width="35%" class="assigned" id="@String.Format("{0}_{1}", mediaFile.DiskPath, "EndTime")">
+                                                        @{
+                                                            var endTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime")?.Value;
+                                                            var endTime = DateTime.TryParse(endTimeMetadata, out DateTime parsedEndTime) ? parsedEndTime.ToString("h:mm tt") : "All Day";
+                                                        }
+                                                        @endTime
+                                                    </td>
+                                                </tr>
+                                            </table>
+                                            <div style="padding-top:10px;">
+                                                <button name="@mediaFile.WebPath" class="dx-btn dx-btn-blue" onclick="@(() => OpenMediaUploader(mediaFile))">Edit</button>
+                                                <button name="@mediaFile.DiskPath" class="dx-btn dx-btn-red" onclick="@(() => assetDeleteModal.Open(0, Location.LocationId, mediaFile))">Delete</button>
+                                            </div>
+
+
+                                        </div>
+
+                                    </article>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+}
+
+<MediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="UpdateMediaFiles">
+
+</MediaAssetUploader>
+
+<AssetDeleteConfirmation @ref="assetDeleteModal" OnAssetDeletedMediaFile="DeleteMediaFile">
+
+</AssetDeleteConfirmation>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public string? PlaylistName { get; set; }
+    [Parameter] public double contentHeight { get; set; }
+    [Parameter] public double contentWidth { get; set; }
+
+    public double scaleFactor { get; set; } = 0.2;
+
+    private MediaAssetUploader? mediaUploaderModal { get; set; }
+    private AssetDeleteConfirmation? assetDeleteModal { get; set; }
+
+    private string? baseDirectory;
+
+    List<MediaFile> MediaFiles = new List<MediaFile>();
+
+    private bool alignAssetsVertically = false;
+
+
+    protected override async Task OnInitializedAsync()
+    {
+        await UpdateMediaFiles();
+    }
+
+    private async Task DeleteMediaFile(MediaFile mediaFileToDelete)
+    {
+        bool deleteSuccess = false;
+        if (mediaFileToDelete.DiskPath != null)
+        {
+            if (System.IO.File.Exists(mediaFileToDelete.DiskPath))
+            {
+                System.IO.File.Delete(mediaFileToDelete.DiskPath);
+                deleteSuccess = true;
+            }
+            if (System.IO.File.Exists(mediaFileToDelete.DiskPath + ".metadata"))
+            {
+                System.IO.File.Delete(mediaFileToDelete.DiskPath + ".metadata");
+            }
+        }
+        if (deleteSuccess)
+        {
+            MediaFiles.Remove(mediaFileToDelete);
+            StateHasChanged();
+        }
+    }
+
+    private async Task UpdateMediaFiles()
+    {
+        try
+        {
+            DateTime now = DateTime.Now;
+            baseDirectory = MediaPaths.GetRoot();
+
+            if (baseDirectory != null && Location != null)
+            {
+                string uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString());
+
+                List<MediaFile> tempMediaFiles = new List<MediaFile>();
+
+                foreach (string file in System.IO.Directory.GetFiles(uploadDirectory, "", SearchOption.AllDirectories).Where(s => s.EndsWith(".metadata") == false && s.EndsWith(".db") == false))
+                {
+                    List<MetadataField> metadata = new List<MetadataField>();
+                    string metadataFilePath = file + ".metadata";
+
+                    if (System.IO.File.Exists(metadataFilePath))
+                    {
+                        XmlDocument doc = new XmlDocument();
+                        doc.Load(metadataFilePath);
+                        XmlNodeList nodes = doc.SelectNodes("usermetadata");
+
+                        foreach (XmlNode node in nodes)
+                        {
+                            foreach (XmlNode line in node)
+                            {
+                                MetadataField mdf = new MetadataField()
+                                    {
+                                        Name = line.Attributes["name"].Value,
+                                        DataType = line.Attributes["datatype"].Value,
+                                        Value = line.Attributes["value"].Value
+                                    };
+                                metadata.Add(mdf);
+                            }
+
+                        }
+                    }
+
+                    MetadataField? location = metadata.Where(x => x.Name == "Location").FirstOrDefault();
+
+                    if (location != null && location.Value == Location.LocationId.ToString())
+                    {
+                        bool isExpired = false;
+                        DateTime? parsedEndDate = null;
+
+                        MetadataField? endDate = metadata.Where(x => x.Name == "EndDate").FirstOrDefault();
+                        if (endDate != null && DateTime.TryParse(endDate.Value, out DateTime parsedDate))
+                        {
+                            parsedEndDate = parsedDate;
+                            if (parsedDate < now)
+                            {
+                                isExpired = true;
+                            }
+                        }
+                        MediaFile mf = new MediaFile()
+                            {
+                                WebPath = String.Format(@"/MediaAssets/{0}/{1}", Location.LocationId, Path.GetFileName(file)),
+                                DiskPath = file,
+                                Metadata = metadata,
+                                IsExpired = isExpired,
+                                EndDate = parsedEndDate
+                            };
+                        tempMediaFiles.Add(mf);
+                    }
+                }
+
+                MediaFiles = tempMediaFiles.OrderBy(x => x.EndDate ?? DateTime.MaxValue).ToList();
+                await InvokeAsync(StateHasChanged);
+            }
+
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating media files");
+        }
+
+    }
+
+    private void UpdateAspectRatio()
+    {
+        double aspectRatio = contentHeight / contentWidth;
+        if (aspectRatio < 0.3)
+        {
+            alignAssetsVertically = true;
+        }
+    }
+
+    private void OpenMediaUploader(MediaFile? editMediaFile)
+    {
+        var config = new MediaUploadConfig
+        {
+            UploadFolder = baseDirectory,
+            LocationId = Location.LocationId,
+            ConstraintId = 0,
+            ExpectedWidth = contentWidth,
+            ExpectedHeight = contentHeight,
+            EditMediaFile = editMediaFile,
+            AddToSql = false,
+            IsSchedulable = true,
+            EnableContentApproval = Location.EnableContentApproval
+        };
+
+        mediaUploaderModal.Open(config);
+    }
+
+    private void OpenMediaCreator()
+    {
+        var url = $"/mediacreator?LocationId={Location.LocationId}&ConstraintId=0&Width={contentWidth}&Height={contentHeight}";
+        navMan.NavigateTo(url);
+    }
+}

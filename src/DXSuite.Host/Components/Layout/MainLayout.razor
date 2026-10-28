@@ -1,0 +1,668 @@
+@inherits LayoutComponentBase
+@implements IDisposable
+@using DXSuite.Shared.Module
+@using DXSuite.Shared.Authorization
+@using DXSuite.Director.Components.Shared
+@using Microsoft.AspNetCore.Components.Authorization
+@using Microsoft.AspNetCore.Components.Routing
+@inject IReadOnlyList<IBlazorModule> Modules
+@inject NavigationManager Navigation
+@inject ISessionState sessionState
+@using DXSuite.Shared.Models
+@using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Services
+@using Microsoft.Extensions.Options
+@inject IConfiguration appConfig
+@inject IOptions<AuthenticationConfig> authConfigOptions
+@inject ITenantContext tenantContext
+@inject LocationAccessBroadcastService accessBroadcast
+@inject KioskModeState kioskMode
+@inject IUserPreferenceService userPreferences
+@inject ILogger<MainLayout> Logger
+
+<div class="page">
+    <main>
+        @if (IsAuthorized && !sessionState.IsDisabled)
+        {
+            @if (!kioskMode.IsActive)
+            {
+            @if (showProfileDropdown || activeGroupDropdown != null || showMobileNav)
+            {
+                <div class="dx-dropdown-overlay" @onclick="CloseAllDropdowns"></div>
+            }
+
+            <div class="dx-navbar">
+                <div class="dx-navbar-left">
+                    <button class="dx-nav-hamburger @(showMobileNav ? "active" : "")" title="Menu"
+                            @onclick="ToggleMobileNav" @onclick:stopPropagation="true">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                        </svg>
+                    </button>
+                    <a class="dx-navbar-brand" href="/">
+                        <img src="images/branding/header.png" alt="DXSuite" style="height:40px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
+                        <strong style="display:none;">DXSuite</strong>
+                    </a>
+
+                    @* Product group buttons — grouped nav items render as dropdowns, ungrouped as direct links.
+                       Hidden below the tablet breakpoint in favor of the hamburger menu. *@
+                    <div class="dx-navbar-links">
+                        @foreach (var group in navGroups)
+                        {
+                            @if (group.Key == null)
+                            {
+                                @* Ungrouped nav items — render as direct links *@
+                                @foreach (var nav in group)
+                                {
+                                    <button class="dx-nav-product-btn @(IsActive(nav.Href) ? "active" : "")"
+                                            @onclick="@(() => NavigateTo(nav.Href))">
+                                        @nav.Label
+                                    </button>
+                                }
+                            }
+                            else
+                            {
+                                @* Grouped nav items — render as dropdown *@
+                                <div class="dx-nav-group">
+                                    <button class="dx-nav-product-btn @(IsGroupActive(group) ? "active" : "")"
+                                            @onclick="@(() => ToggleGroupDropdown(group.Key))"
+                                            @onclick:stopPropagation="true">
+                                        @group.Key
+                                    </button>
+                                    <div class="dx-nav-group-menu @(activeGroupDropdown == group.Key ? "show" : "")">
+                                        @foreach (var nav in group)
+                                        {
+                                            <button class="dx-nav-group-item" @onclick="@(() => NavigateTo(nav.Href))">
+                                                @nav.Label
+                                            </button>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+
+                <div style="display:flex; align-items:center; gap:6px;">
+                    @* <DXSuite.Shared.Components.LanguageSwitcher /> — re-enable when French translations are complete *@
+                    @if (sessionState.RoleEnum != Roles.Role.NewUser)
+                    {
+                        <DXSuite.Shared.Components.NotificationBell />
+                    }
+                    @* Tenant switching and Help live in the profile dropdown to keep the bar compact *@
+                    @* Profile avatar dropdown *@
+                    <div class="dx-profile-dropdown">
+                        <button class="dx-profile-avatar @(showProfileDropdown ? "active" : "")"
+                                @onclick="ToggleProfileDropdown" @onclick:stopPropagation="true"
+                                title="@(sessionState?.User?.FriendlyName ?? "Profile")">
+                            <span class="dx-profile-initials">@(sessionState?.UserInitials ?? "?")</span>
+                        </button>
+                        <div class="dx-profile-dropdown-menu @(showProfileDropdown ? "show" : "")">
+                            @if (sessionState?.User != null)
+                            {
+                                <div class="dx-profile-dropdown-header">
+                                    <span class="dx-profile-dropdown-name">@(sessionState.User.FriendlyName ?? sessionState.UserName)</span>
+                                    <span class="dx-profile-dropdown-role">@FormatRoleName(sessionState.RoleEnum)</span>
+                                </div>
+                                <div class="dx-dropdown-divider"></div>
+                            }
+
+                            @* Current tenant; opens the switcher modal. Hidden on single-tenant deployments. *@
+                            @if (sessionState!.TenantMemberships.Count > 1 || sessionState.IsPlatformOperator)
+                            {
+                                <button class="dx-dropdown-item" @onclick="OpenTenantSwitcher">
+                                    <i class="bi bi-grid-3x3-gap-fill" style="margin-right:6px;"></i>@CurrentTenantName
+                                </button>
+                                <div class="dx-dropdown-divider"></div>
+                            }
+
+                            @if (showSettings)
+                            {
+                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("/settings"))">
+                                    Settings
+                                </button>
+                            }
+
+                            @if (showConfig)
+                            {
+                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("/configuration"))">
+                                    Configuration
+                                </button>
+                            }
+
+                            <a class="dx-dropdown-item" style="text-decoration:none;" href="@HelpUrl"
+                               target="_blank" rel="noopener" @onclick="CloseAllDropdowns">
+                                Help
+                            </a>
+
+                            <div class="dx-dropdown-divider"></div>
+
+                            @if (showLogout)
+                            {
+                                <button class="dx-dropdown-item" @onclick="BeginLogout">Log Out</button>
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <TenantSwitcher @ref="tenantSwitcherModal" />
+
+            @* Flattened navigation for narrow screens, toggled by the hamburger button *@
+            @if (showMobileNav)
+            {
+                <div class="dx-mobile-nav">
+                    @foreach (var group in navGroups)
+                    {
+                        @if (group.Key != null)
+                        {
+                            <div class="dx-mobile-nav-group-label">@group.Key</div>
+                        }
+                        @foreach (var nav in group)
+                        {
+                            <button class="dx-mobile-nav-item @(IsActive(nav.Href) ? "active" : "")"
+                                    @onclick="@(() => NavigateTo(nav.Href))">
+                                @nav.Label
+                            </button>
+                        }
+                    }
+                </div>
+            }
+
+            }
+
+            @* Pages read this to drop their own headers too; hiding only the navbar leaves a
+               DXSuite page title sitting above whatever the page draws. *@
+            <CascadingValue Value="kioskMode.IsActive" Name="KioskMode">
+                <div class="dx-page-body-wrap @(kioskMode.IsActive ? "dx-kiosk" : "")">
+                    @Body
+                </div>
+            </CascadingValue>
+
+            <UploadMinimizedBar />
+            <BatchDeploymentMinimizedBar />
+        }
+        else if (IsAuthorized && sessionState.IsDisabled)
+        {
+            <div style="display:flex; justify-content:center; align-items:center; margin-top:120px;">
+                <div style="text-align:center; max-width:480px; padding:40px; background:#fff; border:1px solid #e0e0e0; border-radius:10px;">
+                    <h3>Account Disabled</h3>
+                    <p>Your account has been disabled by an administrator. Please contact your system administrator for assistance.</p>
+                </div>
+            </div>
+        }
+        else if (!sessionLoading)
+        {
+            var loginConfig = authConfigOptions.Value;
+            // Per-tenant providers take precedence; fall back to top-level config for tenants
+            // using Provider="multi" with no explicit per-tenant OIDC config.
+            var providers = tenantContext.AuthConfig.Providers.Any(p => p.Value.Enabled)
+                ? tenantContext.AuthConfig.Providers.Where(p => p.Value.Enabled).ToList()
+                : loginConfig.Providers.Where(p => p.Value.Enabled).ToList();
+
+            // Per-tenant local account config takes precedence over the global setting.
+            // Null means the tenant has no override — fall back to the global config.
+            var effectiveLocalAccounts = tenantContext.AuthConfig.LocalAccounts ?? loginConfig.LocalAccounts;
+            var effectiveLdap = tenantContext.AuthConfig.Ldap ?? loginConfig.Ldap;
+
+            <div class="dx-login-page">
+                <div class="dx-login-card" style="position:relative;">
+                    @if (loginSubmitting)
+                    {
+                        <div class="dx-loading-overlay" style="border-radius:8px; z-index:10;">
+                            <div class="dx-spinner"></div>
+                        </div>
+                    }
+                    <div>
+                        <img class="dx-login-block-img" src="images/branding/login.png" onerror="this.style.display='none';" />
+                    </div>
+                    <div class="dx-login-card-body">
+                        @foreach (var provider in providers)
+                        {
+                            <button class="dx-login-provider-btn" @onclick="() => SignInWithProvider(provider.Key)">
+                                <i class="bi @provider.Value.Icon"></i>
+                                Sign in with @provider.Value.DisplayName
+                            </button>
+                        }
+
+                        @if (effectiveLdap?.Enabled == true)
+                        {
+                            @if (providers.Any())
+                            {
+                                <div class="dx-login-divider"><span>or</span></div>
+                            }
+                            <div class="dx-login-local-form">
+                                <input type="text"
+                                       class="dx-form-control"
+                                       placeholder="Username or UPN"
+                                       @bind="ldapUsername"
+                                       autocomplete="username" />
+                                <input type="password"
+                                       class="dx-form-control"
+                                       placeholder="Password"
+                                       @bind="ldapPassword"
+                                       autocomplete="current-password" />
+                                <button class="dx-btn dx-btn-blue dx-login-btn" @onclick="SubmitLdapLogin">
+                                    @effectiveLdap.DisplayName
+                                </button>
+                            </div>
+                        }
+
+                        @if ((providers.Any() || effectiveLdap?.Enabled == true) && effectiveLocalAccounts.Enabled)
+                        {
+                            <div class="dx-login-divider"><span>or</span></div>
+                        }
+
+                        @if (effectiveLocalAccounts.Enabled)
+                        {
+                            @if (loginMessage != null)
+                            {
+                                <div class="dx-alert dx-alert-info" style="font-size:0.85rem;">@loginMessage</div>
+                            }
+
+                            @if (loginError != null)
+                            {
+                                <div class="dx-login-error">@loginError</div>
+                            }
+
+                            @if (!showRegisterForm)
+                            {
+                                <div class="dx-login-local-form">
+                                    <input type="email" class="dx-form-control" placeholder="Email" @bind="localEmail" />
+                                    <input type="password" class="dx-form-control" placeholder="Password" @bind="localPassword" />
+                                    <button class="dx-btn dx-btn-blue dx-login-btn" @onclick="SubmitLocalLogin">Sign In</button>
+                                </div>
+
+                                @if (effectiveLocalAccounts.AllowSelfRegistration)
+                                {
+                                    <div style="text-align:center; margin-top:8px;">
+                                        <button class="dx-login-link-btn" @onclick="() => showRegisterForm = true">
+                                            Don't have an account? Create one
+                                        </button>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div class="dx-login-local-form">
+                                    <input type="email" class="dx-form-control" placeholder="Email" @bind="localEmail" />
+                                    <input type="password" class="dx-form-control" placeholder="Password" @bind="localPassword" />
+                                    <input type="password" class="dx-form-control" placeholder="Confirm Password" @bind="localConfirmPassword" />
+                                    <button class="dx-btn dx-btn-blue dx-login-btn" @onclick="SubmitLocalRegister">Create Account</button>
+                                </div>
+                                <div style="text-align:center; margin-top:8px;">
+                                    <button class="dx-login-link-btn" @onclick="() => showRegisterForm = false">
+                                        Already have an account? Sign in
+                                    </button>
+                                </div>
+                            }
+                        }
+
+                        @if (!providers.Any() && !effectiveLocalAccounts.Enabled && effectiveLdap?.Enabled != true)
+                        {
+                            <p class="dx-text-muted" style="text-align:center; padding:20px;">No authentication providers configured.</p>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+        else
+        {
+            <div style="display:flex; justify-content:center; align-items:center; margin-top:120px;">
+                <p>Loading...</p>
+            </div>
+        }
+    </main>
+</div>
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">&#x1f5d9;</span>
+</div>
+
+@code {
+    [CascadingParameter]
+    private Task<AuthenticationState>? authStateTask { get; set; }
+
+    private bool IsAuthorized;
+    private bool idleTimeoutStarted;
+    private bool sessionLoading = true;
+    private bool showProfileDropdown;
+    private string? activeGroupDropdown;
+    private bool showMobileNav;
+    private TenantSwitcher? tenantSwitcherModal;
+
+    private string CurrentTenantName =>
+        sessionState.TenantMemberships.FirstOrDefault(m => m.TenantId == tenantContext.TenantId)?.DisplayName
+        ?? tenantContext.DisplayName;
+
+    private string HelpUrl => $"{appConfig["Help:BaseUrl"]?.TrimEnd('/') ?? "/docs"}/index.html";
+
+    private void OpenTenantSwitcher()
+    {
+        CloseAllDropdowns();
+        tenantSwitcherModal?.Open();
+    }
+    private bool showLogout;
+    private bool showSettings;
+    private bool showConfig;
+
+    private IGrouping<string?, NavItem>[] navGroups = Array.Empty<IGrouping<string?, NavItem>>();
+
+    protected override async Task OnInitializedAsync()
+    {
+        // MainLayout is mounted for the whole circuit lifetime, so it owns the
+        // subscription that keeps this circuit's location access current when another
+        // circuit changes access rules or group membership.
+        accessBroadcast.OnLocationAccessChanged += OnLocationAccessBroadcast;
+
+        try
+        {
+            var authCfg = authConfigOptions.Value;
+
+            if (authCfg.DemoMode)
+            {
+                // Demo mode: bypass all auth
+                var demoUsername = authCfg.DemoUsername ?? "dev@local";
+                await sessionState.LoadUserAsync(demoUsername);
+                IsAuthorized = true;
+            }
+            else if (authStateTask != null)
+            {
+                // Check auth state from any provider (Microsoft, Google, Okta, local cookie)
+                var authState = await authStateTask;
+                var user = authState.User;
+
+                if (user.Identity?.IsAuthenticated == true)
+                {
+                    // Extract username from claims — try provider-specific claims in order
+                    var username = user.Claims.FirstOrDefault(x => x.Type == "preferred_username")?.Value
+                                   ?? user.Claims.FirstOrDefault(x => x.Type == "email")?.Value
+                                   ?? user.Claims.FirstOrDefault(x => x.Type == System.Security.Claims.ClaimTypes.Email)?.Value
+                                   ?? user.Identity.Name;
+
+                    if (username != null)
+                    {
+                        await sessionState.LoadUserAsync(username, user);
+                        IsAuthorized = true;
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading user session");
+        }
+
+        if (IsAuthorized && sessionState.User != null)
+        {
+            try
+            {
+                kioskMode.SetUserPreference(await userPreferences.GetKioskModeAsync(sessionState.User.UserId));
+            }
+            catch (Exception ex)
+            {
+                // A preference lookup must never cost someone the whole page; worst case they
+                // see the navigation they would have seen before this feature existed.
+                Logger.LogWarning(ex, "Could not load kiosk mode preference");
+            }
+        }
+
+        // The override is sticky for the circuit, but the query string only appears on the first
+        // navigation, so it has to be read here as well as on every subsequent one.
+        ApplyChromeQuery();
+        kioskMode.Changed += OnKioskModeChanged;
+        Navigation.LocationChanged += OnNavigationChanged;
+
+        sessionLoading = false;
+        var authCfg2 = authConfigOptions.Value;
+        var effectiveLocalAccounts2 = tenantContext.AuthConfig.LocalAccounts ?? authCfg2.LocalAccounts;
+        showLogout = authCfg2.Providers.Any(p => p.Value.Enabled)
+                  || effectiveLocalAccounts2.Enabled
+                  || (tenantContext.AuthConfig.Ldap ?? authCfg2.Ldap)?.Enabled == true;
+
+        // Parse login messages from query string
+        var uri = new Uri(Navigation.Uri);
+        var query = System.Web.HttpUtility.ParseQueryString(uri.Query);
+
+        var errorParam = query["error"];
+        loginError = errorParam switch
+        {
+            "invalid-credentials" => "Invalid email or password.",
+            "email-not-confirmed" => "Please confirm your email address before signing in. Check your inbox for the confirmation link.",
+            "missing-credentials" => "Please enter your email and password.",
+            "passwords-mismatch" => "Passwords do not match.",
+            "registration-disabled" => "Registration is not enabled.",
+            "invalid-token" => "Invalid or expired confirmation link.",
+            "missing-token" => "Launch token is missing.",
+            "token-already-used" => "This launch link has already been used.",
+            "token-expired" => "This launch link has expired.",
+            "launch-failed"     => "Launch authentication failed.",
+            "ldap-invalid"      => "Invalid username or password.",
+            "ldap-config-error" => "Directory authentication is currently unavailable. Please contact your administrator.",
+            "ldap-failed"       => "An error occurred during directory authentication.",
+            null => null,
+            _ => Uri.UnescapeDataString(errorParam),
+        };
+
+        loginMessage = query["message"] switch
+        {
+            "confirm-email" => "Account created! Check your email to confirm your address before signing in.",
+            "email-confirmed" => "Email confirmed! You can now sign in.",
+            _ => null,
+        };
+
+        showRegisterForm = query["mode"] == "register";
+
+        // Filter to modules that are available for the current tenant (e.g. Design is hidden
+        // on tenants with no Design connection string). This is evaluated per circuit so
+        // switching tenants always reflects the new tenant's module availability.
+        var availableModules = Modules.Where(m => m.IsAvailableForTenant(tenantContext)).ToList();
+
+        // Menu entries show when the user's role is granted at least one tab behind them
+        // (the real Admin role bypasses permission checks and sees everything).
+        var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
+        showSettings = availableModules.SelectMany(m => m.GetSettingsTabs())
+            .Any(t => perms == null || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
+        showConfig = availableModules.SelectMany(m => m.GetConfigTabs())
+            .Any(t => perms == null || perms.Contains(PermissionKeys.ForConfigTab(t.Key)));
+
+        // Build navigation groups from module nav items, filtering out items gated by
+        // disabled per-tenant feature flags, ungranted role permissions (perms == null
+        // means the real Admin role, which sees everything), or a session predicate
+        // (platform identity flags). TenantFeatureFlags is populated from
+        // tblTenant.FeaturesJson (hosted) or appsettings Tenants:{id}:Features (standalone).
+        var tenantFeatures = tenantContext.Features;
+        navGroups = availableModules
+            .SelectMany(m => m.GetNavItems())
+            .Where(n => n.Feature == null ||
+                        typeof(TenantFeatureFlags).GetProperty(n.Feature)?.GetValue(tenantFeatures) is true)
+            .Where(n => n.Permission == null || perms == null || perms.Contains(n.Permission))
+            .Where(n => n.IsVisible == null || n.IsVisible(sessionState))
+            .OrderBy(n => n.Order)
+            .GroupBy(n => n.Group)
+            .ToArray();
+    }
+
+    private void OnLocationAccessBroadcast(string tenantId, IReadOnlyCollection<int> userIds)
+    {
+        var currentUserId = sessionState.User?.UserId;
+        if (currentUserId == null || !userIds.Contains(currentUserId.Value)) return;
+        if (!tenantContext.IsPopulated ||
+            !string.Equals(tenantId, tenantContext.TenantId, StringComparison.OrdinalIgnoreCase)) return;
+
+        // Marshal onto the circuit dispatcher before the session touches its sub-scoped
+        // DB contexts; the broadcast fires on the writing circuit's thread.
+        _ = InvokeAsync(() => sessionState.RefreshLocationAccessAsync());
+    }
+
+    /// <summary>
+    /// Reads "chrome" from the current URL, e.g. /location/5850?chrome=none. Absent or
+    /// unrecognized values leave the state untouched rather than resetting it, which is what
+    /// keeps the override alive across in-app navigation.
+    /// </summary>
+    private void ApplyChromeQuery()
+    {
+        try
+        {
+            var query = System.Web.HttpUtility.ParseQueryString(new Uri(Navigation.Uri).Query);
+            kioskMode.ApplyQueryValue(query["chrome"]);
+        }
+        catch (UriFormatException)
+        {
+            // Nothing to apply; leave whatever the account preference resolved to.
+        }
+    }
+
+    private void OnNavigationChanged(object? sender, LocationChangedEventArgs e) => ApplyChromeQuery();
+
+    private void OnKioskModeChanged() => _ = InvokeAsync(StateHasChanged);
+
+    public void Dispose()
+    {
+        accessBroadcast.OnLocationAccessChanged -= OnLocationAccessBroadcast;
+        kioskMode.Changed -= OnKioskModeChanged;
+        Navigation.LocationChanged -= OnNavigationChanged;
+    }
+
+    private void NavigateTo(string href)
+    {
+        CloseAllDropdowns();
+        Navigation.NavigateTo(href);
+    }
+
+    private void ToggleProfileDropdown()
+    {
+        activeGroupDropdown = null;
+        showProfileDropdown = !showProfileDropdown;
+    }
+
+    private void ToggleGroupDropdown(string? groupName)
+    {
+        showProfileDropdown = false;
+        activeGroupDropdown = activeGroupDropdown == groupName ? null : groupName;
+    }
+
+    private void ToggleMobileNav()
+    {
+        showProfileDropdown = false;
+        activeGroupDropdown = null;
+        showMobileNav = !showMobileNav;
+    }
+
+    private void CloseAllDropdowns()
+    {
+        showProfileDropdown = false;
+        activeGroupDropdown = null;
+        showMobileNav = false;
+    }
+
+    private string? loginError;
+    private string? loginMessage;
+    private bool showRegisterForm;
+    private string localEmail = "";
+    private string localPassword = "";
+    private string localConfirmPassword = "";
+    private string ldapUsername = "";
+    private string ldapPassword = "";
+    private bool loginSubmitting;
+
+    [Inject] private IJSRuntime JS { get; set; } = null!;
+
+    private async Task SubmitLocalLogin()
+    {
+        loginSubmitting = true;
+        StateHasChanged();
+        await Task.Delay(1); // yield to render the overlay
+        await JS.InvokeVoidAsync("eval", $@"
+            var f = document.createElement('form');
+            f.method = 'POST';
+            f.action = '/auth/local/login';
+            var e = document.createElement('input'); e.name='email'; e.value={System.Text.Json.JsonSerializer.Serialize(localEmail)}; f.appendChild(e);
+            var p = document.createElement('input'); p.name='password'; p.value={System.Text.Json.JsonSerializer.Serialize(localPassword)}; f.appendChild(p);
+            document.body.appendChild(f);
+            f.submit();
+        ");
+    }
+
+    private async Task SubmitLdapLogin()
+    {
+        loginSubmitting = true;
+        StateHasChanged();
+        await Task.Delay(1); // yield to render the overlay
+        await JS.InvokeVoidAsync("eval", $@"
+            var f = document.createElement('form');
+            f.method = 'POST';
+            f.action = '/auth/ldap/login';
+            var u = document.createElement('input'); u.name='username'; u.value={System.Text.Json.JsonSerializer.Serialize(ldapUsername)}; f.appendChild(u);
+            var p = document.createElement('input'); p.name='password'; p.value={System.Text.Json.JsonSerializer.Serialize(ldapPassword)}; f.appendChild(p);
+            document.body.appendChild(f);
+            f.submit();
+        ");
+    }
+
+    private async Task SubmitLocalRegister()
+    {
+        loginSubmitting = true;
+        StateHasChanged();
+        await Task.Delay(1); // yield to render the overlay
+        await JS.InvokeVoidAsync("eval", $@"
+            var f = document.createElement('form');
+            f.method = 'POST';
+            f.action = '/auth/local/register';
+            var e = document.createElement('input'); e.name='email'; e.value={System.Text.Json.JsonSerializer.Serialize(localEmail)}; f.appendChild(e);
+            var p = document.createElement('input'); p.name='password'; p.value={System.Text.Json.JsonSerializer.Serialize(localPassword)}; f.appendChild(p);
+            var c = document.createElement('input'); c.name='confirmPassword'; c.value={System.Text.Json.JsonSerializer.Serialize(localConfirmPassword)}; f.appendChild(c);
+            document.body.appendChild(f);
+            f.submit();
+        ");
+    }
+
+    private void SignInWithProvider(string providerName)
+    {
+        // All providers route through AuthController so per-tenant scheme selection applies.
+        Navigation.NavigateTo($"/auth/challenge/{providerName}", forceLoad: true);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        // Not gated on firstRender: OnInitializedAsync awaits the session load, so the first
+        // render completes while IsAuthorized is still false. idleTimeout.start is idempotent.
+        if (IsAuthorized && !idleTimeoutStarted)
+        {
+            idleTimeoutStarted = true;
+
+            // Start client-side idle timeout (IS-LACS2026 compliance)
+            var timeoutMinutes = appConfig.GetValue<int>("Security:SessionTimeoutMinutes", 15);
+            await JS.InvokeVoidAsync("idleTimeout.start", timeoutMinutes);
+        }
+    }
+
+    private void BeginLogout()
+    {
+        CloseAllDropdowns();
+        Navigation.NavigateTo("/auth/logout", forceLoad: true);
+    }
+
+    private bool IsActive(string href)
+    {
+        var relativePath = "/" + Navigation.ToBaseRelativePath(Navigation.Uri);
+        return string.Equals(relativePath, href, StringComparison.OrdinalIgnoreCase)
+            || relativePath.StartsWith(href + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private bool IsGroupActive(IGrouping<string?, NavItem> group)
+    {
+        return group.Any(n => IsActive(n.Href));
+    }
+
+    private static string FormatRoleName(Roles.Role role) => role switch
+    {
+        Roles.Role.Admin => "Admin",
+        Roles.Role.Architect => "Architect",
+        Roles.Role.Contributor => "Contributor",
+        Roles.Role.NewUser => "New User",
+        _ => role.ToString()
+    };
+}

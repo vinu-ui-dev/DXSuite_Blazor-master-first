@@ -1,0 +1,103 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@inject IJSRuntime JSRuntime
+@implements IAsyncDisposable
+
+<div id="@_containerId" class="offmap-container" style="width:100%; height:600px; position:relative;"></div>
+
+@code {
+    [Parameter] public int LocationId { get; set; }
+    [Parameter] public List<TblFloorPlanElement> Elements { get; set; } = new();
+    [Parameter] public Dictionary<int, string> ActiveIcons { get; set; } = new();
+    [Parameter] public LocationExtendedData? Config { get; set; }
+    [Parameter] public EventCallback<TblFloorPlanElement> OnElementClicked { get; set; }
+    [Parameter] public EventCallback<int> OnLocationNavigate { get; set; }
+
+    private string _containerId = $"offmap-{Guid.NewGuid():N}";
+    private DotNetObjectReference<OfflineMapView>? _dotNetRef;
+    private bool _initialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef = DotNetObjectReference.Create(this);
+            await InitMap();
+            _initialized = true;
+        }
+        else if (_initialized)
+        {
+            await UpdateMarkers();
+        }
+    }
+
+    private async Task InitMap()
+    {
+        var tileUrl = Config?.OfflineTilePath ?? "/tiles/{z}/{x}/{y}.png";
+        var center = new { lat = Config?.MapCenterLatitude ?? 0, lng = Config?.MapCenterLongitude ?? 0 };
+        var zoom = Config?.MapZoomLevel ?? 15;
+
+        object? bounds = null;
+        if (Config?.MapBoundsNorth != null && Config?.MapBoundsSouth != null &&
+            Config?.MapBoundsEast != null && Config?.MapBoundsWest != null)
+        {
+            bounds = new
+            {
+                north = Config.MapBoundsNorth.Value,
+                south = Config.MapBoundsSouth.Value,
+                east = Config.MapBoundsEast.Value,
+                west = Config.MapBoundsWest.Value
+            };
+        }
+
+        await JSRuntime.InvokeVoidAsync("leafletInterop.initMap",
+            _containerId, _dotNetRef, tileUrl, center, zoom, bounds,
+            Config?.MapMinZoom, Config?.MapMaxZoom);
+
+        await UpdateMarkers();
+    }
+
+    private async Task UpdateMarkers()
+    {
+        var markers = Elements
+            .Where(e => e.Latitude.HasValue && e.Longitude.HasValue)
+            .Select(e =>
+            {
+                var activeIcon = ActiveIcons.GetValueOrDefault(e.FloorPlanElementId);
+                var iconUrl = activeIcon ?? e.IconPath;
+                var label = e.IconLabel ?? e.ChildDisplay?.DisplayName ?? e.ChildLocation?.LocationName ?? "";
+                return new
+                {
+                    elementId = e.FloorPlanElementId,
+                    lat = e.Latitude!.Value,
+                    lng = e.Longitude!.Value,
+                    label,
+                    iconUrl
+                };
+            }).ToArray();
+
+        await JSRuntime.InvokeVoidAsync("leafletInterop.setMarkers", _containerId, markers);
+    }
+
+    [JSInvokable]
+    public async Task OnMarkerClicked(int elementId)
+    {
+        var element = Elements.FirstOrDefault(e => e.FloorPlanElementId == elementId);
+        if (element == null) return;
+
+        if (element.ChildLocationId.HasValue)
+            await OnLocationNavigate.InvokeAsync(element.ChildLocationId.Value);
+        else
+            await OnElementClicked.InvokeAsync(element);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        try { await JSRuntime.InvokeVoidAsync("leafletInterop.dispose", _containerId); } catch { }
+        _dotNetRef?.Dispose();
+    }
+}
+
+<style>
+    .offmap-container { border: 1px solid #e0e0e0; border-radius: 8px; overflow: hidden; }
+</style>

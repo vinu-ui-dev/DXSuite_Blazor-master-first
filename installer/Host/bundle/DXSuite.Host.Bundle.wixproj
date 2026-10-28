@@ -1,0 +1,26 @@
+<Project Sdk="WixToolset.Sdk/6.0.0">
+
+  <PropertyGroup>
+    <OutputType>Bundle</OutputType>
+    <OutputName>DXSuiteHost-Setup</OutputName>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+
+    <!-- Chained payloads. Override with -p:Name=<abs path>. -->
+    <!-- The MSI builds into a culture subfolder (pinned to en-US in DXSuite.Host.Installer.wixproj). -->
+    <HostMsi Condition="'$(HostMsi)' == ''">$(MSBuildThisFileDirectory)..\bin\$(Configuration)\en-US\DXSuiteHost.msi</HostMsi>
+    <WizardExe Condition="'$(WizardExe)' == ''">$(MSBuildThisFileDirectory)..\wizard\bin\$(Configuration)\net10.0-windows\win-x64\publish\DXSuite.Host.SetupWizard.exe</WizardExe>
+    <!-- The .NET 10 ASP.NET Core Hosting Bundle installer. Supply it here (air-gapped friendly);
+         download from https://dotnet.microsoft.com/download/dotnet/10.0 (ASP.NET Core Runtime →
+         Hosting Bundle). See README.md. -->
+    <HostingBundleExe Condition="'$(HostingBundleExe)' == ''">$(MSBuildThisFileDirectory)redist\dotnet-hosting-win.exe</HostingBundleExe>
+    <LicenseRtf Condition="'$(LicenseRtf)' == ''">$(MSBuildThisFileDirectory)License.rtf</LicenseRtf>
+
+    <DefineConstants>HostMsi=$(HostMsi);WizardExe=$(WizardExe);HostingBundleExe=$(HostingBundleExe);LicenseRtf=$(LicenseRtf)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Bal.wixext" Version="6.0.0" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.0" />
+  </ItemGroup>
+
+</Project>

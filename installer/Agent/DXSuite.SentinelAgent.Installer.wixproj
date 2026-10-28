@@ -1,0 +1,15 @@
+<Project Sdk="WixToolset.Sdk/6.0.0">
+
+  <PropertyGroup>
+    <OutputName>DXSuiteSentinelAgent-Setup</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <!-- Defaults to the agent's self-contained win-x64 publish output; override with -p:PublishDir=... -->
+    <PublishDir Condition="'$(PublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\src\DXSuite.SentinelGateway\bin\Release\net10.0\win-x64\publish\</PublishDir>
+    <DefineConstants>PublishDir=$(PublishDir)</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.UI.wixext" Version="6.0.0" />
+  </ItemGroup>
+
+</Project>

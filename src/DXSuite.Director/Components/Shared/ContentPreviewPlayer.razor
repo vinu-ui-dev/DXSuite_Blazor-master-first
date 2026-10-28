@@ -1,0 +1,352 @@
+@using System.Globalization
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using static DXSuite.Director.Models.Types
+@inject IJSRuntime JSRuntime
+@implements IDisposable
+
+@* In-browser simulation of a display's content rotation: plays the given items with their real
+   durations inside an aspect-correct frame. Web content renders in a sandboxed iframe (same mode
+   the player uses); videos autoplay muted per browser policy; streams are not previewable in a
+   browser and show a labeled placeholder instead. *@
+
+@if (isOpen)
+{
+    <div class="cpp-overlay" @onclick="Close">
+        <div class="cpp-container" @onclick:stopPropagation="true">
+            <div class="cpp-header">
+                <h4>Content Preview</h4>
+                <div class="cpp-header-meta">@((int)EffectiveWidth) × @((int)EffectiveHeight)</div>
+                <button class="cpp-close" @onclick="Close">&times;</button>
+            </div>
+
+            <div class="cpp-stage">
+                @* Width also bounded by height-derived limit so viewport clamping can't distort the aspect *@
+                <div class="cpp-frame" style="aspect-ratio: @Inv(EffectiveWidth) / @Inv(EffectiveHeight); width: min(84vw, 1400px, calc(72vh * @Inv(EffectiveWidth / EffectiveHeight)));">
+                    @if (CurrentItem == null || string.IsNullOrEmpty(CurrentItem.Url))
+                    {
+                        <div class="cpp-placeholder">
+                            <span>@(CurrentItem?.Badge ?? "Missing asset")</span>
+                        </div>
+                    }
+                    else if (CurrentItem.AssetTypeId == (int)AssetType.Web)
+                    {
+                        @* Rendered at the display's native resolution and scaled down, so fixed-canvas
+                           signage pages lay out exactly as they will on the device *@
+                        <iframe class="cpp-content-iframe" src="@CurrentItem.Url"
+                                sandbox="allow-scripts allow-same-origin"
+                                style="width: @Inv(EffectiveWidth)px; height: @Inv(EffectiveHeight)px; transform: scale(@Inv(iframeScale)); transform-origin: top left;"></iframe>
+                    }
+                    else if (CurrentItem.AssetTypeId == (int)AssetType.Stream)
+                    {
+                        <div class="cpp-placeholder">
+                            <span class="cpp-live">&#9654; LIVE</span>
+                            <span>@CurrentItem.Url</span>
+                            <span class="cpp-hint">Streams can't be previewed in the browser</span>
+                        </div>
+                    }
+                    else if (CurrentItem.AssetTypeId == (int)AssetType.Video)
+                    {
+                        @* @key forces a fresh element per item so autoplay re-triggers *@
+                        <video @key="currentIndex" class="cpp-content" src="@CurrentItem.Url"
+                               autoplay muted playsinline @onended="OnVideoEnded"></video>
+                    }
+                    else
+                    {
+                        <img class="cpp-content" src="@CurrentItem.Url" />
+                    }
+
+                    @if (!string.IsNullOrEmpty(CurrentItem?.Badge) && !string.IsNullOrEmpty(CurrentItem?.Url))
+                    {
+                        <div class="cpp-badge">@CurrentItem.Badge</div>
+                    }
+                </div>
+            </div>
+
+            <div class="cpp-controls">
+                <button class="dx-btn dx-btn-gray" @onclick="Previous" disabled="@(items.Count < 2)">&#9664;</button>
+                <button class="dx-btn dx-btn-blue" @onclick="TogglePlay" disabled="@(items.Count < 2)">
+                    @(isPlaying ? "Pause" : "Play")
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="Next" disabled="@(items.Count < 2)">&#9654;</button>
+                <span class="cpp-counter">
+                    @(currentIndex + 1) / @items.Count
+                    @if (CurrentItem != null && items.Count > 1)
+                    {
+                        var dwell = EffectiveDurationSeconds(CurrentItem);
+                        <text>&nbsp;&middot;&nbsp;@(dwell != null ? $"{dwell}s" : "full length")</text>
+                    }
+                </span>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Display resolution the preview frame should mimic.</summary>
+    [Parameter] public double FrameWidth { get; set; } = 1920;
+    [Parameter] public double FrameHeight { get; set; } = 1080;
+
+    /// <summary>Dwell time for items without an explicit duration (playlist images).</summary>
+    [Parameter] public double DefaultImageSeconds { get; set; } = 7;
+
+    private bool isOpen;
+    private bool isPlaying;
+    private int currentIndex;
+    private List<PreviewItem> items = new();
+    private System.Timers.Timer? rotationTimer;
+    private double iframeScale = 0.5;
+    private bool needsScaleMeasure;
+
+    private double EffectiveWidth => FrameWidth > 0 ? FrameWidth : 1920;
+    private double EffectiveHeight => FrameHeight > 0 ? FrameHeight : 1080;
+
+    private PreviewItem? CurrentItem => currentIndex >= 0 && currentIndex < items.Count ? items[currentIndex] : null;
+
+    private static string Inv(double value) => value.ToString(CultureInfo.InvariantCulture);
+
+    public void Open(IEnumerable<ContentItem> contentItems)
+    {
+        Open(contentItems.Select(ci => ci.Asset == null
+            ? new PreviewItem { Url = "", AssetTypeId = -1, Badge = $"Missing asset (ID: {ci.AssetId})" }
+            : new PreviewItem
+            {
+                Url = ci.Asset.AssetPath,
+                AssetTypeId = ci.Asset.AssetTypeId,
+                DurationSeconds = ci.Duration > 0 ? ci.Duration : null
+            }).ToList());
+    }
+
+    public void Open(List<PreviewItem> previewItems)
+    {
+        items = previewItems;
+        if (items.Count == 0) return;
+
+        currentIndex = 0;
+        isOpen = true;
+        isPlaying = items.Count > 1;
+        needsScaleMeasure = true;
+        ArmTimer();
+        StateHasChanged();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!isOpen || !needsScaleMeasure) return;
+        try
+        {
+            var frameWidthPx = await JSRuntime.InvokeAsync<double>("eval",
+                "(function(){var f=document.querySelector('.cpp-frame');return f?f.clientWidth:0;})()");
+            if (frameWidthPx > 0)
+            {
+                needsScaleMeasure = false;
+                iframeScale = frameWidthPx / EffectiveWidth;
+                StateHasChanged();
+            }
+        }
+        catch
+        {
+            // Scale measurement is best-effort; the default keeps the iframe usable
+            needsScaleMeasure = false;
+        }
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+        isPlaying = false;
+        DisposeTimer();
+    }
+
+    // Null = no timer: the item advances on its own completion signal (video 'ended')
+    private double? EffectiveDurationSeconds(PreviewItem item)
+    {
+        if (item.DurationSeconds > 0) return item.DurationSeconds;
+        if (item.AssetTypeId == (int)AssetType.Video) return null;
+        return DefaultImageSeconds;
+    }
+
+    private void ArmTimer()
+    {
+        DisposeTimer();
+        if (!isPlaying || CurrentItem == null) return;
+
+        var duration = EffectiveDurationSeconds(CurrentItem);
+        if (duration == null) return;
+
+        rotationTimer = new System.Timers.Timer(duration.Value * 1000) { AutoReset = false };
+        rotationTimer.Elapsed += (_, _) => _ = InvokeAsync(() => { Advance(1); StateHasChanged(); });
+        rotationTimer.Start();
+    }
+
+    private void OnVideoEnded()
+    {
+        if (isPlaying && CurrentItem != null && EffectiveDurationSeconds(CurrentItem) == null)
+            Advance(1);
+    }
+
+    private void Advance(int step)
+    {
+        if (items.Count == 0) return;
+        currentIndex = (currentIndex + step + items.Count) % items.Count;
+        ArmTimer();
+    }
+
+    private void Next() => Advance(1);
+    private void Previous() => Advance(-1);
+
+    private void TogglePlay()
+    {
+        isPlaying = !isPlaying;
+        ArmTimer();
+    }
+
+    private void DisposeTimer()
+    {
+        rotationTimer?.Stop();
+        rotationTimer?.Dispose();
+        rotationTimer = null;
+    }
+
+    public void Dispose() => DisposeTimer();
+}
+
+<style>
+    .cpp-overlay {
+        position: fixed;
+        top: 0; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.65);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        /* Above dx-modal-overlay (9999): the player opens from inside modals */
+        z-index: 10000;
+    }
+
+    .cpp-container {
+        background: #fff;
+        border-radius: 8px;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+        display: flex;
+        flex-direction: column;
+        max-width: 92vw;
+        max-height: 92vh;
+    }
+
+    .cpp-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 12px 16px;
+        background-color: #0071BC;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .cpp-header h4 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        flex: 1;
+    }
+
+    .cpp-header-meta {
+        color: rgba(255,255,255,0.8);
+        font-size: 12px;
+    }
+
+    .cpp-close {
+        background: none;
+        border: none;
+        font-size: 22px;
+        cursor: pointer;
+        color: #fff;
+        line-height: 1;
+    }
+
+    .cpp-stage {
+        padding: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+        min-height: 0;
+    }
+
+    .cpp-frame {
+        background: #000;
+        position: relative;
+        overflow: hidden;
+    }
+
+    .cpp-content {
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        border: 0;
+        display: block;
+        position: absolute;
+        top: 0; left: 0;
+    }
+
+    .cpp-content-iframe {
+        border: 0;
+        display: block;
+        position: absolute;
+        top: 0; left: 0;
+    }
+
+    .cpp-badge {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(255, 152, 0, 0.92);
+        color: #fff;
+        font-size: 12px;
+        font-weight: 600;
+        padding: 4px 10px;
+        border-radius: 4px;
+        z-index: 5;
+    }
+
+    .cpp-placeholder {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        color: #a0aec0;
+        font-size: 13px;
+        padding: 12px;
+        text-align: center;
+        word-break: break-all;
+    }
+
+    .cpp-live {
+        color: #FF6B00;
+        font-weight: bold;
+        font-size: 18px;
+    }
+
+    .cpp-hint {
+        font-size: 11px;
+        opacity: 0.7;
+    }
+
+    .cpp-controls {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 10px;
+        padding: 12px 16px;
+        border-top: 1px solid #eee;
+    }
+
+    .cpp-counter {
+        font-size: 13px;
+        color: #4D4D4D;
+        margin-left: 8px;
+    }
+</style>

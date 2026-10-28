@@ -1,0 +1,100 @@
+@using DXSuite.Design.Entities
+
+<div class="rqc-card">
+    <div class="rqc-header" @onclick="() => expanded = !expanded" style="cursor:pointer">
+        <div class="rqc-badges">
+            @if (!string.IsNullOrEmpty(Number))
+            {
+                <span class="rqc-number">@Number</span>
+            }
+            <span class="dx-badge @PriorityBadgeClass(Requirement.Priority)">@PriorityLabel(Requirement.Priority)</span>
+            <span class="dx-badge @StatusBadgeClass(Requirement.Status)">@StatusLabel(Requirement.Status)</span>
+        </div>
+        <div class="rqc-meta">
+            @if (!string.IsNullOrEmpty(AssignedToName))
+            {
+                <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">→ @AssignedToName</span>
+            }
+            <span style="font-size:.75rem; color:var(--text-muted,#6c757d)">
+                @Requirement.Comments.Count comment@(Requirement.Comments.Count == 1 ? "" : "s")
+            </span>
+            <span style="font-size:.8rem">@(expanded ? "▲" : "▼")</span>
+        </div>
+    </div>
+
+    <div class="rqc-description">@Requirement.Description</div>
+
+    @if (!string.IsNullOrEmpty(Requirement.ClientNotes))
+    {
+        <div class="rqc-client-notes">
+            <strong>Client Notes:</strong> @Requirement.ClientNotes
+        </div>
+    }
+
+    @if (expanded)
+    {
+        <RequirementReviewPanel Requirement="Requirement" OnStatusChanged="OnStatusChanged" />
+        <CommentThread RequirementId="Requirement.RequirementId" Comments="Requirement.Comments.ToList()" OnCommentPosted="OnCommentPosted">
+            <FooterActions>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OnEditRequested.InvokeAsync(Requirement)">
+                    <i class="bi bi-pencil"></i> Edit
+                </button>
+            </FooterActions>
+        </CommentThread>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public TblDesignRequirement Requirement { get; set; } = null!;
+    [Parameter] public string? Number { get; set; }
+    [Parameter] public string? AssignedToName { get; set; }
+    [Parameter, EditorRequired] public EventCallback<TblDesignRequirement> OnStatusChanged { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnCommentPosted { get; set; }
+    [Parameter, EditorRequired] public EventCallback<TblDesignRequirement> OnEditRequested { get; set; }
+
+    private bool expanded;
+
+    private static string StatusBadgeClass(RequirementStatus s) => s switch
+    {
+        RequirementStatus.Accepted            => "dx-badge-green",
+        RequirementStatus.NeedsClarification  => "dx-badge-yellow",
+        RequirementStatus.Challenged          => "dx-badge-red",
+        _                                     => "dx-badge-gray",
+    };
+
+    private static string StatusLabel(RequirementStatus s) => s switch
+    {
+        RequirementStatus.PendingReview       => "Pending Review",
+        RequirementStatus.Accepted            => "Accepted",
+        RequirementStatus.NeedsClarification  => "Needs Clarification",
+        RequirementStatus.Challenged          => "Challenged",
+        _                                     => s.ToString(),
+    };
+
+    private static string PriorityBadgeClass(RequirementPriority p) => p switch
+    {
+        RequirementPriority.MustHave    => "dx-badge-red",
+        RequirementPriority.ShouldHave  => "dx-badge-orange",
+        RequirementPriority.NiceToHave  => "dx-badge-green",
+        _                               => "dx-badge-gray",
+    };
+
+    private static string PriorityLabel(RequirementPriority p) => p switch
+    {
+        RequirementPriority.MustHave    => "Must Have",
+        RequirementPriority.ShouldHave  => "Should Have",
+        RequirementPriority.NiceToHave  => "Nice to Have",
+        _                               => p.ToString(),
+    };
+}
+
+<style>
+    .rqc-card { border: 1px solid var(--border, #dee2e6); border-radius: 8px; padding: 12px 16px; margin-bottom: 10px; }
+    .rqc-number { font-weight: 700; font-size: .85rem; color: var(--dx-blue, #0071BC); min-width: 32px; }
+    .rqc-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; margin-bottom: 6px; }
+    .rqc-badges { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+    .rqc-meta { display: flex; align-items: center; gap: 10px; }
+    .rqc-description { font-size: .9rem; margin-bottom: 4px; }
+    .rqc-client-notes { font-size: .8rem; color: var(--text-muted, #6c757d); background: var(--surface, #f8f9fa); padding: 6px 10px; border-radius: 4px; margin-top: 6px; }
+    /* rqc-* card layout classes retained; badge styling now uses dx-badge from global CSS */
+</style>

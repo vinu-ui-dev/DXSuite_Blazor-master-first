@@ -1,0 +1,236 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+
+<div class="ct-overlay">
+    <div class="ct-modal" style="width:640px; max-height:80vh; display:flex; flex-direction:column">
+        <div class="ct-modal-header">
+            <strong>Add Item to Worksheet</strong>
+            <button class="outline-btn" style="padding:2px 8px" @onclick="Cancel">✕</button>
+        </div>
+
+        @if (selectedItem is null)
+        {
+            <!-- Step 1: search catalog -->
+            <div style="padding:0 0 12px">
+                <input class="ct-field" style="width:100%" placeholder="Search catalog (min 2 chars)…"
+                       value="@searchTerm" @oninput="OnSearch" />
+            </div>
+
+            @if (searching)
+            {
+                <p style="color:var(--text-muted,#6c757d); font-size:.85rem">Searching…</p>
+            }
+            else if (searchResults is not null)
+            {
+                @if (!searchResults.Any())
+                {
+                    <p class="ct-empty">No catalog items found.</p>
+                }
+                else
+                {
+                    <div class="waim-results" style="overflow-y:auto; flex:1">
+                        @foreach (var item in searchResults)
+                        {
+                            var snap = Deserialize(item.SnapshotJson);
+                            <div class="waim-result-row" @onclick="() => SelectItem(item, snap)">
+                                <div style="font-weight:600; font-size:.9rem">@(item.Description ?? snap?.PurchaseDescription ?? snap?.ItemId ?? item.NetsuiteItemId)</div>
+                                <div style="font-size:.8rem; color:var(--text-muted,#6c757d)">
+                                    @(item.Manufacturer ?? snap?.Manufacturer) · @(item.Category?.Name ?? "No Category") · @((item.Cost > 0 ? item.Cost : snap?.Cost ?? 0).ToString("C"))
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            }
+        }
+        else
+        {
+            <!-- Step 2: attribute values -->
+            <div style="margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border,#dee2e6)">
+                <div style="font-weight:600">@(selectedSnap?.PurchaseDescription ?? selectedItem.NetsuiteItemId)</div>
+                <div style="font-size:.8rem; color:var(--text-muted,#6c757d)">@selectedSnap?.Manufacturer</div>
+            </div>
+
+            @if (categoryAttributes.Any())
+            {
+                <div style="overflow-y:auto; flex:1; margin-bottom:12px">
+                    <p style="font-size:.85rem; color:var(--text-muted,#6c757d); margin-bottom:8px">
+                        Set attribute values for this item:
+                    </p>
+                    @foreach (var ca in categoryAttributes.OrderBy(a => a.SortOrder))
+                    {
+                        var attr = ca.Attribute!;
+                        <div class="ct-form-row" style="margin-bottom:8px">
+                            <label style="font-size:.85rem; width:180px; flex-shrink:0">@attr.Name</label>
+                            @if (attr.AttributeType == AttributeType.Text)
+                            {
+                                <input class="ct-field" style="flex:1"
+                                       value="@GetAttrValue(attr.AttributeId)"
+                                       @onchange="e => SetAttrValue(attr.AttributeId, e.Value?.ToString() ?? string.Empty)" />
+                            }
+                            else if (attr.AttributeType == AttributeType.List)
+                            {
+                                <select class="ct-field" style="flex:1"
+                                        @onchange="e => SetAttrValue(attr.AttributeId, e.Value?.ToString() ?? string.Empty)">
+                                    <option value="">— Select —</option>
+                                    @foreach (var opt in attr.Options.OrderBy(o => o.SortOrder))
+                                    {
+                                        <option value="@opt.OptionValue" selected="@(GetAttrValue(attr.AttributeId) == opt.OptionValue)">@opt.OptionValue</option>
+                                    }
+                                </select>
+                            }
+                            else if (attr.AttributeType == AttributeType.Number)
+                            {
+                                <input type="number" step="any" class="ct-field" style="flex:1"
+                                       value="@GetAttrValue(attr.AttributeId)"
+                                       @onchange="e => SetAttrValue(attr.AttributeId, e.Value?.ToString() ?? string.Empty)" />
+                            }
+                            else if (attr.AttributeType == AttributeType.Dollars)
+                            {
+                                <div style="display:flex; align-items:center; gap:4px; flex:1">
+                                    <span style="font-size:.85rem; color:var(--text-muted,#6c757d)">$</span>
+                                    <input type="number" step="0.01" min="0" class="ct-field" style="flex:1"
+                                           value="@GetAttrValue(attr.AttributeId)"
+                                           @onchange="e => SetAttrValue(attr.AttributeId, e.Value?.ToString() ?? string.Empty)" />
+                                </div>
+                            }
+                            else if (attr.AttributeType == AttributeType.Multiselect)
+                            {
+                                var selected = (GetAttrValue(attr.AttributeId) ?? "")
+                                    .Split(',', StringSplitOptions.RemoveEmptyEntries)
+                                    .ToHashSet();
+                                @foreach (var opt in attr.Options.OrderBy(o => o.SortOrder))
+                                {
+                                    <label style="margin-right:10px; font-size:.85rem">
+                                        <input type="checkbox" checked="@selected.Contains(opt.OptionValue)"
+                                               @onchange="e => ToggleMulti(attr.AttributeId, opt.OptionValue, (bool)(e.Value ?? false))" />
+                                        @opt.OptionValue
+                                    </label>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
+
+            <div style="display:flex; gap:8px; justify-content:flex-end">
+                <button class="outline-btn" @onclick="BackToSearch">← Back</button>
+                <button class="blue-btn" @onclick="Confirm">Add to Worksheet</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventCallback<AddItemResult?> OnClose { get; set; }
+
+    public record AddItemResult(int CatalogItemId, int? CategoryId, string? CategoryName, NetsuiteItem? Snapshot, IReadOnlyDictionary<int, string> AttributeValues);
+
+    private string searchTerm = "";
+    private bool searching;
+    private List<TblDesignCatalogItem>? searchResults;
+    private CancellationTokenSource? _debounceCts;
+
+    private TblDesignCatalogItem? selectedItem;
+    private NetsuiteItem? selectedSnap;
+    private List<TblDesignCategoryAttribute> categoryAttributes = [];
+    private Dictionary<int, string> attrValues = [];
+
+    private async Task OnSearch(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        if (searchTerm.Length < 2) { searchResults = null; return; }
+
+        _debounceCts?.Cancel();
+        _debounceCts = new CancellationTokenSource();
+        var cts = _debounceCts;
+
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            searching = true;
+            StateHasChanged();
+
+            await using var db = await DbFactory.CreateDbContextAsync(cts.Token);
+            var term = searchTerm.ToLower();
+            searchResults = await db.TblDesignCatalogItems
+                .Include(i => i.Category)
+                .Where(i => i.CustomerId == Tenant.CustomerCode &&
+                    (i.NetsuiteItemId.ToLower().Contains(term) ||
+                     (i.Description != null && i.Description.ToLower().Contains(term)) ||
+                     (i.Manufacturer != null && i.Manufacturer.ToLower().Contains(term)) ||
+                     (i.ModelName != null && i.ModelName.ToLower().Contains(term)) ||
+                     (i.SnapshotJson != null && i.SnapshotJson.ToLower().Contains(term))))
+                .OrderBy(i => i.ItemId)
+                .Take(30)
+                .ToListAsync(cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        finally { searching = false; }
+    }
+
+    private async Task SelectItem(TblDesignCatalogItem item, NetsuiteItem? snap)
+    {
+        selectedItem = item;
+        selectedSnap = snap;
+        attrValues = [];
+
+        if (item.CategoryId.HasValue)
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            categoryAttributes = await db.TblDesignCategoryAttributes
+                .Include(ca => ca.Attribute!.Options)
+                .Where(ca => ca.CategoryId == item.CategoryId.Value)
+                .OrderBy(ca => ca.SortOrder)
+                .ToListAsync();
+
+            // Pre-load existing attribute values for this item
+            var existing = await db.TblDesignCatalogItemAttributes
+                .Where(v => v.ItemId == item.ItemId)
+                .ToListAsync();
+            foreach (var v in existing)
+                attrValues[v.AttributeId] = v.Value ?? string.Empty;
+        }
+    }
+
+    private void BackToSearch()
+    {
+        selectedItem = null;
+        selectedSnap = null;
+        categoryAttributes = [];
+        attrValues = [];
+    }
+
+    private Task Cancel() => OnClose.InvokeAsync(null);
+
+    private Task Confirm() => OnClose.InvokeAsync(new AddItemResult(
+        selectedItem!.ItemId, selectedItem!.CategoryId, selectedItem!.Category?.Name, selectedSnap, attrValues));
+
+    private string? GetAttrValue(int attributeId)
+        => attrValues.TryGetValue(attributeId, out var v) ? v : null;
+
+    private void SetAttrValue(int attributeId, string value)
+        => attrValues[attributeId] = value;
+
+    private void ToggleMulti(int attributeId, string optValue, bool on)
+    {
+        var current = (attrValues.TryGetValue(attributeId, out var v) ? v : "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries)
+            .ToHashSet();
+        if (on) current.Add(optValue); else current.Remove(optValue);
+        attrValues[attributeId] = string.Join(",", current);
+    }
+
+    private static NetsuiteItem? Deserialize(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return System.Text.Json.JsonSerializer.Deserialize<NetsuiteItem>(json); }
+        catch { return null; }
+    }
+}
+
+<style>
+    .waim-results { display: flex; flex-direction: column; gap: 2px; }
+    .waim-result-row { padding: 8px 10px; border-radius: 4px; cursor: pointer; border: 1px solid transparent; }
+    .waim-result-row:hover { background: var(--surface, #f8f9fa); border-color: var(--border, #dee2e6); }
+</style>

@@ -1,0 +1,135 @@
+@using DXSuite.Shared.Services
+@using System.Text.Json
+@inject ILanguageProvider languageProvider
+@inject IJSRuntime JSRuntime
+
+<div class="row mb-1">
+    <div class="col-md-10">
+        <input @ref="inputRef"
+               type="text"
+               class="dx-form-control"
+               @bind="selectedLanguageName"
+               @oninput="OnLanguageSearchInput"
+               @onclick="OpenDropdown"
+               placeholder="Select a language..." />
+    </div>
+</div>
+
+@if (filteredLanguages.Any() && showLanguages)
+{
+    <div style="position: fixed; top: @(dropdownTop)px; left: @(dropdownLeft)px; width: @(dropdownWidth)px;
+                z-index: 9999; max-height: 256px; overflow-y: auto;
+                background: #fff; border: 1px solid #ccc; border-radius: 4px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.2);">
+        @foreach (var language in filteredLanguages)
+        {
+            <button class="dropdown-item" @onmousedown="() => SelectLanguage(language)">
+                @language.LanguageName
+            </button>
+        }
+    </div>
+}
+
+@code {
+    [Parameter] public string? SelectedLanguageCode { get; set; }
+    [Parameter] public EventCallback<string> SelectedLanguageChanged { get; set; }
+    [Parameter] public EventCallback<string> SelectedLanguageCodeChanged { get; set; }
+
+    private ElementReference inputRef;
+    private double dropdownTop;
+    private double dropdownLeft;
+    private double dropdownWidth;
+
+    private string? _selectedLanguageCode;
+    private List<LanguageInfo> allLanguages = new();
+    private List<LanguageInfo> filteredLanguages = new();
+    private LanguageInfo? selectedLanguage = null;
+    private string languageSearchTerm = "";
+    private string selectedLanguageName = "";
+    private bool showLanguages = false;
+    private bool hasLoadedLanguages = false;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!allLanguages.Any() && !hasLoadedLanguages)
+        {
+            hasLoadedLanguages = true;
+            var languages = await languageProvider.GetLanguagesAsync();
+            allLanguages = languages.OrderBy(x => x.LanguageName).ToList();
+        }
+
+        filteredLanguages = allLanguages;
+
+        if (!string.IsNullOrWhiteSpace(_selectedLanguageCode))
+        {
+            var matchingLang = allLanguages.FirstOrDefault(x => x.LanguageCode == _selectedLanguageCode);
+            if (matchingLang != null)
+            {
+                selectedLanguage = matchingLang;
+                selectedLanguageName = selectedLanguage.LanguageName;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(SelectedLanguageCode))
+        {
+            var matchingLang = allLanguages.FirstOrDefault(x => x.LanguageCode == SelectedLanguageCode);
+            if (matchingLang != null)
+            {
+                selectedLanguage = matchingLang;
+                selectedLanguageName = selectedLanguage.LanguageName;
+            }
+        }
+        else
+        {
+            selectedLanguage = allLanguages.FirstOrDefault(x => x.LanguageName == "English");
+            selectedLanguageName = selectedLanguage?.LanguageName ?? "";
+        }
+    }
+
+    private async Task OpenDropdown()
+    {
+        if (!showLanguages)
+        {
+            await PositionDropdown();
+        }
+        showLanguages = !showLanguages;
+    }
+
+    private async Task PositionDropdown()
+    {
+        var rect = await JSRuntime.InvokeAsync<JsonElement>("dxGetElementRect", inputRef);
+        dropdownTop = rect.GetProperty("bottom").GetDouble();
+        dropdownLeft = rect.GetProperty("left").GetDouble();
+        dropdownWidth = rect.GetProperty("width").GetDouble();
+    }
+
+    private async void SelectLanguage(LanguageInfo language)
+    {
+        selectedLanguage = language;
+        selectedLanguageName = language.LanguageName;
+        _selectedLanguageCode = language.LanguageCode;
+        showLanguages = false;
+
+        await SelectedLanguageCodeChanged.InvokeAsync(language.LanguageCode);
+    }
+
+    private async void OnLanguageSearchInput(ChangeEventArgs e)
+    {
+        languageSearchTerm = e.Value?.ToString() ?? "";
+
+        if (!showLanguages)
+        {
+            await PositionDropdown();
+            showLanguages = true;
+        }
+
+        filteredLanguages = languageSearchTerm.Length >= 1
+            ? allLanguages.Where(c => c.LanguageName.Contains(languageSearchTerm, StringComparison.OrdinalIgnoreCase)).ToList()
+            : allLanguages;
+    }
+
+    public void ResetState()
+    {
+        _selectedLanguageCode = null;
+        showLanguages = false;
+    }
+}

@@ -1,0 +1,140 @@
+@using DXSuite.Director.Services
+@inject IUploadStateService UploadService
+@inject NavigationManager NavMan
+@implements IDisposable
+
+@if (UploadService.HasVisibleBar)
+{
+    <div class="dx-upload-bar">
+        @foreach (var task in UploadService.Tasks)
+        {
+            <div class="dx-upload-bar-entry @(task.NeedsAttention ? "dx-needs-attention" : "") @(task.IsAutoRemoving ? "dx-auto-removing" : "")"
+                 @onclick="@(() => OnEntryClick(task))">
+
+                <!-- Status icon -->
+                <span style="flex-shrink:0;">
+                    @if (task.Stage == "uploading")
+                    {
+                        <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+                    }
+                    else if (task.Stage == "processing")
+                    {
+                        <i class="bi bi-gear-fill text-info" style="animation: spin 1.5s linear infinite;"></i>
+                    }
+                    else if (task.Stage == "complete")
+                    {
+                        <i class="bi bi-check-circle-fill text-success"></i>
+                    }
+                    else if (task.Stage == "failed")
+                    {
+                        <i class="bi bi-x-circle-fill text-danger"></i>
+                    }
+                    else if (task.Stage == "cancelled")
+                    {
+                        <i class="bi bi-slash-circle text-secondary"></i>
+                    }
+                </span>
+
+                <!-- Filename — prefer the user-facing display name; fall back to raw FileName -->
+                <span class="text-truncate" style="max-width:140px; flex-shrink:1;"
+                      title="@(string.IsNullOrEmpty(task.DisplayName) ? task.FileName : task.DisplayName)">
+                    @(string.IsNullOrEmpty(task.DisplayName) ? task.FileName : task.DisplayName)
+                </span>
+
+                <!-- Progress bar -->
+                <div class="progress flex-grow-1" style="height:8px; min-width:60px;">
+                    <div class="progress-bar @GetProgressBarClass(task)"
+                         role="progressbar"
+                         style="width:@task.ProgressPercent%;"
+                         aria-valuenow="@task.ProgressPercent"
+                         aria-valuemin="0"
+                         aria-valuemax="100">
+                    </div>
+                </div>
+
+                <!-- Percent -->
+                <span class="small" style="flex-shrink:0; min-width:32px; text-align:right;">
+                    @task.ProgressPercent%
+                </span>
+
+                <!-- Dismiss button (complete/failed/cancelled only) -->
+                @if (task.Stage is "complete" or "failed" or "cancelled")
+                {
+                    <button type="button" class="btn btn-sm btn-link text-white p-0 ms-1"
+                            @onclick="@(() => Dismiss(task))"
+                            @onclick:stopPropagation="true"
+                            title="Dismiss">
+                        <i class="bi bi-x-lg"></i>
+                    </button>
+                }
+            </div>
+        }
+    </div>
+}
+
+@code {
+    protected override void OnInitialized()
+    {
+        UploadService.OnChanged += OnServiceChanged;
+    }
+
+    private void OnServiceChanged()
+    {
+        _ = InvokeAsync(StateHasChanged);
+    }
+
+    private void OnEntryClick(UploadTask task)
+    {
+        if (task.Stage is "complete" or "cancelled")
+        {
+            UploadService.DismissTask(task.Id);
+        }
+        else if (task.Stage == "awaiting-submit")
+        {
+            // If already on the correct location page, expand in-place; otherwise navigate there.
+            if (NavMan.Uri.Contains($"/location/{task.LocationId}"))
+                UploadService.RequestExpand(task.Id);
+            else
+            {
+                UploadService.SetPendingExpand(task.Id);
+                NavMan.NavigateTo($"/location/{task.LocationId}");
+            }
+        }
+        else if (task.Stage is "uploading" or "processing")
+        {
+            UploadService.RequestExpand(task.Id);
+        }
+        else if (task.Stage == "failed")
+        {
+            // Navigate to the location page first if needed, then re-open the modal for a retry
+            if (NavMan.Uri.Contains($"/location/{task.LocationId}"))
+                UploadService.RequestExpand(task.Id);
+            else
+            {
+                UploadService.SetPendingExpand(task.Id);
+                NavMan.NavigateTo($"/location/{task.LocationId}");
+            }
+        }
+    }
+
+    private void Dismiss(UploadTask task)
+    {
+        UploadService.DismissTask(task.Id);
+    }
+
+    private static string GetProgressBarClass(UploadTask task) => task.Stage switch
+    {
+        "uploading"       => "bg-primary progress-bar-striped progress-bar-animated",
+        "processing"      => "bg-info progress-bar-striped progress-bar-animated",
+        "awaiting-submit" => "bg-warning",
+        "complete"        => "bg-success",
+        "failed"          => "bg-danger",
+        "cancelled"       => "bg-secondary",
+        _                 => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        UploadService.OnChanged -= OnServiceChanged;
+    }
+}

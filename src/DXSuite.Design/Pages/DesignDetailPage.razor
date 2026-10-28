@@ -1,0 +1,289 @@
+@page "/design/{DesignId:int}"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject NavigationManager Nav
+@inject ISessionState Session
+
+<PageTitle>@(design?.Name ?? "Design") — DXSuite</PageTitle>
+
+@if (isLoading)
+{
+    <!-- Blank until the async permission check resolves, to avoid an Unauthorized flash -->
+}
+else if (!isAuthorized)
+{
+    <div class="unauthorized-wrapper">
+        <h1>Unauthorized</h1>
+        <p>You do not have permission to view this page.</p>
+        <a href="/">Return Home</a>
+    </div>
+}
+else if (notFound)
+{
+    <div class="dx-page-header">
+        <h2>Design not found</h2>
+    </div>
+    <p>This design does not exist or you do not have access to it.</p>
+    <a href="/design">← Back to Designs</a>
+}
+else if (design is null)
+{
+    <p>Loading…</p>
+}
+else
+{
+    <div class="dx-page-header" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap">
+        <a href="/design" class="dx-btn dx-btn-outline-blue dx-btn-sm">← Designs</a>
+
+        @* Inline rename: clicking the design name reveals an input backed by _renameDesignValue *@
+        @if (_renamingDesign)
+        {
+            <input class="ddp-rename-input" type="text" value="@_renameDesignValue"
+                   @oninput="e => _renameDesignValue = e.Value?.ToString() ?? _renameDesignValue"
+                   @onblur="() => RenameDesignAsync(_renameDesignValue)"
+                   @onkeydown='async e => { if (e.Key == "Enter") await RenameDesignAsync(_renameDesignValue); }'
+                   autofocus />
+        }
+        else
+        {
+            <h2 class="ddp-design-name" style="margin:0; cursor:pointer" title="Click to rename"
+                @onclick="() => { _renamingDesign = true; _renameDesignValue = design!.Name; }">@design.Name</h2>
+        }
+
+        @if (!string.IsNullOrEmpty(design.NetsuiteOpportunityId))
+        {
+            <span class="dx-badge dx-badge-blue">Opp: @opportunityTranId</span>
+        }
+
+        @* Worksheet selector — shows name of active worksheet with a dropdown to switch *@
+        @if (allWorksheets.Count > 0 && activeTab == "worksheet")
+        {
+            <div class="ddp-ws-selector" style="margin-left:auto">
+                <select class="ddp-ws-select" value="@_activeWorksheetId"
+                        @onchange="OnWorksheetChanged">
+                    @foreach (var ws in allWorksheets)
+                    {
+                        <option value="@ws.WorksheetId">@ws.Name</option>
+                    }
+                </select>
+                <button class="ddp-ws-rename-btn" title="Rename this worksheet"
+                        @onclick="() => { _renamingWorksheet = !_renamingWorksheet; if (_renamingWorksheet) _renameWorksheetValue = activeWorksheet?.Name ?? string.Empty; }">✎</button>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="CreateWorksheetAsync">
+                    + New
+                </button>
+            </div>
+        }
+    </div>
+
+    @* Inline worksheet rename row *@
+    @if (_renamingWorksheet && activeWorksheet is not null)
+    {
+        <div class="ddp-ws-rename-row">
+            <span style="font-size:.85rem; color:var(--text-muted,#6c757d)">Worksheet name:</span>
+            <input class="ddp-rename-input" type="text" value="@_renameWorksheetValue"
+                   @oninput="e => _renameWorksheetValue = e.Value?.ToString() ?? _renameWorksheetValue"
+                   @onblur="() => RenameWorksheetAsync(_renameWorksheetValue)"
+                   @onkeydown='async e => { if (e.Key == "Enter") await RenameWorksheetAsync(_renameWorksheetValue); }'
+                   autofocus />
+            <button class="dx-btn dx-btn-outline-gray dx-btn-sm" @onclick="() => _renamingWorksheet = false">Done</button>
+        </div>
+    }
+
+    <div class="dx-tab-nav" style="margin-top:12px">
+        <button class="dx-tab-btn @Tab("worksheet")" @onclick='() => activeTab = "worksheet"'>Worksheet</button>
+        <button class="dx-tab-btn @Tab("requirements")" @onclick='() => activeTab = "requirements"'>Requirements</button>
+    </div>
+
+    <div class="dx-tab-content" style="overflow: visible;">
+        @if (activeTab == "worksheet")
+        {
+            @if (_activeWorksheetId.HasValue)
+            {
+                @* Key forces full remount when switching worksheets — LoadAsync fires fresh *@
+                <WorksheetEditor @key="_activeWorksheetId.Value"
+                                 WorksheetId="_activeWorksheetId.Value"
+                                 DesignId="DesignId" />
+            }
+            else
+            {
+                <p>Creating worksheet…</p>
+            }
+        }
+        else if (activeTab == "requirements")
+        {
+            <RequirementsPanel DesignId="DesignId" />
+        }
+    </div>
+}
+
+<style>
+    .ddp-ws-selector { display: flex; align-items: center; gap: 6px; }
+    .ddp-ws-select { font-size: .85rem; padding: 4px 8px; border: 1px solid #d0d5db; border-radius: 4px; min-width: 140px; }
+    .ddp-ws-rename-btn { background: none; border: 1px solid #d0d5db; border-radius: 4px; padding: 3px 8px; cursor: pointer; color: #495057; }
+    .ddp-ws-rename-btn:hover { background: #f0f4ff; }
+    .ddp-ws-rename-row { display: flex; align-items: center; gap: 8px; margin: 8px 0; padding: 8px 12px; background: #f8f9fa; border-radius: 4px; }
+    .ddp-rename-input { font-size: 1rem; padding: 4px 8px; border: 1px solid var(--dx-blue, #0071BC); border-radius: 4px; min-width: 200px; }
+    .ddp-design-name:hover { text-decoration: underline; text-underline-offset: 3px; }
+</style>
+
+@code {
+    [Parameter] public int DesignId { get; set; }
+
+    private TblDesign? design;
+    private string activeTab = "worksheet";
+    private int? _activeWorksheetId;
+    private List<TblDesignWorksheet> allWorksheets = [];
+    private bool notFound;
+    private string? opportunityTranId;
+    private bool _renamingDesign;
+    private bool _renamingWorksheet;
+    private string _renameDesignValue = "";
+    private string _renameWorksheetValue = "";
+
+    private TblDesignWorksheet? activeWorksheet =>
+        allWorksheets.FirstOrDefault(w => w.WorksheetId == _activeWorksheetId);
+
+    // Kept for backwards compatibility with code that used worksheetId directly
+    private int? worksheetId => _activeWorksheetId;
+
+    private string Tab(string t) => activeTab == t ? "active" : "";
+
+    private bool isAuthorized;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await Session.HasPermissionAsync(PermissionKeys.PageDesign);
+        isLoading = false;
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (!isAuthorized)
+            return;
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+        design = await db.TblDesigns
+            .FirstOrDefaultAsync(d => d.DesignId == DesignId && d.CustomerId == Tenant.CustomerCode);
+
+        if (design is null) { notFound = true; return; }
+
+        // Extract TranId from snapshot for display
+        if (!string.IsNullOrEmpty(design.NetsuiteOpportunityData))
+        {
+            try
+            {
+                var opp = System.Text.Json.JsonSerializer.Deserialize<NetsuiteOpportunity>(design.NetsuiteOpportunityData);
+                opportunityTranId = opp?.TranId;
+            }
+            catch { /* malformed snapshot */ }
+        }
+
+        // Load all worksheets for this design; create a default one if none exist
+        allWorksheets = await db.TblDesignWorksheets
+            .Where(w => w.DesignId == DesignId)
+            .OrderBy(w => w.CreateDate)
+            .ToListAsync();
+
+        if (allWorksheets.Count == 0)
+        {
+            var created = await CreateWorksheetCoreAsync(db, $"Worksheet 1");
+            allWorksheets.Add(created);
+        }
+
+        // Default to first worksheet if not already set (or if the active one no longer exists)
+        if (!_activeWorksheetId.HasValue || allWorksheets.All(w => w.WorksheetId != _activeWorksheetId))
+            _activeWorksheetId = allWorksheets.First().WorksheetId;
+    }
+
+    private void OnWorksheetChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var id))
+            _activeWorksheetId = id;
+    }
+
+    private async Task CreateWorksheetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var name = $"Worksheet {allWorksheets.Count + 1}";
+        var ws = await CreateWorksheetCoreAsync(db, name);
+        allWorksheets.Add(ws);
+        _activeWorksheetId = ws.WorksheetId;
+    }
+
+    private async Task RenameDesignAsync(string? newName)
+    {
+        _renamingDesign = false;
+        if (design is null || string.IsNullOrWhiteSpace(newName) || newName == design.Name) return;
+        design.Name = newName.Trim();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesigns.FindAsync(DesignId);
+            if (entity is not null) { entity.Name = design.Name; await db.SaveChangesAsync(); }
+        }
+        catch { /* non-fatal — name reverts on refresh */ }
+    }
+
+    private async Task RenameWorksheetAsync(string? newName)
+    {
+        _renamingWorksheet = false;
+        if (activeWorksheet is null || string.IsNullOrWhiteSpace(newName) || newName == activeWorksheet.Name) return;
+        activeWorksheet.Name = newName.Trim();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDesignWorksheets.FindAsync(activeWorksheet.WorksheetId);
+            if (entity is not null) { entity.Name = activeWorksheet.Name; await db.SaveChangesAsync(); }
+        }
+        catch { /* non-fatal */ }
+    }
+
+    /// <summary>Core worksheet creation: new entity + pre-seeded labor rows. Does not add to allWorksheets list.</summary>
+    private async Task<TblDesignWorksheet> CreateWorksheetCoreAsync(DesignDbContext db, string name)
+    {
+        var worksheet = new TblDesignWorksheet
+        {
+            DesignId = DesignId,
+            Name = name,
+            CreatedBy = Session.User?.UserId.ToString() ?? string.Empty,
+        };
+        db.TblDesignWorksheets.Add(worksheet);
+        await db.SaveChangesAsync();
+
+        // Pre-seed one labor row per active labor type
+        var laborTypes = await db.TblDesignLaborTypes
+            .Where(l => l.CustomerId == Tenant.CustomerCode && l.IsActive)
+            .ToListAsync();
+
+        foreach (var lt in laborTypes)
+        {
+            db.TblDesignWorksheetLaborRows.Add(new TblDesignWorksheetLaborRow
+            {
+                WorksheetId = worksheet.WorksheetId,
+                LaborTypeId = lt.LaborTypeId,
+                CalculatedHours = 0,
+                OverrideHours = 0,
+                IsOverridden = false,
+            });
+        }
+
+        // Pre-seed fixed non-inventory rows
+        var nonInvTypes = new[] { NonInventoryRowType.Shipping, NonInventoryRowType.InstallMaterials, NonInventoryRowType.Accommodations };
+        for (int i = 0; i < nonInvTypes.Length; i++)
+        {
+            db.TblDesignWorksheetNonInventoryRows.Add(new TblDesignWorksheetNonInventoryRow
+            {
+                WorksheetId = worksheet.WorksheetId,
+                RowType = nonInvTypes[i],
+                Label = nonInvTypes[i].ToString(),
+                SortOrder = (i + 1) * 10,
+            });
+        }
+
+        await db.SaveChangesAsync();
+        return worksheet;
+    }
+}

@@ -1,0 +1,303 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject IDbContextFactory<IdentityDbContext> IdentityFactory
+@inject ISessionState Session
+@inject IJSRuntime JS
+
+<div class="rq-panel">
+    <div class="rq-toolbar">
+        <!-- Category filter chips -->
+        <div class="rq-filters">
+            <button class="rq-chip @(activeCategoryId is null ? "rq-chip-active" : "")"
+                    @onclick="() => activeCategoryId = null">All</button>
+            @foreach (var cat in categories)
+            {
+                var catId = cat.CategoryId;
+                var count = requirements.Count(r => r.CategoryId == catId);
+                <button class="rq-chip @(activeCategoryId == catId ? "rq-chip-active" : "")"
+                        @onclick="() => activeCategoryId = catId">
+                    @cat.Name <span class="rq-chip-count">@count</span>
+                </button>
+            }
+        </div>
+
+        <!-- Completion indicator -->
+        <div class="rq-completion">
+            @{ var accepted = requirements.Count(r => r.Status == RequirementStatus.Accepted); }
+            <span class="rq-completion-text">@accepted / @requirements.Count Accepted</span>
+            <div class="rq-progress">
+                <div class="rq-progress-fill" style="width:@(requirements.Count > 0 ? accepted * 100 / requirements.Count : 0)%"></div>
+            </div>
+        </div>
+
+        <div class="rq-export">
+            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => showExportMenu = !showExportMenu"
+                    disabled="@(exporting || !requirements.Any())">
+                <i class="bi bi-file-earmark-excel"></i> @(exporting ? "Exporting…" : "Export")
+            </button>
+            @if (showExportMenu)
+            {
+                <div class="rq-export-menu">
+                    <button @onclick="() => ExportAsync(false)">Customer version</button>
+                    <button @onclick="() => ExportAsync(true)">Internal version (status &amp; assignee)</button>
+                </div>
+            }
+        </div>
+        <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => showManage = true"><i class="bi bi-gear"></i> Manage Categories</button>
+        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => showAdd = true"><i class="bi bi-plus-lg"></i> Add Requirement</button>
+    </div>
+
+    @if (!requirements.Any())
+    {
+        <p class="dx-text-muted" style="font-style:italic; padding:32px 0">No requirements yet. Click <strong>+ Add Requirement</strong> to start.</p>
+    }
+    else
+    {
+        @foreach (var cat in VisibleCategories)
+        {
+            var catNumber = categoryNumbers[cat.CategoryId];
+            var catRequirements = RequirementsFor(cat.CategoryId);
+            <div class="rq-group">
+                <h4 class="rq-group-header">@catNumber. @cat.Name</h4>
+                @{ int itemIndex = 0; }
+                @foreach (var req in catRequirements)
+                {
+                    itemIndex++;
+                    var reqId = req.RequirementId;
+                    var isDragOver = _dragOverId == reqId && _draggingId != reqId;
+                    <div class="rq-card-wrap @(isDragOver ? "rq-drag-over" : "")"
+                         @ondragover:preventDefault
+                         @ondragover="() => _dragOverId = reqId"
+                         @ondrop="() => DropAsync(reqId)"
+                         @ondragleave="() => { if (_dragOverId == reqId) _dragOverId = null; }">
+                        <span class="rq-drag-handle" title="Drag to reorder within category"
+                              draggable="true"
+                              @ondragstart="() => _draggingId = reqId">⠿</span>
+                        <div class="rq-card-body">
+                            <RequirementCard Requirement="req"
+                                             Number="@($"{catNumber}.{itemIndex}")"
+                                             AssignedToName="@GetUserName(req.AssignedToUserId)"
+                                             OnStatusChanged="r => OnStatusChanged(r)"
+                                             OnCommentPosted="() => LoadAsync()"
+                                             OnEditRequested="r => editingRequirement = r" />
+                        </div>
+                    </div>
+                }
+            </div>
+        }
+    }
+</div>
+
+@if (showAdd)
+{
+    <RequirementModal DesignId="DesignId"
+                      Categories="categories"
+                      PreselectedCategoryId="activeCategoryId"
+                      OnClose="OnAddClose" />
+}
+
+@if (editingRequirement is not null)
+{
+    <RequirementModal DesignId="DesignId"
+                      Categories="categories"
+                      Requirement="editingRequirement"
+                      OnClose="OnEditClose" />
+}
+
+@if (showManage)
+{
+    <ManageCategoriesModal DesignId="DesignId"
+                           OnClose="OnManageClose" />
+}
+
+@code {
+    [Parameter, EditorRequired] public int DesignId { get; set; }
+
+    private List<TblDesignRequirement> requirements = [];
+    private List<TblDesignRequirementCategory> categories = [];
+    private Dictionary<string, string> userNames = [];
+    private Dictionary<int, int> categoryNumbers = [];
+    private int? activeCategoryId;
+    private bool showAdd;
+    private bool showManage;
+    private TblDesignRequirement? editingRequirement;
+    private bool showExportMenu;
+    private bool exporting;
+    private int? _draggingId;
+    private int? _dragOverId;
+
+    /// <summary>Categories to render: only those with requirements, honoring the active filter chip.</summary>
+    private IEnumerable<TblDesignRequirementCategory> VisibleCategories =>
+        categories.Where(c => categoryNumbers.ContainsKey(c.CategoryId)
+                              && (activeCategoryId is null || c.CategoryId == activeCategoryId));
+
+    private List<TblDesignRequirement> RequirementsFor(int categoryId) =>
+        requirements.Where(r => r.CategoryId == categoryId).ToList();
+
+    protected override async Task OnParametersSetAsync() => await LoadAsync();
+
+    private async Task LoadAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        categories = await db.TblDesignRequirementCategories
+            .Where(c => c.DesignId == DesignId)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+
+        requirements = await db.TblDesignRequirements
+            .Include(r => r.Comments)
+            .Where(r => r.DesignId == DesignId)
+            .OrderBy(r => r.SortOrder).ThenBy(r => r.CreateDate)
+            .ToListAsync();
+
+        // Number only categories that have requirements: 1, 2, 3… in SortOrder position.
+        // Computed fresh on every load so numbering self-heals after any add/remove/reorder.
+        categoryNumbers = [];
+        var n = 0;
+        foreach (var cat in categories)
+        {
+            if (requirements.Any(r => r.CategoryId == cat.CategoryId))
+                categoryNumbers[cat.CategoryId] = ++n;
+        }
+
+        // If the active filter chip's category was deleted, fall back to All
+        if (activeCategoryId is not null && categories.All(c => c.CategoryId != activeCategoryId))
+            activeCategoryId = null;
+
+        // Resolve assignee display names for cards
+        var assignedIds = requirements
+            .Where(r => r.AssignedToUserId != null)
+            .Select(r => r.AssignedToUserId!)
+            .Distinct().ToList();
+        if (assignedIds.Any())
+        {
+            var intIds = assignedIds.Select(id => int.TryParse(id, out var v) ? v : -1).Where(v => v > 0).ToList();
+            await using var idDb = await IdentityFactory.CreateDbContextAsync();
+            var found = await idDb.TblUsers
+                .Where(u => intIds.Contains(u.UserId))
+                .Select(u => new { u.UserId, Name = u.FriendlyName ?? u.GivenName ?? u.UserId.ToString() })
+                .ToListAsync();
+            userNames = found.ToDictionary(u => u.UserId.ToString(), u => u.Name);
+        }
+    }
+
+    private async Task DropAsync(int targetId)
+    {
+        if (_draggingId is null || _draggingId == targetId)
+        {
+            _draggingId = null; _dragOverId = null;
+            return;
+        }
+
+        var dragging = requirements.FirstOrDefault(r => r.RequirementId == _draggingId);
+        var target = requirements.FirstOrDefault(r => r.RequirementId == targetId);
+        _draggingId = null; _dragOverId = null;
+
+        // Reordering is within-category only; a drop onto another category's card is ignored
+        if (dragging is null || target is null || dragging.CategoryId != target.CategoryId) return;
+
+        var siblings = RequirementsFor(dragging.CategoryId);
+        siblings.Remove(dragging);
+        siblings.Insert(siblings.IndexOf(target), dragging);
+
+        // Reassign SortOrders (10, 20, 30…)
+        await using var db = await DbFactory.CreateDbContextAsync();
+        for (int i = 0; i < siblings.Count; i++)
+        {
+            var newOrder = (i + 1) * 10;
+            if (siblings[i].SortOrder != newOrder)
+            {
+                var entity = await db.TblDesignRequirements.FindAsync(siblings[i].RequirementId);
+                if (entity is not null) entity.SortOrder = newOrder;
+                siblings[i].SortOrder = newOrder;
+            }
+        }
+        await db.SaveChangesAsync();
+        await LoadAsync();
+    }
+
+    private async Task OnStatusChanged(TblDesignRequirement req)
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        var dbReq = await db.TblDesignRequirements.FindAsync(req.RequirementId);
+        if (dbReq is not null)
+        {
+            dbReq.Status = req.Status;
+            dbReq.LastEditDate = DateTime.UtcNow;
+            await db.SaveChangesAsync();
+        }
+        await LoadAsync();
+    }
+
+    private async Task OnAddClose(bool added)
+    {
+        showAdd = false;
+        if (added) await LoadAsync();
+    }
+
+    private async Task OnEditClose(bool changed)
+    {
+        editingRequirement = null;
+        if (changed) await LoadAsync();
+    }
+
+    private async Task OnManageClose()
+    {
+        showManage = false;
+        await LoadAsync();
+    }
+
+    // Null for unassigned so the card hides its assignee span; raw id if the user lookup missed
+    private string? GetUserName(string? userId) =>
+        userId is null ? null : userNames.GetValueOrDefault(userId, userId);
+
+    private async Task ExportAsync(bool includeInternalColumns)
+    {
+        showExportMenu = false;
+        exporting = true;
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var design = await db.TblDesigns.FindAsync(DesignId);
+            if (design is null) return;
+
+            NetsuiteOpportunity? opp = null;
+            if (!string.IsNullOrEmpty(design.NetsuiteOpportunityData))
+            {
+                try { opp = System.Text.Json.JsonSerializer.Deserialize<NetsuiteOpportunity>(design.NetsuiteOpportunityData); }
+                catch { /* malformed snapshot — export proceeds without opportunity info */ }
+            }
+
+            var bytes = RequirementsExcelExporter.Build(design, opp, categories, requirements, userNames, includeInternalColumns);
+
+            var safeName = string.Join("_", design.Name.Split(Path.GetInvalidFileNameChars()));
+            var fileName = $"Requirements - {safeName}.xlsx";
+            using var stream = new MemoryStream(bytes);
+            using var streamRef = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("designInterop.downloadFileFromStream", fileName, streamRef);
+        }
+        finally { exporting = false; }
+    }
+}
+
+<style>
+    .rq-panel { }
+    .rq-toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
+    .rq-filters { display: flex; gap: 6px; flex-wrap: wrap; flex: 1; }
+    .rq-chip { background: var(--dx-bg-alt, #f0f0f0); border: 1px solid var(--dx-border-color, #dee2e6); border-radius: 20px; padding: 3px 12px; font-size: .8rem; cursor: pointer; }
+    .rq-chip-active { background: var(--dx-blue, #0071BC); color: #fff; border-color: var(--dx-blue, #0071BC); }
+    .rq-chip-count { opacity: .7; margin-left: 4px; }
+    .rq-completion { display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+    .rq-completion-text { font-size: .8rem; color: var(--dx-text-muted); }
+    .rq-progress { width: 80px; height: 6px; background: var(--dx-border-color, #dee2e6); border-radius: 3px; overflow: hidden; }
+    .rq-progress-fill { height: 100%; background: var(--dx-green, #39B54A); transition: width .3s; }
+    .rq-export { position: relative; }
+    .rq-export-menu { position: absolute; top: 100%; right: 0; z-index: 20; background: #fff; border: 1px solid var(--dx-border-color, #dee2e6); border-radius: 6px; box-shadow: 0 4px 12px rgba(0,0,0,.12); min-width: 240px; overflow: hidden; }
+    .rq-export-menu button { display: block; width: 100%; text-align: left; background: none; border: none; padding: 8px 14px; font-size: .85rem; cursor: pointer; }
+    .rq-export-menu button:hover { background: var(--dx-bg-alt, #f0f4ff); }
+    .rq-group { margin-bottom: 20px; }
+    .rq-group-header { font-size: 1rem; font-weight: 600; margin: 0 0 8px; padding-bottom: 4px; border-bottom: 2px solid var(--dx-blue, #0071BC); }
+    .rq-card-wrap { display: flex; align-items: flex-start; gap: 6px; }
+    .rq-card-wrap.rq-drag-over { outline: 2px dashed var(--dx-blue, #0071BC); outline-offset: 2px; border-radius: 8px; }
+    .rq-drag-handle { cursor: grab; color: var(--dx-text-muted, #6c757d); padding: 14px 2px 0 0; user-select: none; }
+    .rq-card-body { flex: 1; min-width: 0; }
+</style>

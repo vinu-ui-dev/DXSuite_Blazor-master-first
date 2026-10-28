@@ -1,0 +1,298 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+
+<div class="dx-modal-overlay" @onclick="Cancel">
+    <div class="dx-modal" style="min-width:640px" @onclick:stopPropagation>
+        <div class="dx-modal-header">
+            <span>Edit Category — @categoryName</span>
+            <button class="dx-modal-close" @onclick="Cancel">&times;</button>
+        </div>
+
+        @if (!loaded)
+        {
+            <div class="dx-modal-body"><div class="dx-spinner"></div></div>
+        }
+        else
+        {
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name</label>
+                    <input class="dx-form-control" @bind="editName" />
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Category Group</label>
+                    <select class="dx-form-control" value="@formGroupSelection" @onchange="OnGroupSelectionChange">
+                        <option value="">— None —</option>
+                        @foreach (var grp in allCategoryGroups)
+                        {
+                            <option value="@grp.CategoryGroupId">@grp.Name</option>
+                        }
+                        <option value="__new__">＋ Create new…</option>
+                    </select>
+                    @if (formGroupSelection == "__new__")
+                    {
+                        <input class="dx-form-control" style="margin-top:6px"
+                               @bind="formNewGroupName" placeholder="New group name…" />
+                    }
+                </div>
+
+                <!-- Column labor assignments -->
+                <div class="ct-section-label">Labor</div>
+                @if (allColumns.Count == 0)
+                {
+                    <p style="font-size:.875rem; color:var(--text-muted,#6c757d)">No labor columns defined yet. Add columns in the Labor → Columns tab.</p>
+                }
+                else
+                {
+                    <div class="dx-table" style="margin-bottom:12px; max-width:440px;">
+                        <div class="dx-table-header" style="grid-template-columns: 30px 1fr 90px;">
+                            <div></div>
+                            <div>Column</div>
+                            <div>Default Hrs</div>
+                        </div>
+                        @foreach (var col in allColumns)
+                        {
+                            var colId = col.ColumnId;
+                            var isChecked = columnChecks.ContainsKey(colId) && columnChecks[colId];
+                            <div class="dx-table-row" style="grid-template-columns: 30px 1fr 90px;">
+                                <div style="display:flex; align-items:center;">
+                                    <input type="checkbox" class="ec-check" checked="@isChecked"
+                                           @onchange="e => OnColumnCheck(colId, (bool)(e.Value ?? false))" />
+                                </div>
+                                <div>@col.Name</div>
+                                <div>
+                                    @if (isChecked)
+                                    {
+                                        <input type="number" step="0.25" min="0" class="dx-form-control"
+                                               style="padding:2px 6px; height:28px;"
+                                               value="@(columnHours.TryGetValue(colId, out var h) ? h : 0)"
+                                               @onchange="e => OnColumnHours(colId, e.Value?.ToString())"
+                                               placeholder="hrs" />
+                                    }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                <!-- Attribute assignments -->
+                <div class="ct-section-label">Attribute Assignments</div>
+                @if (allAttributes.Count == 0)
+                {
+                    <p style="font-size:.875rem; color:var(--text-muted,#6c757d)">No attributes defined yet.</p>
+                }
+                else
+                {
+                    <div class="dx-table" style="margin-bottom:12px">
+                        <div class="dx-table-header" style="grid-template-columns: 30px 1fr;">
+                            <div></div>
+                            <div>Attribute</div>
+                        </div>
+                        @foreach (var attr in allAttributes)
+                        {
+                            var attrId = attr.AttributeId;
+                            var isGlobal = attr.IsGlobal;
+                            var isChecked = isGlobal || (attrChecks.ContainsKey(attrId) && attrChecks[attrId]);
+                            <div class="dx-table-row" style="grid-template-columns: 30px 1fr;">
+                                <div style="display:flex; align-items:center;">
+                                    <input type="checkbox" class="ec-check" checked="@isChecked" disabled="@isGlobal"
+                                           @onchange="e => OnAttrCheck(attrId, (bool)(e.Value ?? false))" />
+                                </div>
+                                <div>
+                                    @attr.Name
+                                    <span class="dx-badge dx-badge-gray" style="margin-left:4px">@attr.AttributeType</span>
+                                    @if (isGlobal) { <span class="dx-badge dx-badge-blue" style="margin-left:4px">Global</span> }
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+
+                @if (saveError is not null)
+                {
+                    <div class="dx-alert dx-alert-danger">@saveError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="Cancel">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync">Save</button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public int CategoryId { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnClose { get; set; }
+
+    private bool loaded;
+    private string categoryName = "";
+    private string editName = "";
+
+    private List<TblDesignCategoryGroup> allCategoryGroups = [];
+    private List<TblDesignLaborColumn> allColumns = [];
+    private List<TblDesignAttribute> allAttributes = [];
+
+    // Group selection (mirrors LaborTab category pattern)
+    private string formGroupSelection = "";   // "" | "<id>" | "__new__"
+    private string formNewGroupName = "";
+
+    private Dictionary<int, bool> columnChecks = [];
+    private Dictionary<int, decimal> columnHours = [];
+    private Dictionary<int, bool> attrChecks = [];
+    private Dictionary<int, int> attrOrder = [];
+
+    private string? saveError;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        var category = await db.TblDesignCategories
+            .Include(c => c.CategoryAttributes)
+            .FirstAsync(c => c.CategoryId == CategoryId);
+
+        categoryName = category.Name;
+        editName = category.Name;
+
+        // Initialise group selection
+        formGroupSelection = category.CategoryGroupId.HasValue
+            ? category.CategoryGroupId.Value.ToString()
+            : "";
+        formNewGroupName = "";
+
+        allCategoryGroups = await db.TblDesignCategoryGroups
+            .Where(g => g.CustomerId == Tenant.CustomerCode)
+            .OrderBy(g => g.Name)
+            .ToListAsync();
+
+        allColumns = await db.TblDesignLaborColumns
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.SortOrder)
+            .ToListAsync();
+
+        allAttributes = await db.TblDesignAttributes
+            .Where(a => a.CustomerId == Tenant.CustomerCode)
+            .OrderBy(a => a.Name)
+            .ToListAsync();
+
+        // Load existing column labor assignments for this category
+        var existingColumnAssignments = await db.TblDesignCategoryColumnAssignments
+            .Where(a => a.CategoryId == CategoryId)
+            .ToListAsync();
+
+        columnChecks = allColumns.ToDictionary(c => c.ColumnId, _ => false);
+        columnHours = allColumns.ToDictionary(c => c.ColumnId, _ => (decimal)0);
+        foreach (var a in existingColumnAssignments)
+        {
+            columnChecks[a.ColumnId] = true;
+            columnHours[a.ColumnId] = a.DefaultHours;
+        }
+
+        attrChecks = allAttributes.ToDictionary(a => a.AttributeId, _ => false);
+        attrOrder = allAttributes.ToDictionary(a => a.AttributeId, _ => 10);
+        foreach (var a in category.CategoryAttributes)
+        {
+            attrChecks[a.AttributeId] = true;
+            attrOrder[a.AttributeId] = a.SortOrder;
+        }
+
+        loaded = true;
+    }
+
+    private void OnGroupSelectionChange(ChangeEventArgs e)
+    {
+        formGroupSelection = e.Value?.ToString() ?? "";
+        if (formGroupSelection != "__new__") formNewGroupName = "";
+    }
+
+    private void OnColumnCheck(int id, bool val) => columnChecks[id] = val;
+    private void OnColumnHours(int id, string? val)
+        => columnHours[id] = decimal.TryParse(val, out var d) ? d : 0;
+    private void OnAttrCheck(int id, bool val) => attrChecks[id] = val;
+    private void OnAttrOrder(int id, string? val)
+        => attrOrder[id] = int.TryParse(val, out var i) ? i : 10;
+
+    private async Task SaveAsync()
+    {
+        if (string.IsNullOrWhiteSpace(editName)) { saveError = "Name is required."; return; }
+        if (formGroupSelection == "__new__" && string.IsNullOrWhiteSpace(formNewGroupName))
+        {
+            saveError = "Enter a name for the new group."; return;
+        }
+
+        await using var db = await DbFactory.CreateDbContextAsync();
+
+        // Resolve or create category group
+        int? groupId = await ResolveGroupIdAsync(db);
+
+        var category = await db.TblDesignCategories
+            .Include(c => c.CategoryAttributes)
+            .FirstAsync(c => c.CategoryId == CategoryId);
+
+        category.Name = editName.Trim();
+        category.CategoryGroupId = groupId;
+
+        // Sync column labor assignments (delete+reinsert for simplicity)
+        var existingColumnAssignments = await db.TblDesignCategoryColumnAssignments
+            .Where(a => a.CategoryId == CategoryId)
+            .ToListAsync();
+        db.TblDesignCategoryColumnAssignments.RemoveRange(existingColumnAssignments);
+        foreach (var col in allColumns)
+        {
+            if (columnChecks.TryGetValue(col.ColumnId, out var isChecked) && isChecked)
+            {
+                var hrs = columnHours.TryGetValue(col.ColumnId, out var h) ? h : 0;
+                db.TblDesignCategoryColumnAssignments.Add(new TblDesignCategoryColumnAssignment
+                    { CategoryId = CategoryId, ColumnId = col.ColumnId, DefaultHours = hrs });
+            }
+        }
+
+        // Sync attribute assignments
+        var existingAttr = category.CategoryAttributes.ToDictionary(a => a.AttributeId);
+        foreach (var attr in allAttributes)
+        {
+            var wantChecked = attrChecks.TryGetValue(attr.AttributeId, out var c) && c;
+            if (wantChecked)
+            {
+                var order = attrOrder.TryGetValue(attr.AttributeId, out var o) ? o : 10;
+                if (existingAttr.TryGetValue(attr.AttributeId, out var existing))
+                    existing.SortOrder = order;
+                else
+                    category.CategoryAttributes.Add(new TblDesignCategoryAttribute
+                        { CategoryId = CategoryId, AttributeId = attr.AttributeId, SortOrder = order });
+            }
+            else if (existingAttr.TryGetValue(attr.AttributeId, out var toRemove))
+            {
+                db.TblDesignCategoryAttributes.Remove(toRemove);
+            }
+        }
+
+        await db.SaveChangesAsync();
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task<int?> ResolveGroupIdAsync(DesignDbContext db)
+    {
+        if (formGroupSelection == "__new__" && !string.IsNullOrWhiteSpace(formNewGroupName))
+        {
+            var existing = await db.TblDesignCategoryGroups
+                .FirstOrDefaultAsync(g => g.CustomerId == Tenant.CustomerCode && g.Name == formNewGroupName.Trim());
+            if (existing is not null) return existing.CategoryGroupId;
+
+            var grp = new TblDesignCategoryGroup { CustomerId = Tenant.CustomerCode, Name = formNewGroupName.Trim() };
+            db.TblDesignCategoryGroups.Add(grp);
+            await db.SaveChangesAsync();
+            return grp.CategoryGroupId;
+        }
+        if (int.TryParse(formGroupSelection, out var id) && id > 0) return id;
+        return null;
+    }
+
+    private async Task Cancel() => await OnClose.InvokeAsync();
+}
+
+<style>
+    .ec-check { accent-color: var(--dx-blue, #0071BC); width: 15px; height: 15px; }
+</style>

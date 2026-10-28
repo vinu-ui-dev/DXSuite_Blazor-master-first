@@ -1,0 +1,214 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.JSInterop
+@inject IServiceScopeFactory scopeFactory;
+@inject NavigationManager navMan;
+@inject IJSRuntime JSRuntime;
+@inject IDisplayOverrideService displayOverrides
+@rendermode InteractiveServer
+
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="section-body">
+            <div class="scroll-container" @ref="scrollContainerRef">
+                <div class="image-container">
+                    <div class="d-flex flex-wrap">
+                        @if (displays != null)
+                        {
+                            foreach (TblDisplay display in displays.Where(x => x.DisplayTypeId == (int)Types.DisplayType.StandardDisplay).OrderBy(x => x.SortOrder))
+                            {
+                                var displayScale = GetDisplayScale(display);
+                                var scaledWidth = display.DisplayWidth * displayScale;
+
+                                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; text-align: center; margin-right:20px; max-width: 100%;">
+                                    <div class="card-display-shell" style="background: #CCC; border-radius: 5px;  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); padding: 10px;">
+                                        <div style="margin-bottom: 10px; width: min(@(scaledWidth)px, 100%);">
+                                            @(display.DisplayName.ToUpper())
+                                        </div>
+                                        <div class="card-display-preview" style="position: relative;">
+                                            <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display"
+                                                                                                     ScaleFactor="displayScale"
+                                                                                                     PreviewMode="true"
+                                                                                                     PreloadedAssets="assets">
+                                            </DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+                                            @if (SelectedAsset != null)
+                                            {
+                                                <div class="card-override-target">
+                                                    <div class="hoverOverlay" style="border: 2px dashed red;"></div>
+                                                    <div class="fullBanner"
+                                                        style="font-size: 20px;"
+                                                        @onclick="@(() => OnOverride(display.DisplayId))">
+                                                        OVERRIDE
+                                                    </div>
+                                                </div>
+                                            }
+                                        </div>
+                                        <div style="display:flex; justify-content:center;">
+                                            <div class="dx-btn dx-btn-blue" style="width: min(@(scaledWidth * .9)px, 100%); height:40px; font-size: 20px; margin-top: 10px; max-width:200px;"
+                                                 @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">
+                                                MANAGE
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div style="min-height: 40px; position:relative; display:flex; justify-content:center;">
+                                        @if (display.DisplayMode == (int)Types.DisplayMode.Override)
+                                        {
+                                            <div class="overrideBanner"
+                                                 style="width: min(@(scaledWidth * .9)px, 100%); height:40px; font-size: 20px;"
+                                                 @onclick="(() => BackToSchedule(display.DisplayId))">
+                                                CANCEL OVERRIDE
+                                            </div>
+                                        }
+                                    </div>
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+}
+
+<style>
+    /* Previews render at a fixed pixel size derived from the physical display's
+       resolution; clamp the shell so oversized previews pan inside the card
+       instead of widening the page on small screens. */
+    .card-display-shell {
+        max-width: 100%;
+        overflow-x: auto;
+    }
+
+    .card-override-target {
+        display: none;
+    }
+
+    .card-display-preview:hover .card-override-target {
+        display: block;
+    }
+
+    /* Touch devices have no hover, so show the override target whenever an asset is selected */
+    @@media (pointer: coarse) {
+        .card-display-preview .card-override-target {
+            display: block;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+    public IList<TblAsset>? assets { get; set; }
+    public IList<TblDisplay>? displays { get; set; }
+    public TblDisplay? contentDisplay { get; set; }
+    public TblDisplay? maskDisplay { get; set; }
+    public double scaleFactor { get; set; } = 0.2;
+    public double targetHeight { get; set; } = 400;
+    public bool imageIsExpanded = false;
+
+    private ElementReference scrollContainerRef;
+    private double availableWidth;
+
+    // Height-based scaling alone lets wide (landscape) displays exceed narrow
+    // viewports; once the container is measured, cap the scale so the preview
+    // fits. The 40px allowance covers the card shell padding and column margin.
+    private double GetDisplayScale(TblDisplay display)
+    {
+        var scale = display.DisplayHeight > 0 ? targetHeight / display.DisplayHeight : scaleFactor;
+        if (availableWidth > 60 && display.DisplayWidth > 0)
+            scale = Math.Min(scale, (availableWidth - 40) / display.DisplayWidth);
+        return scale;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender)
+            return;
+
+        try
+        {
+            var rect = await JSRuntime.InvokeAsync<DxRect>("dxGetElementRect", scrollContainerRef);
+            if (rect.Width > 0 && Math.Abs(rect.Width - availableWidth) > 1)
+            {
+                availableWidth = rect.Width;
+                StateHasChanged();
+            }
+        }
+        catch (Exception)
+        {
+            // Measurement is best-effort; previews fall back to height-based scaling
+        }
+    }
+
+    private class DxRect
+    {
+        public double Bottom { get; set; }
+        public double Left { get; set; }
+        public double Width { get; set; }
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            // Load display structure first so card shells render immediately
+            displays = await dataContext.TblDisplays
+                .Where(x => x.LocationId == Location.LocationId)
+                .Include(d => d.OverrideAsset)
+                .Include(e => e.TblScheduleEvents)
+                .Include(f => f.Constraint)
+                .ToListAsync();
+            StateHasChanged();
+
+            // Load assets second — each StandardDisplay shows a spinner until its content resolves
+            assets = await dataContext.TblAssets
+                .Where(x => x.LocationId == Location.LocationId)
+                .Include(d => d.AssetGroup)
+                .Include(e => e.AssetType)
+                .Include(f => f.Constraint)
+                .ToListAsync();
+        }
+    }
+
+    private async Task RefreshData(IDirectorDBContext dataContext)
+    {
+        if (Location != null)
+        {
+            assets = await dataContext.TblAssets.Where(x => x.LocationId == Location.LocationId).Include(d => d.AssetGroup).Include(e => e.AssetType).Include(f => f.Constraint).ToListAsync();
+            displays = await dataContext.TblDisplays.Where(x => x.LocationId == Location.LocationId).Include(d => d.OverrideAsset).Include(e => e.TblScheduleEvents).Include(f => f.Constraint).ToListAsync();
+        }
+    }
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset != null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+                {
+                    await RefreshData(dataContext);
+                }
+            }
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            if (await displayOverrides.ReturnToScheduleAsync(displayId))
+            {
+                await RefreshData(dataContext);
+            }
+        }
+    }
+}

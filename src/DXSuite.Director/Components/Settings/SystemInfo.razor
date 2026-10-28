@@ -1,0 +1,102 @@
+@using System.Net
+@using System.Net.Sockets
+@using System.Reflection
+@inject IConfiguration config
+@inject IStringLocalizer<SystemInfo> L
+
+<div class="dx-card">
+    <div class="dx-card-header">@L["Header_ServerInformation"]</div>
+    <div class="dx-card-body">
+        <div class="dx-settings-list" style="grid-template-columns: 160px 1fr;">
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_Hostname"]</div>
+                <div><code>@serverHostname</code></div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_IpAddresses"]</div>
+                <div>
+                    @foreach (var ip in serverIpAddresses)
+                    {
+                        <code style="margin-right: 8px;">@ip</code>
+                    }
+                </div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_InstanceId"]</div>
+                <div><code>@instanceId</code></div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_AppVersion"]</div>
+                <div><code>@appVersion</code></div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_Environment"]</div>
+                <div><code>@environment</code></div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_FailoverMode"]</div>
+                <div>
+                    @if (failoverEnabled)
+                    {
+                        <span class="dx-badge dx-badge-green">@L["Label_FailoverEnabled"]</span>
+                    }
+                    else
+                    {
+                        <span class="dx-badge dx-badge-gray">@L["Label_FailoverDisabled"]</span>
+                    }
+                </div>
+            </div>
+            <div class="dx-settings-list-row" style="grid-template-columns: 160px 1fr;">
+                <div class="dx-settings-list-label">@L["Label_ServerTime"]</div>
+                <div><code>@DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")</code></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private string serverHostname = "";
+    private List<string> serverIpAddresses = new();
+    private string instanceId = "";
+    private string appVersion = "";
+    private string environment = "";
+    private bool failoverEnabled = false;
+
+    protected override void OnInitialized()
+    {
+        LoadServerInfo();
+    }
+
+    private void LoadServerInfo()
+    {
+        serverHostname = Dns.GetHostName();
+
+        try
+        {
+            var host = Dns.GetHostEntry(serverHostname);
+            serverIpAddresses = host.AddressList
+                .Where(ip => ip.AddressFamily == AddressFamily.InterNetwork && !IPAddress.IsLoopback(ip))
+                .Select(ip => ip.ToString())
+                .ToList();
+        }
+        catch
+        {
+            serverIpAddresses = new List<string> { "Unable to determine" };
+        }
+
+        instanceId = Environment.ProcessId.ToString() + "-" +
+                     Environment.CurrentManagedThreadId.ToString("X4");
+
+        var assembly = Assembly.GetExecutingAssembly();
+        var version = assembly.GetName().Version;
+        var fileVersion = assembly.GetCustomAttribute<AssemblyFileVersionAttribute>()?.Version;
+        appVersion = fileVersion ?? version?.ToString() ?? "Unknown";
+
+        environment = config["ASPNETCORE_ENVIRONMENT"]
+                      ?? System.Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT")
+                      ?? "Production";
+
+        var failoverConfig = config["Failover:Enabled"];
+        failoverEnabled = failoverConfig?.ToUpper() == "TRUE";
+    }
+}

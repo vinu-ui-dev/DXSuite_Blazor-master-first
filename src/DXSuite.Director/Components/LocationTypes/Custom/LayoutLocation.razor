@@ -1,0 +1,252 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject ILogger<LayoutLocation> Logger
+
+<div class="layout-location-container">
+    <div class="layout-header">
+        <h3>Zone layout map</h3>
+        <div class="layout-info">
+            @if (layoutConfig != null)
+            {
+                <span class="layout-dimensions">@((int)LayoutWidth) x @((int)LayoutHeight) px</span>
+                <span class="zone-count">@layoutConfig.Zones.Count zones</span>
+            }
+        </div>
+    </div>
+
+    @if (layoutConfig != null && layoutConfig.Zones.Any())
+    {
+        <div class="layout-preview-container">
+            <div class="layout-canvas" style="width: @(CanvasWidth)px; height: @(CanvasHeight)px;">
+                @foreach (var zone in layoutConfig.Zones)
+                {
+                    var zoneColor = GetZoneColor(zone.ZoneNumber);
+                    var scaledLeft = (double)zone.Left * ScaleFactor;
+                    var scaledTop = (double)zone.Top * ScaleFactor;
+                    var scaledWidth = (double)zone.Width * ScaleFactor;
+                    var scaledHeight = (double)zone.Height * ScaleFactor;
+
+                    <div class="zone-box @(hoveredZone == zone.ZoneNumber ? "hovered" : "")"
+                         style="left: @(scaledLeft.ToString("F1"))px; top: @(scaledTop.ToString("F1"))px; width: @(scaledWidth.ToString("F1"))px; height: @(scaledHeight.ToString("F1"))px; background-color: @zoneColor; border-color: @zoneColor;"
+                         @onmouseenter="() => hoveredZone = zone.ZoneNumber"
+                         @onmouseleave="() => hoveredZone = null"
+                         @onclick="() => NavigateToZoneLocation(zone)">
+                        <div class="zone-label">
+                            <span class="zone-number">Zone @zone.ZoneNumber</span>
+                            <span class="zone-name">@zone.SourceLocationName</span>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+    else
+    {
+        <div class="no-zones">
+            <p>No zones configured for this layout.</p>
+        </div>
+    }
+</div>
+
+<style>
+    .layout-location-container {
+        padding: 20px;
+        color: white;
+    }
+
+    .layout-header {
+        margin-bottom: 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .layout-header h3 {
+        margin: 0;
+    }
+
+    .layout-info {
+        display: flex;
+        gap: 15px;
+        align-items: center;
+    }
+
+    .layout-dimensions, .zone-count {
+        color: #888;
+        font-size: 0.9rem;
+    }
+
+    .layout-preview-container {
+        display: flex;
+        justify-content: center;
+    }
+
+    .layout-canvas {
+        position: relative;
+        background-color: #1a1a2e;
+        border: 2px solid #333;
+        border-radius: 4px;
+    }
+
+    .zone-box {
+        position: absolute;
+        border: 2px solid;
+        cursor: pointer;
+        transition: all 0.15s ease;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.9;
+        overflow: hidden;
+    }
+
+    .zone-box:hover, .zone-box.hovered {
+        opacity: 1;
+        z-index: 10;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+        filter: brightness(1.15);
+    }
+
+    .zone-label {
+        text-align: center;
+        padding: 8px;
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 4px;
+        max-width: 90%;
+    }
+
+    .zone-number {
+        display: block;
+        font-weight: bold;
+        font-size: 0.7rem;
+        opacity: 0.85;
+    }
+
+    .zone-name {
+        display: block;
+        font-size: 0.85rem;
+        font-weight: 600;
+        max-width: 150px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .no-zones {
+        text-align: center;
+        padding: 40px;
+        color: #888;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public TblLocation? Location { get; set; }
+
+    private LayoutConfiguration? layoutConfig;
+    private int? hoveredZone = null;
+    private Dictionary<int, TblLocation> sourceLocations = new();
+
+    // Target canvas width - height calculated from layout aspect ratio
+    private const double TargetCanvasWidth = 800;
+
+    // Calculate layout dimensions from zones (the bounding box of all zones)
+    private double LayoutWidth => layoutConfig?.Zones.Any() == true
+        ? (double)layoutConfig.Zones.Max(z => z.Left + z.Width)
+        : 1920;
+
+    private double LayoutHeight => layoutConfig?.Zones.Any() == true
+        ? (double)layoutConfig.Zones.Max(z => z.Top + z.Height)
+        : 1080;
+
+    // Scale factor to fit layout into target canvas width
+    private double ScaleFactor => TargetCanvasWidth / LayoutWidth;
+
+    // Actual canvas dimensions after scaling
+    private double CanvasWidth => TargetCanvasWidth;
+    private double CanvasHeight => LayoutHeight * ScaleFactor;
+
+    private readonly string[] ZoneColors = new[]
+    {
+        "#0071BC", "#28a745", "#fd7e14", "#e83e8c", "#6f42c1",
+        "#20c997", "#6c757d", "#dc3545", "#17a2b8", "#ffc107"
+    };
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (Location != null && !string.IsNullOrEmpty(Location.ExtendedData))
+        {
+            try
+            {
+                layoutConfig = JsonSerializer.Deserialize<LayoutConfiguration>(
+                    Location.ExtendedData,
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                );
+
+                // Load source location info to determine navigation type
+                if (layoutConfig?.Zones.Any() == true)
+                {
+                    await LoadSourceLocations();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Error parsing layout configuration");
+                layoutConfig = null;
+            }
+        }
+    }
+
+    private async Task LoadSourceLocations()
+    {
+        if (layoutConfig == null) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var locationIds = layoutConfig.Zones.Select(z => z.SourceLocationId).Distinct().ToList();
+        var locations = await db.TblLocations
+            .Include(l => l.TblDisplays)
+            .Where(l => locationIds.Contains(l.LocationId))
+            .ToListAsync();
+
+        sourceLocations = locations.ToDictionary(l => l.LocationId);
+    }
+
+    private string GetZoneColor(int zoneNumber)
+    {
+        return ZoneColors[(zoneNumber - 1) % ZoneColors.Length];
+    }
+
+    private void NavigateToZoneLocation(LayoutZone zone)
+    {
+        // If zone has a display assigned, go to Schedule page for that display
+        if (zone.SourceDisplayId.HasValue)
+        {
+            navMan.NavigateTo($"/Schedule/{zone.SourceDisplayId.Value}");
+            return;
+        }
+
+        // Check source location type
+        if (sourceLocations.TryGetValue(zone.SourceLocationId, out var loc))
+        {
+            // For DefaultLocation (Card style), navigate to the display's schedule if there's one
+            if (loc.LocationTypeId == 4)
+            {
+                var display = loc.TblDisplays?.FirstOrDefault();
+                if (display != null)
+                {
+                    navMan.NavigateTo($"/Schedule/{display.DisplayId}");
+                    return;
+                }
+            }
+        }
+
+        // Default: navigate to the location page (Playlist style)
+        navMan.NavigateTo($"/Location/{zone.SourceLocationId}");
+    }
+}

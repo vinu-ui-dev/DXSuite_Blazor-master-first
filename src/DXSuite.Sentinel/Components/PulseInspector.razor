@@ -1,0 +1,600 @@
+@using DXSuite.Sentinel.Services.Pulse
+@inject PulseLinkService links
+@inject PulseGateway pulse
+@inject ISessionState sessionState
+@inject ILogger<PulseInspector> Logger
+
+@{
+    var now = DateTime.UtcNow;
+    var linked = Device.PulseDeviceId;
+    var pulseRow = linked is not null && PulseDevices is not null && PulseDevices.TryGetValue(linked, out var row) ? row : null;
+    var chip = PulseStatusChip.For(linked, State, PulseDevices, now, Zone);
+    var (eligibleHeartbeat, suppression) = PulsePublishPlanner.HeartbeatEligibility(Sources, now);
+}
+
+<div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(150px, 1fr)); gap:10px;">
+    <div class="dx-card" style="padding:10px 12px;">
+        <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase;">Pulse link</div>
+        <div style="font-weight:600; margin-top:3px; font-family:Consolas, monospace;">@(linked ?? "Not linked")</div>
+        <div class="dx-text-muted" style="font-size:0.78rem;">@(pulseRow?.Description ?? $"customer {CustomerId}")</div>
+    </div>
+    <div class="dx-card" style="padding:10px 12px;">
+        <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase;">In Pulse</div>
+        <div style="margin-top:3px;"><span class="dx-badge @chip.BadgeClass" style="font-size:0.78rem;">@chip.Label</span></div>
+        <div class="dx-text-muted" style="font-size:0.78rem;">@(pulseRow is null ? "" : pulseRow.IsMonitored ? "Monitored" : "Not monitored, no down alerts")</div>
+    </div>
+    <div class="dx-card" style="padding:10px 12px;">
+        <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase;">Last heartbeat sent</div>
+        <div style="font-weight:600; margin-top:3px;" title="@(State?.LastHeartbeatSentUtc is { } sent ? Zone.Full(sent) : "")">
+            @(linked is null ? "n/a" : State?.LastHeartbeatSentUtc is { } s ? Zone.Short(s) : "none yet")
+        </div>
+        <div class="dx-text-muted" style="font-size:0.78rem;">
+            @(linked is null ? "" : suppression is not null ? $"not sent while {suppression}" : "sent while Sentinel can vouch")
+        </div>
+    </div>
+    <div class="dx-card" style="padding:10px 12px;">
+        <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase;">Snooze</div>
+        <div style="font-weight:600; margin-top:3px;">@(pulseRow is { Snooze: true } ? pulseRow.SnoozeTimeUtc is { } until ? Zone.Short(until) : "On" : "Off")</div>
+        <div class="dx-text-muted" style="font-size:0.78rem;">@(pulseRow is { Snooze: true } ? "until, your time" : "")</div>
+    </div>
+</div>
+
+@if (Health == OverallHealthStatus.Unknown)
+{
+    <div class="dx-alert dx-alert-warning" style="margin-top:10px;">
+        Sentinel cannot vouch for this device. Its sources report Unknown, so no heartbeat is sent and Pulse will show it down if it is monitored.
+        Snooze it, or leave it unlinked.
+    </div>
+}
+else if (Health == OverallHealthStatus.Offline)
+{
+    <div class="dx-alert dx-alert-warning" style="margin-top:10px;">
+        Sentinel sees this device Offline. @(linked is null ? "Once linked, Pulse will show it down within 6 minutes if it is monitored." : "Pulse shows it down if it is monitored.")
+    </div>
+}
+
+@if (message is not null)
+{
+    <div class="dx-alert @(messageIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin-top:10px;">@message</div>
+}
+
+@if (State?.LinkBrokenUtc is { } brokenAt)
+{
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">Link broken</div>
+        <div class="dx-card-body">
+            <div>Sentinel stopped writing to <strong>@linked</strong> at @Zone.Short(brokenAt): the Pulse device no longer exists under @CustomerId.</div>
+            @if (!string.IsNullOrWhiteSpace(State.LastError))
+            {
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:4px; word-break:break-word;">@State.LastError</div>
+            }
+            <div style="display:flex; gap:8px; margin-top:8px; flex-wrap:wrap;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@busy" @onclick="RetryAsync">Retry</button>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@busy" @onclick="StartRelink">Change link</button>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="UnlinkAsync">Unlink</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (linked is null || relinking)
+{
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">@(linked is null ? "Link to an existing Pulse device" : "Change link")</div>
+        <div class="dx-card-body">
+            @if (PulseDevices is null)
+            {
+                <div class="dx-text-muted">Pulse could not be read, so its devices cannot be listed.</div>
+            }
+            else
+            {
+                <input class="dx-search-input" style="width:100%;" placeholder="Search @CustomerId Pulse devices by DeviceID or description"
+                       value="@pickQuery" @oninput="e => pickQuery = e.Value?.ToString() ?? string.Empty" />
+                <div style="border:1px solid #dde3ea; border-radius:4px; max-height:230px; overflow-y:auto; margin-top:6px;">
+                    @{ var options = PickerOptions(); }
+                    @if (options.Count == 0)
+                    {
+                        <div class="dx-text-muted" style="padding:8px 10px;">No Pulse devices match.</div>
+                    }
+                    @foreach (var (p, suggestion) in options)
+                    {
+                        var takenBy = LinkedPulseIds.TryGetValue(p.DeviceId, out var other) && !string.Equals(p.DeviceId, linked, StringComparison.OrdinalIgnoreCase) ? other : null;
+                        var isPicked = string.Equals(pick, p.DeviceId, StringComparison.OrdinalIgnoreCase);
+                        <div class="dx-table-row @(isPicked ? "expanded" : "")"
+                             style="grid-template-columns:1fr auto; cursor:@(takenBy is null ? "pointer" : "not-allowed"); opacity:@(takenBy is null ? "1" : "0.5");"
+                             @onclick="() => { if (takenBy is null) pick = p.DeviceId; }">
+                            <div style="padding:6px 10px;">
+                                <strong style="font-family:Consolas, monospace;">@p.DeviceId</strong>
+                                @if (suggestion is not null)
+                                {
+                                    <span class="dx-badge dx-badge-green" style="font-size:0.72rem; padding:2px 8px;">suggested: @suggestion.ReasonText</span>
+                                }
+                                <div class="dx-text-muted" style="font-size:0.78rem;">
+                                    @(p.Description ?? "no description") · @(p.IsMonitored ? "Monitor" : $"Monitor = {p.Monitor}") · heartbeat @Rel(p.HeartbeatUtc, now)@(takenBy is null ? "" : $" · linked to {takenBy}")
+                                </div>
+                            </div>
+                            <div style="padding:6px 10px;">
+                                @if (p.OtherCustomerIds.Count > 0)
+                                {
+                                    <span class="dx-badge dx-badge-orange" style="font-size:0.72rem; padding:2px 8px;" title="tblPulse readings are not kept apart by customer">also under @string.Join(", ", p.OtherCustomerIds)</span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (pick is not null && PulseDevices.TryGetValue(pick, out var picked))
+                {
+                    @foreach (var line in PickConsequences(picked, eligibleHeartbeat is not null))
+                    {
+                        <div class="dx-alert @line.Css" style="margin-top:6px; font-size:0.85rem;">@line.Text</div>
+                    }
+                }
+            }
+            <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(pick is null || busy)" @onclick="LinkAsync">Link</button>
+                @if (linked is not null)
+                {
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="() => { relinking = false; pick = null; }">Cancel</button>
+                }
+            </div>
+        </div>
+    </div>
+
+    @if (linked is null)
+    {
+        <div class="dx-card" style="margin-top:12px;">
+            <div class="dx-card-header">Not in Pulse yet?</div>
+            <div class="dx-card-body">
+                <div class="dx-text-muted" style="margin-bottom:8px;">Create the Pulse device under customer @CustomerId and link it in one step. Pulse devices are never created automatically.</div>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@busy" @onclick="OpenCreateAsync">Create in Pulse…</button>
+            </div>
+        </div>
+    }
+}
+else if (State?.LinkBrokenUtc is null)
+{
+    @if (pulseRow is not null)
+    {
+        <div class="dx-card" style="margin-top:12px;">
+            <div class="dx-card-header" style="display:flex; gap:8px; align-items:center;">
+                <span style="flex:1;">Pulse monitoring</span>
+                <span class="dx-badge @(pulseRow.IsMonitored ? "dx-badge-green" : "dx-badge-gray")" style="font-size:0.72rem; padding:2px 8px;">@(pulseRow.IsMonitored ? "Monitored" : "Not monitored")</span>
+            </div>
+            <div class="dx-card-body">
+                @if (pulseRow.IsMonitored)
+                {
+                    <div>Pulse raises a Mission Critical down alert if the heartbeat for <strong>@linked</strong> is older than 6 minutes.</div>
+                    @if (confirmStopMonitoring)
+                    {
+                        <div class="dx-alert dx-alert-warning" style="margin-top:8px;">
+                            <div>
+                                <div>Pulse will stop raising down alerts for this device.</div>
+                                <div class="dx-cell-actions" style="margin-top:6px;">
+                                    <button class="dx-btn dx-btn-red dx-btn-sm" disabled="@busy" @onclick="StopMonitoringAsync">Stop monitoring</button>
+                                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="() => confirmStopMonitoring = false">Keep monitoring</button>
+                                </div>
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="dx-cell-actions" style="margin-top:8px;">
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="() => { confirmStopMonitoring = true; message = null; }">Stop monitoring</button>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div>Pulse raises no down alerts for <strong>@linked</strong>. Readings and heartbeats still flow.</div>
+                    <div class="dx-cell-actions" style="margin-top:8px;">
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(busy || eligibleHeartbeat is null)" @onclick="StartMonitoringAsync">Start monitoring</button>
+                        @if (eligibleHeartbeat is not null)
+                        {
+                            <span class="dx-text-muted" style="font-size:0.8rem;">Writes a fresh heartbeat at the same time, so the device starts up.</span>
+                        }
+                    </div>
+                    @if (eligibleHeartbeat is null)
+                    {
+                        <div class="dx-alert dx-alert-info" style="margin-top:8px; font-size:0.85rem;">
+                            Start monitoring is not available because Sentinel cannot vouch for this device (@suppression). A monitored device with no heartbeat raises an alert within minutes.
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    }
+
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">Snooze</div>
+        <div class="dx-card-body">
+            @if (pulseRow is { Snooze: true })
+            {
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                    <span>Pulse will not raise a down alert for <strong>@linked</strong> until <strong>@(pulseRow.SnoozeTimeUtc is { } u ? Zone.Short(u) : "it is unsnoozed")</strong>.</span>
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="UnsnoozeAsync">Unsnooze now</button>
+                </div>
+            }
+            else if (pulseRow is null)
+            {
+                <div class="dx-text-muted">Snooze needs the Pulse device, and @(PulseDevices is null ? "Pulse could not be read" : $"{linked} was not found under {CustomerId}").</div>
+            }
+            else
+            {
+                <PulseSnoozePicker Zone="Zone" @bind-UntilUtc="snoozeUntilUtc" Disabled="busy" />
+                <div style="display:flex; gap:8px; align-items:center; margin-top:8px; flex-wrap:wrap;">
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(busy || snoozeUntilUtc is not { } su || su <= DateTime.UtcNow)" @onclick="SnoozeAsync">Snooze now</button>
+                    <span class="dx-text-muted" style="font-size:0.8rem;">Readings keep flowing while snoozed. Pulse suppresses only the down alert.</span>
+                </div>
+            }
+        </div>
+    </div>
+
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header">Link</div>
+        <div class="dx-card-body">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                <span>Reporting to <strong style="font-family:Consolas, monospace;">@linked</strong>.</span>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@busy" @onclick="StartRelink">Change link</button>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="UnlinkAsync">Unlink</button>
+            </div>
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">Unlinking stops Sentinel writing to Pulse. The Pulse device stays; if it is monitored, Pulse shows it down.</div>
+        </div>
+    </div>
+}
+
+@if (UrlMonitors is not null)
+{
+    var attached = UrlMonitors.Where(u => u.DeviceInstanceId == Device.DeviceInstanceId).ToList();
+    var attachable = UrlMonitors.Where(u => u.DeviceInstanceId != Device.DeviceInstanceId).ToList();
+    <div class="dx-card" style="margin-top:12px;">
+        <div class="dx-card-header" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <span style="flex:1;">URL monitors reporting through this device</span>
+            @if (linked is null)
+            {
+                <span class="dx-badge dx-badge-orange" style="font-size:0.72rem; padding:2px 8px;">device has no Pulse link</span>
+            }
+        </div>
+        <div class="dx-card-body">
+            @if (attached.Count == 0)
+            {
+                <div class="dx-text-muted" style="font-size:0.85rem;">No URL monitors report through this device.</div>
+            }
+            @foreach (var u in attached)
+            {
+                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; padding:5px 0; border-bottom:1px solid #eef1f4;">
+                    <div style="flex:1; min-width:0;">
+                        <strong style="font-family:Consolas, monospace;">@u.MonitorId</strong>
+                        <div class="dx-text-muted" style="font-size:0.78rem; word-break:break-all;">@u.UrlKey</div>
+                    </div>
+                    @if (!u.IsMonitored)
+                    {
+                        <span class="dx-badge dx-badge-gray" style="font-size:0.72rem; padding:2px 8px;" title="Monitor it on Director's URLs tab to report it">not monitored</span>
+                    }
+                    else if (u.IsMissing)
+                    {
+                        <span class="dx-badge dx-badge-red" style="font-size:0.72rem; padding:2px 8px;">missing</span>
+                    }
+                    else
+                    {
+                        <span class="dx-badge dx-badge-green" style="font-size:0.72rem; padding:2px 8px;">online</span>
+                    }
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@busy" @onclick="() => DetachUrlAsync(u.DirectorUrlId)">Detach</button>
+                </div>
+            }
+
+            @if (attachable.Count > 0)
+            {
+                <div style="display:flex; gap:8px; align-items:center; margin-top:10px; flex-wrap:wrap;">
+                    <select class="dx-form-control dx-form-control-sm" style="flex:1; min-width:200px;" @key="UrlMonitors" @bind="attachUrlId">
+                        <option value="0">Pick a URL monitor</option>
+                        @foreach (var u in attachable)
+                        {
+                            <option value="@u.DirectorUrlId">@UrlOptionLabel(u)</option>
+                        }
+                    </select>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@(attachUrlId <= 0 || busy)" @onclick="AttachUrlAsync">Attach</button>
+                </div>
+            }
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
+                A URL that goes missing is written to this device's Pulse item as <em>URL missing</em>. It reaches Pulse only while it is monitored and this device is linked.
+            </div>
+        </div>
+    </div>
+}
+
+@if (createOpen)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:min(560px, 100%);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5>Create in Pulse: @Device.DisplayName</h5>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="() => createOpen = false"></button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-text-muted" style="margin-bottom:10px;">Adds a device to Pulse customer <strong>@CustomerId</strong> and links it.</div>
+
+                <label class="dx-form-label">DeviceID</label>
+                <input class="dx-form-control" style="font-family:Consolas, monospace;" maxlength="@PulseGateway.MaxDeviceIdLength"
+                       value="@createDeviceId" @onchange="OnCreateDeviceIdChangedAsync" />
+                <div class="dx-text-muted" style="font-size:0.8rem;">Defaults to the Director id, or the display name when that id is a cloud GUID.</div>
+                @foreach (var error in CreateErrors())
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:6px; font-size:0.85rem;">@error</div>
+                }
+                @if (createUsage is { OtherCustomerIds.Count: > 0 })
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:6px; font-size:0.85rem;">
+                        @createDeviceId also exists under @string.Join(", ", createUsage.OtherCustomerIds). Pulse readings are not kept apart by customer, so this device's readings would mix with theirs. Pick a different DeviceID.
+                    </div>
+                }
+
+                <label class="dx-form-label" style="margin-top:10px;">Description</label>
+                <input class="dx-form-control" maxlength="@PulseGateway.MaxDescriptionLength" @bind="createDescription" />
+
+                <label class="dx-form-label" style="margin-top:10px;">Device type</label>
+                <select class="dx-form-control" @key="deviceTypes" @bind="createDeviceTypeId">
+                    @if (deviceTypes is null)
+                    {
+                        <option value="1">1 (Pulse device types could not be read)</option>
+                    }
+                    else
+                    {
+                        @foreach (var t in deviceTypes)
+                        {
+                            <option value="@t.DeviceTypeId">@t.Description</option>
+                        }
+                    }
+                </select>
+
+                <label class="dx-form-label" style="margin-top:10px;">Pulse monitoring</label>
+                <label style="display:flex; gap:8px; align-items:flex-start; margin-bottom:6px; opacity:@(createEligibleHeartbeat is null ? "0.5" : "1");">
+                    <input type="radio" name="pulse-monitor" checked="@createMonitor" disabled="@(createEligibleHeartbeat is null)" @onchange="() => createMonitor = true" />
+                    <span><strong>Monitor</strong><br /><span class="dx-text-muted" style="font-size:0.8rem;">Pulse raises a Mission Critical down alert if the heartbeat is older than 6 minutes. The heartbeat is written now, so the device starts up.</span></span>
+                </label>
+                <label style="display:flex; gap:8px; align-items:flex-start;">
+                    <input type="radio" name="pulse-monitor" checked="@(!createMonitor)" @onchange="() => createMonitor = false" />
+                    <span><strong>Don't monitor yet</strong><br /><span class="dx-text-muted" style="font-size:0.8rem;">Created with Monitor = 0. Readings still flow; no down alerts until someone sets it to Monitor in Pulse.</span></span>
+                </label>
+                @if (createEligibleHeartbeat is null)
+                {
+                    <div class="dx-alert dx-alert-info" style="margin-top:6px; font-size:0.85rem;">
+                        Monitor is unavailable because Sentinel cannot vouch for this device (@createSuppression). A monitored device with no heartbeat raises an alert within minutes.
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" disabled="@busy" @onclick="() => createOpen = false">Cancel</button>
+                <button class="dx-btn dx-btn-blue" disabled="@(busy || CreateErrors().Any() || createChecking)" @onclick="CreateAsync">Create and link</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public DeviceInstance Device { get; set; } = null!;
+    [Parameter] public OverallHealthStatus Health { get; set; }
+    [Parameter] public IReadOnlyCollection<DeviceSourceState> Sources { get; set; } = [];
+    [Parameter] public SentinelPulseDeviceState? State { get; set; }
+
+    /// <summary>The customer's Pulse devices by DeviceID, or null when the tab could not read Pulse.</summary>
+    [Parameter] public IReadOnlyDictionary<string, PulseDevice>? PulseDevices { get; set; }
+
+    /// <summary>Pulse DeviceIDs already linked, mapped to the Sentinel device that holds each.</summary>
+    [Parameter] public IReadOnlyDictionary<string, string> LinkedPulseIds { get; set; } = new Dictionary<string, string>();
+
+    [Parameter] public string CustomerId { get; set; } = "";
+    [Parameter, EditorRequired] public ViewerTimeZone Zone { get; set; } = ViewerTimeZone.Utc;
+
+    /// <summary>The tenant's Director URL monitors, or null when the tenant has no Director.</summary>
+    [Parameter] public IReadOnlyList<PulseUrlMonitorRow>? UrlMonitors { get; set; }
+
+    /// <summary>Sentinel device names by id, so the attach picker can say where a URL reports now.</summary>
+    [Parameter] public IReadOnlyDictionary<int, string> DeviceNames { get; set; } = new Dictionary<int, string>();
+
+    /// <summary>Raised after any action that changed a link or Pulse, with the message to show.</summary>
+    [Parameter] public EventCallback<string> OnChanged { get; set; }
+
+    private int shownDeviceId;
+    private bool relinking;
+    private string pickQuery = "";
+    private string? pick;
+    private DateTime? snoozeUntilUtc;
+    private int attachUrlId;
+    private bool confirmStopMonitoring;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    private bool createOpen;
+    private bool createChecking;
+    private string createDeviceId = "";
+    private string createDescription = "";
+    private int createDeviceTypeId = 1;
+    private bool createMonitor;
+    private DateTime? createEligibleHeartbeat;
+    private string? createSuppression;
+    private PulseDeviceIdUsage? createUsage;
+    private string? createCheckError;
+    private List<PulseDeviceType>? deviceTypes;
+
+    protected override void OnParametersSet()
+    {
+        if (shownDeviceId == Device.DeviceInstanceId) return;
+        shownDeviceId = Device.DeviceInstanceId;
+        relinking = false;
+        pickQuery = "";
+        pick = null;
+        snoozeUntilUtc = DateTime.UtcNow.AddHours(1);
+        attachUrlId = 0;
+        confirmStopMonitoring = false;
+        message = null;
+        createOpen = false;
+    }
+
+    private List<(PulseDevice Device, PulseSuggestion? Suggestion)> PickerOptions()
+    {
+        if (PulseDevices is null) return [];
+        var elsewhere = LinkedPulseIds.Keys.Where(k => !string.Equals(k, Device.PulseDeviceId, StringComparison.OrdinalIgnoreCase))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var suggestions = PulseLinkService.Suggestions(Device, PulseDevices.Values, elsewhere)
+            .ToDictionary(s => s.Device.DeviceId, StringComparer.OrdinalIgnoreCase);
+        var q = pickQuery.Trim();
+        return PulseDevices.Values
+            .Where(p => !string.Equals(p.DeviceId, Device.PulseDeviceId, StringComparison.OrdinalIgnoreCase))
+            .Where(p => q.Length == 0
+                        || p.DeviceId.Contains(q, StringComparison.OrdinalIgnoreCase)
+                        || (p.Description?.Contains(q, StringComparison.OrdinalIgnoreCase) ?? false))
+            .Select(p => (p, suggestions.GetValueOrDefault(p.DeviceId)))
+            .OrderBy(x => x.Item2 is null)
+            .ThenBy(x => x.p.DeviceId, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private IEnumerable<(string Css, string Text)> PickConsequences(PulseDevice p, bool eligible)
+    {
+        if (p.OtherCustomerIds.Count > 0)
+            yield return ("dx-alert-warning", $"{p.DeviceId} also exists under {string.Join(", ", p.OtherCustomerIds)}. Readings for this DeviceID are not kept apart by customer.");
+        if (!p.IsMonitored)
+            yield return ("dx-alert-info", $"{p.DeviceId} is not monitored in Pulse (Monitor = {p.Monitor}), so it raises no down alerts. Sentinel still writes its heartbeat and readings.");
+        else if (!eligible)
+            yield return ("dx-alert-warning", $"{p.DeviceId} is monitored and Sentinel cannot keep its heartbeat fresh, so Pulse will show it down.");
+        else if (p.HeartbeatUtc is not { } hb || DateTime.UtcNow - hb > PulseStatusChip.PulseDownAfter)
+            yield return ("dx-alert-info", $"{p.DeviceId} last heartbeat {Rel(p.HeartbeatUtc, DateTime.UtcNow)}. Sentinel brings it up on its next cycle.");
+    }
+
+    private void StartRelink()
+    {
+        relinking = true;
+        pick = null;
+        pickQuery = "";
+        message = null;
+    }
+
+    private Task LinkAsync() => RunAsync(() => links.LinkAsync(Device.DeviceInstanceId, pick!));
+    private Task UnlinkAsync() => RunAsync(() => links.UnlinkAsync(Device.DeviceInstanceId));
+    private Task RetryAsync() => RunAsync(() => links.RetryAsync(Device.DeviceInstanceId));
+    private Task SnoozeAsync() => RunAsync(() => links.SnoozeAsync(Device.DeviceInstanceId, snoozeUntilUtc!.Value));
+    private Task UnsnoozeAsync() => RunAsync(() => links.UnsnoozeAsync(Device.DeviceInstanceId));
+    private Task DetachUrlAsync(int directorUrlId) => RunAsync(() => links.DetachUrlAsync(directorUrlId));
+    private Task StartMonitoringAsync() => RunAsync(() => links.SetMonitorAsync(Device.DeviceInstanceId, true, sessionState.UserName));
+
+    private async Task StopMonitoringAsync()
+    {
+        await RunAsync(() => links.SetMonitorAsync(Device.DeviceInstanceId, false, sessionState.UserName));
+        confirmStopMonitoring = false;
+    }
+
+    private async Task AttachUrlAsync()
+    {
+        await RunAsync(() => links.AttachUrlAsync(Device.DeviceInstanceId, attachUrlId));
+        if (!messageIsError) attachUrlId = 0;
+    }
+
+    private string UrlOptionLabel(PulseUrlMonitorRow u)
+    {
+        var where = u.DeviceInstanceId is { } id ? $" (reports through {DeviceNames.GetValueOrDefault(id) ?? $"#{id}"})" : "";
+        var monitored = u.IsMonitored ? "" : " (not monitored)";
+        return $"{u.MonitorId} · {u.UrlKey}{monitored}{where}";
+    }
+
+    private async Task OpenCreateAsync()
+    {
+        message = null;
+        createDeviceId = PulseLinkService.DefaultDeviceId(Device);
+        createDescription = Device.DisplayName.Length > PulseGateway.MaxDescriptionLength
+            ? Device.DisplayName[..PulseGateway.MaxDescriptionLength]
+            : Device.DisplayName;
+        createMonitor = false;
+        createUsage = null;
+        createCheckError = null;
+
+        (createEligibleHeartbeat, createSuppression) = await links.HeartbeatEligibilityAsync(Device.DeviceInstanceId);
+
+        var types = await pulse.ReadDeviceTypesAsync();
+        deviceTypes = types.IsSuccess ? types.Value!.ToList() : null;
+        createDeviceTypeId = deviceTypes is null || deviceTypes.Any(t => t.DeviceTypeId == 1) ? 1 : deviceTypes[0].DeviceTypeId;
+
+        await CheckCreateDeviceIdAsync();
+        createOpen = true;
+    }
+
+    private async Task OnCreateDeviceIdChangedAsync(ChangeEventArgs e)
+    {
+        createDeviceId = (e.Value?.ToString() ?? "").Trim();
+        await CheckCreateDeviceIdAsync();
+    }
+
+    private async Task CheckCreateDeviceIdAsync()
+    {
+        createUsage = null;
+        createCheckError = null;
+        if (createDeviceId.Length is 0 or > PulseGateway.MaxDeviceIdLength) return;
+
+        createChecking = true;
+        try
+        {
+            var usage = await pulse.CheckDeviceIdAsync(createDeviceId);
+            if (usage.IsSuccess) createUsage = usage.Value;
+            else createCheckError = usage.Outcome == PulseOutcome.NotConfigured
+                ? "Pulse is not configured for this tenant."
+                : "Pulse could not be reached to check this DeviceID.";
+        }
+        finally
+        {
+            createChecking = false;
+        }
+    }
+
+    private IEnumerable<string> CreateErrors()
+    {
+        if (createDeviceId.Length == 0) yield return "DeviceID is required.";
+        if (createDeviceId.Length > PulseGateway.MaxDeviceIdLength) yield return $"DeviceID is at most {PulseGateway.MaxDeviceIdLength} characters.";
+        if (createUsage is { ExistsForCustomer: true }) yield return $"{createDeviceId} already exists under {CustomerId}. Link to it instead.";
+        if (createCheckError is not null) yield return createCheckError;
+    }
+
+    private async Task CreateAsync()
+    {
+        var request = new PulseCreateRequest(createDeviceId, createDescription, createDeviceTypeId, createMonitor && createEligibleHeartbeat is not null);
+        await RunAsync(() => links.CreateInPulseAsync(Device.DeviceInstanceId, request));
+        if (!messageIsError) createOpen = false;
+    }
+
+    private async Task RunAsync(Func<Task<PulseLinkResult>> action)
+    {
+        busy = true;
+        message = null;
+        try
+        {
+            var result = await action();
+            message = result.Message;
+            messageIsError = !result.Success;
+            if (result.Success)
+            {
+                relinking = false;
+                pick = null;
+                await OnChanged.InvokeAsync(result.Message);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Pulse action failed for device {DeviceInstanceId}", Device.DeviceInstanceId);
+            message = $"The action failed: {ex.Message}";
+            messageIsError = true;
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private static string Rel(DateTime? utc, DateTime now)
+    {
+        if (utc is not { } t) return "never";
+        var d = now - t;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+}

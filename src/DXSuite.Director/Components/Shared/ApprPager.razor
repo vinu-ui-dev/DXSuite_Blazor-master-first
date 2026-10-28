@@ -1,0 +1,62 @@
+@* Reusable pagination control for the Approvals page tables *@
+
+@if (TotalPages > 1)
+{
+    <div class="appr-pager">
+        <span class="appr-pager-info">
+            @((CurrentPage - 1) * PageSize + 1)–@(Math.Min(CurrentPage * PageSize, TotalItems)) of @TotalItems
+        </span>
+        <button class="appr-pager-btn" disabled="@(CurrentPage == 1)"
+                @onclick="() => OnPageChange.InvokeAsync(CurrentPage - 1)">‹</button>
+
+        @foreach (var p in VisiblePages)
+        {
+            @if (p == 0)
+            {
+                <span class="appr-pager-btn" style="cursor:default; border:none;">…</span>
+            }
+            else
+            {
+                <button class="appr-pager-btn @(p == CurrentPage ? "active" : "")"
+                        @onclick="() => OnPageChange.InvokeAsync(p)">@p</button>
+            }
+        }
+
+        <button class="appr-pager-btn" disabled="@(CurrentPage == TotalPages)"
+                @onclick="() => OnPageChange.InvokeAsync(CurrentPage + 1)">›</button>
+    </div>
+}
+
+@code {
+    [Parameter] public int TotalItems { get; set; }
+    [Parameter] public int CurrentPage { get; set; }
+    [Parameter] public int PageSize { get; set; } = 20;
+    [Parameter] public EventCallback<int> OnPageChange { get; set; }
+
+    private int TotalPages => (int)Math.Ceiling((double)TotalItems / PageSize);
+
+    // Shows first page, last page, current ±1, and ellipsis gaps
+    private IEnumerable<int> VisiblePages
+    {
+        get
+        {
+            var pages = new List<int>();
+            for (int i = 1; i <= TotalPages; i++)
+            {
+                if (i == 1 || i == TotalPages || (i >= CurrentPage - 1 && i <= CurrentPage + 1))
+                    pages.Add(i);
+            }
+
+            var result = new List<int>();
+            int prev = 0;
+            foreach (var p in pages)
+            {
+                if (prev != 0 && p - prev > 1)
+                    result.Add(0); // 0 = ellipsis sentinel
+                result.Add(p);
+                prev = p;
+            }
+            return result;
+        }
+    }
+}

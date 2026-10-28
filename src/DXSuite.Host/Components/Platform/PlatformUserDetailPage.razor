@@ -1,0 +1,166 @@
+@page "/platform/users/{UserId:guid}"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Services
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject IPlatformIdentityService? IdentityService
+@inject ReAuthConfirmationService ReAuth
+@inject NavigationManager Nav
+
+<ReAuthConfirmationModal />
+
+<div class="dx-platform-page">
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (user == null)
+    {
+        <p class="dx-text-muted">User not found.</p>
+    }
+    else
+    {
+        <div class="dx-platform-header">
+            <h2>@(user.DisplayName ?? user.PrimaryEmail)</h2>
+            <a href="/platform/users" class="dx-btn dx-btn-gray dx-btn-sm">← Back</a>
+        </div>
+
+        <dl class="dx-dl">
+            <dt>Email</dt>            <dd>@user.PrimaryEmail</dd>
+            <dt>Platform Operator</dt><dd>@(user.IsPlatformOperator ? "Yes" : "No")</dd>
+        </dl>
+
+        <h4 style="margin-top:1.5rem;">Tenant Memberships</h4>
+
+        @if (user.Memberships.Count == 0)
+        {
+            <p class="dx-text-muted">No memberships.</p>
+        }
+        else
+        {
+            <div class="dx-table">
+                <div class="dx-table-header" style="grid-template-columns: 2fr 110px 120px 100px 90px;">
+                    <div>Tenant</div>
+                    <div>Active</div>
+                    <div>Tenant Admin</div>
+                    <div>Granted</div>
+                    <div>Status</div>
+                </div>
+                @foreach (var m in user.Memberships)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 110px 120px 100px 90px;">
+                        <div>
+                            @m.TenantDisplayName
+                            <span class="dx-text-muted" style="font-size:0.85em;">(@m.TenantId)</span>
+                        </div>
+                        <div>
+                            <button class="dx-btn @(m.IsActive ? "dx-btn-red" : "dx-btn-blue") dx-btn-sm"
+                                    @onclick="@(() => ToggleActive(m.MembershipId, m.IsActive))"
+                                    disabled="@(acting == m.MembershipId)">
+                                @(m.IsActive ? "Deactivate" : "Activate")
+                            </button>
+                        </div>
+                        <div>
+                            <button class="dx-btn @(m.IsTenantAdmin ? "dx-btn-gray" : "dx-btn-outline-blue") dx-btn-sm"
+                                    @onclick="@(() => ToggleAdmin(m.MembershipId, m.IsTenantAdmin))"
+                                    disabled="@(acting == m.MembershipId)">
+                                @(m.IsTenantAdmin ? "Revoke Admin" : "Grant Admin")
+                            </button>
+                        </div>
+                        <div>@m.GrantedDate.ToString("yyyy-MM-dd")</div>
+                        <div class="dx-text-muted">@(acting == m.MembershipId ? "Working…" : "")</div>
+                    </div>
+                }
+            </div>
+        }
+
+        @if (actionError != null)
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@actionError</div>
+        }
+        @if (actionSuccess != null)
+        {
+            <div class="dx-alert dx-alert-success" style="margin-top:12px;">@actionSuccess</div>
+        }
+    }
+</div>
+
+@code {
+    [Parameter] public Guid UserId { get; set; }
+
+    private PlatformUserSummary? user;
+    private bool loading = true;
+    private Guid? acting;
+    private string? actionError;
+    private string? actionSuccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        await Reload();
+        loading = false;
+    }
+
+    private async Task Reload()
+    {
+        if (IdentityService == null) return;
+        var all = await IdentityService.GetPlatformUsersAsync();
+        user = all.FirstOrDefault(u => u.PlatformUserId == UserId);
+    }
+
+    private async Task ToggleActive(Guid membershipId, bool currentlyActive)
+    {
+        if (SessionState.PlatformUserId == null || IdentityService == null) return;
+        actionError = null; actionSuccess = null;
+
+        var token = await ReAuth.RequestConfirmationAsync();
+        if (token == null) return;
+
+        acting = membershipId;
+        try
+        {
+            await IdentityService.SetMembershipActiveAsync(membershipId, !currentlyActive, SessionState.PlatformUserId.Value, token.Value);
+            actionSuccess = currentlyActive ? "Membership deactivated." : "Membership activated.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            acting = null;
+        }
+    }
+
+    private async Task ToggleAdmin(Guid membershipId, bool currentlyAdmin)
+    {
+        if (SessionState.PlatformUserId == null || IdentityService == null) return;
+        actionError = null; actionSuccess = null;
+
+        var token = await ReAuth.RequestConfirmationAsync();
+        if (token == null) return;
+
+        acting = membershipId;
+        try
+        {
+            await IdentityService.SetTenantAdminAsync(membershipId, !currentlyAdmin, SessionState.PlatformUserId.Value, token.Value);
+            actionSuccess = currentlyAdmin ? "Tenant admin revoked." : "Tenant admin granted.";
+            await Reload();
+        }
+        catch (Exception ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            acting = null;
+        }
+    }
+}

@@ -1,0 +1,244 @@
+@page "/Sentinel"
+@using DXSuite.Sentinel.Entities
+@using DXSuite.Sentinel.Services
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@using System.Threading
+@implements IDisposable
+@inject ISentinelDBContext sentinelDb
+@inject ISessionState sessionState
+@inject NavigationManager Navigation
+@inject ISentinelAvailabilityService sentinelAvailability
+@inject ILogger<SentinelDashboard> Logger
+
+<PageTitle>Sentinel Dashboard</PageTitle>
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="dx-spinner" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    if (!isAuthorized)
+    {
+        <div class="unauthorized-wrapper">
+            <h1>Unauthorized</h1>
+            <p>You do not have permission to access this page.</p>
+            <a href="/">Return Home</a>
+        </div>
+    }
+    else if (!isDatabaseAvailable)
+    {
+        <div class="sentinel-db-warning">
+            <h2>Sentinel Database Not Initialized</h2>
+            <p>The Sentinel database has not been created yet. Run <code>Scripts\Sentinel_CreateDatabase.sql</code> to initialize it.</p>
+            <a href="/">Return Home</a>
+        </div>
+    }
+    else
+    {
+        <section class="Sub-Header">
+            <div class="Head-flex">
+                <h2>SENTINEL DASHBOARD</h2>
+                <div class="sentinel-header-actions">
+                    <span class="last-refresh">Last refresh: @lastRefresh.ToString("HH:mm:ss")</span>
+                </div>
+            </div>
+        </section>
+
+        <section class="Body">
+            <!-- Zone 1: Summary Stats Bar -->
+            <SentinelSummaryBar TotalDevices="totalDevices"
+                                OnlineCount="onlineCount"
+                                WarningCount="warningCount"
+                                CriticalCount="criticalCount"
+                                OfflineCount="offlineCount"
+                                OpenTicketCount="openTicketCount"
+                                RecentRemediationCount="recentRemediationCount" />
+
+            <!-- Zone 2: Active Outages Banner -->
+            @if (activeOutages != null && activeOutages.Any())
+            {
+                <div class="sentinel-outage-banner">
+                    <div class="outage-icon">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
+                            <line x1="12" y1="9" x2="12" y2="13"/>
+                            <line x1="12" y1="17" x2="12.01" y2="17"/>
+                        </svg>
+                    </div>
+                    @foreach (var outage in activeOutages)
+                    {
+                        <div class="outage-item">
+                            <strong>@outage.CorrelationType</strong> — @outage.Scope
+                            <span class="outage-count">(@outage.AffectedDeviceCount devices affected)</span>
+                        </div>
+                    }
+                </div>
+            }
+
+            <div style="text-align: center; margin: 16px 0;">
+                <a href="/Configuration" class="action-link">Manage devices in Configuration</a>
+            </div>
+
+            <!-- Zone 4: Recent Activity Feed -->
+            <SentinelActivityFeed RecentLogs="recentLogs" />
+        </section>
+    }
+}
+
+@code {
+    private bool isLoading = true;
+    private bool isAuthorized = false;
+    private bool isDatabaseAvailable = true;
+    private DateTime lastRefresh = DateTime.Now;
+    private Timer? refreshTimer;
+
+    // Summary stats
+    private int totalDevices;
+    private int onlineCount;
+    private int warningCount;
+    private int criticalCount;
+    private int offlineCount;
+    private int openTicketCount;
+    private int recentRemediationCount;
+
+    // Data
+    private List<DeviceInstance> allDevices = new();
+    private List<OutageCorrelation> activeOutages = new();
+    private List<RemediationLog>? recentLogs;
+
+    // Cache parsed states to avoid repeated deserialization
+    private Dictionary<int, DeviceState?> stateCache = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!sessionState.SessionLoaded.Task.IsCompleted)
+        {
+            await sessionState.SessionLoaded.Task;
+        }
+
+        if (sessionState.User != null &&
+            (sessionState.RoleEnum == Roles.Role.Admin || sessionState.RoleEnum == Roles.Role.Architect))
+        {
+            isAuthorized = true;
+            await LoadData();
+            refreshTimer = new Timer(async _ => await RefreshData(), null, 20000, 20000);
+        }
+
+        isLoading = false;
+    }
+
+    private async Task LoadData()
+    {
+        if (!sentinelAvailability.IsAvailable)
+        {
+            isDatabaseAvailable = false;
+            return;
+        }
+
+        try
+        {
+            allDevices = await sentinelDb.DeviceInstances
+                .AsNoTracking()
+                .Include(d => d.DeviceDescriptor)
+                .Where(d => d.IsEnabled)
+                .ToListAsync();
+
+            stateCache.Clear();
+            foreach (var device in allDevices)
+            {
+                stateCache[device.DeviceInstanceId] = ParseDeviceState(device);
+            }
+
+            CalculateSummaryStats();
+
+            activeOutages = await sentinelDb.OutageCorrelations
+                .AsNoTracking()
+                .Where(o => o.ResolvedAt == null)
+                .OrderByDescending(o => o.DetectedAt)
+                .ToListAsync();
+
+            openTicketCount = await sentinelDb.TicketTrackings
+                .AsNoTracking()
+                .CountAsync(t => t.ResolvedAt == null);
+
+            var cutoff = DateTime.UtcNow.AddHours(-24);
+            recentRemediationCount = await sentinelDb.RemediationLogs
+                .AsNoTracking()
+                .CountAsync(r => r.CreateDate >= cutoff);
+
+            recentLogs = await sentinelDb.RemediationLogs
+                .AsNoTracking()
+                .Include(r => r.DeviceInstance)
+                .OrderByDescending(r => r.CreateDate)
+                .Take(10)
+                .ToListAsync();
+
+            lastRefresh = DateTime.Now;
+            isDatabaseAvailable = true;
+        }
+        catch (Exception ex)
+        {
+            isDatabaseAvailable = false;
+            Logger.LogError(ex, "Sentinel DB not available");
+        }
+    }
+
+    private async Task RefreshData()
+    {
+        await LoadData();
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void CalculateSummaryStats()
+    {
+        totalDevices = allDevices.Count;
+        onlineCount = 0;
+        warningCount = 0;
+        criticalCount = 0;
+        offlineCount = 0;
+
+        foreach (var device in allDevices)
+        {
+            var state = stateCache.GetValueOrDefault(device.DeviceInstanceId);
+            var health = state?.OverallHealth ?? OverallHealthStatus.Unknown;
+
+            switch (health)
+            {
+                case OverallHealthStatus.Healthy:
+                    onlineCount++;
+                    break;
+                case OverallHealthStatus.Warning:
+                    warningCount++;
+                    break;
+                case OverallHealthStatus.Critical:
+                    criticalCount++;
+                    break;
+                case OverallHealthStatus.Offline:
+                    offlineCount++;
+                    break;
+                default:
+                    offlineCount++;
+                    break;
+            }
+        }
+    }
+
+    private DeviceState? ParseDeviceState(DeviceInstance device)
+    {
+        if (string.IsNullOrEmpty(device.LastStateJson)) return null;
+        try { return JsonSerializer.Deserialize<DeviceState>(device.LastStateJson); }
+        catch { return null; }
+    }
+
+    public void Dispose()
+    {
+        refreshTimer?.Dispose();
+    }
+}

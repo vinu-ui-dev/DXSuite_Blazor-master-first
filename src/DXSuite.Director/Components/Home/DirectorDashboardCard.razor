@@ -1,0 +1,317 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory ScopeFactory
+@inject IManifestCacheService ManifestCache
+@inject PlayerWakeConnectionTracker WakeTracker
+@inject ITenantContext TenantContext
+
+@if (stats is null)
+{
+    <div class="dx-card dx-home-stat-card">
+        <div class="dx-card-body" style="display:flex; align-items:center; justify-content:center; min-height:140px;">
+            <div class="dx-spinner"></div>
+        </div>
+    </div>
+}
+else
+{
+    <div class="dx-card dx-home-stat-card">
+        <div class="dx-card-body">
+            <h5 class="dx-home-stat-title">
+                <i class="bi bi-speedometer2" style="margin-right:8px;"></i>Director
+            </h5>
+
+            <div class="dx-home-stat-grid">
+
+                @* Devices *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">Devices</div>
+                    <div class="dx-home-stat-value">@stats.TotalDevices</div>
+                    <div class="dx-home-stat-sub">
+                        <span class="dx-badge-green">@stats.HealthyDevices healthy</span>
+                        @if (stats.UnhealthyDevices > 0)
+                        {
+                            <span class="dx-badge-red" style="margin-left:6px;">@stats.UnhealthyDevices offline</span>
+                        }
+                    </div>
+                </div>
+
+                @* Player Sync *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">Player Sync</div>
+                    <div class="dx-home-stat-value">@stats.LiveWakeConnections live</div>
+                    <div class="dx-home-stat-sub">
+                        <span class="dx-badge-green">@stats.ContentCurrentDevices current</span>
+                        @if (stats.ContentStaleDevices > 0)
+                        {
+                            <span class="dx-badge-red" style="margin-left:6px;">@stats.ContentStaleDevices stale</span>
+                        }
+                        @if (stats.TimeZoneMismatchDevices > 0)
+                        {
+                            <div style="margin-top:2px;">
+                                <span class="dx-badge-red">@stats.TimeZoneMismatchDevices time zone mismatch@(stats.TimeZoneMismatchDevices == 1 ? "" : "es")</span>
+                            </div>
+                        }
+                        @if (stats.PendingCommands > 0)
+                        {
+                            <div style="margin-top:2px;">@stats.PendingCommands pending command@(stats.PendingCommands == 1 ? "" : "s")</div>
+                        }
+                    </div>
+                </div>
+
+                @* Locations & Displays *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">Locations</div>
+                    <div class="dx-home-stat-value">@stats.TotalLocations</div>
+                    <div class="dx-home-stat-sub">@stats.TotalDisplays displays</div>
+                </div>
+
+                @* API Keys *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">API Keys</div>
+                    <div class="dx-home-stat-value">@stats.ActiveApiKeys active</div>
+                    @if (stats.ExpiringApiKeys > 0)
+                    {
+                        <div class="dx-home-stat-sub dx-stat-warn">
+                            <i class="bi bi-exclamation-triangle-fill"></i> @stats.ExpiringApiKeys expiring within 14 days
+                        </div>
+                    }
+                </div>
+
+                @* Cloud Connectors *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">Cloud Connectors</div>
+                    <div class="dx-home-stat-value">@stats.ActiveConnectors active</div>
+                    @if (stats.ExpiringConnectors > 0)
+                    {
+                        <div class="dx-home-stat-sub dx-stat-warn">
+                            <i class="bi bi-exclamation-triangle-fill"></i> @stats.ExpiringConnectors credential@(stats.ExpiringConnectors == 1 ? "" : "s") expiring
+                        </div>
+                    }
+                </div>
+
+                @* LLM Providers *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">LLM Providers</div>
+                    <div class="dx-home-stat-value">@stats.ActiveLlmProviders active</div>
+                    @if (stats.ExpiringLlmProviders > 0)
+                    {
+                        <div class="dx-home-stat-sub dx-stat-warn">
+                            <i class="bi bi-exclamation-triangle-fill"></i> @stats.ExpiringLlmProviders credential@(stats.ExpiringLlmProviders == 1 ? "" : "s") expiring
+                        </div>
+                    }
+                </div>
+
+                @* Pending *@
+                <div class="dx-home-stat-section">
+                    <div class="dx-home-stat-label">Pending</div>
+                    <div class="dx-home-stat-value">@stats.PendingApprovals approval@(stats.PendingApprovals == 1 ? "" : "s")</div>
+                    <div class="dx-home-stat-sub">@stats.ActiveOverrides active override@(stats.ActiveOverrides == 1 ? "" : "s")</div>
+                </div>
+
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .dx-home-stat-card {
+        height: 100%;
+    }
+
+    .dx-home-stat-title {
+        font-weight: 600;
+        margin-bottom: 16px;
+        font-size: 1rem;
+        color: var(--dx-text);
+    }
+
+    .dx-home-stat-grid {
+        display: grid;
+        /* auto-fit collapses to 2 columns on tablets and 1 on phones */
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 16px;
+    }
+
+    .dx-home-stat-section {
+        padding: 12px;
+        background: var(--dx-bg-subtle, #f8f9fa);
+        border-radius: 6px;
+    }
+
+    .dx-home-stat-label {
+        font-size: 0.72rem;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--dx-text-muted);
+        margin-bottom: 4px;
+    }
+
+    .dx-home-stat-value {
+        font-size: 1.15rem;
+        font-weight: 600;
+        color: var(--dx-text);
+        margin-bottom: 4px;
+    }
+
+    .dx-home-stat-sub {
+        font-size: 0.8rem;
+        color: var(--dx-text-muted);
+    }
+
+    .dx-stat-warn {
+        color: #b45309;
+        font-weight: 500;
+    }
+
+    .dx-badge-green {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        background: #dcfce7;
+        color: #166534;
+        font-weight: 500;
+    }
+
+    .dx-badge-red {
+        display: inline-block;
+        padding: 1px 6px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+        background: #fee2e2;
+        color: #991b1b;
+        font-weight: 500;
+    }
+</style>
+
+@code {
+    // A heartbeat older than this threshold means the device is offline.
+    private const int HeartbeatStaleMinutes = 15;
+
+    // Credentials expiring within this many days are flagged.
+    private const int ExpiryWarningDays = 14;
+
+    private DirectorStats? stats;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = ScopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var now = DateTime.UtcNow;
+        var heartbeatCutoff = now.AddMinutes(-HeartbeatStaleMinutes);
+        var expiryCutoff = now.AddDays(ExpiryWarningDays);
+
+        // EF Core DbContext is not thread-safe — queries must be awaited sequentially
+        // on the same context instance. A single COUNT per table is fast enough that
+        // sequential execution adds no perceptible latency.
+        var totalDevices       = await db.TblDevices.AsNoTracking().CountAsync();
+        var healthyDevices     = await db.TblDevices.AsNoTracking().CountAsync(d => d.Heartbeat >= heartbeatCutoff);
+        var totalLocations     = await db.TblLocations.AsNoTracking().CountAsync();
+        var totalDisplays      = await db.TblDisplays.AsNoTracking().CountAsync();
+        var activeApiKeys      = await db.TblApiKeys.AsNoTracking().CountAsync(k => k.IsActive);
+        var expiringApiKeys    = await db.TblApiKeys.AsNoTracking().CountAsync(k =>
+                                     k.IsActive && k.ExpiresAt != null &&
+                                     k.ExpiresAt.Value > now && k.ExpiresAt.Value <= expiryCutoff);
+        var activeConnectors   = await db.TblCloudPlatformConnectors.AsNoTracking().CountAsync(c => c.IsEnabled);
+        var expiringConnectors = await db.TblCloudPlatformConnectors.AsNoTracking().CountAsync(c =>
+                                     c.IsEnabled && c.CredentialExpiresAt != null &&
+                                     c.CredentialExpiresAt.Value > now && c.CredentialExpiresAt.Value <= expiryCutoff);
+        var activeLlm          = await db.TblLlmProviderConfigurations.AsNoTracking().CountAsync(p => p.IsEnabled);
+        var expiringLlm        = await db.TblLlmProviderConfigurations.AsNoTracking().CountAsync(p =>
+                                     p.IsEnabled && p.CredentialExpiresAt != null &&
+                                     p.CredentialExpiresAt.Value > now && p.CredentialExpiresAt.Value <= expiryCutoff);
+        var pendingApprovals   = await db.TblApprovalRequests.AsNoTracking().CountAsync(r => r.Status == "pending");
+        var activeOverrides    = await db.TblOverrides.AsNoTracking().CountAsync(o => o.IsActive);
+        var pendingCommands    = await db.TblDeviceCommands.AsNoTracking().CountAsync(c => c.Status == DeviceCommandStatus.Queued);
+
+        // Content freshness: compare each active player's echoed manifest version against
+        // the current cached manifest for its bucket (displayId or locationId)
+        var contentCurrent = 0;
+        var contentStale = 0;
+        // A device reporting a zone whose rules disagree with the one it was told to run. Counted
+        // here because the Devices grid cannot be filtered to problem rows, so sort alone would let
+        // two bad devices in ninety go unnoticed.
+        var timeZoneMismatch = 0;
+        var playerRows = await db.TblDevices.AsNoTracking()
+            .Where(d => d.LocationId != null)
+            .Select(d => new { d.DeviceId, d.DisplayId, d.LocationId, d.ExtendedData, d.TimeZone })
+            .ToListAsync();
+        foreach (var row in playerRows)
+        {
+            var extended = ExtendedDataHelper.Parse<DeviceExtendedData>(row.ExtendedData);
+            var reported = extended?.TimeZoneFingerprint;
+            if (reported != null)
+            {
+                var state = TimeZoneVerification.Evaluate(
+                    row.TimeZone,
+                    TimeZoneCatalog.FindSetTimeZoneArgument(row.TimeZone),
+                    new TimeZoneFingerprint(
+                        reported.OffsetJanuaryHours, reported.OffsetJulyHours, reported.Year,
+                        reported.PosixString, reported.AppliedLiteral));
+
+                if (state == TimeZoneVerificationState.Mismatch) timeZoneMismatch++;
+            }
+
+            // Against the delivery version this device was last served: a cached publication is
+            // shared across devices and is deliberately a different value.
+            var echoed = extended?.ContentSync?.ManifestVersion;
+            if (string.IsNullOrEmpty(echoed))
+                continue;
+
+            var delivered = ManifestCache.GetDeliveredVersion(TenantContext.TenantId, row.DeviceId);
+            if (!string.IsNullOrEmpty(delivered))
+            {
+                if (echoed == delivered) contentCurrent++; else contentStale++;
+            }
+        }
+
+        stats = new DirectorStats
+        {
+            TotalDevices         = totalDevices,
+            HealthyDevices       = healthyDevices,
+            UnhealthyDevices     = totalDevices - healthyDevices,
+            TotalLocations       = totalLocations,
+            TotalDisplays        = totalDisplays,
+            ActiveApiKeys        = activeApiKeys,
+            ExpiringApiKeys      = expiringApiKeys,
+            ActiveConnectors     = activeConnectors,
+            ExpiringConnectors   = expiringConnectors,
+            ActiveLlmProviders   = activeLlm,
+            ExpiringLlmProviders = expiringLlm,
+            PendingApprovals     = pendingApprovals,
+            ActiveOverrides      = activeOverrides,
+            PendingCommands      = pendingCommands,
+            ContentCurrentDevices = contentCurrent,
+            ContentStaleDevices  = contentStale,
+            TimeZoneMismatchDevices = timeZoneMismatch,
+            LiveWakeConnections  = WakeTracker.ConnectedCount,
+        };
+    }
+
+    private sealed class DirectorStats
+    {
+        public int TotalDevices       { get; init; }
+        public int HealthyDevices     { get; init; }
+        public int UnhealthyDevices   { get; init; }
+        public int TotalLocations     { get; init; }
+        public int TotalDisplays      { get; init; }
+        public int ActiveApiKeys      { get; init; }
+        public int ExpiringApiKeys    { get; init; }
+        public int ActiveConnectors   { get; init; }
+        public int ExpiringConnectors { get; init; }
+        public int ActiveLlmProviders { get; init; }
+        public int ExpiringLlmProviders { get; init; }
+        public int PendingApprovals   { get; init; }
+        public int ActiveOverrides    { get; init; }
+        public int PendingCommands    { get; init; }
+        public int ContentCurrentDevices { get; init; }
+        public int ContentStaleDevices { get; init; }
+        public int TimeZoneMismatchDevices { get; init; }
+        public int LiveWakeConnections { get; init; }
+    }
+}

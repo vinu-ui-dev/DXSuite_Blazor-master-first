@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_SearchCity">
+    <value>Rechercher une ville</value>
+  </data>
+  <data name="Placeholder_StartTyping">
+    <value>Commencez à taper...</value>
+  </data>
+  <data name="Label_AirportCode">
+    <value>Code d'aéroport</value>
+  </data>
+  <data name="Label_SearchLanguages">
+    <value>Rechercher des langues</value>
+  </data>
+  <data name="Label_AssignedLanguages">
+    <value>Langues assignées</value>
+  </data>
+  <data name="Message_ErrorSavingLanguage">
+    <value>Une erreur est survenue lors de l'enregistrement de la langue.</value>
+  </data>
+  <data name="Message_BothRequired">
+    <value>Une ville et une langue doivent être sélectionnées.</value>
+  </data>
+  <data name="Message_ErrorRemovingLanguage">
+    <value>Une erreur est survenue lors de la suppression de la langue.</value>
+  </data>
+</root>

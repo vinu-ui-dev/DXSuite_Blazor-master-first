@@ -1,0 +1,996 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NetJets KPI Dashboard</title>
+    <style>
+        @font-face {
+            font-family: 'GT Zirkon';
+            src: url('../fonts/GT-Zirkon-Regular.otf') format('opentype');
+            font-weight: 400;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'GT Zirkon';
+            src: url('../fonts/GT-Zirkon-Medium.otf') format('opentype');
+            font-weight: 500;
+            font-style: normal;
+        }
+
+        @font-face {
+            font-family: 'GT Zirkon';
+            src: url('../fonts/GT-Zirkon-Bold.otf') format('opentype');
+            font-weight: 700;
+            font-style: normal;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background: #1c3149;
+            font-family: 'GT Zirkon', Arial, Helvetica, sans-serif;
+        }
+
+        #display-root {
+            position: absolute;
+            width: 1194px;
+            height: 1453px;
+            overflow: hidden;
+            background: #1c3149;
+            -webkit-transform-origin: top left;
+            transform-origin: top left;
+        }
+
+        .panel {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 1194px;
+            height: 1453px;
+            background: #1c3149;
+            opacity: 0;
+            -webkit-transition: opacity 0.6s ease;
+            transition: opacity 0.6s ease;
+            pointer-events: none;
+        }
+
+        .panel.active {
+            opacity: 1;
+            pointer-events: auto;
+        }
+
+        /* ── Panel 1: Charts ─────────────────────────────── */
+
+        .chart-panel {
+            height: 100%;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+            padding: 48px 56px;
+            gap: 36px;
+        }
+
+        .chart-block {
+            -webkit-box-flex: 1;
+            -ms-flex: 1;
+            flex: 1;
+            min-height: 0;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+        }
+
+        .chart-header {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-pack: justify;
+            -ms-flex-pack: justify;
+            justify-content: space-between;
+            -webkit-box-align: start;
+            -ms-flex-align: start;
+            align-items: flex-start;
+            margin-bottom: 4px;
+        }
+
+        .chart-title-group {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+        }
+
+        .chart-title {
+            font-size: 52px;
+            font-weight: 400;
+            color: #ffffff;
+            letter-spacing: 0.01em;
+            line-height: 1.2;
+        }
+
+        .chart-title-divider {
+            border: none;
+            border-top: 1px solid #ffffff;
+            margin: 0;
+        }
+
+
+        .chart-subtitle-row {
+            margin-top: 15px;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-pack: justify;
+            -ms-flex-pack: justify;
+            justify-content: space-between;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+        }
+
+        .chart-subtitle {
+            font-size: 43px;
+            color: #D7D5D3;
+        }
+
+        .chart-value-standalone {
+            margin-top: -20px;
+            margin-right: 25px;
+            -webkit-box-pack: end;
+            -ms-flex-pack: end;
+            justify-content: flex-end;
+        }
+
+        .chart-value-group {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .chart-dot {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            -webkit-border-radius: 50%;
+            -ms-border-radius: 50%;
+            display: inline-block;
+            -ms-flex-negative: 0;
+            flex-shrink: 0;
+        }
+
+        .chart-dot-outline {
+            width: 18px;
+            height: 18px;
+            border-radius: 50%;
+            -webkit-border-radius: 50%;
+            border: 3px solid #9e9e9e;
+            display: inline-block;
+            -ms-flex-negative: 0;
+            flex-shrink: 0;
+        }
+
+        .chart-value {
+            font-size: 84px;
+            font-weight: 400;
+            color: #ffffff;
+            line-height: 1;
+        }
+
+        .chart-canvas-wrap {
+            -webkit-box-flex: 1;
+            -ms-flex: 1;
+            flex: 1;
+            min-height: 0;
+            position: relative;
+            margin-top: 8px;
+        }
+
+        .chart-canvas-wrap canvas {
+            display: block;
+            width: 100%;
+            height: 100%;
+        }
+
+        .chart-legend {
+            margin-top: 25px;
+            margin-right: 25px;
+            font-size: 34px;
+            color: #D7D5D3;
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-pack: end;
+            -ms-flex-pack: end;
+            justify-content: flex-end;
+            gap: 28px;
+        }
+
+        .legend-item {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .legend-line-dashed {
+            width: 74px;
+            height: 4px;
+            background-image: linear-gradient(
+                to right,
+                #d3d9d7 0,     #d3d9d7 11px,
+                transparent    11px, transparent 26px,
+                #d3d9d7 26px,  #d3d9d7 48px,
+                transparent    48px, transparent 63px,
+                #d3d9d7 63px,  #d3d9d7 74px
+            );
+        }
+
+        .legend-line-dotted {
+            width: 70px;
+            height: 2px;
+            background-image: repeating-linear-gradient(
+                to right,
+                #d3d9d7 0, #d3d9d7 7px,
+                transparent 7px, transparent 14px
+            );
+        }
+
+        /* ── Panel 2: Metrics ────────────────────────────── */
+
+        .metrics-panel {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+            padding: 60px 64px;
+        }
+
+        .metric-block {
+            padding: 20px 0 10px 0;
+        }
+
+        .metric-name {
+            font-size: 52px;
+            font-weight: 400;
+            color: #f6ffff;
+            margin-bottom: 0;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #ffffff;
+            letter-spacing: 0.01em;
+            line-height: 1.2;
+        }
+
+        .metric-rows {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-orient: vertical;
+            -webkit-box-direction: normal;
+            -ms-flex-direction: column;
+            flex-direction: column;
+            margin-left: 50px;
+        }
+
+        .metric-row {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+            -webkit-box-pack: justify;
+            -ms-flex-pack: justify;
+            justify-content: space-between;
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            padding: 12px 0;
+        }
+
+        /* Divider between rows, matching the chart title divider style */
+        .metric-row + .metric-row {
+            border-top: 1px solid #ffffff;
+        }
+
+        .metric-label-rolling {
+            font-size: 38px;
+            font-weight: 400;
+            color: #ffffff;
+        }
+
+        .metric-label-yesterday {
+            font-size: 36px;
+            font-weight: 400;
+            color: #D7D5D3;
+        }
+
+        .metric-value {
+            font-size: 42px;
+            font-weight: 400;
+            color: #D7D5D3;
+            letter-spacing: 0.04em;
+        }
+
+        /* Rolling row value matches the large chart percentage display */
+        .metric-row:first-child .metric-value {
+            font-size: 60px;
+            font-weight: 400;
+            color: #ffffff;
+            line-height: 1;
+            letter-spacing: normal;
+        }
+
+        /* ── No-data state ───────────────────────────────────── */
+
+        /* Full-screen overlay shown on fresh launch before data arrives.
+           backdrop-filter blurs everything behind it; the semi-transparent
+           background darkens the panel so the label reads clearly. */
+        #no-data-overlay {
+            display: none;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 50;
+            background: rgba(28, 49, 73, 0.55);
+            -webkit-backdrop-filter: blur(12px);
+            backdrop-filter: blur(12px);
+            -webkit-box-align: center;
+            -ms-flex-align: center;
+            align-items: center;
+            -webkit-box-pack: center;
+            -ms-flex-pack: center;
+            justify-content: center;
+        }
+
+        #no-data-overlay.visible {
+            display: -webkit-box;
+            display: -ms-flexbox;
+            display: flex;
+        }
+
+        .no-data-label {
+            font-size: 72px;
+            font-weight: 500;
+            color: rgba(246, 255, 255, 0.92);
+            letter-spacing: 0.05em;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div id="display-root">
+
+        <!-- Panel 1: Charts -->
+        <div id="panel-charts" class="panel chart-panel active">
+
+            <!-- LTR Chart -->
+            <div class="chart-block">
+                <div class="chart-header">
+                    <div class="chart-title-group">
+                        <div class="chart-title">LTR&#8212;Flight Satisfaction Survey</div>
+                    </div>
+                </div>
+                <hr class="chart-title-divider">
+                <div class="chart-subtitle-row">
+                    <div id="ltr-subtitle" class="chart-subtitle">14-Day Rolling</div>
+                </div>
+                <div class="chart-value-group chart-value-standalone">
+                    <div id="ltr-value" class="chart-value">93.5%</div>
+                </div>
+                <div class="chart-canvas-wrap">
+                    <canvas id="canvas-ltr"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-line-dashed"></div>
+                        <span id="ltr-legend-goal">Goal 95%</span>
+                    </div>
+                    <div class="legend-item">
+                        <div class="legend-line-dotted"></div>
+                        <span id="ltr-legend-target">2026 Target 90%</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Flight Satisfaction Score Chart -->
+            <div class="chart-block">
+                <div class="chart-header" style="margin-top: 15px;">
+                    <div class="chart-title-group">
+                        <div class="chart-title">Flight Satisfaction Score</div>
+                    </div>
+                </div>
+                <hr class="chart-title-divider">
+                <div class="chart-subtitle-row">
+                    <div id="fss-subtitle" class="chart-subtitle">14-Day Rolling</div>
+                </div>
+                <div class="chart-value-group chart-value-standalone">
+                    <div id="fss-value" class="chart-value">90.6%</div>
+                </div>
+                <div class="chart-canvas-wrap">
+                    <canvas id="canvas-fss"></canvas>
+                </div>
+                <div class="chart-legend">
+                    <div class="legend-item">
+                        <div class="legend-line-dotted"></div>
+                        <span id="fss-legend-target">2026 Target 90%</span>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /panel-charts -->
+
+        <!-- Panel 2: Metrics -->
+        <div id="panel-metrics" class="panel metrics-panel">
+
+            <div class="metric-block">
+                <div class="metric-name">Perfect Flight</div>
+                <div class="metric-rows">
+                    <div class="metric-row">
+                        <span class="metric-label-rolling">14-Day Rolling</span>
+                        <span id="pf-rolling" class="metric-value">&#8212;%</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label-yesterday">Yesterday</span>
+                        <span id="pf-yesterday" class="metric-value">&#8212;%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-block">
+                <div class="metric-name">On-Time Performance</div>
+                <div class="metric-rows">
+                    <div class="metric-row">
+                        <span class="metric-label-rolling">14-Day Rolling</span>
+                        <span id="otp-rolling" class="metric-value">&#8212;%</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label-yesterday">Yesterday</span>
+                        <span id="otp-yesterday" class="metric-value">&#8212;%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-block">
+                <div class="metric-name">Controllable OTP</div>
+                <div class="metric-rows">
+                    <div class="metric-row">
+                        <span class="metric-label-rolling">14-Day Rolling</span>
+                        <span id="cotp-rolling" class="metric-value">&#8212;%</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label-yesterday">Yesterday</span>
+                        <span id="cotp-yesterday" class="metric-value">&#8212;%</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-block">
+                <div class="metric-name">Service Recovery Time</div>
+                <div class="metric-rows">
+                    <div class="metric-row">
+                        <span class="metric-label-rolling">14-Day Rolling</span>
+                        <span id="srt-rolling" class="metric-value">&#8212; min</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label-yesterday">Yesterday</span>
+                        <span id="srt-yesterday" class="metric-value">&#8212; min</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-block">
+                <div class="metric-name">All-In Service Recovery Time</div>
+                <div class="metric-rows">
+                    <div class="metric-row">
+                        <span class="metric-label-rolling">14-Day Rolling</span>
+                        <span id="aisr-rolling" class="metric-value">&#8212; min</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label-yesterday">Yesterday</span>
+                        <span id="aisr-yesterday" class="metric-value">&#8212; min</span>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /panel-metrics -->
+
+        <!-- Shown on fresh launch when the listener is unreachable.
+             Hidden permanently once the first successful data fetch arrives. -->
+        <div id="no-data-overlay">
+            <div class="no-data-label">No Data Available</div>
+        </div>
+
+    </div><!-- /display-root -->
+
+    <script>
+    (function () {
+        'use strict';
+
+        // ── Configuration ─────────────────────────────────────────
+        var SLIDE_DURATION_MS = 10000;   // milliseconds between screen rotations
+        var DESIGN_W          = 1194;
+        var DESIGN_H          = 1453;
+        var LISTENER_URL      = '/api/netjets/kpi';
+        var POLL_INTERVAL_MS  = 60000;   // data is daily; re-poll every 60 seconds
+
+        // ── Chart state ───────────────────────────────────────────
+        // Arrays start empty; populated on first successful poll.
+        // On subsequent poll failures the last received values are retained.
+        var hasData          = false;
+        var LTR_DATA         = [87.2, 88.5, 86.9, 89.1, 90.3, 88.7, 87.4, 91.2, 90.8, 89.5, 88.3, 90.1, 91.4, 92.0];
+        var FSS_DATA         = [82.1, 83.4, 81.7, 84.2, 85.6, 83.9, 82.5, 86.1, 85.4, 84.8, 83.2, 85.0, 86.3, 87.1];
+        var LTR_GOAL         = 95;
+        var LTR_TARGET       = 90;
+        var FSS_TARGET       = 85;
+        var LTR_COLOR        = '#4db84d';
+        var FSS_COLOR        = '#f5a623';
+        var LTR_LEFT_LABEL   = 'MAR';
+        var LTR_RIGHT_LABEL  = 'APR';
+        var LTR_SPLIT        = 7;        // index of first data point in the right month
+        var LTR_DATES        = [];       // parallel date strings, e.g. ["2026-03-10", ...]
+        var FSS_LEFT_LABEL   = 'MAR';
+        var FSS_RIGHT_LABEL  = 'APR';
+        var FSS_SPLIT        = 7;
+        var FSS_DATES        = [];
+
+        // ── Viewport scaling ──────────────────────────────────────
+        // Scales #display-root to fill the viewport while preserving
+        // the 1194×1453 aspect ratio, centering the result.
+        function scaleToFit() {
+            var vw = window.innerWidth;
+            var vh = window.innerHeight;
+            var scale = Math.min(vw / DESIGN_W, vh / DESIGN_H);
+            var scaledW = DESIGN_W * scale;
+            var scaledH = DESIGN_H * scale;
+            var root = document.getElementById('display-root');
+            root.style.left = Math.round((vw - scaledW) / 2) + 'px';
+            root.style.top  = Math.round((vh - scaledH) / 2) + 'px';
+            root.style.webkitTransform = 'scale(' + scale + ')';
+            root.style.transform = 'scale(' + scale + ')';
+        }
+
+        scaleToFit();
+        window.addEventListener('resize', scaleToFit);
+
+        // ── Slide rotation ────────────────────────────────────────
+        var panels = [
+            document.getElementById('panel-charts'),
+            document.getElementById('panel-metrics')
+        ];
+        var currentPanel = 0;
+
+        function nextSlide() {
+            panels[currentPanel].classList.remove('active');
+            currentPanel = (currentPanel + 1) % panels.length;
+            panels[currentPanel].classList.add('active');
+        }
+
+        setInterval(nextSlide, SLIDE_DURATION_MS);
+
+        // ── Date helpers ─────────────────────────────────────────
+        var MONTH_NAMES = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+
+        // "2026-03-10" → "2026"
+        function yearFromDate(dateStr) {
+            if (!dateStr) { return ''; }
+            return dateStr.substring(0, 4);
+        }
+
+        // "2026-03-10" → "MAR"
+        function monthLabel(dateStr) {
+            if (!dateStr) { return ''; }
+            var parts = dateStr.split('-');
+            if (parts.length >= 2) {
+                var m = parseInt(parts[1], 10);
+                if (m >= 1 && m <= 12) { return MONTH_NAMES[m - 1]; }
+            }
+            return '';
+        }
+
+        // Returns the index of the first date that belongs to a different month
+        // than dates[0].  Returns -1 when all dates share the same month.
+        function computeSplitIndex(dates) {
+            if (!dates || dates.length === 0) { return -1; }
+            var firstMonth = dates[0].substring(0, 7);   // "YYYY-MM"
+            for (var i = 1; i < dates.length; i++) {
+                if (dates[i].substring(0, 7) !== firstMonth) { return i; }
+            }
+            return -1;
+        }
+
+        // ── Chart rendering ───────────────────────────────────────
+        //
+        // dataPoints  — array of percentage values (e.g. [90.2, 91.5, ...])
+        // goalPct     — goal reference line value, or null to omit
+        // targetPct   — target reference line value
+        // dotColor    — hex color for the endpoint dot
+        // showGoal    — whether to draw the goal (dashed) line
+        // leftLabel   — month label drawn at the left quarter of the x-axis
+        // rightLabel  — month label drawn at the right quarter of the x-axis
+        function drawChart(canvasId, dataPoints, goalPct, targetPct, dotColor, showGoal, leftLabel, rightLabel, splitIndex) {
+            var canvas = document.getElementById(canvasId);
+            if (!canvas) { return; }
+
+            // Size canvas to its CSS layout pixel dimensions
+            var wrap = canvas.parentNode;
+            var w = wrap.offsetWidth;
+            var h = wrap.offsetHeight;
+            canvas.width = w;
+            canvas.height = h;
+
+            var ctx = canvas.getContext('2d');
+
+            var padLeft   = 128;
+            var padRight  = 32;
+            var padTop    = 16;
+            var padBottom = 56;
+            var plotW = w - padLeft - padRight;
+            var plotH = h - padTop - padBottom;
+
+            // Dynamic y-axis range: fits data + reference lines with 2% breathing room,
+            // snapped to the nearest 5% boundary.
+            var dataMin = Math.min.apply(null, dataPoints);
+            var dataMax = Math.max.apply(null, dataPoints);
+            var allMax  = dataMax;
+            var allMin  = dataMin;
+            if (showGoal && goalPct !== null) { allMax = Math.max(allMax, goalPct); }
+            if (targetPct !== null)           { allMax = Math.max(allMax, targetPct); allMin = Math.min(allMin, targetPct); }
+            var yMin = Math.floor((allMin - 2) / 5) * 5;
+            var yMax = Math.ceil((allMax  + 2) / 5) * 5;
+            var yRange = yMax - yMin;
+
+            // Map a percentage value to a canvas Y coordinate
+            function toY(pct) {
+                return padTop + plotH - ((pct - yMin) / yRange) * plotH;
+            }
+
+            // Map a data index to a canvas X coordinate
+            function toX(i) {
+                return padLeft + (i / (dataPoints.length - 1)) * plotW;
+            }
+
+            // Y-axis reference lines and labels.
+            // Step size scales up so there are never more than 6 labels,
+            // keeping the axis readable across any data range.
+            // The top boundary is always unlabeled (avoids canvas-edge clipping).
+            var tickStep = Math.max(5, Math.ceil(yRange / 6 / 5) * 5);
+            var yTicks = [];
+            for (var yv = yMin; yv < yMax; yv += tickStep) {
+                yTicks.push(yv);
+            }
+            ctx.font = '43px "GT Zirkon", Arial, sans-serif';
+            ctx.fillStyle = '#ffffff';
+            ctx.textAlign = 'right';
+            for (var t = 0; t < yTicks.length; t++) {
+                var yPx = toY(yTicks[t]);
+                ctx.fillText(yTicks[t] + '%', padLeft - 20, yPx + 5);
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(253,255,255,0.1)';
+                ctx.lineWidth = 1;
+                ctx.moveTo(padLeft, yPx);
+                ctx.lineTo(padLeft + plotW, yPx);
+                ctx.stroke();
+            }
+
+            // Fill under the data line (drawn first so reference lines appear above it)
+            ctx.beginPath();
+            ctx.moveTo(toX(0), padTop + plotH);
+            for (var i = 0; i < dataPoints.length; i++) {
+                ctx.lineTo(toX(i), toY(dataPoints[i]));
+            }
+            ctx.lineTo(toX(dataPoints.length - 1), padTop + plotH);
+            ctx.closePath();
+            ctx.fillStyle = '#3d5369';
+            ctx.fill();
+
+            // X-axis: month divider + labels, positioned from actual data dates.
+            // splitIndex is the first data index belonging to the right-hand month.
+            // -1 (or absent) means all data is within a single month.
+            var hasSplit = (typeof splitIndex === 'number') &&
+                           splitIndex > 0 &&
+                           splitIndex < dataPoints.length;
+
+            var BASE_FONT = 43;
+            var MIN_FONT  = 20;
+
+            if (hasSplit) {
+                // Divider sits at the midpoint between the last left-month point
+                // and the first right-month point, preserving equal-spacing assumption.
+                var dividerX = padLeft + ((splitIndex - 0.5) / (dataPoints.length - 1)) * plotW;
+
+                ctx.beginPath();
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+                ctx.lineWidth = 3;
+                ctx.moveTo(dividerX, padTop);
+                ctx.lineTo(dividerX, h);
+                ctx.stroke();
+
+                var leftPortionW  = dividerX - padLeft;
+                var rightPortionW = (padLeft + plotW) - dividerX;
+
+                ctx.font = BASE_FONT + 'px "GT Zirkon", Arial, sans-serif';
+                ctx.fillStyle = '#ffffff';
+                ctx.textAlign = 'center';
+
+                // Only draw a label if it fits with comfortable padding on each side.
+                if (leftLabel && ctx.measureText(leftLabel).width <= leftPortionW - 16) {
+                    ctx.fillText(leftLabel,  padLeft + (dividerX - padLeft) / 2,  h - 6);
+                }
+                if (rightLabel && ctx.measureText(rightLabel).width <= rightPortionW - 16) {
+                    ctx.fillText(rightLabel, dividerX + ((padLeft + plotW) - dividerX) / 2, h - 6);
+                }
+            } else {
+                // Single month — one centered label, no divider
+                var singleLabel = leftLabel || rightLabel || '';
+                if (singleLabel) {
+                    ctx.fillStyle = '#ffffff';
+                    ctx.textAlign = 'center';
+                    ctx.font = BASE_FONT + 'px "GT Zirkon", Arial, sans-serif';
+                    ctx.fillText(singleLabel, padLeft + plotW / 2, h - 6);
+                }
+            }
+
+            // Goal line (dashed) — only for LTR chart, drawn above fill
+            if (showGoal && goalPct !== null) {
+                var goalY = toY(goalPct);
+                ctx.beginPath();
+                ctx.strokeStyle = '#fdffff';
+                ctx.lineWidth = 3.5;
+                ctx.setLineDash([18, 13]);
+                ctx.moveTo(padLeft, goalY);
+                ctx.lineTo(padLeft + plotW, goalY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Target line (dotted), drawn above fill
+            if (targetPct !== null) {
+                var targetY = toY(targetPct);
+                ctx.beginPath();
+                ctx.strokeStyle = '#fdffff';
+                ctx.lineWidth = 2;
+                ctx.setLineDash([6, 8]);
+                ctx.moveTo(padLeft, targetY);
+                ctx.lineTo(padLeft + plotW, targetY);
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Data line
+            ctx.beginPath();
+            ctx.strokeStyle = '#fdffff';
+            ctx.lineWidth = 5;
+            ctx.lineJoin = 'round';
+            for (var j = 0; j < dataPoints.length; j++) {
+                var px = toX(j);
+                var py = toY(dataPoints[j]);
+                if (j === 0) {
+                    ctx.moveTo(px, py);
+                } else {
+                    ctx.lineTo(px, py);
+                }
+            }
+            ctx.stroke();
+
+            // Endpoint dot — filled circle with white border
+            var lastX = toX(dataPoints.length - 1);
+            var lastY = toY(dataPoints[dataPoints.length - 1]);
+            ctx.beginPath();
+            ctx.arc(lastX, lastY, 25, 0, Math.PI * 2);
+            ctx.fillStyle = dotColor;
+            ctx.fill();
+            ctx.strokeStyle = '#ffffff';
+            ctx.lineWidth = 7;
+            ctx.stroke();
+
+            // Left and bottom axis borders
+            ctx.beginPath();
+            ctx.strokeStyle = '#fdffff';
+            ctx.lineWidth = 1.5;
+            ctx.moveTo(padLeft, padTop);
+            ctx.lineTo(padLeft, padTop + plotH);
+            ctx.lineTo(padLeft + plotW, padTop + plotH);
+            ctx.stroke();
+        }
+
+        // ── Draw both charts from current state variables ─────────
+        function redrawCharts() {
+            if (!LTR_DATA.length || !FSS_DATA.length) { return; }
+            drawChart('canvas-ltr', LTR_DATA, LTR_GOAL, LTR_TARGET, LTR_COLOR, true,  LTR_LEFT_LABEL, LTR_RIGHT_LABEL, LTR_SPLIT);
+            drawChart('canvas-fss', FSS_DATA, null,     FSS_TARGET, FSS_COLOR, false, FSS_LEFT_LABEL, FSS_RIGHT_LABEL, FSS_SPLIT);
+        }
+
+        // ── No-data overlay ───────────────────────────────────────
+        // Shown on fresh launch when the listener is unreachable.
+        // Once data arrives it is hidden and never shown again —
+        // subsequent failures retain the last-known chart state instead.
+        function showNoDataState() {
+            var overlay = document.getElementById('no-data-overlay');
+            if (overlay) { overlay.className = 'visible'; }
+        }
+
+        function clearNoDataState() {
+            var overlay = document.getElementById('no-data-overlay');
+            if (overlay) { overlay.className = ''; }
+        }
+
+        // ── setText: safe null-guarded DOM update ─────────────────
+        function setText(id, text) {
+            var el = document.getElementById(id);
+            if (el) { el.innerHTML = text; }
+        }
+
+        // ── applyKpiData: push live payload into DOM + charts ─────
+        function applyKpiData(data) {
+            // ── LTR chart ──────────────────────────────────────────
+            if (data.ltr) {
+                var ltr = data.ltr;
+                if (ltr.data && ltr.data.length) { LTR_DATA = ltr.data; }
+                if (typeof ltr.goal   === 'number') { LTR_GOAL   = ltr.goal;   }
+                if (typeof ltr.target === 'number') { LTR_TARGET = ltr.target; }
+                if (ltr.color) { LTR_COLOR = ltr.color; }
+                // Derive labels and split position from the actual date strings so
+                // the divider lands on the real month boundary, not the midpoint.
+                if (ltr.dates && ltr.dates.length) {
+                    LTR_DATES       = ltr.dates;
+                    LTR_LEFT_LABEL  = monthLabel(LTR_DATES[0]);
+                    LTR_RIGHT_LABEL = monthLabel(LTR_DATES[LTR_DATES.length - 1]);
+                    LTR_SPLIT       = computeSplitIndex(LTR_DATES);
+                } else {
+                    if (ltr.leftLabel)  { LTR_LEFT_LABEL  = ltr.leftLabel;  }
+                    if (ltr.rightLabel) { LTR_RIGHT_LABEL = ltr.rightLabel; }
+                }
+                if (ltr.rollingWindow) {
+                    setText('ltr-subtitle', ltr.rollingWindow + '-Day Rolling');
+                }
+                if (typeof ltr.currentValue === 'number') {
+                    setText('ltr-value', ltr.currentValue.toFixed(1) + '%');
+                }
+                // Legend: "Goal 95%" / "2026 Target 90%"
+                if (typeof ltr.goal   === 'number') { setText('ltr-legend-goal',   'Goal ' + ltr.goal.toFixed(1) + '%'); }
+                if (typeof ltr.target === 'number') {
+                    var ltrYear = yearFromDate(LTR_DATES[LTR_DATES.length - 1]) || '2026';
+                    setText('ltr-legend-target', ltrYear + ' Target ' + ltr.target.toFixed(1) + '%');
+                }
+            }
+
+            // ── FSS chart ──────────────────────────────────────────
+            if (data.fss) {
+                var fss = data.fss;
+                if (fss.data && fss.data.length) { FSS_DATA = fss.data; }
+                if (typeof fss.target === 'number') { FSS_TARGET = fss.target; }
+                if (fss.color) { FSS_COLOR = fss.color; }
+                if (fss.dates && fss.dates.length) {
+                    FSS_DATES       = fss.dates;
+                    FSS_LEFT_LABEL  = monthLabel(FSS_DATES[0]);
+                    FSS_RIGHT_LABEL = monthLabel(FSS_DATES[FSS_DATES.length - 1]);
+                    FSS_SPLIT       = computeSplitIndex(FSS_DATES);
+                } else {
+                    if (fss.leftLabel)  { FSS_LEFT_LABEL  = fss.leftLabel;  }
+                    if (fss.rightLabel) { FSS_RIGHT_LABEL = fss.rightLabel; }
+                }
+                if (fss.rollingWindow) {
+                    setText('fss-subtitle', fss.rollingWindow + '-Day Rolling');
+                }
+                if (typeof fss.currentValue === 'number') {
+                    setText('fss-value', fss.currentValue.toFixed(1) + '%');
+                }
+                if (typeof fss.target === 'number') {
+                    var fssYear = yearFromDate(FSS_DATES[FSS_DATES.length - 1]) || '2026';
+                    setText('fss-legend-target', fssYear + ' Target ' + fss.target.toFixed(1) + '%');
+                }
+            }
+
+            // ── Metrics panel ──────────────────────────────────────
+            if (data.metrics) {
+                var m = data.metrics;
+
+                if (m.perfectFlight) {
+                    setText('pf-rolling',   m.perfectFlight.rollingAvg.toFixed(1) + '%');
+                    setText('pf-yesterday', m.perfectFlight.yesterday.toFixed(1)  + '%');
+                }
+                if (m.otp) {
+                    setText('otp-rolling',   m.otp.rollingAvg.toFixed(1) + '%');
+                    setText('otp-yesterday', m.otp.yesterday.toFixed(1)  + '%');
+                }
+                if (m.cotp) {
+                    setText('cotp-rolling',   m.cotp.rollingAvg.toFixed(1) + '%');
+                    setText('cotp-yesterday', m.cotp.yesterday.toFixed(1)  + '%');
+                }
+                if (m.srt) {
+                    setText('srt-rolling',   m.srt.rollingAvgMinutes.toFixed(1) + ' min');
+                    setText('srt-yesterday', m.srt.yesterdayMinutes.toFixed(1)  + ' min');
+                }
+                if (m.allInSrt) {
+                    setText('aisr-rolling',   m.allInSrt.rollingAvgMinutes.toFixed(1) + ' min');
+                    setText('aisr-yesterday', m.allInSrt.yesterdayMinutes.toFixed(1)  + ' min');
+                }
+            }
+
+            hasData = true;
+            clearNoDataState();
+            redrawCharts();
+        }
+
+        // ── pollKpiData: XHR GET to Moxie listener ────────────────
+        // On success, applies live data. On any error, keeps existing
+        // chart state so the display never goes blank.
+        function pollKpiData() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', LISTENER_URL, true);
+            xhr.timeout = 10000;   // 10-second timeout
+
+            xhr.onreadystatechange = function () {
+                if (xhr.readyState !== 4) { return; }
+                if (xhr.status === 200) {
+                    try {
+                        var data = JSON.parse(xhr.responseText);
+                        applyKpiData(data);
+                    } catch (e) {
+                        console.log('[KPI] JSON parse error: ' + e);
+                        if (!hasData) { showNoDataState(); }
+                    }
+                } else {
+                    console.log('[KPI] Listener returned status ' + xhr.status + ' — keeping existing data');
+                    if (!hasData) { showNoDataState(); }
+                }
+            };
+
+            xhr.ontimeout = function () {
+                console.log('[KPI] Listener request timed out — keeping existing data');
+                if (!hasData) { showNoDataState(); }
+            };
+
+            xhr.onerror = function () {
+                console.log('[KPI] Listener unreachable — keeping existing data');
+                if (!hasData) { showNoDataState(); }
+            };
+
+            xhr.send();
+        }
+
+        // ── Initialization ────────────────────────────────────────
+        // Show the no-data overlay immediately on load so the display
+        // never sits blank waiting for the first poll to resolve.
+        // The overlay clears automatically when data arrives.
+        window.addEventListener('load', function () {
+            scaleToFit();
+            redrawCharts();
+            showNoDataState();
+            pollKpiData();
+            setInterval(pollKpiData, POLL_INTERVAL_MS);
+        });
+
+    })();
+    </script>
+</body>
+</html>

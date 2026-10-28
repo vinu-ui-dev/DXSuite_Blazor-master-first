@@ -1,0 +1,103 @@
+@using DXSuite.Director.Services
+@inject IBatchDeploymentStateService StateService
+@implements IDisposable
+
+@if (StateService.IsMinimized && Progress != null)
+{
+    <div class="batch-deployment-minimized-bar">
+        <div class="d-flex align-items-center gap-2 px-3 py-2 bg-dark text-white" style="border-radius: 4px; cursor: pointer;" @onclick="Expand">
+            <!-- Status Icon -->
+            <span class="status-icon">
+                @if (Progress.BatchStatus == "IN_PROGRESS")
+                {
+                    <span class="spinner-border spinner-border-sm text-primary" role="status"></span>
+                }
+                else if (Progress.BatchStatus == "COMPLETED")
+                {
+                    <i class="bi bi-check-circle-fill text-success"></i>
+                }
+                else if (Progress.BatchStatus == "PAUSED")
+                {
+                    <i class="bi bi-exclamation-triangle-fill text-warning"></i>
+                }
+                else if (Progress.BatchStatus == "FAILED")
+                {
+                    <i class="bi bi-x-circle-fill text-danger"></i>
+                }
+            </span>
+
+            <!-- Deployment Name -->
+            <span class="deployment-name text-truncate" style="max-width: 150px;" title="@Progress.DeploymentName">
+                @Progress.DeploymentName
+            </span>
+
+            <!-- Progress Bar -->
+            <div class="progress flex-grow-1" style="height: 8px; min-width: 100px; max-width: 200px;">
+                <div class="progress-bar @GetProgressBarClass()"
+                     role="progressbar"
+                     style="width: @Progress.ProgressPercent%;"
+                     aria-valuenow="@Progress.ProgressPercent"
+                     aria-valuemin="0"
+                     aria-valuemax="100">
+                </div>
+            </div>
+
+            <!-- Progress Stats -->
+            <span class="progress-stats small">
+                @Progress.CompletedCount/@Progress.TotalDevices
+                @if (Progress.FailedCount > 0)
+                {
+                    <span class="text-danger ms-1">(@Progress.FailedCount failed)</span>
+                }
+            </span>
+
+            <!-- Close Button -->
+            @if (Progress.BatchStatus == "COMPLETED" || Progress.BatchStatus == "FAILED")
+            {
+                <button type="button" class="btn btn-sm btn-link text-white p-0 ms-2" @onclick="Dismiss" @onclick:stopPropagation="true" title="Dismiss">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    private BatchDeploymentProgress? Progress => StateService.CurrentProgress;
+
+    protected override void OnInitialized()
+    {
+        StateService.OnModalVisibilityChanged += OnStateChanged;
+        StateService.OnProgressUpdated += OnStateChanged;
+    }
+
+    private void OnStateChanged()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void Expand()
+    {
+        StateService.Expand();
+    }
+
+    private void Dismiss(MouseEventArgs args)
+    {
+        StateService.Dismiss();
+    }
+
+    private string GetProgressBarClass() => Progress?.BatchStatus switch
+    {
+        "IN_PROGRESS" => "bg-primary progress-bar-striped progress-bar-animated",
+        "PAUSED" => "bg-warning",
+        "COMPLETED" => "bg-success",
+        "FAILED" => "bg-danger",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        StateService.OnModalVisibilityChanged -= OnStateChanged;
+        StateService.OnProgressUpdated -= OnStateChanged;
+    }
+}

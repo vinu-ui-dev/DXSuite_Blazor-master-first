@@ -1,0 +1,376 @@
+@rendermode InteractiveServer
+@using DXSuite.Aviation.Entities
+@using DXSuite.CoreData.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.DependencyInjection
+@using Microsoft.Extensions.Logging
+@inject IServiceScopeFactory ScopeFactory
+@inject IDbContextFactory<AviationDbContext> AviationDbFactory
+@inject IDbContextFactory<CoreDataDbContext> CoreDataDbFactory
+@inject ILogger<CitiesTab> Logger
+
+<div class="dx-card" style="display:flex; flex-direction:column;">
+    <div class="dx-panel-header">
+        <h4>Cities</h4>
+    </div>
+    <div class="dx-panel-content" style="padding:24px;">
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="dx-alert dx-alert-danger" style="margin-bottom:16px;">@errorMessage</div>
+        }
+
+        <div class="dx-form-row" style="margin-bottom:16px;">
+            <div class="dx-form-group" style="flex:2; position:relative;">
+                <label class="dx-form-label">Search City</label>
+                <input type="text" class="dx-form-control" autocomplete="off"
+                       value="@selectedCityName"
+                       @oninput="OnCitySearchInput"
+                       @onclick="ShowCities"
+                       placeholder="Start typing city name or IATA code..." />
+
+                @if (filteredCities.Any() && showCities)
+                {
+                    <div class="dx-typeahead-dropdown">
+                        @foreach (var city in filteredCities)
+                        {
+                            <button class="dx-typeahead-item" @onclick="() => SelectCity(city)">
+                                <div class="dx-truncate">
+                                    @city.Name (@city.IataCode)
+                                </div>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+
+            <div class="dx-form-group" style="flex:1;">
+                <label class="dx-form-label">Airport Code</label>
+                <input type="text" class="dx-form-control" value="@selectedAirportCode" readonly />
+            </div>
+        </div>
+
+        <div class="dx-form-group" style="margin-bottom:16px;">
+            <label class="dx-form-label">Search Languages</label>
+            <div style="display:flex; gap:8px; align-items:flex-start; position:relative;">
+                <div style="flex:1; position:relative;">
+                    <input type="text" class="dx-form-control" autocomplete="off"
+                           value="@selectedLanguageName"
+                           @oninput="OnLanguageSearchInput"
+                           @onclick="ShowLanguages"
+                           placeholder="Start typing language name..." />
+
+                    @if (filteredLanguages.Any() && showLanguages)
+                    {
+                        <div class="dx-typeahead-dropdown">
+                            @foreach (var language in filteredLanguages)
+                            {
+                                <button class="dx-typeahead-item" @onclick="() => SelectLanguage(language)">
+                                    <div class="dx-truncate">
+                                        @language.LanguageName
+                                    </div>
+                                </button>
+                            }
+                        </div>
+                    }
+                </div>
+
+                @if (selectedCity != null && selectedLanguage != null)
+                {
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:2px;" @onclick="() => AddLanguage(selectedLanguage, selectedCity)">Add</button>
+                }
+                else
+                {
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" style="margin-top:2px;" disabled>Add</button>
+                }
+            </div>
+        </div>
+
+        @if (assignedLanguages.Count > 0)
+        {
+            <div class="dx-form-group" style="margin-bottom:16px;">
+                <label class="dx-form-label">Assigned Languages</label>
+                <div class="dx-scrollable" style="max-height:180px; border:1px solid var(--dx-border-color, #dee2e6); border-radius:4px;">
+                    @foreach (var language in assignedLanguages)
+                    {
+                        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--dx-border-color, #f0f0f0);">
+                            <span>@language.LanguageName</span>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RemoveLanguage(language, selectedCity!)">Remove</button>
+                        </div>
+                    }
+                </div>
+            </div>
+        }
+
+    </div>
+</div>
+
+<style>
+    .dx-typeahead-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        right: 0;
+        z-index: 1000;
+        background: #fff;
+        border: 1px solid #dee2e6;
+        border-radius: 4px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.12);
+        max-height: 220px;
+        overflow-y: auto;
+    }
+
+    .dx-typeahead-item {
+        display: block;
+        width: 100%;
+        padding: 8px 12px;
+        text-align: left;
+        background: none;
+        border: none;
+        border-bottom: 1px solid #f0f0f0;
+        cursor: pointer;
+        font-size: 0.875rem;
+    }
+
+    .dx-typeahead-item:hover {
+        background: #f5f8ff;
+    }
+
+    .dx-typeahead-item:last-child {
+        border-bottom: none;
+    }
+</style>
+
+@code {
+    private string errorMessage = "";
+
+    // City state
+    private List<TblLocation> allCities = new();
+    private List<TblLocation> filteredCities = new();
+    private TblLocation? selectedCity;
+    private string selectedCityName = "";
+    private string selectedAirportCode = "";
+    private bool showCities = false;
+
+    // Language state
+    private List<TblLanguage> allLanguages = new();
+    private List<TblLanguage> filteredLanguages = new();
+    private List<TblLanguage> assignedLanguages = new();
+    private TblLanguage? selectedLanguage;
+    private string selectedLanguageName = "";
+    private bool showLanguages = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var aviationDb = await AviationDbFactory.CreateDbContextAsync();
+        await using var coreDataDb = await CoreDataDbFactory.CreateDbContextAsync();
+
+        allCities = await aviationDb.TblLocations
+            .OrderBy(l => l.Name)
+            .ToListAsync();
+
+        allLanguages = await coreDataDb.TblLanguages
+            .OrderBy(l => l.LanguageName)
+            .ToListAsync();
+
+        filteredLanguages = allLanguages;
+    }
+
+    private void OnCitySearchInput(ChangeEventArgs e)
+    {
+        var term = e.Value?.ToString() ?? "";
+        selectedCityName = term;
+
+        if (term.Length >= 3)
+        {
+            showCities = true;
+            showLanguages = false;
+
+            filteredCities = allCities
+                .Where(c => c.IataCode.Contains(term, StringComparison.OrdinalIgnoreCase) ||
+                            (c.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false))
+                .ToList();
+        }
+        else
+        {
+            filteredCities.Clear();
+        }
+    }
+
+    private void OnLanguageSearchInput(ChangeEventArgs e)
+    {
+        var term = e.Value?.ToString() ?? "";
+        selectedLanguageName = term;
+
+        if (term.Length >= 1)
+        {
+            filteredLanguages = allLanguages
+                .Where(l => l.LanguageName.Contains(term, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+        }
+        else
+        {
+            filteredLanguages = allLanguages;
+        }
+    }
+
+    private async void SelectCity(TblLocation city)
+    {
+        selectedCity = city;
+        selectedCityName = city.Name ?? city.IataCode;
+        selectedAirportCode = city.IataCode;
+        filteredCities.Clear();
+        showCities = false;
+
+        await LoadCityLanguages();
+    }
+
+    private void SelectLanguage(TblLanguage language)
+    {
+        selectedLanguage = language;
+        selectedLanguageName = language.LanguageName;
+        showLanguages = false;
+    }
+
+    private void ShowLanguages()
+    {
+        showLanguages = !showLanguages;
+        if (showLanguages) showCities = false;
+    }
+
+    private void ShowCities()
+    {
+        showCities = !showCities;
+        if (showCities) showLanguages = false;
+    }
+
+    private async Task AddLanguage(TblLanguage language, TblLocation city)
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+
+        try
+        {
+            var cityEntry = await aviationDb.TblLocations
+                .FirstOrDefaultAsync(l => l.IataCode == city.IataCode);
+
+            if (cityEntry == null)
+            {
+                errorMessage = $"Unable to find city '{city.Name}'.";
+            }
+            else
+            {
+                var existingCodes = string.IsNullOrWhiteSpace(cityEntry.LanguageCodes)
+                    ? new List<string>()
+                    : cityEntry.LanguageCodes.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToList();
+
+                if (existingCodes.Contains(language.LanguageCode, StringComparer.OrdinalIgnoreCase))
+                {
+                    errorMessage = $"The language '{language.LanguageName}' is already linked to '{city.Name}'.";
+                }
+                else
+                {
+                    existingCodes.Add(language.LanguageCode);
+                    cityEntry.LanguageCodes = string.Join(",", existingCodes);
+                    await aviationDb.SaveChangesAsync();
+                    errorMessage = "";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving language code");
+            errorMessage = "An error occurred while saving the language assignment.";
+        }
+
+        await LoadCityLanguages();
+
+        selectedLanguage = null;
+        selectedLanguageName = "";
+        StateHasChanged();
+    }
+
+    private async Task RemoveLanguage(TblLanguage language, TblLocation city)
+    {
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+
+        try
+        {
+            var cityEntry = await aviationDb.TblLocations
+                .FirstOrDefaultAsync(l => l.IataCode == city.IataCode);
+
+            if (cityEntry == null)
+            {
+                errorMessage = $"Unable to find city '{city.Name}'.";
+            }
+            else
+            {
+                var existingCodes = cityEntry.LanguageCodes?.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToList()
+                                    ?? new List<string>();
+
+                var toRemove = existingCodes.FirstOrDefault(c => c.Equals(language.LanguageCode, StringComparison.OrdinalIgnoreCase));
+                if (toRemove != null)
+                {
+                    existingCodes.Remove(toRemove);
+                    cityEntry.LanguageCodes = string.Join(",", existingCodes);
+                    await aviationDb.SaveChangesAsync();
+                    errorMessage = "";
+                }
+                else
+                {
+                    errorMessage = $"The language '{language.LanguageName}' is not linked to '{city.Name}'.";
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error removing language");
+            errorMessage = "An error occurred while removing the language assignment.";
+        }
+
+        await LoadCityLanguages();
+        StateHasChanged();
+    }
+
+    private async Task LoadCityLanguages()
+    {
+        if (selectedCity == null)
+        {
+            assignedLanguages = new List<TblLanguage>();
+            return;
+        }
+
+        await using var scope = ScopeFactory.CreateAsyncScope();
+        await using var aviationDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
+            .CreateDbContextAsync();
+        await using var coreDataDb = await scope.ServiceProvider
+            .GetRequiredService<IDbContextFactory<CoreDataDbContext>>()
+            .CreateDbContextAsync();
+
+        var cityEntry = await aviationDb.TblLocations
+            .FirstOrDefaultAsync(l => l.IataCode == selectedCity.IataCode);
+
+        if (cityEntry == null)
+        {
+            assignedLanguages = new List<TblLanguage>();
+            StateHasChanged();
+            return;
+        }
+
+        var codes = cityEntry.LanguageCodes?.Split(',').Select(c => c.Trim()).Where(c => c.Length > 0).ToList()
+                    ?? new List<string>();
+
+        assignedLanguages = await coreDataDb.TblLanguages
+            .Where(l => codes.Contains(l.LanguageCode))
+            .OrderBy(l => l.LanguageName)
+            .ToListAsync();
+
+        StateHasChanged();
+    }
+}

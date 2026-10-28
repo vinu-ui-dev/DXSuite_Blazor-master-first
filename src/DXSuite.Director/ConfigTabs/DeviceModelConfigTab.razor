@@ -1,0 +1,109 @@
+@using Microsoft.EntityFrameworkCore
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@rendermode InteractiveServer
+
+@if (isLoading)
+{
+    <div style="position:relative; min-height:120px;">
+        <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+    </div>
+}
+else
+{
+    <div class="dx-panel-header">
+        <h4>Device Model Config</h4>
+        <div class="dx-panel-controls">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="Load">Refresh</button>
+        </div>
+    </div>
+
+    @if (configs.Count == 0)
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No device models found</h5>
+            <p class="dx-text-muted">Make/model combinations appear here automatically when a device first checks in.</p>
+        </div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table" style="min-width:max-content;">
+                <div class="dx-table-header" style="grid-template-columns: 200px 200px 120px 120px;">
+                    <div>Make</div>
+                    <div>Model</div>
+                    <div>Profiles</div>
+                    <div></div>
+                </div>
+                @foreach (var cfg in configs)
+                {
+                    var profileCount = GetProfileCount(cfg);
+                    <div class="dx-table-row" style="grid-template-columns: 200px 200px 120px 120px;">
+                        <div class="dx-truncate">@cfg.Manufacturer</div>
+                        <div class="dx-truncate">@cfg.Model</div>
+                        <div>
+                            @if (profileCount > 0)
+                            {
+                                <span class="dx-badge dx-badge-blue">@profileCount profile@(profileCount == 1 ? "" : "s")</span>
+                            }
+                            else
+                            {
+                                <span class="dx-text-muted" style="font-size:0.85rem;">None</span>
+                            }
+                        </div>
+                        <div>
+                            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenModal(cfg)">
+                                Edit
+                            </button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+    }
+}
+
+<DeviceEncodingModal @ref="encodingModal" OnSave="Load" />
+
+@code {
+    private List<TblDeviceModelConfig> configs = new();
+    private bool isLoading = true;
+    private DeviceEncodingModal? encodingModal;
+
+    protected override async Task OnInitializedAsync() => await Load();
+
+    private async Task Load()
+    {
+        isLoading = true;
+        StateHasChanged();
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            configs = await db.TblDeviceModelConfigs
+                .AsNoTracking()
+                .OrderBy(c => c.Manufacturer).ThenBy(c => c.Model)
+                .ToListAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading device model configs: {ex.Message}");
+            configs = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private static int GetProfileCount(TblDeviceModelConfig cfg)
+    {
+        if (string.IsNullOrEmpty(cfg.ProfilesJson)) return 0;
+        var profiles = ExtendedDataHelper.Parse<List<EncodingProfile>>(cfg.ProfilesJson);
+        return profiles?.Count ?? 0;
+    }
+
+    private async Task OpenModal(TblDeviceModelConfig cfg)
+    {
+        if (encodingModal != null)
+            await encodingModal.Open(cfg);
+    }
+}

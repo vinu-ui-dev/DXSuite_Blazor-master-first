@@ -1,0 +1,547 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using static DXSuite.Director.Models.Types
+@using Microsoft.EntityFrameworkCore
+@inject IJSRuntime JSRuntime
+@inject ISessionState sessionState
+@inject IAssetApprovalService approvalService
+@inject IContentScopeService contentScopeService
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ILogger<ScheduleAssetPanel> Logger
+
+@* Shared asset library: add-content buttons + filtered asset grid. Used by the
+   ScheduleEditor (drag/tap sources for the schedule builder), the Assets tab
+   (browse/manage), and the Set Default Content modal (picker without uploads). *@
+
+<style>
+    .asset-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15) !important;
+    }
+
+    .asset-readonly {
+        opacity: 0.7;
+        pointer-events: none;
+        position: relative;
+    }
+
+    /* Mouse devices reveal Delete on hover; touch devices get it always
+       visible since hover states never fire on touchscreens. */
+    .asset-delete-btn {
+        display: none;
+    }
+
+    .asset-delete-btn.asset-delete-btn-visible {
+        display: inline-flex;
+    }
+
+    @@media (pointer: coarse) {
+        .asset-delete-btn {
+            display: inline-flex;
+        }
+    }
+
+    /* View/Add action row at the bottom of each card */
+    .asset-card-actions {
+        display: flex;
+        gap: 6px;
+        margin-top: 4px;
+    }
+
+    .asset-card-actions .dx-btn {
+        flex: 1;
+        padding: 6px 12px;
+        font-size: 12px;
+    }
+
+    .asset-corporate-badge {
+        position: absolute;
+        bottom: 5px;
+        left: 5px;
+        right: 5px;
+        background-color: #607D8B;
+        color: white;
+        padding: 3px 6px;
+        border-radius: 3px;
+        z-index: 50;
+        font-weight: bold;
+        font-size: 9px;
+        text-align: center;
+    }
+
+    .sap-gray-box {
+        background-color: #F2F2F2;
+        border-radius: 4px;
+        padding: 20px;
+    }
+
+    .sap-media-buttons {
+        display: flex;
+        gap: 10px;
+        justify-content: flex-end;
+        flex-wrap: wrap;
+    }
+
+    .sap-media-dropdown {
+        display: none;
+    }
+
+    @@media (max-width: 768px) {
+        .sap-gray-box {
+            padding: 10px;
+        }
+
+        .sap-media-buttons {
+            display: none;
+        }
+
+        .sap-media-dropdown {
+            display: block;
+        }
+    }
+
+    .sap-header-row {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+        flex-wrap: wrap;
+        border-bottom: 2px solid #F2F2F2;
+        padding-bottom: 8px;
+        margin-bottom: 20px;
+    }
+
+    .sap-section-title {
+        color: #333333;
+        margin: 0;
+        font-weight: bold;
+    }
+</style>
+
+@* Title on the left, add-content buttons right-justified in the same row
+   (mirrors the Playlist section header) *@
+<div class="sap-header-row">
+    <h4 class="sap-section-title">Available Assets</h4>
+    @if (ShowUploadButtons && UserAccess?.AccessLevel != "view" && UploadTypes.AnyEnabled)
+    {
+        <div class="sap-media-buttons">
+            @if (UploadTypes.MediaUpload)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="() => OpenMediaUploader?.Invoke(null)">ADD MEDIA +</button>
+            }
+            @if (UploadTypes.WebContent)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="() => OpenWebUploader?.Invoke()">ADD WEB +</button>
+            }
+            @if (UploadTypes.Stream)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="() => OpenStreamUploader?.Invoke()">ADD STREAM +</button>
+            }
+            @if (UploadTypes.CreateMedia)
+            {
+                <button class="dx-btn dx-btn-blue" @onclick="() => OpenMediaCreator?.Invoke()">CREATE MEDIA +</button>
+            }
+        </div>
+
+        @* On narrow screens the button row becomes a tall stack; offer one dropdown instead *@
+        <div class="sap-media-dropdown">
+            <select class="dx-form-control" @bind="addContentSelection" @bind:after="OnAddContentSelected">
+                <option value="">ADD CONTENT +</option>
+                @if (UploadTypes.MediaUpload)
+                {
+                    <option value="media">Add Media</option>
+                }
+                @if (UploadTypes.WebContent)
+                {
+                    <option value="web">Add Web</option>
+                }
+                @if (UploadTypes.Stream)
+                {
+                    <option value="stream">Add Stream</option>
+                }
+                @if (UploadTypes.CreateMedia)
+                {
+                    <option value="create-media">Create Media</option>
+                }
+            </select>
+        </div>
+    }
+</div>
+@if (ShowContentFilterDropdown())
+{
+    <div style="margin-bottom: 15px;">
+        <ContentFilterDropdown Options="contentFilterOptions"
+                               OnFilterChanged="OnContentFilterChanged" />
+    </div>
+}
+<div class="sap-gray-box">
+    <div style="display: flex; gap: 15px; flex-wrap: wrap;">
+        @foreach (var filteredAsset in GetFilteredAssets())
+        {
+            var asset = filteredAsset.Asset;
+            var isReadOnly = filteredAsset.IsReadOnly;
+            var assetApproval = GetApprovalForAsset(asset.AssetId);
+            var showApprovalOverlay = ShouldShowApprovalOverlay(assetApproval);
+            var approvalStatusText = GetApprovalStatusText(assetApproval);
+            var isPendingApproval = assetApproval?.ApprovalStatus == (int)ApprovalStatus.Pending;
+            var isDraggable = AllowDrag && !isPendingApproval && !isReadOnly;
+
+            <div class="asset-card @(isReadOnly ? "asset-readonly" : "")" style="background-color: white; border-radius: 4px; padding: 15px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); text-align: center; min-width: 150px; position: relative; cursor: @(isPendingApproval || isReadOnly ? "not-allowed" : "pointer"); transition: transform 0.2s, box-shadow 0.2s; @(showApprovalOverlay ? "opacity: 0.5;" : "")"
+                 @onmouseover="(() => OnMouseOver(asset.AssetId))"
+                 @onmouseout="OnMouseOut"
+                 @ondragstart="@(()=> { if (isDraggable) { OnDragStart?.Invoke(asset); } })"
+                 draggable="@(isDraggable.ToString().ToLower())">
+
+                <!-- Asset Preview Card (not clickable: opening the asset is the View
+                     button's job, so a drag can't accidentally open the image) -->
+                <div style="width: 120px; height: 90px; border-radius: 3px; overflow: hidden; margin: 0 auto 10px; position: relative; @(showApprovalOverlay ? "filter: grayscale(100%);" : "")">
+                    <AssetPreviewCard Asset="asset" />
+                </div>
+
+                <!-- Approval Status Overlay -->
+                @if (showApprovalOverlay)
+                {
+                    var badgeColor = isPendingApproval ? "#FF9800" : "#F44336";
+                    var badgeIcon = isPendingApproval ? "⏱" : "✕";
+                    <div style="position: absolute; top: 5px; left: 5px; right: 5px; background-color: @badgeColor; color: white; padding: 6px 8px; border-radius: 4px; z-index: 50; font-weight: bold; font-size: 10px; text-align: center; box-shadow: 0 2px 4px rgba(0,0,0,0.2);">
+                        @badgeIcon @approvalStatusText
+                    </div>
+                }
+
+                @if (isReadOnly)
+                {
+                    <div class="asset-corporate-badge">@ReadOnlyBadge(asset)</div>
+                }
+
+                <!-- Asset Info -->
+                <div style="color: #4D4D4D; margin-bottom: 8px; font-size: 11px; font-weight: bold;
+                            width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"
+                     title="@(GetAssetDisplayName(asset))">
+                    @(GetAssetDisplayName(asset))
+                </div>
+
+                <!-- View opens the asset in a new tab; Add is a click alternative to
+                     drag-and-drop (and the only path on touchscreens) -->
+                <div class="asset-card-actions">
+                    <button class="dx-btn dx-btn-gray"
+                            @onclick="() => ViewAsset(asset)">
+                        View
+                    </button>
+                    @if (OnAssetAdd.HasDelegate && !isPendingApproval && !isReadOnly)
+                    {
+                        <button class="dx-btn dx-btn-blue"
+                                @onclick="() => OnAssetAdd.InvokeAsync(asset)">
+                            Add
+                        </button>
+                    }
+                    @if (OnAssetReplace != null && !isReadOnly && !isPendingApproval
+                        && (asset.AssetTypeId == (int)AssetType.Image || asset.AssetTypeId == (int)AssetType.Video))
+                    {
+                        <button class="dx-btn dx-btn-blue"
+                                @onclick="() => OnAssetReplace?.Invoke(asset)">
+                            Replace
+                        </button>
+                    }
+                </div>
+
+                <!-- Delete Button (hover-revealed on mouse devices, always shown on touch) -->
+                @if (AllowDelete && !isReadOnly)
+                {
+                    <button class="dx-btn dx-btn-red asset-delete-btn @(hoverAssetId == asset.AssetId ? "asset-delete-btn-visible" : "")"
+                            @onclick="() => OnAssetDelete?.Invoke(asset.AssetId, asset.LocationId)"
+                            style="position: absolute; top: 5px; right: 5px; padding: 4px 8px; font-size: 10px; z-index: 100;">
+                        Delete
+                    </button>
+                }
+
+                @if (AllowDelete && !isReadOnly && asset.AssetTypeId == (int)AssetType.Web && OnWebAssetEdit != null)
+                {
+                    <button class="dx-btn dx-btn-blue asset-delete-btn @(hoverAssetId == asset.AssetId ? "asset-delete-btn-visible" : "")"
+                            @onclick="() => OnWebAssetEdit?.Invoke(asset)"
+                            style="position: absolute; top: 5px; left: 5px; padding: 4px 8px; font-size: 10px; z-index: 100;">
+                        Edit
+                    </button>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter] public TblDisplay? Display { get; set; }
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public Action<TblAsset>? OnAssetReplace { get; set; }
+    [Parameter] public IList<TblAsset> AssetList { get; set; } = new List<TblAsset>();
+    [Parameter] public bool EnableContentApproval { get; set; } = false;
+    [Parameter] public UploadTypeSettings UploadTypes { get; set; } = new();
+    [Parameter] public ResolvedAccess? UserAccess { get; set; }
+
+    // Feature switches per host surface: the default-content modal hides uploads,
+    // the Assets tab hides drag (there is no drop target on that tab).
+    [Parameter] public bool ShowUploadButtons { get; set; } = true;
+    [Parameter] public bool AllowDrag { get; set; } = true;
+    [Parameter] public bool AllowDelete { get; set; } = true;
+
+    [Parameter] public Action<MediaFile?>? OpenMediaUploader { get; set; }
+    [Parameter] public Action? OpenWebUploader { get; set; }
+    [Parameter] public Action? OpenStreamUploader { get; set; }
+    [Parameter] public Action? OpenMediaCreator { get; set; }
+    [Parameter] public Action<TblAsset>? OnDragStart { get; set; }
+    [Parameter] public Action<int, int>? OnAssetDelete { get; set; }
+    [Parameter] public Action<TblAsset>? OnWebAssetEdit { get; set; }
+    [Parameter] public EventCallback<TblAsset> OnAssetAdd { get; set; }
+
+    private int? hoverAssetId;
+
+    private Dictionary<int, TblAssetApproval> assetApprovals = new();
+
+    // Content scope and the filter over the location's participating keys, both read from the rule table
+    private ContentScopeContext? contentScope;
+    private IReadOnlyDictionary<int, IReadOnlyDictionary<string, IReadOnlySet<string>>> assetValues =
+        new Dictionary<int, IReadOnlyDictionary<string, IReadOnlySet<string>>>();
+    private List<ContentFilterOption> contentFilterOptions = new();
+    private ContentFilterOption? activeContentFilter;
+    private HashSet<int> memberGroupIds = new();
+
+    protected override async Task OnParametersSetAsync()
+    {
+        await LoadApprovalDataAsync();
+        await LoadContentFilterDataAsync();
+        await base.OnParametersSetAsync();
+    }
+
+    private void OnMouseOver(int id) => hoverAssetId = id;
+    private void OnMouseOut() => hoverAssetId = null;
+
+    private async Task ViewAsset(TblAsset asset)
+        => await JSRuntime.InvokeVoidAsync("open", asset.AssetPath, "_blank");
+
+    // Mobile replacement for the add/create button row; resets to the placeholder after each pick
+    private string addContentSelection = "";
+
+    private void OnAddContentSelected()
+    {
+        var choice = addContentSelection;
+        addContentSelection = "";
+
+        switch (choice)
+        {
+            case "media": OpenMediaUploader?.Invoke(null); break;
+            case "web": OpenWebUploader?.Invoke(); break;
+            case "stream": OpenStreamUploader?.Invoke(); break;
+            case "create-media": OpenMediaCreator?.Invoke(); break;
+        }
+    }
+
+    private string GetAssetDisplayName(TblAsset asset)
+    {
+        // Prefer the stored AssetName (original filename) over the path-derived name (which has a GUID prefix)
+        if (!string.IsNullOrWhiteSpace(asset.AssetName))
+            return asset.AssetName;
+
+        if (asset.AssetTypeId == (int)AssetType.Web || asset.AssetTypeId == (int)AssetType.Stream)
+        {
+            try
+            {
+                var uri = new Uri(asset.AssetPath);
+                return uri.Host;
+            }
+            catch
+            {
+                return asset.AssetPath;
+            }
+        }
+        return System.IO.Path.GetFileName(asset.AssetPath);
+    }
+
+    private bool ShowContentFilterDropdown() => contentFilterOptions.Count > 1;
+
+    private void OnContentFilterChanged(ContentFilterOption? filter)
+    {
+        activeContentFilter = filter;
+        StateHasChanged();
+    }
+
+    private async Task LoadContentFilterDataAsync()
+    {
+        var locationId = Location?.LocationId ?? Display?.LocationId;
+        contentScope = null;
+        if (locationId == null || locationId == 0) return;
+
+        try
+        {
+            var userId = sessionState.User?.UserId ?? 0;
+            var isAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+            contentScope = await contentScopeService.GetAsync(userId, locationId.Value, isAdmin ? null : UserAccess);
+
+            var keys = contentScope.ParticipatingKeys;
+            assetValues = keys.Count > 0 || contentScope.IsEvaluated
+                ? await contentScopeService.GetAssetValuesAsync(AssetList.Where(a => !a.IsDeleted).Select(a => a.AssetId).ToList())
+                : new Dictionary<int, IReadOnlyDictionary<string, IReadOnlySet<string>>>();
+
+            contentFilterOptions = keys.Count == 0
+                ? new List<ContentFilterOption>()
+                : keys
+                    .SelectMany(key => assetValues.Values
+                        .SelectMany(values => values.TryGetValue(key, out var set) ? set : Enumerable.Empty<string>())
+                        .Distinct(MetadataEvaluator.ValueComparer)
+                        .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+                        .Select(v => new ContentFilterOption(key, v)))
+                    .Prepend(ContentFilterOption.Shared)
+                    .ToList();
+
+            if (!isAdmin && UserAccess?.AccessLevel == "partial")
+            {
+                await using var db = await dbFactory.CreateDbContextAsync();
+                memberGroupIds = (await db.TblUserGroupMemberships.AsNoTracking()
+                    .Where(m => m.UserId == userId)
+                    .Select(m => m.UserGroupId)
+                    .ToListAsync()).ToHashSet();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading content filter data");
+        }
+    }
+
+    private IReadOnlyDictionary<string, IReadOnlySet<string>> ValuesFor(TblAsset asset) =>
+        assetValues.TryGetValue(asset.AssetId, out var values)
+            ? values
+            : new Dictionary<string, IReadOnlySet<string>>(MetadataEvaluator.KeyComparer);
+
+    private bool MatchesContentFilter(TblAsset asset)
+    {
+        if (activeContentFilter == null || contentScope == null)
+            return true;
+
+        var values = ValuesFor(asset);
+        if (activeContentFilter.Key == null)
+            return contentScope.ParticipatingKeys.All(k => !values.TryGetValue(k, out var set) || set.Count == 0);
+
+        return values.TryGetValue(activeContentFilter.Key, out var matched) && matched.Contains(activeContentFilter.Value!);
+    }
+
+    // View access schedules nothing; a scoped user changes only what she owns, while scope decides what is listed.
+    private bool IsReadOnly(TblAsset asset)
+    {
+        var level = sessionState.RoleEnum == Roles.Role.Admin ? "full" : UserAccess?.AccessLevel;
+        return level == "view"
+            || (level == "partial" && !AssetOwnership.CanControl(level, sessionState.User?.UserId ?? 0, memberGroupIds,
+                asset.UploadedByUserId, asset.UploadedByUserGroupId));
+    }
+
+    private string ReadOnlyBadge(TblAsset asset) =>
+        UserAccess?.AccessLevel == "view"
+            ? "View only"
+            : AssetOwnership.LockReason(UserAccess?.AccessLevel, sessionState.User?.UserId ?? 0, memberGroupIds,
+                asset.UploadedByUserId, asset.UploadedByUserGroupId, null) ?? "View only";
+
+    // Load approval data for content filtering
+    public async Task LoadApprovalDataAsync()
+    {
+        if (!EnableContentApproval)
+        {
+            return;
+        }
+
+        try
+        {
+            // Get all approvals for assets in the current location
+            var locationId = Display?.LocationId ?? Location?.LocationId;
+            if (locationId == null)
+            {
+                return;
+            }
+
+            var approvals = await approvalService.GetApprovalsByStatusAsync(ApprovalStatus.Pending);
+            var approvedList = await approvalService.GetApprovalsByStatusAsync(ApprovalStatus.Approved);
+            var declinedList = await approvalService.GetApprovalsByStatusAsync(ApprovalStatus.Declined);
+
+            var allApprovals = approvals
+                .Concat(approvedList)
+                .Concat(declinedList)
+                .ToList();
+
+            var filteredApprovals = allApprovals
+                .Where(a => a.Asset?.LocationId == locationId)
+                .ToList();
+
+            assetApprovals = filteredApprovals.ToDictionary(a => a.AssetId, a => a);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading approval data");
+        }
+    }
+
+    // Get approval for a specific asset
+    private TblAssetApproval? GetApprovalForAsset(int assetId)
+    {
+        if (!EnableContentApproval) return null;
+        assetApprovals.TryGetValue(assetId, out var approval);
+        return approval;
+    }
+
+    // Get filtered assets based on access rules and approval status
+    private IEnumerable<FilteredAsset> GetFilteredAssets()
+    {
+        // Scope never ANDs approval: a scoped manager sees Pending content in her scope.
+        if (UserAccess != null)
+        {
+            return AssetList
+                .Where(a => !a.IsDeleted)
+                .Where(a => contentScope?.IsVisible(ValuesFor(a)) ?? !ContentScope.IsEvaluated(UserAccess))
+                .Where(MatchesContentFilter)
+                .Select(a => new FilteredAsset(a, IsReadOnly(a)));
+        }
+
+        if (EnableContentApproval)
+        {
+            return GetApprovalFilteredAssets().Where(f => MatchesContentFilter(f.Asset));
+        }
+
+        return AssetList.Where(a => !a.IsDeleted).Where(MatchesContentFilter).Select(a => new FilteredAsset(a, false));
+    }
+
+    // Content approval filtering — shows approved/pending content, hides declined
+    private IEnumerable<FilteredAsset> GetApprovalFilteredAssets()
+    {
+        return AssetList.Where(asset =>
+        {
+            if (asset.IsDeleted) return false;
+
+            var approval = GetApprovalForAsset(asset.AssetId);
+
+            if (approval == null) return false;
+
+            if (approval.ApprovalStatus == (int)ApprovalStatus.Declined) return false;
+
+            return true;
+        }).Select(a => new FilteredAsset(a, false));
+    }
+
+    private record FilteredAsset(TblAsset Asset, bool IsReadOnly);
+
+    // Check if approval overlay should be shown
+    private bool ShouldShowApprovalOverlay(TblAssetApproval? approval)
+    {
+        if (approval == null) return false;
+        return approval.ApprovalStatus == (int)ApprovalStatus.Pending ||
+               approval.ApprovalStatus == (int)ApprovalStatus.Declined;
+    }
+
+    // Get approval status text for overlay display
+    private string GetApprovalStatusText(TblAssetApproval? approval)
+    {
+        if (approval == null) return "";
+
+        return approval.ApprovalStatus switch
+        {
+            (int)ApprovalStatus.Pending => "Awaiting Approval",
+            (int)ApprovalStatus.Declined => "Declined",
+            _ => ""
+        };
+    }
+}

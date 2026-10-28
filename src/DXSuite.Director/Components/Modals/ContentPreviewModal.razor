@@ -1,0 +1,731 @@
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using DXSuite.Shared.Services.Identity
+@using static DXSuite.Director.Models.Types
+@inject IEffectiveContentResolver resolver
+@inject IDeviceMetadataService deviceMetadataService
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject IDbContextFactory<DirectorDbContext> dbFactory
+@inject ILogger<ContentPreviewModal> Logger
+@rendermode InteractiveServer
+
+@if (isOpen)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="max-width: 880px; width: 95vw;">
+            <div class="dx-modal-header">
+                <h4>Preview</h4>
+                <button type="button" class="btn-close btn-close-white" aria-label="Close" @onclick="Close"></button>
+            </div>
+            <div class="dx-modal-body" style="max-height: 75vh; overflow-y: auto;">
+                <div class="cpv-toolbar cpv-toolbar-stacked">
+                    <div class="cpv-toolbar-row">
+                        <div class="cpv-field">
+                            <label>Date</label>
+                            <input type="date" class="dx-form-control" @bind="previewDate" @bind:after="RunPreview" />
+                        </div>
+                        <div class="cpv-field">
+                            <label>Time</label>
+                            <input type="time" class="dx-form-control" @bind="previewTime" @bind:after="RunPreview" />
+                        </div>
+                        @if (TargetingActive)
+                        {
+                            <div class="cpv-field">
+                                <label>Preview as</label>
+                                <div class="cpv-segmented">
+                                    <button type="button" class="dx-btn @(subjectMode == SubjectMode.Player ? "dx-btn-blue" : "dx-btn-gray")"
+                                            disabled="@(devices.Count == 0)"
+                                            title="@(devices.Count == 0 ? "No players are assigned to this location." : null)"
+                                            @onclick="() => SetSubjectMode(SubjectMode.Player)">Player</button>
+                                    <button type="button" class="dx-btn @(subjectMode == SubjectMode.Mock ? "dx-btn-blue" : "dx-btn-gray")"
+                                            @onclick="() => SetSubjectMode(SubjectMode.Mock)">Mock player</button>
+                                </div>
+                            </div>
+                            @if (subjectMode == SubjectMode.Player && devices.Count > 0)
+                            {
+                                <div class="cpv-field">
+                                    <label>Player</label>
+                                    <select class="dx-form-control" value="@selectedDeviceId" @onchange="OnDeviceSelected">
+                                        @foreach (var device in devices)
+                                        {
+                                            <option value="@device.DeviceId">@DeviceLabel(device)</option>
+                                        }
+                                    </select>
+                                </div>
+                            }
+                        }
+                        <button class="dx-btn dx-btn-blue" @onclick="StartPlayback"
+                                disabled="@(isBusy || displayLoop.Count == 0)"
+                                title="@(!isBusy && displayLoop.Count == 0 ? PreviewDisabledReason : null)">
+                            Preview
+                        </button>
+                    </div>
+                    @if (isPlaylistMode)
+                    {
+                        <div class="cpv-toolbar-row">
+                            <label class="cpv-check" title="Shows content still in the approval chain as though it had been approved.">
+                                <input type="checkbox" @bind="treatPendingAsApproved" @bind:after="RunPreview" />
+                                <span>Treat pending as approved</span>
+                            </label>
+                            @if (TargetingActive)
+                            {
+                                <label class="cpv-check" title="Shows content this player does not receive, with the reason.">
+                                    <input type="checkbox" @bind="showExcluded" />
+                                    <span>Show excluded content</span>
+                                </label>
+                            }
+                        </div>
+                    }
+                </div>
+
+                @if (evaluationFailed)
+                {
+                    <div class="dx-alert dx-alert-danger cpv-note">The preview could not be evaluated. Try again, or check the server log.</div>
+                }
+                else if (result != null && isPlaylistMode && !TargetingActive)
+                {
+                    <div class="dx-alert dx-alert-info cpv-note">
+                        @(result.TargetingRules == null
+                            ? "Target content by metadata is off for this location, so every player here receives the same rotation."
+                            : "This location has no content metadata fields, so every player here receives the same rotation.")
+                    </div>
+                }
+
+                @if (result != null && TargetingActive)
+                {
+                    @RenderSubjectPanel()
+                }
+
+                @if (isBusy && result == null)
+                {
+                    <div style="display: flex; justify-content: center; padding: 32px 0;">
+                        <div class="dx-spinner"></div>
+                    </div>
+                }
+                else if (result != null)
+                {
+                    var excludedCount = result.Rows.Count(r => !r.Included);
+                    var heldCount = result.Rows.Count(r => r.HeldApprovalStatus != null);
+                    <div class="cpv-summary">
+                        <span>
+                            <strong>@result.Items.Count</strong> @PreviewDiagnostics.Noun(result.Items.Count, "item", "items") in rotation ·
+                            loop <strong>@FormatSeconds(result.LoopSeconds)</strong> ·
+                            <strong>@result.Loop.Count</strong> @PreviewDiagnostics.Noun(result.Loop.Count, "play", "plays")
+                        </span>
+                        @if (TargetingActive && excludedCount > 0)
+                        {
+                            <span class="dx-text-muted"><strong>@excludedCount</strong> of @result.Rows.Count excluded</span>
+                        }
+                        else if (!TargetingActive && heldCount > 0)
+                        {
+                            <span class="dx-text-muted">@heldCount held by approval</span>
+                        }
+                        @if (result.NotScheduledCount > 0)
+                        {
+                            <span class="dx-text-muted" title="Outside their scheduled window at the selected time.">@result.NotScheduledCount not scheduled now</span>
+                        }
+                        @if (!string.IsNullOrEmpty(result.ActiveEventLabel))
+                        {
+                            <span class="dx-badge dx-badge-blue">@result.ActiveEventLabel</span>
+                        }
+                        @if (result.ShuffleEnabled && !ShowingDiagnostic)
+                        {
+                            <label class="cpv-check" style="margin: 0;">
+                                <input type="checkbox" @bind="showShuffled" @bind:after="ApplyShuffleView" />
+                                <span>Shuffle</span>
+                            </label>
+                            @if (showShuffled)
+                            {
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="Reshuffle">Reshuffle</button>
+                            }
+                        }
+                    </div>
+                    @if (result.ShuffleEnabled && showShuffled && !ShowingDiagnostic)
+                    {
+                        <p class="dx-text-muted" style="font-size: 0.78rem; margin: 4px 0 8px;">
+                            Players shuffle independently, so this is a representative order, not the exact
+                            order any one screen is playing.
+                        </p>
+                    }
+
+                    var emptyState = PreviewDiagnostics.EmptyState(TargetingActive, result.GateKey, result.Items.Count, result.HasContent, result.AnyReachesPlayer);
+                    var listEmpty = ShowingDiagnostic ? result.Rows.Count == 0 : displayLoop.Count == 0;
+
+                    @if (TargetingActive && result.GateKey != null && !(listEmpty || emptyState == PreviewEmptyState.Gate && !ShowingDiagnostic))
+                    {
+                        @RenderGate(banner: true)
+                    }
+
+                    @if (listEmpty || (emptyState != PreviewEmptyState.None && !ShowingDiagnostic))
+                    {
+                        @RenderEmptyState(emptyState)
+                    }
+                    else if (ShowingDiagnostic)
+                    {
+                        var order = 0;
+                        <div class="cpv-list">
+                            @foreach (var row in result.Rows)
+                            {
+                                @RenderRow(row.Item, row, row.Included ? ++order : null)
+                            }
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="cpv-list">
+                            @for (var i = 0; i < displayLoop.Count; i++)
+                            {
+                                @RenderRow(displayLoop[i], TargetingActive ? RowFor(displayLoop[i]) : null, i + 1)
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+<ContentPreviewPlayer @ref="playbackPlayer"
+                      FrameWidth="@frameWidth"
+                      FrameHeight="@frameHeight" />
+
+@code {
+    private enum SubjectMode { Player, Mock }
+
+    private bool isOpen;
+    private bool isBusy;
+    private bool evaluationFailed;
+    private bool isPlaylistMode;
+    private int locationId;
+    private int displayId;
+    private ContentPreviewPlayer? playbackPlayer;
+    private double frameWidth = 1920;
+    private double frameHeight = 1080;
+
+    private DateTime previewDate = DateTime.Today;
+    private TimeOnly previewTime = TimeOnly.FromDateTime(DateTime.Now);
+    private bool treatPendingAsApproved;
+    private bool showShuffled;
+    private bool showExcluded;
+
+    private SubjectMode subjectMode = SubjectMode.Player;
+    private string? selectedDeviceId;
+    private Dictionary<string, string> selectedDeviceMetadata = new(MetadataEvaluator.KeyComparer);
+    private Dictionary<string, List<string>> mockValues = new(MetadataEvaluator.KeyComparer);
+    private string startFromDeviceId = "";
+
+    private List<TblDevice> devices = new();
+    private List<MetadataDefinitionDto> metadataDefs = new();
+    private PreviewRotationResult? result;
+    private List<PreviewRotationItem> displayLoop = new();
+    private Dictionary<PreviewRotationItem, PreviewDiagnosticRow> rowsByItem = new(ReferenceEqualityComparer.Instance);
+    private readonly Random shuffleRandom = new();
+
+    // The resolver reads through the circuit's shared DbContext, so evaluations run one at a time, and a
+    // result superseded while it waited is dropped rather than shown over a newer one.
+    private readonly SemaphoreSlim runLock = new(1, 1);
+    private int runGeneration;
+
+    private bool TargetingActive => isPlaylistMode && result?.TargetingRules is { Participating.Count: > 0 };
+
+    private bool ShowingDiagnostic => TargetingActive && showExcluded;
+
+    private string? PreviewDisabledReason => PreviewDiagnostics.PreviewDisabledReason(result == null
+        ? PreviewEmptyState.NotScheduled
+        : PreviewDiagnostics.EmptyState(TargetingActive, result.GateKey, result.Items.Count, result.HasContent, result.AnyReachesPlayer));
+
+    private IReadOnlyList<string> ParticipatingKeys =>
+        result?.TargetingRules?.Participating.Select(r => r.Key).ToList() ?? (IReadOnlyList<string>)[];
+
+    public async Task OpenForPlaylist(int forLocationId)
+    {
+        isPlaylistMode = true;
+        locationId = forLocationId;
+        await OpenSharedAsync(d => d.LocationId == forLocationId && d.DisplayId == null);
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var location = await db.TblLocations.AsNoTracking().FirstOrDefaultAsync(l => l.LocationId == forLocationId);
+            frameWidth = location?.BackgroundImageWidth > 0 ? (double)location.BackgroundImageWidth : 1920;
+            frameHeight = location?.BackgroundImageHeight > 0 ? (double)location.BackgroundImageHeight : 1080;
+            metadataDefs = await metadataDefinitionService.GetAllDefinitionsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not resolve preview settings for location {LocationId}", forLocationId);
+        }
+
+        // A real player is the default subject whenever the location has one; a mock player otherwise.
+        subjectMode = devices.Count > 0 ? SubjectMode.Player : SubjectMode.Mock;
+        if (devices.Count > 0)
+            await SelectDeviceAsync(devices[0].DeviceId);
+        await RunPreview();
+    }
+
+    public async Task OpenForDisplay(int forDisplayId)
+    {
+        isPlaylistMode = false;
+        displayId = forDisplayId;
+        await OpenSharedAsync(d => d.DisplayId == forDisplayId);
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            var display = await db.TblDisplays.AsNoTracking().FirstOrDefaultAsync(d => d.DisplayId == forDisplayId);
+            frameWidth = display?.DisplayWidth > 0 ? (double)display.DisplayWidth : 1920;
+            frameHeight = display?.DisplayHeight > 0 ? (double)display.DisplayHeight : 1080;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not resolve preview settings for display {DisplayId}", forDisplayId);
+        }
+        await RunPreview();
+    }
+
+    // Plays the rotation exactly as resolved for the toolbar's current date, time, and
+    // subject, re-evaluating first so a change made a moment ago is honored
+    private async Task StartPlayback()
+    {
+        await RunPreview();
+        if (displayLoop.Count == 0) return;
+
+        var items = displayLoop.Select(item => new PreviewItem
+        {
+            Url = item.WebPath ?? "",
+            AssetTypeId = item.IsWeb ? (int)AssetType.Web
+                : item.IsVideo ? (int)AssetType.Video
+                : (int)AssetType.Image,
+            // Videos advance on playback end, matching the player; images use the resolved dwell
+            DurationSeconds = item.IsVideo ? null : item.DurationSeconds
+        }).ToList();
+
+        playbackPlayer?.Open(items);
+    }
+
+    private async Task OpenSharedAsync(System.Linq.Expressions.Expression<Func<TblDevice, bool>> deviceScope)
+    {
+        previewDate = DateTime.Today;
+        previewTime = TimeOnly.FromDateTime(DateTime.Now);
+        selectedDeviceMetadata = new(MetadataEvaluator.KeyComparer);
+        selectedDeviceId = null;
+        mockValues = new(MetadataEvaluator.KeyComparer);
+        startFromDeviceId = "";
+        treatPendingAsApproved = false;
+        showShuffled = false;
+        showExcluded = false;
+        result = null;
+        displayLoop = new();
+        rowsByItem = new(ReferenceEqualityComparer.Instance);
+        evaluationFailed = false;
+        runGeneration++;
+        isOpen = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await dbFactory.CreateDbContextAsync();
+            devices = (await db.TblDevices.AsNoTracking().Where(deviceScope).ToListAsync())
+                .OrderBy(DeviceLabel, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load devices for preview");
+            devices = new();
+        }
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+        StateHasChanged();
+    }
+
+    private static string DeviceLabel(TblDevice device) =>
+        !string.IsNullOrWhiteSpace(device.Name) ? device.Name!
+        : !string.IsNullOrWhiteSpace(device.Description) ? device.Description!
+        : device.DeviceId;
+
+    private async Task SetSubjectMode(SubjectMode mode)
+    {
+        if (subjectMode == mode) return;
+        subjectMode = mode;
+        await RunPreview();
+    }
+
+    private async Task OnDeviceSelected(ChangeEventArgs e)
+    {
+        await SelectDeviceAsync(e.Value?.ToString());
+        await RunPreview();
+    }
+
+    private async Task SelectDeviceAsync(string? deviceId)
+    {
+        selectedDeviceId = deviceId;
+        var metadata = await LoadDeviceMetadataAsync(deviceId);
+        // A later pick may have landed while this one loaded; its values must not show under the later name.
+        if (selectedDeviceId == deviceId)
+            selectedDeviceMetadata = metadata;
+    }
+
+    // Seeds the mock from a real player, because a near miss of an existing screen is the usual question.
+    private async Task OnStartFromSelected(ChangeEventArgs e)
+    {
+        startFromDeviceId = e.Value?.ToString() ?? "";
+        if (string.IsNullOrEmpty(startFromDeviceId)) return;
+
+        var metadata = await LoadDeviceMetadataAsync(startFromDeviceId);
+        mockValues = ParticipatingKeys.ToDictionary(
+            k => k,
+            k => metadata.TryGetValue(k, out var v) && !string.IsNullOrWhiteSpace(v) ? new List<string> { v.Trim() } : new List<string>(),
+            MetadataEvaluator.KeyComparer);
+        await RunPreview();
+    }
+
+    private async Task OnMockValueChanged(string key, List<string> values)
+    {
+        mockValues[key] = values;
+        await RunPreview();
+    }
+
+    private async Task<Dictionary<string, string>> LoadDeviceMetadataAsync(string? deviceId)
+    {
+        if (string.IsNullOrEmpty(deviceId)) return new(MetadataEvaluator.KeyComparer);
+        try
+        {
+            return new Dictionary<string, string>(await deviceMetadataService.GetMetadataAsync(deviceId), MetadataEvaluator.KeyComparer);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load metadata for device {DeviceId}", deviceId);
+            return new(MetadataEvaluator.KeyComparer);
+        }
+    }
+
+    private IReadOnlyDictionary<string, string> SubjectMetadata() =>
+        subjectMode == SubjectMode.Player
+            ? selectedDeviceMetadata
+            : mockValues
+                .Where(kv => kv.Value.Count > 0)
+                .ToDictionary(kv => kv.Key, kv => kv.Value[0], MetadataEvaluator.KeyComparer);
+
+    private async Task RunPreview()
+    {
+        var generation = ++runGeneration;
+        await runLock.WaitAsync();
+        try
+        {
+            if (generation != runGeneration) return;
+
+            isBusy = true;
+            StateHasChanged();
+
+            var asOf = previewDate.Date + previewTime.ToTimeSpan();
+            var next = isPlaylistMode
+                ? await resolver.ResolvePlaylistAsync(locationId, SubjectMetadata(), treatPendingAsApproved, asOf)
+                : await resolver.ResolveDisplayAsync(displayId, asOf);
+
+            if (generation != runGeneration) return;
+            result = next ?? new PreviewRotationResult();
+            evaluationFailed = false;
+            rowsByItem = result.Rows.ToDictionary<PreviewDiagnosticRow, PreviewRotationItem, PreviewDiagnosticRow>(r => r.Item, r => r, ReferenceEqualityComparer.Instance);
+            ApplyShuffleView();
+        }
+        catch (Exception ex)
+        {
+            // The last good result stays, so a failed run does not read as the location switching targeting off.
+            Logger.LogError(ex, "Preview evaluation failed");
+            evaluationFailed = true;
+            result ??= new PreviewRotationResult();
+        }
+        finally
+        {
+            isBusy = false;
+            runLock.Release();
+            StateHasChanged();
+        }
+    }
+
+    private PreviewDiagnosticRow? RowFor(PreviewRotationItem item) => rowsByItem.GetValueOrDefault(item);
+
+    private void ApplyShuffleView()
+    {
+        if (result == null)
+        {
+            displayLoop = new();
+            return;
+        }
+
+        displayLoop = result.ShuffleEnabled && showShuffled
+            ? AntiAdjacentShuffle(result.Loop)
+            : result.Loop;
+        StateHasChanged();
+    }
+
+    private void Reshuffle() => ApplyShuffleView();
+
+    private MetadataDefinitionDto? Definition(string key) =>
+        metadataDefs.FirstOrDefault(d => MetadataEvaluator.KeyComparer.Equals(d.MetadataKey, key));
+
+    private string FieldName(string key) =>
+        Definition(key)?.DisplayName is { Length: > 0 } name ? name : key;
+
+    // A real player is shown read only. A mock player is the same panel made editable, and says plainly that it
+    // is a mock so a simulation is never read as a real screen.
+    private RenderFragment RenderSubjectPanel() => __builder =>
+    {
+        var isMock = subjectMode == SubjectMode.Mock;
+        var keys = ParticipatingKeys;
+        var device = devices.FirstOrDefault(d => d.DeviceId == selectedDeviceId);
+        <div class="cpv-subject @(isMock ? "cpv-subject-mock" : "")">
+            <div class="cpv-subject-head">
+                <span class="cpv-subject-title">Previewing as</span>
+                @if (isMock)
+                {
+                    <span class="cpv-subject-name">Mock player</span>
+                    <span class="dx-badge dx-badge-yellow">@keys.Count(k => mockValues.GetValueOrDefault(k)?.Count > 0) of @keys.Count fields set</span>
+                }
+                else if (device != null)
+                {
+                    <span class="cpv-subject-name">@DeviceLabel(device)</span>
+                    <span class="dx-badge dx-badge-gray">@device.DeviceId</span>
+                }
+            </div>
+            <div class="cpv-subject-body">
+                @foreach (var key in keys)
+                {
+                    <div class="cpv-kv">
+                        <span class="cpv-kv-key">@FieldName(key)</span>
+                        @if (isMock)
+                        {
+                            var fieldKey = key;
+                            <MetadataValueInput FieldType="@(Definition(key)?.FieldType ?? "string")"
+                                                SingleValue="true"
+                                                Values="@(mockValues.GetValueOrDefault(key) ?? new List<string>())"
+                                                ValuesChanged="@((List<string> v) => OnMockValueChanged(fieldKey, v))"
+                                                Options="@(Definition(key)?.Options ?? new())"
+                                                Placeholder="No value" />
+                        }
+                        else if (selectedDeviceMetadata.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value))
+                        {
+                            <span class="cpv-kv-value">@value</span>
+                        }
+                        else
+                        {
+                            <span class="cpv-kv-value cpv-kv-none">No value</span>
+                        }
+                    </div>
+                }
+                @if (isMock)
+                {
+                    <div class="cpv-kv">
+                        <span class="cpv-kv-key">Start from</span>
+                        <select class="dx-form-control" value="@startFromDeviceId" @onchange="OnStartFromSelected"
+                                disabled="@(devices.Count == 0)"
+                                title="@(devices.Count == 0 ? "No players are assigned to this location." : null)">
+                            <option value="">Pick a player to copy</option>
+                            @foreach (var d in devices)
+                            {
+                                <option value="@d.DeviceId">@DeviceLabel(d)</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+            @if (isMock)
+            {
+                <div class="cpv-subject-mockbar"><strong>Mock player.</strong> These values are not set on any screen. Nothing here changes a player.</div>
+            }
+        </div>
+    };
+
+    private RenderFragment RenderRow(PreviewRotationItem item, PreviewDiagnosticRow? row, int? order) => __builder =>
+    {
+        var excluded = row is { Included: false };
+        var reasons = excluded ? ReasonLines(row!) : null;
+        <div class="cpv-row @(excluded ? "cpv-row-out" : "") @(reasons != null ? "cpv-row-reasoned" : "")">
+            <span class="cpv-order">@order</span>
+            <span class="cpv-thumb">
+                @if (!string.IsNullOrEmpty(item.ThumbnailWebPath))
+                {
+                    <img src="@item.ThumbnailWebPath" alt="" loading="lazy" />
+                }
+                else
+                {
+                    <span class="cpv-thumb-web">@(item.IsWeb ? "WEB" : "▶")</span>
+                }
+            </span>
+            <span class="cpv-name" title="@item.Name">
+                <span class="cpv-name-text">@item.Name</span>
+                @if (row != null)
+                {
+                    <span class="cpv-tags">@TagSummary(row)</span>
+                }
+            </span>
+            <span class="cpv-duration">@FormatSeconds(item.DurationSeconds)</span>
+            @if (item.Weight > 1)
+            {
+                <span class="dx-badge dx-badge-gray" title="Plays per loop">@(item.Weight)x</span>
+            }
+            @if (row?.NotTargeted == true)
+            {
+                <span class="dx-badge dx-badge-gray">Not targeted</span>
+            }
+            @if (row?.HeldApprovalStatus == (int)ApprovalStatus.Declined)
+            {
+                <span class="dx-badge dx-badge-red">Declined</span>
+            }
+            else if (row?.HeldApprovalStatus == (int)ApprovalStatus.Pending)
+            {
+                <span class="dx-badge dx-badge-yellow">Pending approval</span>
+            }
+        </div>
+        @if (reasons != null)
+        {
+            @RenderReasons(reasons.Value)
+        }
+    };
+
+    private (string? Leading, IReadOnlyList<PreviewReason> Reasons, string? Trailing, string? Approval)? ReasonLines(PreviewDiagnosticRow row)
+    {
+        var rules = result!.TargetingRules!;
+        var reasons = row.NotTargeted
+            ? PreviewDiagnostics.Reasons(rules, row.Verdicts, row.Tags, result.Player, FieldName)
+            : [];
+        var (leading, trailing) = PreviewDiagnostics.CombineLines(rules.Combine, reasons.Count);
+        var approval = PreviewDiagnostics.ApprovalReason(row.HeldApprovalStatus);
+        return reasons.Count == 0 && approval == null ? null : (leading, reasons, trailing, approval);
+    }
+
+    // Both failing gates are always listed. Approval and targeting are independent, so naming only the first
+    // would send someone to fix a tag and then rediscover that approval was holding the content too.
+    private RenderFragment RenderReasons((string? Leading, IReadOnlyList<PreviewReason> Reasons, string? Trailing, string? Approval) lines) => __builder =>
+    {
+        var (leading, reasons, trailing, approval) = lines;
+        <div class="cpv-reason">
+            @if (leading != null)
+            {
+                <span class="cpv-reason-line cpv-reason-mode">@leading</span>
+            }
+            @foreach (var reason in reasons)
+            {
+                <span class="cpv-reason-line cpv-reason-meta">
+                    <b>@reason.Field</b>: @reason.Detail
+                    @if (reason.Control != null)
+                    {
+                        @* Blazor trims the whitespace beside this @if block, so the space before the control is explicit. *@
+                        @(" ")<i>@reason.Control</i><text> is set to </text><b>@reason.Setting</b>
+                    }
+                </span>
+            }
+            @if (trailing != null)
+            {
+                <span class="cpv-reason-line cpv-reason-mode">@trailing</span>
+            }
+            @if (approval != null)
+            {
+                <span class="cpv-reason-line cpv-reason-approval">@approval</span>
+            }
+        </div>
+    };
+
+    private string TagSummary(PreviewDiagnosticRow row)
+    {
+        if (row.Tags == null) return "No asset record, so every player receives it";
+        var parts = ParticipatingKeys
+            .Select(k => (Key: k, Values: row.Tags.FirstOrDefault(t => MetadataEvaluator.KeyComparer.Equals(t.Key, k)).Value))
+            .Where(p => p.Values is { Count: > 0 })
+            .Select(p => $"{FieldName(p.Key)}: {string.Join(", ", p.Values!.Order(StringComparer.OrdinalIgnoreCase))}")
+            .ToList();
+        return parts.Count > 0 ? string.Join("   ", parts) : "No values for any targeted field";
+    }
+
+    private string SubjectName() =>
+        subjectMode == SubjectMode.Mock ? "The mock player"
+        : devices.FirstOrDefault(d => d.DeviceId == selectedDeviceId) is { } device ? DeviceLabel(device)
+        : "This player";
+
+    // As a banner, files with no asset record still play past the gate, so it cannot claim nothing plays.
+    private RenderFragment RenderGate(bool banner) => __builder =>
+    {
+        var field = FieldName(result!.GateKey!);
+        <div class="cpv-empty cpv-empty-gate @(banner ? "cpv-empty-banner" : "")">
+            <div class="cpv-empty-title">
+                @(banner ? "Only files with no asset record reach this player" : "This player receives no content at this location")
+            </div>
+            <div class="cpv-empty-body">
+                @SubjectName() has no value for <b>@field</b>, and that field sets <i>@PreviewDiagnostics.PlayersWithNoValue</i> to
+                <b>@PreviewDiagnostics.Nothing</b>. That beats every other field, so no rule can bring tagged content back. Set a
+                value on the player, or change the @field rule.
+            </div>
+        </div>
+    };
+
+    private RenderFragment RenderEmptyState(PreviewEmptyState state) => __builder =>
+    {
+        if (state == PreviewEmptyState.Gate)
+        {
+            @RenderGate(banner: false)
+        }
+        else if (state == PreviewEmptyState.NothingTargeted)
+        {
+            <div class="cpv-empty">
+                <div class="cpv-empty-title">Nothing reaches this player</div>
+                <div class="cpv-empty-body">
+                    No content at this location is targeted at this player. This is a valid configuration, not an error.
+                    @if (!ShowingDiagnostic)
+                    {
+                        <text>Turn on <b>Show excluded content</b> to see which field stopped each one scheduled now.</text>
+                    }
+                </div>
+            </div>
+        }
+        else
+        {
+            <div class="cpv-empty">
+                <div class="cpv-empty-title">Nothing plays at the selected time</div>
+                <div class="cpv-empty-body">
+                    @(!isPlaylistMode ? "No content is scheduled for this display at this time."
+                        : TargetingActive ? "Content here reaches this player, but none of it is scheduled and approved for this time."
+                        : "No content is scheduled and approved for this location at this time.")
+                </div>
+            </div>
+        }
+    };
+
+    // Mirrors the player: random order, then a best-effort repair pass so repeats of the
+    // same item never sit next to each other unless the mix makes that impossible
+    private List<PreviewRotationItem> AntiAdjacentShuffle(List<PreviewRotationItem> source)
+    {
+        var items = source.OrderBy(_ => shuffleRandom.Next()).ToList();
+
+        for (var pass = 0; pass < 2; pass++)
+        {
+            for (var i = 1; i < items.Count; i++)
+            {
+                if (!SameItem(items[i], items[i - 1])) continue;
+                for (var j = i + 1; j < items.Count; j++)
+                {
+                    if (SameItem(items[j], items[i - 1])) continue;
+                    if (j != i + 1 && i + 1 < items.Count && SameItem(items[j], items[i + 1])) continue;
+                    (items[i], items[j]) = (items[j], items[i]);
+                    break;
+                }
+            }
+        }
+
+        return items;
+
+        static bool SameItem(PreviewRotationItem a, PreviewRotationItem b) =>
+            string.Equals(a.WebPath, b.WebPath, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string FormatSeconds(int totalSeconds)
+    {
+        var span = TimeSpan.FromSeconds(totalSeconds);
+        if (span.TotalHours >= 1) return $"{(int)span.TotalHours}h {span.Minutes}m";
+        if (span.TotalMinutes >= 1) return $"{span.Minutes}m {span.Seconds}s";
+        return $"{span.Seconds}s";
+    }
+}

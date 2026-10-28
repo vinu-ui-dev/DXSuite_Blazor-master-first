@@ -1,0 +1,378 @@
+@using Newtonsoft.Json
+@inject IServiceScopeFactory scopeFactory
+@inject ILogger<CBPMessages> Logger
+@inject DXSuite.Director.Services.IPublicationInvalidator publicationInvalidator
+
+<div class="cbp-container">
+    <div class="messages-panel">
+        <h3>Message Configuration</h3>
+
+        @foreach (var message in messages)
+        {
+            <div class="message-group">
+                <div class="message-row">
+                    <div class="input-group message-text">
+                        <label class="input-label">Message Text</label>
+                        <input type="text" class="dx-form-control" @bind="message.Message" placeholder="Enter a message..." maxlength="100" />
+                    </div>
+
+                    <div class="input-group datetime-input">
+                        <label class="input-label">Start Time</label>
+                        <input type="datetime-local" class="dx-form-control" @bind="message.StartDateTime" />
+                    </div>
+
+                    <div class="input-group datetime-input">
+                        <label class="input-label">End Time</label>
+                        <input type="datetime-local" class="dx-form-control" @bind="message.EndDateTime" />
+                    </div>
+
+                    <button class="dx-btn dx-btn-red" @onclick="@(()=>DeleteMessage(message))">Delete</button>
+                </div>
+            </div>
+        }
+
+        <button class="dx-btn dx-btn-blue" @onclick="@(()=>UpdateMessages())" disabled="@isLoading">
+            @if (isLoading) { <span>Saving...</span> } else { <span>Save Messages</span> }
+        </button>
+    </div>
+
+    <div class="visualization-panel">
+        <h3>Message Preview</h3>
+        <div class="cbp-display">
+            <div class="cbp-header">ANNOUNCEMENTS:</div>
+            @{
+                var activeMessages = messages.Where(m => !string.IsNullOrEmpty(m.Message)).ToList();
+                for (int i = 0; i < activeMessages.Count && i < 4; i++)
+                {
+                    <div class="cbp-message cbp-message-@(i + 1)">@activeMessages[i].Message</div>
+                }
+            }
+        </div>
+        <small style="color: #4D4D4D; font-size: 12px;">Represents an approximate visual - Live content spacing may be slightly different</small>
+    </div>
+</div>
+
+@if (showSaveModal)
+{
+    <div class="dx-modal-overlay" @onclick="CloseSaveModal">
+        <div class="dx-modal" style="max-width:500px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Save Confirmation</h4>
+                <button class="dx-modal-close" @onclick="CloseSaveModal">×</button>
+            </div>
+            <div class="dx-modal-body" style="text-align:center;">
+                <p>Your messages have been saved.</p>
+                <p style="font-size: 0.9rem; color: #666;">@saveResultMessage</p>
+                <div style="display:flex; justify-content:flex-end; padding-top:1rem; border-top:1px solid #eee;">
+                    <button class="dx-btn dx-btn-blue" @onclick="CloseSaveModal">Close</button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .cbp-container {
+        display: flex;
+        gap: 2rem;
+        align-items: flex-start;
+    }
+
+    .messages-panel {
+        flex: 2;
+        padding: 1rem;
+        border: 1px solid #ddd;
+        border-radius: 8px;
+        background: #CCCCCC;
+    }
+
+    .messages-panel h3 {
+        margin-bottom: 1.5rem;
+        color: #333;
+        font-weight: 600;
+    }
+
+    .message-group {
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 0.75rem;
+        margin-bottom: 0.75rem;
+        background: #f9f9f9;
+    }
+
+    .input-group {
+        margin-bottom: 0.5rem;
+    }
+
+    .input-label {
+        display: block;
+        font-weight: 500;
+        margin-bottom: 0.25rem;
+        color: #555;
+        font-size: 0.8rem;
+        text-align: left;
+        width: 100%;
+    }
+
+    .message-row {
+        display: flex;
+        gap: 0.75rem;
+        align-items: flex-end;
+    }
+
+    .message-text {
+        width: 50%;
+    }
+
+    .datetime-input {
+        width: 20%;
+    }
+
+    .message-row .input-group {
+        margin-bottom: 0;
+        display: flex;
+        flex-direction: column;
+    }
+
+    .message-row .dx-btn-red {
+        margin-top: 0;
+        height: fit-content;
+        align-self: flex-end;
+    }
+
+    .dx-form-control {
+        width: 100% !important;
+        padding: 0.5rem;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        font-size: 0.9rem;
+    }
+
+    input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+        cursor: pointer;
+    }
+
+    .visualization-panel {
+        flex: 1;
+        padding: 1rem;
+    }
+
+    .visualization-panel h3 {
+        margin-bottom: 1.5rem;
+        color: #333;
+        font-weight: 600;
+    }
+
+    .cbp-display {
+        background: #000;
+        color: white;
+        font-family: 'Roboto', sans-serif;
+        aspect-ratio: 1.822;
+        border-radius: 8px;
+        position: relative;
+        overflow: hidden;
+        width: 100%;
+        max-width: 600px;
+        min-width: 300px;
+        container-type: size;
+    }
+
+    .cbp-header {
+        font-size: 4cqw;
+        font-weight: bold;
+        position: absolute;
+        top: 3cqh;
+        left: 5cqw;
+        right: 5cqw;
+    }
+
+    .cbp-message {
+        font-size: 3.2cqw;
+        line-height: 1.4;
+        height: calc(3.2cqw * 1.4 * 2);
+        overflow: hidden;
+        position: absolute;
+        left: 5cqw;
+        right: 5cqw;
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        word-break: break-word;
+        overflow-wrap: break-word;
+    }
+
+    .cbp-message-1 { top: 18cqh; }
+    .cbp-message-2 { top: calc(18cqh + 3.2cqw * 1.4 * 2 + 2cqh); }
+    .cbp-message-3 { top: calc(18cqh + (3.2cqw * 1.4 * 2 + 2cqh) * 2); }
+    .cbp-message-4 { top: calc(18cqh + (3.2cqw * 1.4 * 2 + 2cqh) * 3); }
+
+    @@media (max-width: 1200px) {
+        .cbp-display { max-width: 500px; }
+        .cbp-header { font-size: 1.5rem; }
+        .cbp-message { font-size: 1.3rem; height: 3.6rem; }
+    }
+
+    @@media (max-width: 768px) {
+        .cbp-display { max-width: 400px; }
+        .cbp-header { font-size: 1.2rem; }
+        .cbp-message { font-size: 1.1rem; height: 3.1rem; }
+    }
+</style>
+
+@code {
+    [Parameter] public int LocationId { get; set; }
+
+    private List<MessageItem> messages = new();
+    private int? scheduleEventId;
+
+    // The schedule event's DisplayId is the playback key the GetMessages API filters on,
+    // so it must match the display attached to this location. Resolved from TblDisplay on load.
+    private int? resolvedDisplayId;
+    private bool showSaveModal = false;
+    private bool isLoading = false;
+    private string saveResultMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        ResetMessages();
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        resolvedDisplayId = await db.TblDisplays
+            .Where(d => d.LocationId == LocationId)
+            .Select(d => (int?)d.DisplayId)
+            .FirstOrDefaultAsync();
+
+        var existing = await db.TblScheduleEvents
+            .Where(x => x.ScheduleEventTypeId == 3 && x.LocationId == LocationId)
+            .FirstOrDefaultAsync();
+
+        if (existing is not null)
+        {
+            scheduleEventId = existing.ScheduleEventId;
+            var assignment = JsonConvert.DeserializeObject<MessageAssignment?>(existing.ContentAssignment);
+            if (assignment is not null && assignment.Messages.Any())
+            {
+                for (int i = 0; i < Math.Min(assignment.Messages.Count, 4); i++)
+                    messages[i] = assignment.Messages[i];
+
+                var active = assignment.Messages.Where(IsActiveMessage).ToList();
+                if (active.Count != assignment.Messages.Count)
+                {
+                    assignment.Messages = active;
+                    existing.ContentAssignment = JsonConvert.SerializeObject(assignment);
+                    await db.SaveChangesAsync();
+                    publicationInvalidator.DisplayScheduleChanged(existing.DisplayId);
+                }
+            }
+        }
+    }
+
+    private void ResetMessages()
+    {
+        messages = new List<MessageItem>
+        {
+            new MessageItem(),
+            new MessageItem(),
+            new MessageItem(),
+            new MessageItem()
+        };
+    }
+
+    private bool IsActiveMessage(MessageItem message)
+    {
+        try
+        {
+            return DateTime.Now >= message.StartDateTime && DateTime.Now < message.EndDateTime;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error checking active message status");
+            return false;
+        }
+    }
+
+    private async Task UpdateMessages()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            var assignment = new MessageAssignment(messages);
+
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            if (scheduleEventId.HasValue)
+            {
+                var existing = await db.TblScheduleEvents.FindAsync(scheduleEventId.Value);
+                if (existing != null)
+                {
+                    var previousDisplayId = existing.DisplayId;
+                    existing.ContentAssignment = JsonConvert.SerializeObject(assignment);
+                    if (resolvedDisplayId.HasValue)
+                        existing.DisplayId = resolvedDisplayId.Value;
+                    await db.SaveChangesAsync();
+                    publicationInvalidator.DisplayScheduleChanged(previousDisplayId);
+                    if (existing.DisplayId != previousDisplayId)
+                        publicationInvalidator.DisplayScheduleChanged(existing.DisplayId);
+                    saveResultMessage = $"Updated existing schedule event (ID: {existing.ScheduleEventId})";
+                }
+            }
+            else if (resolvedDisplayId.HasValue)
+            {
+                var newEvent = new TblScheduleEvent
+                {
+                    ScheduleEventTypeId = 3,
+                    DisplayId = resolvedDisplayId.Value,
+                    LocationId = LocationId,
+                    ContentAssignment = JsonConvert.SerializeObject(assignment),
+                    CreateDate = DateTime.UtcNow,
+                    DefaultContent = false
+                };
+                db.TblScheduleEvents.Add(newEvent);
+                await db.SaveChangesAsync();
+                publicationInvalidator.DisplayScheduleChanged(newEvent.DisplayId);
+                scheduleEventId = newEvent.ScheduleEventId;
+                saveResultMessage = $"Created new schedule event (ID: {newEvent.ScheduleEventId})";
+            }
+            else
+            {
+                // No prior schedule event means no known playback display for this location.
+                // Creating one with an arbitrary DisplayId violates FK_tblScheduleEvent_tblDisplay,
+                // so fail with a clear message instead.
+                throw new InvalidOperationException(
+                    "This CBP Messages location has no associated display yet. Assign a display before saving messages.");
+            }
+
+            showSaveModal = true;
+        }
+        catch (Exception ex)
+        {
+            saveResultMessage = $"Error saving messages: {ex.Message}";
+            showSaveModal = true;
+        }
+        finally
+        {
+            isLoading = false;
+            StateHasChanged();
+        }
+    }
+
+    private void CloseSaveModal()
+    {
+        showSaveModal = false;
+        StateHasChanged();
+    }
+
+    private async Task DeleteMessage(MessageItem message)
+    {
+        int index = messages.IndexOf(message);
+        if (index >= 0)
+            messages[index] = new MessageItem();
+
+        await UpdateMessages();
+    }
+}

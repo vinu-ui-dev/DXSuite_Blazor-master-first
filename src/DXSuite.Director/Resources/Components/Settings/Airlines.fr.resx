@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Label_SearchAirline">
+    <value>Rechercher une compagnie aérienne</value>
+  </data>
+  <data name="Placeholder_StartTyping">
+    <value>Commencez à taper...</value>
+  </data>
+  <data name="Label_AirlineCode">
+    <value>Code de la compagnie</value>
+  </data>
+  <data name="Label_SearchLocations">
+    <value>Rechercher des emplacements</value>
+  </data>
+  <data name="Label_AssignedLocations">
+    <value>Emplacements assignés</value>
+  </data>
+  <data name="Label_WayfindingPin">
+    <value>Code PIN d'orientation</value>
+  </data>
+  <data name="Label_UpdatePin">
+    <value>Mettre à jour le code PIN</value>
+  </data>
+  <data name="Placeholder_EnterPin">
+    <value>Entrez un code à 4 chiffres</value>
+  </data>
+  <data name="Message_ErrorSavingLocation">
+    <value>Une erreur est survenue lors de l'enregistrement de l'emplacement.</value>
+  </data>
+  <data name="Message_BothRequired">
+    <value>Une compagnie et un emplacement doivent être sélectionnés.</value>
+  </data>
+  <data name="Message_ErrorRemovingLocation">
+    <value>Une erreur est survenue lors de la suppression de l'emplacement.</value>
+  </data>
+  <data name="Message_PinMustBeFourDigits">
+    <value>Le code PIN doit comporter exactement quatre chiffres.</value>
+  </data>
+</root>

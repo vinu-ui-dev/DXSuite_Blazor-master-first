@@ -1,0 +1,474 @@
+@using DXSuite.Director.Entities
+@using DXSuite.NetJets.Models
+@using Microsoft.EntityFrameworkCore
+@using Newtonsoft.Json
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject IConfiguration config
+@inject ILogger<NetJetsVideoWall> Logger
+@rendermode InteractiveServer
+
+@if (Location != null)
+{
+    <div class="netjets-container">
+
+        <!-- Messages card -->
+        <section class="netjets-card">
+            <div class="netjets-card-header">
+                <h3>Messages</h3>
+                <button class="dx-btn @(messagesEnabled ? "dx-btn-green" : "dx-btn-gray")"
+                        @onclick="ToggleMessagesEnabled"
+                        disabled="@isSavingToggle"
+                        title="Toggle message display on the video wall">
+                    Messages @(messagesEnabled ? "ON" : "OFF")
+                </button>
+            </div>
+            <p class="netjets-helper">Enter a headline and up to three detail lines. When Messages is On, the video wall displays this content instead of normal programming. Detail messages loop or hold based on how many are populated. 200 character limit per field.</p>
+
+            <div class="netjets-field">
+                <label>Main Message</label>
+                <div class="netjets-input-row">
+                    <input type="text" class="dx-form-control" maxlength="200"
+                           value="@mainMessage"
+                           @oninput="@(e => { mainMessage = e.Value?.ToString() ?? string.Empty; hasUnsavedChanges = true; })"
+                           placeholder="Enter the headline message..." />
+                    <button class="dx-btn dx-btn-red" @onclick="ClearMain" title="Clear main message">Delete</button>
+                </div>
+            </div>
+
+            <div class="netjets-section-divider"></div>
+
+            @for (int i = 0; i < detailMessages.Count; i++)
+            {
+                var index = i;
+                <div class="netjets-field">
+                    <label>Additional Detail @(i + 1)</label>
+                    <div class="netjets-input-row">
+                        <input type="text" class="dx-form-control" maxlength="200"
+                               value="@detailMessages[index]"
+                               @oninput="@(e => { detailMessages[index] = e.Value?.ToString() ?? string.Empty; hasUnsavedChanges = true; })"
+                               placeholder="Optional supporting line..." />
+                        <button class="dx-btn dx-btn-red" @onclick="() => ClearDetail(index)" title="Clear this detail">Delete</button>
+                    </div>
+                </div>
+            }
+
+            <div class="netjets-actions">
+                <button class="dx-btn dx-btn-blue" @onclick="SaveMessages" disabled="@isSavingMessages">
+                    @(isSavingMessages ? "Saving..." : "Save Messages")
+                </button>
+                @if (hasUnsavedChanges && !isSavingMessages)
+                {
+                    <span class="netjets-pending">
+                        <span class="netjets-pending-dot"></span>
+                        Changes pending — save to confirm
+                    </span>
+                }
+                else if (!string.IsNullOrEmpty(messagesStatus))
+                {
+                    <span class="netjets-status">@messagesStatus</span>
+                }
+            </div>
+        </section>
+
+        <!-- Video Wall Mode card -->
+        <section class="netjets-card">
+            <h3>Video Wall Mode</h3>
+
+            <div class="netjets-toggle-row netjets-toggle-row-3">
+
+                <div class="netjets-toggle">
+                    <div class="netjets-toggle-label">TV Mode</div>
+                    <button class="dx-btn @(fullScreenTv ? "dx-btn-green" : "dx-btn-gray")"
+                            @onclick="ToggleFullScreenTv"
+                            disabled="@isSavingToggle">
+                        @(fullScreenTv ? "Maximized" : "Minimized")
+                    </button>
+                    <div class="netjets-toggle-hint">Switches the TV content between Maximized and Minimized mode.</div>
+                </div>
+
+                <div class="netjets-toggle">
+                    <div class="netjets-toggle-label">Change Channel</div>
+                    @if (linkedTvControllerDisplayId > 0)
+                    {
+                        <button class="dx-btn dx-btn-blue netjets-manage-btn" @onclick="NavigateToTvController">MANAGE</button>
+                    }
+                    else
+                    {
+                        <div class="netjets-warning">
+                            <strong>Not configured.</strong> Set <code>NetJets:VideoWall:DisplayId</code> in appsettings.json.
+                        </div>
+                    }
+                </div>
+
+                <div class="netjets-toggle">
+                    <div class="netjets-toggle-label">Special Content Takeover</div>
+                    <button class="dx-btn @(specialContentTakeover ? "dx-btn-green" : "dx-btn-gray")"
+                            @onclick="ToggleSpecialContentTakeover"
+                            disabled="@isSavingToggle">
+                        @(specialContentTakeover ? "ON" : "OFF")
+                    </button>
+                    <div class="netjets-toggle-hint">Triggers special content to override the entire Video Wall.</div>
+                </div>
+
+            </div>
+        </section>
+
+    </div>
+}
+
+<style>
+    .netjets-container {
+        max-width: 1100px;
+        margin: 0 auto;
+        padding: 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+    }
+
+    .netjets-card {
+        background-color: #ffffff;
+        border-radius: 4px;
+        border: 1px solid #CCC;
+        padding: 24px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.08);
+    }
+
+    .netjets-card h3 {
+        margin: 0 0 6px 0;
+        color: #333;
+        font-weight: 700;
+        border-bottom: 2px solid #F2F2F2;
+        padding-bottom: 8px;
+    }
+
+    .netjets-card-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        border-bottom: 2px solid #F2F2F2;
+        padding-bottom: 8px;
+        margin-bottom: 6px;
+    }
+
+    .netjets-card-header h3 {
+        border-bottom: none;
+        padding-bottom: 0;
+        margin: 0;
+    }
+
+    .netjets-helper {
+        color: #4D4D4D;
+        font-size: 0.9rem;
+        margin: 8px 0 18px 0;
+    }
+
+    .netjets-field {
+        margin-bottom: 14px;
+    }
+
+    .netjets-field label {
+        display: block;
+        font-weight: 600;
+        color: #333;
+        margin-bottom: 6px;
+    }
+
+    .netjets-input-row {
+        display: flex;
+        gap: 8px;
+        align-items: stretch;
+    }
+
+    .netjets-input-row .dx-form-control {
+        flex: 1;
+        padding: 8px 12px;
+        border: 1px solid #CCC;
+        border-radius: 4px;
+        font-size: 0.95rem;
+    }
+
+    .netjets-input-row .dx-btn-red {
+        flex: 0 0 auto;
+        padding: 8px 14px;
+    }
+
+    .netjets-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-top: 8px;
+    }
+
+    .netjets-section-divider {
+        border-top: 1px solid #E8E8E8;
+        margin: 6px 0 14px 0;
+    }
+
+    .netjets-status {
+        color: #4D4D4D;
+        font-size: 0.9rem;
+    }
+
+    .netjets-pending {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #856404;
+        font-size: 0.9rem;
+        font-weight: 500;
+    }
+
+    .netjets-pending-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background-color: #FFC107;
+        flex-shrink: 0;
+        animation: netjets-pulse 1.4s ease-in-out infinite;
+    }
+
+    @@keyframes netjets-pulse {
+        0%, 100% { opacity: 1; }
+        50%       { opacity: 0.15; }
+    }
+
+    .netjets-toggle-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px;
+    }
+
+    .netjets-toggle-row-3 {
+        grid-template-columns: 1fr 1fr 1fr;
+    }
+
+    .netjets-toggle {
+        background-color: #F2F2F2;
+        border-radius: 4px;
+        padding: 18px;
+        text-align: center;
+    }
+
+    .netjets-toggle-label {
+        font-weight: 700;
+        color: #333;
+        font-size: 1rem;
+        margin-bottom: 10px;
+    }
+
+    .netjets-toggle .dx-btn {
+        min-width: 140px;
+        font-size: 1.1rem;
+        font-weight: 700;
+        padding: 12px 24px;
+    }
+
+    .netjets-toggle-hint {
+        color: #4D4D4D;
+        font-size: 0.85rem;
+        margin-top: 10px;
+    }
+
+    .netjets-manage-btn {
+        font-size: 1.1rem;
+        font-weight: 700;
+        padding: 12px 30px;
+    }
+
+    .netjets-warning {
+        background-color: #FFF3CD;
+        color: #856404;
+        padding: 10px 14px;
+        border-radius: 4px;
+        border-left: 4px solid #FFC107;
+        font-size: 0.9rem;
+    }
+
+    @@media (max-width: 768px) {
+        .netjets-toggle-row,
+        .netjets-toggle-row-3 {
+            grid-template-columns: 1fr;
+        }
+    }
+</style>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+
+    private string mainMessage = string.Empty;
+    private List<string> detailMessages = new List<string> { string.Empty, string.Empty, string.Empty };
+    private bool messagesEnabled = false;
+    private bool fullScreenTv = false;
+    private bool specialContentTakeover = false;
+
+    private bool isSavingMessages = false;
+    private bool isSavingToggle = false;
+    private bool hasUnsavedChanges = false;
+    private string messagesStatus = string.Empty;
+
+    private int linkedTvControllerDisplayId = 0;
+
+    protected override async Task OnInitializedAsync()
+    {
+        linkedTvControllerDisplayId = config.GetValue<int>("NetJets:VideoWall:DisplayId");
+
+        if (Location == null) return;
+
+        await LoadStateFromLocation();
+    }
+
+    private Task LoadStateFromLocation()
+    {
+        if (Location == null) return Task.CompletedTask;
+
+        if (!string.IsNullOrWhiteSpace(Location.ExtendedData))
+        {
+            try
+            {
+                var parsed = JsonConvert.DeserializeObject<NetJetsVideoWallState>(Location.ExtendedData);
+                if (parsed != null)
+                {
+                    mainMessage = parsed.MainMessage ?? string.Empty;
+                    detailMessages = parsed.DetailMessages != null && parsed.DetailMessages.Count == NetJetsVideoWallState.DetailMessageCount
+                        ? parsed.DetailMessages.ToList()
+                        : new List<string> { string.Empty, string.Empty, string.Empty };
+                    messagesEnabled = parsed.MessagesEnabled;
+                    fullScreenTv = parsed.FullScreenTv;
+                    specialContentTakeover = parsed.SpecialContentTakeover;
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Failed to deserialize NetJets ExtendedData for location {LocationId}", Location.LocationId);
+            }
+        }
+
+        return Task.CompletedTask;
+    }
+
+    private void ClearMain()
+    {
+        mainMessage = string.Empty;
+        hasUnsavedChanges = true;
+    }
+
+    private void ClearDetail(int index)
+    {
+        if (index >= 0 && index < detailMessages.Count)
+        {
+            detailMessages[index] = string.Empty;
+            hasUnsavedChanges = true;
+        }
+    }
+
+    private async Task SaveMessages()
+    {
+        if (Location == null) return;
+
+        isSavingMessages = true;
+        messagesStatus = string.Empty;
+        StateHasChanged();
+
+        try
+        {
+            var compacted = BuildState().Compact();
+            // Reflect the compacted local state back into the UI so users see the shift.
+            mainMessage = compacted.MainMessage;
+            detailMessages = compacted.DetailMessages.ToList();
+
+            await PersistAsync(compacted);
+            hasUnsavedChanges = false;
+            messagesStatus = "Saved.";
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving NetJets messages for location {LocationId}", Location.LocationId);
+            messagesStatus = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            isSavingMessages = false;
+            StateHasChanged();
+        }
+    }
+
+    private async Task ToggleMessagesEnabled()
+    {
+        messagesEnabled = !messagesEnabled;
+        await PersistToggleAsync();
+    }
+
+    private async Task ToggleFullScreenTv()
+    {
+        fullScreenTv = !fullScreenTv;
+        await PersistToggleAsync();
+    }
+
+    private async Task ToggleSpecialContentTakeover()
+    {
+        specialContentTakeover = !specialContentTakeover;
+        await PersistToggleAsync();
+    }
+
+    private async Task PersistToggleAsync()
+    {
+        if (Location == null) return;
+
+        isSavingToggle = true;
+        StateHasChanged();
+
+        try
+        {
+            // Toggles save the current state without compacting messages — preserves whatever the user has typed
+            // even if they haven't clicked Save Messages yet. Compaction only applies on Save Messages and on read.
+            var state = BuildState();
+            await PersistAsync(state);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error persisting NetJets toggle for location {LocationId}", Location.LocationId);
+        }
+        finally
+        {
+            isSavingToggle = false;
+            StateHasChanged();
+        }
+    }
+
+    private NetJetsVideoWallState BuildState() => new NetJetsVideoWallState
+    {
+        MainMessage = mainMessage ?? string.Empty,
+        DetailMessages = detailMessages?.ToList() ?? new List<string> { string.Empty, string.Empty, string.Empty },
+        MessagesEnabled = messagesEnabled,
+        FullScreenTv = fullScreenTv,
+        SpecialContentTakeover = specialContentTakeover
+    };
+
+    private async Task PersistAsync(NetJetsVideoWallState state)
+    {
+        if (Location == null) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var locationRow = await dataContext.TblLocations.FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+        if (locationRow == null) return;
+
+        var serialized = JsonConvert.SerializeObject(state);
+        locationRow.ExtendedData = serialized;
+        await dataContext.SaveChangesAsync();
+
+        // Keep the in-memory Location reference in sync so a parent re-render doesn't show stale data.
+        Location.ExtendedData = serialized;
+    }
+
+    private void NavigateToTvController()
+    {
+        if (linkedTvControllerDisplayId > 0)
+        {
+            navMan.NavigateTo($"/schedule/{linkedTvControllerDisplayId}");
+        }
+    }
+}

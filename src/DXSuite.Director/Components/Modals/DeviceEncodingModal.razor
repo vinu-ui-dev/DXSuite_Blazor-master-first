@@ -1,0 +1,90 @@
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+
+@if (isOpen && _config != null)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="max-width:600px; width:90%;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h5 style="margin:0;">Encoding Profiles — @_config.Manufacturer / @_config.Model</h5>
+                <button class="dx-modal-close" @onclick="Close">×</button>
+            </div>
+            <div class="dx-modal-body" style="max-height:70vh; overflow-y:auto;">
+                <p class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
+                    Profiles are evaluated against uploaded videos in order. The first profile whose
+                    resolution condition matches and has at least one threshold exceeded triggers a
+                    re-encode offer in the uploader.
+                </p>
+                <EncodingProfileEditor Profiles="_profiles" ProfilesChanged="@(p => _profiles = p)" />
+                @if (!string.IsNullOrEmpty(_saveError))
+                {
+                    <div class="alert alert-danger mt-2">@_saveError</div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@_isSaving">
+                    @(_isSaving ? "Saving..." : "Save")
+                </button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSave { get; set; }
+
+    private bool isOpen;
+    private TblDeviceModelConfig? _config;
+    private List<EncodingProfile> _profiles = new();
+    private bool _isSaving;
+    private string? _saveError;
+
+    public Task Open(TblDeviceModelConfig cfg)
+    {
+        _config = cfg;
+        _profiles = ExtendedDataHelper.Parse<List<EncodingProfile>>(cfg.ProfilesJson) ?? new();
+        _saveError = null;
+        isOpen = true;
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+        _config = null;
+        _profiles = new();
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        if (_config == null) return;
+        _isSaving = true;
+        _saveError = null;
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var entity = await db.TblDeviceModelConfigs
+                .FirstOrDefaultAsync(c => c.DeviceModelConfigId == _config.DeviceModelConfigId);
+            if (entity != null)
+            {
+                entity.ProfilesJson = _profiles.Count > 0
+                    ? ExtendedDataHelper.Serialize(_profiles)
+                    : null;
+                await db.SaveChangesAsync();
+            }
+            isOpen = false;
+            await OnSave.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            _saveError = $"Save failed: {ex.Message}";
+        }
+        finally
+        {
+            _isSaving = false;
+        }
+    }
+}

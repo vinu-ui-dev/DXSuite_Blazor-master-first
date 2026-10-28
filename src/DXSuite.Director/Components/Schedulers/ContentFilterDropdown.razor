@@ -1,0 +1,73 @@
+@using DXSuite.Director.Models
+
+<div class="cf-dropdown-container">
+    <label class="cf-label">Content Filter</label>
+    <select class="cf-select" value="@selectedIndex" @onchange="OnFilterSelectionChanged">
+        <option value="-1">All Content</option>
+        @for (var i = 0; i < Options.Count; i++)
+        {
+            <option value="@i">@Options[i].Label</option>
+        }
+    </select>
+</div>
+
+<style>
+    .cf-dropdown-container {
+        display: inline-flex;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 12px;
+        background-color: #E8F0FE;
+        border-radius: 4px;
+        border: 1px solid #C2D9F2;
+    }
+
+    .cf-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #333;
+        white-space: nowrap;
+    }
+
+    .cf-select {
+        padding: 4px 8px;
+        border: 1px solid #CCC;
+        border-radius: 3px;
+        font-size: 12px;
+        background-color: white;
+        min-width: 160px;
+    }
+</style>
+
+@code {
+    /// <summary>Shared first, then one option per value of each participating key.</summary>
+    [Parameter] public IReadOnlyList<ContentFilterOption> Options { get; set; } = [];
+    [Parameter] public EventCallback<ContentFilterOption?> OnFilterChanged { get; set; }
+
+    // Held by value, because the host rebuilds Options and a new value can shift every index.
+    private ContentFilterOption? selected;
+    private int selectedIndex = -1;
+
+    protected override void OnParametersSet()
+    {
+        selectedIndex = selected == null ? -1 : IndexOf(selected);
+    }
+
+    private int IndexOf(ContentFilterOption option)
+    {
+        for (var i = 0; i < Options.Count; i++)
+        {
+            if (string.Equals(Options[i].Key, option.Key, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(Options[i].Value, option.Value, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+        return -1;
+    }
+
+    private async Task OnFilterSelectionChanged(ChangeEventArgs e)
+    {
+        selectedIndex = int.TryParse(e.Value?.ToString(), out var index) && index >= 0 && index < Options.Count ? index : -1;
+        selected = selectedIndex < 0 ? null : Options[selectedIndex];
+        await OnFilterChanged.InvokeAsync(selected);
+    }
+}

@@ -1,0 +1,160 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory;
+@inject NavigationManager navMan;
+@inject IDisplayOverrideService displayOverrides
+@rendermode InteractiveServer
+
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="section-header">
+            <div class="section-title">
+                Side A
+            </div>
+        </div>
+        <div class="section-body">
+            <div class="scroll-container">
+                <div class="image-container">
+                    <div class="d-flex">
+                        @if (displays != null)
+                        {
+
+                            bool firstDisplay = true;
+
+                            foreach (TblDisplay display in displays.Where(x => x.DisplayTypeId == (int)Types.DisplayType.StandardDisplay).OrderBy(x => x.SortOrder))
+                            {
+
+                                @code {
+                                    private int? hoverDisplayId = null;
+
+                                    private void OnMouseOver(int id) => hoverDisplayId = id;
+                                    private void OnMouseOut() => hoverDisplayId = null;
+                                }
+
+                                <div style="display: flex; flex-direction: column; align-items: center; margin-bottom: 20px; text-align: center; margin-right:20px;">
+
+                                    <div style="margin-bottom: 10px; width:@(display.DisplayWidth*scaleFactor)px;">
+                                        @(display.DisplayName.ToUpper())
+                                    </div>
+
+                                    <!-- Mouseover container for the StandardDisplay -->
+                                    <div style="position: relative;"
+                                         @onmouseover="(() => OnMouseOver(display.DisplayId))"
+                                         @onmouseout="OnMouseOut">
+
+                                        <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display"
+                                                                                             ScaleFactor="scaleFactor">
+                                        </DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+
+                                        @if (display.DisplayId == hoverDisplayId && SelectedAsset != null)
+                                        {
+                                            <div class="hoverOverlay" style="border: 2px dashed red;"></div>
+                                            <div class="bottomBanner" @onclick="@(() => OnOverride(display.DisplayId))">
+                                                OVERRIDE
+                                            </div>
+                                        }
+                                        else if (display.DisplayId == hoverDisplayId)
+                                        {
+                                            <div class="hoverOverlay" style="border: 2px solid #16FF00;"></div>
+                                            <div class="bottomBanner" @onclick="@(() => navMan.NavigateTo("/schedule/" + display.DisplayId))">
+                                                EDIT SCHEDULE
+                                            </div>
+                                        }
+                                    </div>
+
+                                    <!-- If needed, extra content here (e.g., overrideBanner) -->
+                                    @if (display.DisplayMode == (int)Types.DisplayMode.Override)
+                                    {
+                                        <div class="overrideBanner"
+                                             style="width:90%; font-size: 14px; cursor:pointer; text-align:center; margin-top:10px;"
+                                             @onclick="(() => BackToSchedule(display.DisplayId))">
+                                            CANCEL OVERRIDE
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title">
+                Side B
+            </div>
+        </div>
+        <div class="section-body">
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+    public IList<TblAsset>? assets { get; set; }
+    public IList<TblDisplay>? displays { get; set; }
+
+    public TblDisplay? contentDisplay { get; set; }
+    public TblDisplay? maskDisplay { get; set; }
+
+    public double scaleFactor { get; set; } = 0.2;
+    public bool imageIsExpanded = false;
+
+    //For Future Use: background-size:1920px 1080px; background-repeat:no-repeat;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                await RefreshData(dataContext);
+            }
+
+        }
+    }
+
+    private async Task RefreshData(IDirectorDBContext dataContext)
+    {
+        if (Location != null)
+        {
+            assets = await dataContext.TblAssets.Where(x => x.LocationId == Location.LocationId).Include(d => d.AssetGroup).Include(e => e.AssetType).Include(f => f.Constraint).ToListAsync();
+            displays = await dataContext.TblDisplays.Where(x => x.LocationId == Location.LocationId).Include(d => d.OverrideAsset).Include(e => e.TblScheduleEvents).Include(f => f.Constraint).ToListAsync();
+        }
+    }
+
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset != null)
+        {
+            using (var scope = scopeFactory.CreateScope())
+            {
+                var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+                {
+                    await RefreshData(dataContext);
+                }
+            }
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+
+        using (var scope = scopeFactory.CreateScope())
+        {
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            if (await displayOverrides.ReturnToScheduleAsync(displayId))
+            {
+                await RefreshData(dataContext);
+            }
+        }
+    }
+}

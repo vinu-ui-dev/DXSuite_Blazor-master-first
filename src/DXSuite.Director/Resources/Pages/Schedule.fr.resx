@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="PageTitle_ManageSchedule">
+    <value>G&#xE9;rer l'horaire</value>
+  </data>
+  <data name="Header_ManageSchedule">
+    <value>G&#xC9;RER L'HORAIRE</value>
+  </data>
+  <data name="Placeholder_EnterDisplayName">
+    <value>Entrez le nom de l'affichage</value>
+  </data>
+  <data name="Button_EditName">
+    <value>Modifier le nom</value>
+  </data>
+  <data name="Header_CurrentStatus">
+    <value>&#xC9;tat actuel</value>
+  </data>
+  <data name="Label_Override">
+    <value>REMPLACEMENT</value>
+  </data>
+  <data name="Label_OnSchedule">
+    <value>&#xC0; L'HORAIRE</value>
+  </data>
+  <data name="Button_Disable">
+    <value>D&#xE9;sactiver</value>
+  </data>
+  <data name="Header_ScheduleManagement">
+    <value>Gestion de l'horaire</value>
+  </data>
+  <data name="Button_CancelScheduleEntry">
+    <value>ANNULER L'ENTR&#xC9;E</value>
+  </data>
+  <data name="Button_NewScheduleEntry">
+    <value>NOUVELLE ENTR&#xC9;E</value>
+  </data>
+  <data name="Label_ScheduleManagementDescription">
+    <value>Cr&#xE9;er et g&#xE9;rer les horaires de contenu des affichages pour la programmation automatis&#xE9;e</value>
+  </data>
+  <data name="Header_DefaultContent">
+    <value>Contenu par d&#xE9;faut</value>
+  </data>
+  <data name="Label_Duration">
+    <value>Dur&#xE9;e&#xA0;:</value>
+  </data>
+  <data name="Label_NoDefaultContent">
+    <value>Aucun contenu par d&#xE9;faut attribu&#xE9;</value>
+  </data>
+  <data name="Header_CurrentScheduleEntries">
+    <value>Entr&#xE9;es d'horaire actuelles</value>
+  </data>
+  <data name="Header_ScheduleEntry">
+    <value>Entr&#xE9;e d'horaire</value>
+  </data>
+  <data name="Header_Content">
+    <value>Contenu</value>
+  </data>
+  <data name="Label_Video">
+    <value>Vid&#xE9;o</value>
+  </data>
+  <data name="Label_NoContentAssigned">
+    <value>Aucun contenu attribu&#xE9;</value>
+  </data>
+  <data name="Header_DateRange">
+    <value>Plage de dates</value>
+  </data>
+  <data name="Label_Start">
+    <value>D&#xE9;but&#xA0;:</value>
+  </data>
+  <data name="Label_End">
+    <value>Fin&#xA0;:</value>
+  </data>
+  <data name="Label_NoLimit">
+    <value>Sans limite</value>
+  </data>
+  <data name="Label_AlwaysActive">
+    <value>Toujours actif</value>
+  </data>
+  <data name="Header_TimeRange">
+    <value>Plage horaire</value>
+  </data>
+  <data name="Label_StartOfDay">
+    <value>D&#xE9;but de journ&#xE9;e</value>
+  </data>
+  <data name="Label_EndOfDay">
+    <value>Fin de journ&#xE9;e</value>
+  </data>
+  <data name="Label_AllDay">
+    <value>Toute la journ&#xE9;e</value>
+  </data>
+  <data name="Header_ActiveDays">
+    <value>Jours actifs</value>
+  </data>
+  <data name="Label_ActiveEveryday">
+    <value>Actif tous les jours</value>
+  </data>
+  <data name="Button_SaveScheduleEdit">
+    <value>ENREGISTRER LA MODIFICATION</value>
+  </data>
+  <data name="Modal_ScheduleContentPreview">
+    <value>Aper&#xE7;u du contenu programm&#xE9;</value>
+  </data>
+  <data name="Label_Type">
+    <value>Type&#xA0;:</value>
+  </data>
+  <data name="Label_Seconds">
+    <value>secondes</value>
+  </data>
+  <data name="Label_URL">
+    <value>URL&#xA0;:</value>
+  </data>
+  <data name="Label_File">
+    <value>Fichier&#xA0;:</value>
+  </data>
+  <data name="Label_MissingAsset">
+    <value>&#xC9;l&#xE9;ment manquant</value>
+  </data>
+  <data name="Label_MissingAssetDescription">
+    <value>Cet &#xE9;l&#xE9;ment a peut-&#xEA;tre &#xE9;t&#xE9; supprim&#xE9; ou d&#xE9;plac&#xE9;.</value>
+  </data>
+  <data name="Label_NoContentItems">
+    <value>Aucun &#xE9;l&#xE9;ment de contenu attribu&#xE9; &#xE0; cet horaire.</value>
+  </data>
+  <data name="Label_Total">
+    <value>Total&#xA0;:</value>
+  </data>
+  <data name="Label_ContentItem">
+    <value>&#xE9;l&#xE9;ment de contenu</value>
+  </data>
+  <data name="Label_ContentItems">
+    <value>&#xE9;l&#xE9;ments de contenu</value>
+  </data>
+  <data name="Label_Daily">
+    <value>Quotidien</value>
+  </data>
+  <data name="Label_ContentItemsAssigned">
+    <value>&#xE9;l&#xE9;ment(s) de contenu attribu&#xE9;(s)</value>
+  </data>
+  <data name="Label_ContentAssignmentError">
+    <value>Erreur d'attribution du contenu</value>
+  </data>
+  <data name="Label_Image">
+    <value>Image</value>
+  </data>
+  <data name="Label_Web">
+    <value>Web</value>
+  </data>
+  <data name="Label_Stream">
+    <value>Flux</value>
+  </data>
+  <data name="Label_Unknown">
+    <value>Inconnu</value>
+  </data>
+</root>

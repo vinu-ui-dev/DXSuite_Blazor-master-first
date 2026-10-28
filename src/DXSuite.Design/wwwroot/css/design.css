@@ -1,0 +1,89 @@
+/* DXSuite.Design — module-scoped stylesheet
+   Status badges now use dx-badge from the global dxsuite.css. */
+
+/* ── Shared search-dropdown pattern (ct-search-*) ───────────────────────────
+   Used by: NewDesignModal, AddItemModal, CreateNetsuiteItemModal, CatalogPage
+   Defined here so all pages get the styles regardless of render order.        */
+
+.ct-search-wrap { position: relative; }
+
+.ct-search-results {
+    border: 1px solid var(--dx-border-color, #dee2e6);
+    border-radius: 4px;
+    max-height: 220px;
+    overflow-y: auto;
+    margin-top: 2px;
+    background: #fff;
+    box-shadow: 0 4px 12px rgba(0,0,0,.08);
+    position: absolute;
+    left: 0; right: 0;
+    z-index: 50;
+}
+
+.ct-search-result {
+    padding: 8px 12px;
+    cursor: pointer;
+    border-bottom: 1px solid var(--dx-border-color, #dee2e6);
+}
+
+.ct-search-result:last-child { border-bottom: none; }
+.ct-search-result:hover { background: var(--dx-bg-alt, #f0f7ff); }
+
+.ct-search-result-name { font-weight: 500; font-size: 0.875rem; }
+.ct-search-result-sub  { font-size: 0.8rem; color: var(--dx-text-muted, #6c757d); }
+
+/* ── Selected-item chip ─────────────────────────────────────────────────── */
+
+.ct-selected-chip {
+    background: var(--dx-bg-alt, #f0f0f0);
+    border: 1px solid var(--dx-border-color, #dee2e6);
+    border-radius: 4px;
+    padding: 10px 14px;
+    margin-bottom: 14px;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.ct-selected-chip-name { font-weight: 600; font-size: 0.9rem; }
+.ct-selected-chip-sub  { font-size: 0.8rem; color: var(--dx-text-muted, #6c757d); }
+
+/* ── Section label (used inside modals) ─────────────────────────────────── */
+
+.ct-section-label {
+    font-size: 0.78rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .06em;
+    color: var(--dx-text-muted, #6c757d);
+    margin: 18px 0 8px;
+}
+
+/* ── Catalog-page-specific helpers (assign rows, option rows) ────────────── */
+
+.ct-assign-row {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    border-bottom: 1px solid var(--dx-border-color, #dee2e6);
+}
+.ct-assign-row:last-child { border-bottom: none; }
+.ct-assign-hours { width: 80px; }
+
+.ct-options-wrap {
+    border: 1px solid var(--dx-border-color, #dee2e6);
+    border-radius: 4px;
+    margin-top: 6px;
+}
+.ct-option-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--dx-border-color, #dee2e6);
+}
+.ct-option-row:last-child { border-bottom: none; }
+.ct-option-row input[type=text] { flex: 1; }
+.ct-add-option { display: flex; gap: 8px; margin-top: 8px; }

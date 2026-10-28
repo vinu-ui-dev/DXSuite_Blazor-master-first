@@ -1,0 +1,160 @@
+@page "/design/ai-access"
+@rendermode InteractiveServer
+@attribute [Authorize]
+@using DXSuite.Design.Services.Mcp
+@inject DesignMcpTokenService TokenService
+@inject ISessionState Session
+@inject NavigationManager Nav
+
+<PageTitle>AI Access — DXSuite</PageTitle>
+
+@if (isLoading)
+{
+    <!-- Blank until the async permission check resolves, to avoid an Unauthorized flash -->
+}
+else if (!isAuthorized)
+{
+    <div class="unauthorized-wrapper">
+        <h1>Unauthorized</h1>
+        <p>You do not have permission to view this page.</p>
+        <a href="/">Return Home</a>
+    </div>
+}
+else
+{
+<div class="dx-page-header" style="display:flex; align-items:center; gap:16px">
+    <a href="/design" class="dx-btn dx-btn-outline-blue dx-btn-sm">← Designs</a>
+    <h2 style="margin:0">AI Access</h2>
+</div>
+
+<div class="dx-card" style="max-width:860px; padding:20px">
+    <p class="dx-text-muted" style="font-size:.85rem">
+        Personal access tokens let your own AI assistant (e.g. a Claude custom connector) read
+        design and requirements data through the DXSuite MCP endpoint. Tokens are tied to your
+        account, are read-only, and expire after @DesignMcpTokenService.DefaultLifetime.Days days.
+        Add the connector URL <code>@McpUrl</code> with the token as a Bearer authorization header.
+    </p>
+
+    @if (newTokenValue is not null)
+    {
+        <div class="dx-alert dx-alert-warning" style="margin:12px 0">
+            <strong>Copy your new token now — it will not be shown again.</strong>
+            <div class="aa-token-box">
+                <code>@newTokenValue</code>
+            </div>
+        </div>
+    }
+
+    <div style="display:flex; gap:8px; align-items:flex-end; margin-bottom:16px">
+        <div class="dx-form-group" style="flex:1; margin-bottom:0">
+            <label class="dx-form-label">New token name</label>
+            <input class="dx-form-control" @bind="newTokenName" placeholder="e.g. Claude desktop"
+                   @onkeydown='async e => { if (e.Key == "Enter") await CreateAsync(); }' />
+        </div>
+        <button class="dx-btn dx-btn-blue" @onclick="CreateAsync" disabled="@busy">Create Token</button>
+    </div>
+
+    @if (error is not null)
+    {
+        <div class="dx-alert dx-alert-danger">@error</div>
+    }
+
+    @if (!tokens.Any())
+    {
+        <p class="dx-text-muted" style="font-style:italic">No tokens yet.</p>
+    }
+    else
+    {
+        <table class="dx-table" style="width:100%">
+            <thead>
+                <tr>
+                    <th>Name</th><th>Created</th><th>Expires</th><th>Last Used</th><th>Status</th><th></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var t in tokens)
+                {
+                    var expired = t.ExpiresDate <= DateTime.UtcNow;
+                    <tr>
+                        <td>@t.Name</td>
+                        <td>@t.CreateDate.ToLocalTime().ToString("MMM d, yyyy")</td>
+                        <td>@t.ExpiresDate.ToLocalTime().ToString("MMM d, yyyy")</td>
+                        <td>@(t.LastUsedDate?.ToLocalTime().ToString("MMM d, h:mm tt") ?? "never")</td>
+                        <td>
+                            @if (t.IsRevoked) { <span class="dx-badge dx-badge-red">Revoked</span> }
+                            else if (expired) { <span class="dx-badge dx-badge-gray">Expired</span> }
+                            else { <span class="dx-badge dx-badge-green">Active</span> }
+                        </td>
+                        <td style="text-align:right">
+                            @if (!t.IsRevoked && !expired)
+                            {
+                                <button class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RevokeAsync(t.TokenId)">
+                                    @(confirmRevokeId == t.TokenId ? "Confirm?" : "Revoke")
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+}
+
+@code {
+    private List<TblDesignMcpToken> tokens = [];
+    private string newTokenName = string.Empty;
+    private string? newTokenValue;
+    private string? error;
+    private bool busy;
+    private int? confirmRevokeId;
+
+    private string McpUrl => new Uri(new Uri(Nav.BaseUri), "/mcp/design").ToString();
+
+    private string UserId => Session.User?.UserId.ToString() ?? string.Empty;
+
+    private bool isAuthorized;
+    private bool isLoading = true;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await Session.HasPermissionAsync(PermissionKeys.PageDesign);
+        isLoading = false;
+        if (isAuthorized)
+            await LoadAsync();
+    }
+
+    private async Task LoadAsync() => tokens = await TokenService.ListForUserAsync(UserId);
+
+    private async Task CreateAsync()
+    {
+        var name = newTokenName.Trim();
+        if (string.IsNullOrEmpty(name)) { error = "Token name is required."; return; }
+        if (string.IsNullOrEmpty(UserId)) { error = "No user session."; return; }
+        busy = true; error = null;
+        try
+        {
+            newTokenValue = await TokenService.CreateAsync(UserId, name);
+            newTokenName = string.Empty;
+            await LoadAsync();
+        }
+        catch (Exception ex) { error = $"Failed to create token: {ex.Message}"; }
+        finally { busy = false; }
+    }
+
+    private async Task RevokeAsync(int tokenId)
+    {
+        if (confirmRevokeId != tokenId)
+        {
+            confirmRevokeId = tokenId;
+            return;
+        }
+        confirmRevokeId = null;
+        await TokenService.RevokeAsync(tokenId, UserId);
+        await LoadAsync();
+    }
+}
+
+<style>
+    .aa-token-box { background: var(--surface, #f8f9fa); border: 1px solid var(--dx-border-color, #dee2e6); border-radius: 6px; padding: 10px 14px; margin-top: 8px; font-size: .9rem; word-break: break-all; user-select: all; }
+</style>

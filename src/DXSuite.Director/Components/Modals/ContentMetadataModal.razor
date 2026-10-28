@@ -1,0 +1,602 @@
+@using DXSuite.Director.Services
+@inject IContentMetadataRuleEditor ruleEditor
+@inject ISessionState sessionState
+@inject ILogger<ContentMetadataModal> Logger
+
+@* The content metadata rule builder (spec section 5). A Playlist location gets the full builder; every other
+   type gets the reduced, scope-only shape of section 10.3: no targeting switch, no player columns, no coverage. *@
+
+@if (isOpen && snapshot != null && confirm != null)
+{
+    var name = Label(confirm.Key);
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:540px; max-width:calc(100vw - 32px);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>@ConfirmTitle(confirm, name)</h4>
+                <button class="dx-modal-close" type="button" aria-label="Close" @onclick="CancelConfirm">&times;</button>
+            </div>
+            <div class="dx-modal-body" style="font-size:.9rem; line-height:1.6;">
+                @if (confirm.Kind == ConfirmKind.Add)
+                {
+                    var carrying = ContentMetadataRuleBuilder.AssetsTagged(confirm.Key, snapshot.Assets);
+                    <p>@(snapshot.IsPlaylist
+                        ? (targetingOn ? "This changes what plays on screens as soon as you save." : "Targeting is off, so this does not change what plays until it is switched on.")
+                        : "Scoped users here are matched on this field as soon as you save.")</p>
+                    <ul style="margin:8px 0 0; padding-left:20px;">
+                        <li><b>@carrying of @AssetTotal assets</b> here are already tagged with @name and start being matched on it.</li>
+                        @if (snapshot.IsPlaylist)
+                        {
+                            var holding = ContentMetadataRuleBuilder.PlayersTagged(confirm.Key, snapshot.Players);
+                            <li><b>@(snapshot.Players.Count - holding) of @snapshot.Players.Count players</b> hold no @name value and fall under its players with no value setting.</li>
+                            @if (targetingOn && snapshot.Players.Count > 0)
+                            {
+                                <li>Players receiving nothing goes from <b>@CurrentCoverage().ReceivingNothing</b> to <b>@CoverageWith(rows.Append(RowToAdd(confirm.Key))).ReceivingNothing</b>.</li>
+                            }
+                        }
+                    </ul>
+                    <div class="dx-alert dx-alert-info" style="margin-top:12px;">
+                        <div>Tags are never deleted by this screen. Removing a field later stops it being used here and leaves the tags in place.</div>
+                    </div>
+                }
+                else if (confirm.Kind == ConfirmKind.Remove)
+                {
+                    var carrying = ContentMetadataRuleBuilder.AssetsTagged(confirm.Key, snapshot.Assets);
+                    <p>@(snapshot.IsPlaylist ? $"{name} stops affecting what plays here." : $"{name} stops affecting what Scoped users here can see.")</p>
+                    <ul style="margin:8px 0 0; padding-left:20px;">
+                        <li><b>@carrying of @AssetTotal assets</b> keep their @name tags. The tags stop being read at this location.</li>
+                        @if (snapshot.IsPlaylist && targetingOn && snapshot.Players.Count > 0)
+                        {
+                            <li>Players receiving nothing goes from <b>@CurrentCoverage().ReceivingNothing</b> to <b>@CoverageWith(rows.Where(r => !SameKey(r.Key, confirm.Key))).ReceivingNothing</b>.</li>
+                        }
+                        <li>Adding the field back later restores this exactly.</li>
+                    </ul>
+                    <div class="dx-alert dx-alert-info" style="margin-top:12px;">
+                        <div>The tags stay reachable through Edit metadata on each asset in the content list.</div>
+                    </div>
+                }
+                else
+                {
+                    var untagged = ContentMetadataRuleBuilder.AssetsUntagged(confirm.Key, snapshot.Assets);
+                    <p><b>@untagged of @AssetTotal assets</b> here have no @name value. Scoped users here stop seeing them.</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-blue" @onclick="ApplyConfirm">@ConfirmAction(confirm)</button>
+                <button class="dx-btn dx-btn-gray" @onclick="CancelConfirm">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+else if (isOpen && snapshot != null)
+{
+    var free = FreeFields();
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="width:900px; max-width:calc(100vw - 32px);" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Content metadata: @snapshot.LocationName</h4>
+                <button class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div style="padding:12px; margin-bottom:14px; background:var(--dx-bg-alt); border-radius:var(--dx-border-radius);">
+                    @if (snapshot.IsPlaylist)
+                    {
+                        <label style="display:flex; align-items:center; gap:10px; cursor:pointer;">
+                            <span class="dx-toggle">
+                                <input type="checkbox" checked="@targetingOn" @onchange="@(e => targetingOn = e.Value is true)" />
+                                <span class="dx-toggle-slider"></span>
+                            </span>
+                            <span>
+                                <span style="font-weight:600;">Target content by metadata</span>
+                                <span class="dx-form-hint" style="display:block;">When off, every player here receives all content. Does not affect what users can see.</span>
+                            </span>
+                        </label>
+                    }
+                    <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; @(snapshot.IsPlaylist ? "margin-top:12px; padding-top:12px; border-top:1px solid var(--dx-border-color);" : "")">
+                        <span style="font-size:.88rem; font-weight:600;">@(snapshot.IsPlaylist ? "Play content matching" : "Show content matching")</span>
+                        <button class="dx-btn dx-btn-sm @(matchMode == "all" ? "dx-btn-blue" : "dx-btn-gray")" @onclick='() => matchMode = "all"'>All rules</button>
+                        <button class="dx-btn dx-btn-sm @(matchMode == "any" ? "dx-btn-blue" : "dx-btn-gray")" @onclick='() => matchMode = "any"'>Any rule</button>
+                        <span class="dx-form-hint">@(matchMode == "all" ? "An asset must satisfy every rule below." : "An asset needs one rule below to say yes.")</span>
+                    </div>
+                </div>
+
+                @foreach (var warning in Warnings())
+                {
+                    <div class="dx-alert @warning.Css" style="margin-bottom:8px;">
+                        <div>@warning.Text</div>
+                    </div>
+                }
+
+                <div class="dx-table" style="margin-top:12px;">
+                    <div class="dx-table-header" style="grid-template-columns:@GridColumns;">
+                        <div>Field</div>
+                        <div style="text-align:right; border-right:1px solid var(--dx-border-color);">Assets<span class="dx-text-muted" style="display:block; font-size:.65rem; text-transform:none;">tagged</span></div>
+                        <div>Content with no value</div>
+                        @if (snapshot.IsPlaylist)
+                        {
+                            <div>Players with no value</div>
+                            <div style="text-align:right; border-left:1px solid var(--dx-border-color);">Players<span class="dx-text-muted" style="display:block; font-size:.65rem; text-transform:none;">tagged</span></div>
+                        }
+                        <div></div>
+                    </div>
+                    @if (rows.Count == 0)
+                    {
+                        <div class="dx-table-row" style="grid-template-columns:1fr;">
+                            <div class="dx-text-muted">@(snapshot.IsPlaylist
+                                ? "No fields yet. All content plays on every player here."
+                                : "No fields yet. Scoped users here see nothing until a field is added.")</div>
+                        </div>
+                    }
+                    @foreach (var row in rows)
+                    {
+                        var rule = row;
+                        var name = Label(rule.Key);
+                        var field = Field(rule.Key);
+                        var tagged = ContentMetadataRuleBuilder.AssetsTagged(rule.Key, snapshot.Assets);
+                        <div class="dx-table-row" style="grid-template-columns:@GridColumns; align-items:center;">
+                            <div style="min-width:0;">
+                                <span style="font-weight:600;">@name</span>
+                                @if (field == null)
+                                {
+                                    <span class="dx-badge dx-badge-orange" title="This field is no longer defined in the metadata registry, so this rule is ignored.">not defined</span>
+                                }
+                                else
+                                {
+                                    <span class="dx-type-badge dx-type-@field.FieldType" style="font-size:.64rem; padding:1px 8px; margin-left:6px; cursor:help;" title="@TypeTip(field.FieldType, name)">@field.FieldType</span>
+                                }
+                                <small class="dx-text-muted" style="display:block;">@rule.Key</small>
+                            </div>
+                            <div style="text-align:right; font-variant-numeric:tabular-nums; border-right:1px solid var(--dx-border-color);"
+                                 title="@tagged of @AssetTotal assets here carry a @name value. @(AssetTotal - tagged) do not.">
+                                @tagged of @AssetTotal
+                            </div>
+                            <div>
+                                <select @key="@($"{rule.Key}:{selectVersion}")" class="dx-form-control dx-form-control-sm" style="cursor:help;" title="@ContentWhy(rule.Content)"
+                                        value="@rule.Content" @onchange="e => OnContentPolicyChanged(rule, e.Value?.ToString())">
+                                    @foreach (var option in ContentOptions)
+                                    {
+                                        <option value="@option.Value" title="@ContentWhy(option.Value)">@option.Label</option>
+                                    }
+                                </select>
+                            </div>
+                            @if (snapshot.IsPlaylist)
+                            {
+                                var holding = ContentMetadataRuleBuilder.PlayersTagged(rule.Key, snapshot.Players);
+                                <div>
+                                    <select class="dx-form-control dx-form-control-sm" style="cursor:help;" title="@PlayerWhy(rule.Players)"
+                                            value="@rule.Players" @onchange="e => rule.Players = e.Value?.ToString() ?? PolicyDefault">
+                                        @foreach (var option in PlayerOptions)
+                                        {
+                                            <option value="@option.Value" title="@PlayerWhy(option.Value)">@option.Label</option>
+                                        }
+                                    </select>
+                                </div>
+                                <div style="text-align:right; font-variant-numeric:tabular-nums; border-left:1px solid var(--dx-border-color);"
+                                     title="@holding of @snapshot.Players.Count players here hold a @name value. @(snapshot.Players.Count - holding) do not.">
+                                    @holding of @snapshot.Players.Count
+                                </div>
+                            }
+                            <div>
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" aria-label="Remove @name" title="Remove @name"
+                                        @onclick="() => confirm = new Confirmation(ConfirmKind.Remove, rule.Key)">&times;</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+
+                <div style="display:flex; justify-content:center; align-items:center; gap:8px; margin:14px 0;">
+                    @if (free.Count == 0)
+                    {
+                        <button class="dx-btn dx-btn-blue" disabled title="Every metadata field in the registry is already used at this location.">Add metadata</button>
+                    }
+                    else if (picking)
+                    {
+                        <select class="dx-form-control" style="width:auto; min-width:240px;" @onchange="OnFieldPicked">
+                            <option value="">Choose a field</option>
+                            @foreach (var f in free)
+                            {
+                                <option value="@f.Key">@f.DisplayName (@f.Key)</option>
+                            }
+                        </select>
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => picking = false">Cancel</button>
+                    }
+                    else
+                    {
+                        <button class="dx-btn dx-btn-blue" @onclick="() => picking = true">Add metadata</button>
+                    }
+                </div>
+
+                @if (snapshot.IsPlaylist)
+                {
+                    @if (!targetingOn)
+                    {
+                        <div class="dx-alert dx-alert-info">
+                            <div>Targeting is off, so every player here receives all content. These rules are saved but not applied.</div>
+                        </div>
+                    }
+                    else if (snapshot.Players.Count == 0)
+                    {
+                        <div class="dx-alert dx-alert-info">
+                            <div>No players are assigned to this location, so there is no coverage to show.</div>
+                        </div>
+                    }
+                    else
+                    {
+                        var coverage = CurrentCoverage();
+                        <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                            <div class="dx-alert @(coverage.MatchedByNoContent.Count > 0 ? "dx-alert-danger" : "dx-alert-info")" style="flex:1 1 180px; margin:0;">
+                                <div><b style="font-size:1.4rem; display:block;">@coverage.MatchedByNoContent.Count</b>players matched by no content</div>
+                            </div>
+                            <div class="dx-alert @(coverage.ExcludedBeforeMatching.Count > 0 ? "dx-alert-warning" : "dx-alert-info")" style="flex:1 1 180px; margin:0;">
+                                <div><b style="font-size:1.4rem; display:block;">@coverage.ExcludedBeforeMatching.Count</b>players excluded before matching, by a Nothing rule</div>
+                            </div>
+                            <div class="dx-alert dx-alert-info" style="flex:1 1 180px; margin:0;">
+                                <div><b style="font-size:1.4rem; display:block;">@coverage.Receiving of @coverage.Total</b>players receiving content</div>
+                            </div>
+                        </div>
+                        @if (coverage.MatchedByNoContent.Count > 0)
+                        {
+                            <div class="dx-text-muted" style="font-size:.8rem; margin-top:6px;">Matched by no content: @string.Join(", ", coverage.MatchedByNoContent)</div>
+                        }
+                        @if (coverage.ExcludedBeforeMatching.Count > 0)
+                        {
+                            <div class="dx-text-muted" style="font-size:.8rem; margin-top:6px;">Excluded before matching: @string.Join(", ", coverage.ExcludedBeforeMatching)</div>
+                        }
+                    }
+                }
+
+                @if (saveError != null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:12px;"><div>@saveError</div></div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-blue" disabled="@saving" @onclick="SaveAsync">Save</button>
+                <button class="dx-btn dx-btn-gray" disabled="@saving" @onclick="Close">Cancel</button>
+            </div>
+        </div>
+    </div>
+}
+else if (isOpen && loadError == null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:480px;">
+            <div class="dx-modal-header"><h4>Content metadata</h4></div>
+            <div class="dx-modal-body" style="display:flex; align-items:center; gap:10px;">
+                <div class="dx-spinner"></div>
+                <span class="dx-text-muted">Loading content metadata...</span>
+            </div>
+        </div>
+    </div>
+}
+else if (isOpen && loadError != null)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="width:480px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Content metadata</h4>
+                <button class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
+            </div>
+            <div class="dx-modal-body"><div class="dx-alert dx-alert-danger"><div>@loadError</div></div></div>
+            <div class="dx-modal-footer"><button class="dx-btn dx-btn-gray" @onclick="Close">Close</button></div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private const string PolicyDefault = "all";
+
+    private enum ConfirmKind { Add, Remove, HideUntagged }
+
+    private sealed record Confirmation(ConfirmKind Kind, string Key);
+
+    private sealed class RuleRow
+    {
+        public RuleRow(string key, string content = PolicyDefault, string players = PolicyDefault)
+        {
+            Key = key;
+            Content = content;
+            Players = players;
+        }
+
+        public string Key { get; }
+        public string Content { get; set; }
+        public string Players { get; set; }
+    }
+
+    private sealed record PolicyOption(string Value, string Label);
+
+    private sealed record Warning(string Css, string Text);
+
+    private bool isOpen;
+    private RuleBuilderSnapshot? snapshot;
+    private string? loadError;
+    private bool targetingOn;
+    private string matchMode = PolicyDefault;
+    private List<RuleRow> rows = new();
+    private bool picking;
+    private Confirmation? confirm;
+    private bool saving;
+    private string? saveError;
+    private int openVersion;
+
+    // Settings of rules removed during this session and of every stored rule, so adding a field back restores
+    // the policies it had rather than the defaults.
+    private readonly Dictionary<string, RuleRow> knownSettings = new(MetadataEvaluator.KeyComparer);
+
+    // Coverage walks every player against every asset, so it is recomputed only when the rules change.
+    private string? coverageSignature;
+    private RuleCoverage? coverageCache;
+
+    // Bumped to rebuild the policy selects, so a cancelled confirmation does not leave one showing the refused choice.
+    private int selectVersion;
+
+    public async Task OpenAsync(int locationId)
+    {
+        var version = ++openVersion;
+        isOpen = true;
+        snapshot = null;
+        loadError = null;
+        saveError = null;
+        confirm = null;
+        picking = false;
+        StateHasChanged();
+
+        try
+        {
+            var loaded = await ruleEditor.LoadAsync(locationId);
+            // A later open supersedes this one, whichever load finishes last.
+            if (version != openVersion)
+                return;
+
+            snapshot = loaded;
+            if (snapshot == null)
+            {
+                loadError = "This location no longer exists.";
+            }
+            else
+            {
+                targetingOn = snapshot.TargetContentByMetadata;
+                matchMode = snapshot.MatchMode == "any" ? "any" : PolicyDefault;
+                rows = snapshot.Rules.Select(r => new RuleRow(r.MetadataKey, r.UntaggedContentPolicy, r.UntaggedPlayerPolicy)).ToList();
+                knownSettings.Clear();
+                foreach (var row in rows)
+                    knownSettings[row.Key] = new RuleRow(row.Key, row.Content, row.Players);
+                coverageSignature = null;
+            }
+        }
+        catch (Exception ex)
+        {
+            if (version != openVersion)
+                return;
+            Logger.LogError(ex, "Failed to load content metadata for location {LocationId}", locationId);
+            loadError = "Content metadata could not be loaded.";
+        }
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        if (saving)
+            return;
+        openVersion++;
+        isOpen = false;
+        snapshot = null;
+        confirm = null;
+    }
+
+    private string GridColumns => snapshot?.IsPlaylist == true
+        ? "minmax(0,1.15fr) 90px minmax(0,1.3fr) minmax(0,1.4fr) 90px 44px"
+        : "minmax(0,1.5fr) 90px minmax(0,1.6fr) 44px";
+
+    private int AssetTotal => snapshot?.Assets.Count ?? 0;
+
+    private RuleBuilderField? Field(string key) =>
+        snapshot?.Registry.FirstOrDefault(f => SameKey(f.Key, key));
+
+    private string Label(string key) => Field(key)?.DisplayName ?? key;
+
+    private static bool SameKey(string a, string b) => MetadataEvaluator.KeyComparer.Equals(a.Trim(), b.Trim());
+
+    private List<RuleBuilderField> FreeFields() =>
+        snapshot?.Registry.Where(f => !rows.Any(r => SameKey(r.Key, f.Key))).ToList() ?? new();
+
+    // ---- Copy. Explanations live on the controls as tooltips; each option explains itself. ----
+
+    private IReadOnlyList<PolicyOption> ContentOptions => snapshot?.IsPlaylist == true
+        ? [new("all", "All players (default)"), new("none", "No players")]
+        : [new("all", "Everyone (default)"), new("none", "Unscoped users only")];
+
+    private static readonly IReadOnlyList<PolicyOption> PlayerOptions =
+        [new("all", "All content (default)"), new("untaggedOnly", "Untagged content"), new("none", "Nothing")];
+
+    private string ContentWhy(string value) => (snapshot?.IsPlaylist == true, value) switch
+    {
+        (true, "none") => "Content with no value for this field stops playing at this location entirely.",
+        (true, _) => "Content with no value for this field stays shared and reaches every player here.",
+        (false, "none") => "Content with no value for this field is hidden from Scoped users here.",
+        (false, _) => "Content with no value for this field stays shared and every user here can see it."
+    };
+
+    private static string PlayerWhy(string value) => value switch
+    {
+        "untaggedOnly" => "Use when a player with no value should show only shared content.",
+        "none" => "This beats every other field. A player with no value here plays nothing, even when another field matches.",
+        _ => "This field places no restriction on a player that has no value for it."
+    };
+
+    private static string TypeTip(string fieldType, string name) => fieldType switch
+    {
+        "multi-select" => $"{name} can hold several values at once. Content matches when any one of its values matches any one of the player's, so an asset tagged for two concourses reaches both.",
+        "list" => $"{name} holds one value chosen from a fixed list.",
+        "int" => $"{name} holds a number.",
+        _ => $"{name} holds free text. Values are matched exactly, ignoring case and surrounding spaces."
+    };
+
+    private string ConfirmTitle(Confirmation c, string name) => c.Kind switch
+    {
+        ConfirmKind.Add => $"Add {name}",
+        ConfirmKind.Remove => $"Remove {name}",
+        _ => "Hide untagged content from Scoped users"
+    };
+
+    private static string ConfirmAction(Confirmation c) => c.Kind switch
+    {
+        ConfirmKind.Add => "Add field",
+        ConfirmKind.Remove => "Remove field",
+        _ => "Change setting"
+    };
+
+    private List<Warning> Warnings()
+    {
+        var warnings = new List<Warning>();
+        if (snapshot == null)
+            return warnings;
+
+        var orphaned = rows.Where(r => Field(r.Key) == null).Select(r => r.Key).ToList();
+        if (orphaned.Count > 0)
+            warnings.Add(new("dx-alert-warning",
+                $"Not in the metadata registry: {string.Join(", ", orphaned)}. These rules are ignored until the fields are restored or the rules are removed."));
+
+        var undeclared = ContentMetadataRuleBuilder.UndeclaredKeys(rows.Select(r => r.Key), snapshot.Assets);
+        var addable = undeclared.Where(u => Field(u.Key) != null).ToList();
+        var undefined = undeclared.Where(u => Field(u.Key) == null).ToList();
+        if (addable.Count > 0)
+            warnings.Add(new("dx-alert-info",
+                $"Content here is tagged with {string.Join(", ", addable.Select(u => $"{Label(u.Key)} ({u.Assets})"))}, which no rule uses. "
+                + "Those tags are ignored. Adding a rule for one starts using it right away."));
+        if (undefined.Count > 0)
+            warnings.Add(new("dx-alert-info",
+                $"Content here is also tagged with {string.Join(", ", undefined.Select(u => $"{u.Key} ({u.Assets})"))}, which {(undefined.Count == 1 ? "is not a defined metadata field" : "are not defined metadata fields")}. "
+                + "Those tags are ignored and cannot be used here."));
+
+        if (snapshot.FilesWithoutAssetRecord > 0)
+            warnings.Add(new("dx-alert-info",
+                $"{snapshot.FilesWithoutAssetRecord} {(snapshot.FilesWithoutAssetRecord == 1 ? "file" : "files")} at this location {(snapshot.FilesWithoutAssetRecord == 1 ? "has" : "have")} no asset record and {(snapshot.FilesWithoutAssetRecord == 1 ? "is" : "are")} not targeted."));
+
+        // A zone filtered to nothing is a blank rectangle inside a composed screen, not an empty playlist.
+        foreach (var usage in snapshot.LayoutUsages)
+            warnings.Add(new("dx-alert-info", $"This location is zone {usage.ZoneNumber} of {usage.LayoutName}."));
+
+        return warnings;
+    }
+
+    // ---- Coverage ----
+
+    private LocationMetadataRules RulesFrom(IEnumerable<RuleRow> ruleRows) => new(
+        matchMode == "any" ? MetadataCombineMode.Any : MetadataCombineMode.All,
+        ruleRows.Select(r => new MetadataKeyRule(
+            r.Key,
+            r.Content == "none" ? UntaggedContentPolicy.None : UntaggedContentPolicy.All,
+            r.Players switch { "untaggedOnly" => UntaggedPlayerPolicy.UntaggedOnly, "none" => UntaggedPlayerPolicy.None, _ => UntaggedPlayerPolicy.All })),
+        snapshot!.Registry.Select(f => f.Key));
+
+    private RuleCoverage CoverageWith(IEnumerable<RuleRow> ruleRows) =>
+        ContentMetadataRuleBuilder.Coverage(RulesFrom(ruleRows), snapshot!.Assets, snapshot.Players);
+
+    private RuleCoverage CurrentCoverage()
+    {
+        var signature = matchMode + "|" + string.Join("|", rows.Select(r => $"{r.Key}:{r.Content}:{r.Players}"));
+        if (coverageCache == null || signature != coverageSignature)
+        {
+            coverageCache = CoverageWith(rows);
+            coverageSignature = signature;
+        }
+        return coverageCache;
+    }
+
+    // ---- Edits. Neither add nor remove applies without its counts being shown first. ----
+
+    private RuleRow RowToAdd(string key) =>
+        knownSettings.TryGetValue(key, out var known) ? new RuleRow(known.Key, known.Content, known.Players) : new RuleRow(key);
+
+    private void OnFieldPicked(ChangeEventArgs e)
+    {
+        var key = e.Value?.ToString();
+        if (string.IsNullOrEmpty(key))
+            return;
+        picking = false;
+        confirm = new Confirmation(ConfirmKind.Add, key);
+    }
+
+    private void OnContentPolicyChanged(RuleRow rule, string? value)
+    {
+        value ??= PolicyDefault;
+        // On a scope-only location the flip to none hides content from Scoped users, so it says how much first.
+        if (snapshot?.IsPlaylist == false && value == "none" && rule.Content != "none")
+        {
+            confirm = new Confirmation(ConfirmKind.HideUntagged, rule.Key);
+            return;
+        }
+        rule.Content = value;
+    }
+
+    private void ApplyConfirm()
+    {
+        if (confirm == null)
+            return;
+
+        switch (confirm.Kind)
+        {
+            case ConfirmKind.Add:
+                if (!rows.Any(r => SameKey(r.Key, confirm.Key)))
+                    rows.Add(knownSettings.TryGetValue(confirm.Key, out var known)
+                        ? new RuleRow(known.Key, known.Content, known.Players)
+                        : new RuleRow(confirm.Key));
+                break;
+            case ConfirmKind.Remove:
+                foreach (var removed in rows.Where(r => SameKey(r.Key, confirm.Key)))
+                    knownSettings[removed.Key] = new RuleRow(removed.Key, removed.Content, removed.Players);
+                rows.RemoveAll(r => SameKey(r.Key, confirm.Key));
+                break;
+            case ConfirmKind.HideUntagged:
+                var rule = rows.FirstOrDefault(r => SameKey(r.Key, confirm.Key));
+                if (rule != null)
+                    rule.Content = "none";
+                break;
+        }
+        confirm = null;
+    }
+
+    private void CancelConfirm()
+    {
+        confirm = null;
+        selectVersion++;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (snapshot == null)
+            return;
+
+        var locationId = snapshot.LocationId;
+        saving = true;
+        saveError = null;
+        try
+        {
+            await ruleEditor.SaveAsync(
+                locationId,
+                snapshot.IsPlaylist ? targetingOn : snapshot.TargetContentByMetadata,
+                matchMode,
+                rows.Select(r => new LocationMetadataRuleInput(r.Key, r.Content, r.Players)).ToList(),
+                sessionState.User?.UserId.ToString() ?? "system");
+            saving = false;
+            Close();
+            await OnSaved.InvokeAsync();
+        }
+        catch (ArgumentException ex)
+        {
+            saveError = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to save content metadata for location {LocationId}", locationId);
+            saveError = "Content metadata could not be saved.";
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

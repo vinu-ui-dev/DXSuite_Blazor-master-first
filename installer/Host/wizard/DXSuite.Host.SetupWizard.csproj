@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    The setup wizard the technician sees. Self-contained (win-x64) so it runs before the
+    .NET Desktop runtime is guaranteed on the box; it carries its own runtime. References
+    only Microsoft.Data.SqlClient (connection tests + DB-state detection) — never the heavy
+    DXSuite.Director assembly, which is the DB tool's job. On Finish it writes the collected
+    SetupConfig to the JSON file the MSI's custom actions consume.
+  -->
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>DXSuite.Host.SetupWizard</AssemblyName>
+    <RootNamespace>DXSuite.Host.Setup.Wizard</RootNamespace>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <!-- Single file so the Burn bundle can carry the wizard as one payload. Native libs
+         (WPF, SqlClient SNI) must be embedded too, or the bundle would ship without them. -->
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <EnableCompressionInSingleFile>true</EnableCompressionInSingleFile>
+    <!-- WPF resolves the UI language (xml:lang, default en-US) to a specific culture for
+         data binding; InvariantGlobalization strips non-invariant cultures and crashes on
+         the first Window.Show() ("Cannot find non-neutral culture related to 'en-us'"). -->
+    <InvariantGlobalization>false</InvariantGlobalization>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Data.SqlClient" Version="6.0.1" />
+  </ItemGroup>
+
+  <!-- Shared contract + helpers, also linked into the DB tool. -->
+  <ItemGroup>
+    <Compile Include="..\shared\SetupConfig.cs" Link="Shared\SetupConfig.cs" />
+    <Compile Include="..\shared\ConnectionStringFactory.cs" Link="Shared\ConnectionStringFactory.cs" />
+    <Compile Include="..\shared\DirectorDbState.cs" Link="Shared\DirectorDbState.cs" />
+  </ItemGroup>
+
+</Project>

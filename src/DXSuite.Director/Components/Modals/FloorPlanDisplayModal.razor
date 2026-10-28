@@ -1,0 +1,181 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using DXSuite.Director.Models
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject ISessionState sessionState
+@inject NavigationManager navManager
+@inject IStatusSelectorService statusSelectorService
+
+@if (isOpen)
+{
+    <div class="fpdm-overlay" @onclick="Close">
+        <div class="fpdm-modal" @onclick:stopPropagation="true">
+            <div class="fpdm-header">
+                <h4>@(display?.DisplayName ?? "Display")</h4>
+                <button class="fpdm-close" @onclick="Close">&times;</button>
+            </div>
+
+            <div class="fpdm-body">
+                @if (display != null)
+                {
+                    <div class="fpdm-section-label">Preview</div>
+                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay
+                        Display="@display"
+                        ScaleFactor="@scaleFactor"
+                        PreviewMode="true" />
+
+                    @if (display.DisplayMode == (int)Types.DisplayMode.StatusSelector)
+                    {
+                        <div class="fpdm-status-section">
+                            @if (isAdmin && scheduleContexts.Count > 0)
+                            {
+                                <div class="fpdm-section-label">Content Context</div>
+                                <select class="form-select fpdm-context-select" value="@selectedContextIndex" @onchange="OnContextChanged">
+                                    <option value="-1">Default</option>
+                                    @for (int i = 0; i < scheduleContexts.Count; i++)
+                                    {
+                                        var ctx = scheduleContexts[i];
+                                        <option value="@i">@ctx.GetDisplayLabel()</option>
+                                    }
+                                </select>
+                            }
+
+                            <div class="fpdm-section-label" style="margin-top: 12px;">Status Selector</div>
+                            <DXSuite.Director.Components.DisplayTypes.StatusSelector
+                                DisplayId="@display.DisplayId"
+                                EditUser="@(sessionState.User?.UserId.ToString() ?? "system")"
+                                ConstraintId="@selectedConstraintId"
+                                MetadataKeyOverride="@selectedMetadataKey"
+                                ScheduleContext="@selectedScheduleContext"
+                                OnContentChanged="OnStatusChanged" />
+                        </div>
+                    }
+                }
+            </div>
+
+            <div class="fpdm-footer">
+                @if (display != null)
+                {
+                    <button class="blue-btn" @onclick="GoToDisplay">Go to Display</button>
+                }
+                <button class="gray-btn" @onclick="Close">Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnContentChanged { get; set; }
+
+    private bool isOpen;
+    private TblDisplay? display;
+    private double scaleFactor = 0.3;
+    private bool isAdmin;
+    private List<ScheduleContext> scheduleContexts = new();
+    private int selectedContextIndex = -1;
+
+    private int? selectedConstraintId => selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+        ? scheduleContexts[selectedContextIndex].ConstraintId
+        : null;
+
+    private string? selectedMetadataKey => selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+        ? scheduleContexts[selectedContextIndex].MetadataKey
+        : null;
+
+    private ScheduleContext? selectedScheduleContext => selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+        ? scheduleContexts[selectedContextIndex]
+        : null;
+
+    public async Task Open(TblFloorPlanElement element)
+    {
+        if (!element.ChildDisplayId.HasValue) return;
+
+        selectedContextIndex = -1;
+        scheduleContexts.Clear();
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        display = await db.TblDisplays
+            .Include(d => d.OverrideAsset)
+            .Include(d => d.TblScheduleEvents)
+            .Include(d => d.Location)
+            .Include(d => d.Constraint)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.DisplayId == element.ChildDisplayId.Value);
+
+        if (display == null) return;
+
+        if (display.DisplayWidth > 0 && display.DisplayHeight > 0)
+        {
+            // Modal is 560px with 20px padding on each side, so 520px available width
+            double maxWidth = 520;
+            double maxHeight = 400;
+            double ws = maxWidth / display.DisplayWidth;
+            double hs = maxHeight / display.DisplayHeight;
+            scaleFactor = Math.Min(ws, hs);
+            if (scaleFactor > 1) scaleFactor = 1;
+        }
+
+        isAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+        if (isAdmin && display.DisplayMode == (int)Types.DisplayMode.StatusSelector)
+        {
+            scheduleContexts = await statusSelectorService.GetScheduleContextsAsync(display.DisplayId);
+        }
+
+        isOpen = true;
+        StateHasChanged();
+    }
+
+    private async Task OnStatusChanged()
+    {
+        if (display != null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            display = await db.TblDisplays
+                .Include(d => d.OverrideAsset)
+                .Include(d => d.TblScheduleEvents)
+                .Include(d => d.Location)
+                .Include(d => d.Constraint)
+                .AsNoTracking()
+                .FirstOrDefaultAsync(d => d.DisplayId == display.DisplayId);
+        }
+        StateHasChanged();
+        await OnContentChanged.InvokeAsync();
+    }
+
+    private void OnContextChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var idx))
+            selectedContextIndex = idx;
+    }
+
+    private void GoToDisplay()
+    {
+        if (display != null)
+        {
+            navManager.NavigateTo($"/display/{display.DisplayId}");
+        }
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+    }
+}
+
+<style>
+    .fpdm-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1050; }
+    .fpdm-modal { background: white; border-radius: 8px; width: 560px; max-height: 90vh; overflow-y: auto; box-shadow: 0 8px 32px rgba(0,0,0,0.3); }
+    .fpdm-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #eee; }
+    .fpdm-header h4 { margin: 0; font-size: 16px; font-weight: 600; font-family: "BAHNSCHRIFT"; }
+    .fpdm-close { background: none; border: none; font-size: 22px; cursor: pointer; color: #666; }
+    .fpdm-body { padding: 20px; }
+    .fpdm-section-label { font-size: 12px; font-weight: 600; color: #888; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 8px; }
+    .fpdm-status-section { margin-top: 16px; padding-top: 16px; border-top: 1px solid #eee; }
+    .fpdm-context-select { max-width: 100%; margin-bottom: 12px; }
+    .fpdm-footer { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px; border-top: 1px solid #eee; }
+</style>

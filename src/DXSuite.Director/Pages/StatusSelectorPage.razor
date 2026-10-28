@@ -1,0 +1,258 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@inject ILocationAccessService locationAccessService
+@inject DisplayScaleService ScaleService
+@inject IStatusSelectorService statusSelectorService
+@inject IUserGroupLocationDefaultService defaultService
+
+@if (display != null)
+{
+    <PageTitle>@display.DisplayName</PageTitle>
+
+    <section class="dx-page-header">
+        <div class="dx-page-header-flex">
+            <h2>@(display.DisplayName?.ToUpper())</h2>
+        </div>
+    </section>
+
+    <section class="ssp-body">
+        <div class="ssp-status-card">
+            <h4 class="ssp-status-title">Current Status</h4>
+            <div class="ssp-preview">
+                <DXSuite.Director.Components.DisplayTypes.StandardDisplay
+                    @key="refreshKey"
+                    Display="display"
+                    ScaleFactor="scaleFactorHalf"
+                    PreviewMode="true">
+                </DXSuite.Director.Components.DisplayTypes.StandardDisplay>
+            </div>
+        </div>
+
+        @if (isAdmin)
+        {
+            <div class="ssp-admin-controls">
+                <button class="dx-btn dx-btn-blue" @onclick="StartRename">Edit Name</button>
+
+                @if (scheduleContexts.Count > 0)
+                {
+                    <div class="ssp-context-field">
+                        <label class="ssp-context-label">Content Context</label>
+                        <select class="form-select ssp-context-select" value="@selectedContextIndex" @onchange="OnContextChanged">
+                            <option value="-1">Default</option>
+                            @for (int i = 0; i < scheduleContexts.Count; i++)
+                            {
+                                var ctx = scheduleContexts[i];
+                                <option value="@i">@ctx.GetDisplayLabel()</option>
+                            }
+                        </select>
+                    </div>
+                }
+            </div>
+
+            @if (isRenaming)
+            {
+                <div class="ssp-rename-row">
+                    <input type="text" class="form-control ssp-rename-input" @bind="newName" placeholder="Enter display name" />
+                    <button class="blue-btn ssp-rename-btn" @onclick="SubmitRename">Save</button>
+                    <button class="gray-btn ssp-rename-btn" @onclick="CancelRename">Cancel</button>
+                </div>
+            }
+        }
+
+        @if (!isAdmin && !isAuthorized)
+        {
+            <div class="ssp-unauthorized">
+                <h4>Unauthorized</h4>
+                <p>You do not have an active access schedule for this display.</p>
+            </div>
+        }
+        else
+        {
+            <div class="ssp-buttons">
+                <DXSuite.Director.Components.DisplayTypes.StatusSelector
+                    DisplayId="@DisplayId"
+                    EditUser="@editUser"
+                    ConstraintId="@selectedConstraintId"
+                    MetadataKeyOverride="@selectedMetadataKey"
+                    ScheduleContext="@selectedScheduleContext"
+                    OnContentChanged="OnStatusChanged" />
+            </div>
+        }
+    </section>
+}
+
+@code {
+    [Parameter] public int DisplayId { get; set; }
+
+    private TblDisplay? display;
+    private int refreshKey;
+    private string editUser = "system";
+    private double scaleFactorHalf;
+    private bool isRenaming;
+    private string newName = "";
+    private List<ScheduleContext> scheduleContexts = new();
+    private int selectedContextIndex = -1;
+    private bool isAdmin;
+    private bool isAuthorized = true;
+    private int? resolvedConstraintId;
+    private string? resolvedMetadataKey;
+
+    // The active airline's "Counter Content" constraint for this counter, when an allocation block
+    // is active. Used as the default content library so admins (and users) editing a counter see the
+    // airline's assigned asset library rather than the display's own default. Null for non-counter
+    // displays or when no airline block is active — callers then fall back to the display library.
+    private int? airlineConstraintId;
+
+    private int? selectedConstraintId => isAdmin
+        ? (selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+            ? scheduleContexts[selectedContextIndex].ConstraintId
+            : airlineConstraintId)
+        : (resolvedConstraintId ?? airlineConstraintId);
+
+    private string? selectedMetadataKey => isAdmin
+        ? (selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+            ? scheduleContexts[selectedContextIndex].MetadataKey
+            : null)
+        : resolvedMetadataKey;
+
+    private ScheduleContext? selectedScheduleContext => isAdmin && selectedContextIndex >= 0 && selectedContextIndex < scheduleContexts.Count
+        ? scheduleContexts[selectedContextIndex]
+        : null;
+
+    protected override async Task OnInitializedAsync()
+    {
+        editUser = sessionState.User?.UserId.ToString() ?? "system";
+        isAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+
+        await ReloadDisplay();
+
+        // When an airline allocation block is active on this counter, default the content library to
+        // that airline's "Counter Content" constraint (set in the Ticket Counter Scheduler) rather
+        // than the display's own default library. Applies to both the main wall and transient views.
+        airlineConstraintId = await statusSelectorService.ResolveActiveAirlineConstraintAsync(DisplayId);
+
+        if (isAdmin)
+        {
+            scheduleContexts = await statusSelectorService.GetScheduleContextsAsync(DisplayId);
+        }
+        else if (display != null)
+        {
+            var userId = sessionState.User?.UserId ?? 0;
+            var access = await locationAccessService.ResolveAccessAsync(userId, display.LocationId, DateTime.Now);
+
+            if (access == null)
+            {
+                isAuthorized = false;
+            }
+            else if (access.ActiveConstraintId.HasValue)
+            {
+                resolvedConstraintId = access.ActiveConstraintId.Value;
+                resolvedMetadataKey = access.ActiveMetadataKey;
+            }
+
+            // The LocationAccessRule grants access to the transient cluster but doesn't carry a
+            // ConstraintId. Fall back to the airline group's default for the parent wall location.
+            if (resolvedConstraintId == null && isAuthorized && display.Location?.ParentVideoWallLocationId.HasValue == true)
+            {
+                var wallLocId = display.Location.ParentVideoWallLocationId.Value;
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+                var memberGroupIds = await db.TblUserGroupMemberships.AsNoTracking()
+                    .Where(m => m.UserId == userId)
+                    .Select(m => m.UserGroupId)
+                    .ToListAsync();
+
+                foreach (var groupId in memberGroupIds)
+                {
+                    var constraint = (await defaultService.GetDefaultForGroupAsync(groupId, wallLocId)).ConstraintId;
+                    if (constraint.HasValue)
+                    {
+                        resolvedConstraintId = constraint.Value;
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private async Task ReloadDisplay()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        display = await db.TblDisplays
+            .Include(d => d.OverrideAsset)
+            .Include(s => s.TblScheduleEvents)
+            .Include(d => d.Location)
+            .Include(d => d.Constraint)
+            .AsNoTracking()
+            .FirstOrDefaultAsync(d => d.DisplayId == DisplayId);
+
+        if (display != null)
+            scaleFactorHalf = ScaleService.GetScaleFactor(display.DisplayWidth, display.DisplayHeight, "half");
+    }
+
+    private async Task OnStatusChanged()
+    {
+        await ReloadDisplay();
+        refreshKey++;
+        StateHasChanged();
+    }
+
+    private void OnContextChanged(ChangeEventArgs e)
+    {
+        if (int.TryParse(e.Value?.ToString(), out var idx))
+            selectedContextIndex = idx;
+    }
+
+    private void StartRename()
+    {
+        newName = display?.DisplayName ?? "";
+        isRenaming = true;
+    }
+
+    private void CancelRename()
+    {
+        isRenaming = false;
+    }
+
+    private async Task SubmitRename()
+    {
+        if (string.IsNullOrWhiteSpace(newName)) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var d = await db.TblDisplays.FirstOrDefaultAsync(x => x.DisplayId == DisplayId);
+        if (d != null)
+        {
+            d.DisplayName = newName.Trim();
+            await db.SaveChangesAsync();
+        }
+
+        await ReloadDisplay();
+        isRenaming = false;
+    }
+}
+
+<style>
+    .ssp-body { display: flex; flex-direction: column; align-items: center; padding: 30px 20px; }
+    .ssp-status-card { background: #f5f5f5; border-radius: 8px; padding: 24px 32px; text-align: center; max-width: 720px; width: 100%; }
+    .ssp-status-title { margin: 0 0 16px 0; font-family: "BAHNSCHRIFT", sans-serif; font-size: 16px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 1px; }
+    .ssp-preview { display: flex; justify-content: center; }
+    .ssp-admin-controls { display: flex; align-items: flex-end; justify-content: center; gap: 16px; margin-top: 20px; flex-wrap: wrap; }
+    .ssp-rename-row { display: flex; align-items: center; justify-content: center; gap: 8px; margin-top: 12px; }
+    .ssp-context-field { display: flex; flex-direction: column; gap: 4px; }
+    .ssp-context-label { font-size: 13px; font-weight: 600; font-family: "BAHNSCHRIFT", sans-serif; color: #555; }
+    .ssp-context-select { max-width: 320px; font-size: 13px; }
+    .ssp-unauthorized { margin-top: 24px; padding: 40px; text-align: center; background-color: #f5f5f5; border-radius: 8px; max-width: 720px; width: 100%; }
+    .ssp-unauthorized h4 { color: #888; margin: 0 0 8px 0; }
+    .ssp-unauthorized p { color: #999; margin: 0; }
+    .ssp-buttons { margin-top: 24px; display: flex; justify-content: center; max-width: 900px; width: 100%; }
+    .ssp-rename-input { width: 300px; font-size: 16px; margin-right: 8px; }
+    .ssp-rename-btn { font-size: 13px; padding: 6px 14px; margin-right: 4px; }
+</style>

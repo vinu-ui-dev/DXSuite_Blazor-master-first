@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="/" />
+    <link href="lib/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
+    <link href="lib/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" />
+    <link rel="stylesheet" href="_content/DXSuite.Shared/dxsuite.css" />
+    @if (ModuleDesignEnabled)
+    {
+        <link rel="stylesheet" href="_content/DXSuite.Design/css/design.css" />
+    }
+    <ResourcePreloader />
+    <link rel="stylesheet" href="@Assets["app.css"]" />
+    <link rel="stylesheet" href="@Assets["DXSuite.Host.styles.css"]" />
+    <link rel="icon" type="image/png" href="/images/branding/favicon.png" />
+    @{
+        var threeJs = new ImportMapDefinition(
+            new Dictionary<string, string>
+            {
+                ["three"] = "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+                ["three/addons/"] = "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+            },
+            null, null);
+        var combinedMap = ImportMapDefinition.Combine(
+            ImportMapDefinition.FromResourceCollection(Assets),
+            threeJs);
+    }
+    <ImportMap ImportMapDefinition="combinedMap" />
+    <HeadOutlet />
+</head>
+
+<body>
+    <Routes @rendermode=RenderMode.InteractiveServer />
+    <ReconnectModal />
+    <script src="@Assets["_framework/blazor.web.js"]"></script>
+    <script src="scripts/idleTimeout.js"></script>
+    <script src="scripts/videoCleanup.js"></script>
+    <script src="_content/DXSuite.Director/scripts/dxInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/panoramaInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/schedulerInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/displayCalendarInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/floorPlanPanZoom.js"></script>
+    <script src="_content/DXSuite.Director/scripts/googleMapsInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/leafletInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/threeDInterop.js"></script>
+    <script src="_content/DXSuite.Director/scripts/contentPackageInterop.js"></script>
+    @if (ModuleDesignEnabled)
+    {
+        <script src="_content/DXSuite.Design/scripts/worksheetInterop.js"></script>
+        <script src="_content/DXSuite.Design/scripts/designInterop.js"></script>
+    }
+</body>
+
+</html>
+
+@code {
+#if MODULE_DESIGN
+    private const bool ModuleDesignEnabled = true;
+#else
+    private const bool ModuleDesignEnabled = false;
+#endif
+}

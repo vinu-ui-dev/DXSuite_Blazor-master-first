@@ -1,0 +1,93 @@
+@page "/platform/tenants"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Registry
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+@inject ITenantProvisioningService ProvisioningService
+@inject NavigationManager Nav
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Tenants</h2>
+        @if (ProvisioningService.IsAvailable)
+        {
+            <a href="/platform/tenants/new" class="dx-btn dx-btn-blue dx-btn-sm">+ New Tenant</a>
+        }
+    </div>
+
+    @if (loading)
+    {
+        <p>Loading…</p>
+    }
+    else if (tenants.Count == 0)
+    {
+        <p class="dx-text-muted">No tenants found.</p>
+    }
+    else
+    {
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 1fr 1.5fr 1fr 80px 70px;">
+                <div>Tenant ID</div>
+                <div>Display Name</div>
+                <div>Subdomain</div>
+                <div>Status</div>
+                <div></div>
+            </div>
+            @foreach (var t in tenants)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 1fr 1.5fr 1fr 80px 70px;">
+                    <div>@t.TenantId</div>
+                    <div>@t.DisplayName</div>
+                    <div>@t.Subdomain</div>
+                    <div>
+                        @if (t.IsEnabled)
+                        {
+                            <span class="dx-badge dx-badge-green">Active</span>
+                        }
+                        else
+                        {
+                            <span class="dx-badge dx-badge-gray">Disabled</span>
+                        }
+                    </div>
+                    <div>
+                        <a href="/platform/tenants/@t.TenantId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (error != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@error</div>
+    }
+</div>
+
+@code {
+    private List<TblTenant> tenants = new();
+    private bool loading = true;
+    private string? error;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await SessionState.SessionLoaded.Task;
+        if (!SessionState.IsPlatformOperator)
+        {
+            Nav.NavigateTo("/403");
+            return;
+        }
+
+        try
+        {
+            tenants = (await ProvisioningService.GetAllTenantsAsync()).ToList();
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+}

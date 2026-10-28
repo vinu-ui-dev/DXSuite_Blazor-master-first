@@ -1,0 +1,515 @@
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using DXSuite.Director.Components.Modals
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Services.Identity
+@inject IDbContextFactory<DirectorDbContext> DbFactory
+@inject ISessionState SessionState
+@inject ILocationAccessService LocationAccessService
+@inject IWebHostEnvironment WebHostEnv
+@inject ITenantMediaPathResolver MediaPaths
+@inject ILogger<LocationsTab> Logger
+@implements IDisposable
+@rendermode InteractiveServer
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Location Management</h4>
+        <div class="dx-panel-controls">
+            <input @bind="searchFilter" @bind:event="oninput"
+                   class="dx-search-input"
+                   placeholder="Search locations..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenCreateLayout">
+                + Create Location
+            </button>
+        </div>
+    </div>
+
+    @if (isLoading)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (FilteredLocations?.Any() == true)
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table dx-collapse">
+                <div class="dx-table-header dx-collapse-header" style="grid-template-columns: 40px 60px minmax(120px,1fr) minmax(100px,1fr) 120px 100px 300px;">
+                    <div></div>
+                    <div>ID</div>
+                    <div style="cursor:pointer; user-select:none;" @onclick='() => SetSort("name")'>Location Name @(SortCaret("name"))</div>
+                    <div style="cursor:pointer; user-select:none;" @onclick='() => SetSort("group")'>Location Group @(SortCaret("group"))</div>
+                    <div style="cursor:pointer; user-select:none;" @onclick='() => SetSort("type")'>Type @(SortCaret("type"))</div>
+                    <div>Access</div>
+                    <div>Actions</div>
+                </div>
+                @foreach (var loc in FilteredLocations)
+                {
+                    var locDisplays = GetDisplaysForLocation(loc.LocationId);
+                    var isExpanded = expandedLocations.Contains(loc.LocationId);
+                    var isOverrideContent = loc.LocationType?.LocationTypeName == "Override Content";
+                    <div class="dx-table-row dx-collapse-row @(isExpanded ? "expanded" : "")" style="grid-template-columns: 40px 60px minmax(120px,1fr) minmax(100px,1fr) 120px 100px 300px;">
+                        <div>
+                            @if (locDisplays.Any())
+                            {
+                                <button class="dx-expand-btn" @onclick="() => ToggleExpand(loc.LocationId)">
+                                    @(isExpanded ? "▼" : "▶")
+                                </button>
+                            }
+                        </div>
+                        <div class="dx-col-id dx-col-hide">@loc.LocationId</div>
+                        <div class="dx-col-primary">
+                            <a href="/location/@loc.LocationId" class="dx-col-link">@loc.LocationName</a>
+                        </div>
+                        <div class="dx-col-hide">
+                            <span>@(loc.LocationGroup?.LocationGroupName ?? "—")</span>
+                        </div>
+                        <div>
+                            <span>@(loc.LocationType?.LocationTypeName ?? "—")</span>
+                        </div>
+                        <div>
+                            @if (isOverrideContent)
+                            {
+                                <span class="dx-text-muted">—</span>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                        @onclick="() => ManageAccess(loc)">
+                                    Manage
+                                </button>
+                            }
+                        </div>
+                        <div class="dx-col-actions" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditLocation(loc)">Edit</button>
+                            @if (loc.LocationType?.LocationTypeId == 1015)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditLayoutLocation(loc)">Configure</button>
+                            }
+                            @if (loc.LocationType?.LocationTypeName == "Floorplan")
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditFloorplanLocation(loc)">Configure</button>
+                            }
+                            @if (loc.LocationType?.LocationTypeId == 1030)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditPanoramaLocation(loc)">Configure</button>
+                            }
+                            @if (loc.LocationType?.LocationTypeName == "VideoWall")
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditVideoWallLocation(loc)">Configure</button>
+                            }
+                            @if (DXSuite.Director.Services.LocationBundles.LocationBundleConstants.IsBundleType(loc.LocationType))
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenBundleConfigure(loc)">Configure</button>
+                            }
+                            @if (loc.LocationType?.LinkedToDisplay == false)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenMetadata(loc)">Metadata</button>
+                            }
+                            @if (!isOverrideContent)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenImage(loc)">Image</button>
+                            }
+                        </div>
+                    </div>
+                    @if (isExpanded && locDisplays.Any())
+                    {
+                        <div class="dx-table-nested-header dx-collapse-header" style="grid-template-columns: 40px 60px 1fr 120px 180px;">
+                            <div></div>
+                            <div>ID</div>
+                            <div>Display</div>
+                            <div>Constraint</div>
+                            <div>Actions</div>
+                        </div>
+                        @foreach (var display in locDisplays)
+                        {
+                            <div class="dx-table-nested-row dx-collapse-row" style="grid-template-columns: 40px 60px 1fr 120px 180px;">
+                                <div class="dx-col-hide"></div>
+                                <div class="dx-col-id dx-col-hide">@display.DisplayId</div>
+                                <div>
+                                    <span class="dx-display-connector">└─</span>
+                                    <a href="/schedule/@display.DisplayId" class="dx-col-link">@display.DisplayName</a>
+                                    @if (display.DisplayWidth > 0 && display.DisplayHeight > 0)
+                                    {
+                                        <span class="dx-display-resolution" style="margin-left:6px;">(@(display.DisplayWidth)×@(display.DisplayHeight))</span>
+                                    }
+                                </div>
+                                <div class="dx-col-hide">
+                                    @if (display.ConstraintId > 0 && display.Constraint != null)
+                                    {
+                                        <span class="dx-constraint-badge">@display.Constraint.ConstraintName</span>
+                                    }
+                                </div>
+                                <div style="display:flex; gap:4px;">
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditDisplay(display, loc.LocationId)">Edit</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                }
+            </div>
+        </div>
+        <div class="dx-text-muted" style="padding:8px 20px; font-size:0.85rem;">
+            @FilteredLocations.Count() locations, @(displays?.Count ?? 0) total displays
+        </div>
+    }
+    else
+    {
+        <div style="text-align:center; padding:40px 20px;">
+            <h5>No locations found</h5>
+            <p class="dx-text-muted">No locations have been configured.</p>
+        </div>
+    }
+</div>
+
+@* Modals *@
+@if (editingLocation != null)
+{
+    <LocationEditModal Location="editingLocation"
+                       OnSave="OnLocationSaved"
+                       OnClose="() => editingLocation = null"
+                       OnDelete="OnLocationDeleted" />
+}
+
+<DisplayEditModal @ref="displayEditModal" />
+@* Reload after every modal save: the locations list is no-tracking, so without this a re-opened
+   editor is fed the pre-save entity and re-saving it silently reverts the previous edits *@
+<CreateLayoutModal @ref="createLayoutModal" OnLayoutCreated="@(async _ => await LoadData())" />
+<LocationBundleConfigureModal @ref="bundleConfigureModal" OnSaved="ReloadLocations" />
+
+<ContentMetadataModal @ref="contentMetadataModal" />
+
+@* Location Image Modal *@
+@if (showImageModal && imageLocation != null)
+{
+    <div class="dx-modal-overlay" @onclick="CloseImageModal">
+        <div class="dx-modal" style="width:400px;" @onclick:stopPropagation="true">
+            <div class="dx-modal-header">
+                <h4>Location Image — @imageLocation.LocationName</h4>
+                <button class="dx-modal-close" @onclick="CloseImageModal">×</button>
+            </div>
+            <div class="dx-modal-body" style="text-align:center;">
+                @if (!string.IsNullOrEmpty(imageLocation.LocationImagePath))
+                {
+                    <div style="margin-bottom:12px;">
+                        <img src="@imageLocation.LocationImagePath" alt="Location image" style="max-width:180px; max-height:120px; border:1px solid #ddd; border-radius:4px;" />
+                    </div>
+                }
+                else
+                {
+                    <div style="margin-bottom:12px; padding:30px; background:#f8f9fa; border:1px dashed #ccc; border-radius:4px; color:#999;">
+                        No image
+                    </div>
+                }
+
+                @if (!string.IsNullOrEmpty(imageError))
+                {
+                    <div class="dx-text-red" style="font-size:0.85rem; margin-bottom:8px;">@imageError</div>
+                }
+
+                <div style="display:flex; gap:8px; justify-content:center;">
+                    <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
+                        Upload
+                        <InputFile OnChange="OnLocationImageUpload" accept=".jpg,.jpeg,.png,.gif" style="display:none;" />
+                    </label>
+                    @if (!string.IsNullOrEmpty(imageLocation.LocationImagePath))
+                    {
+                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="RemoveLocationImage">
+                            Remove
+                        </button>
+                    }
+                </div>
+                <p style="font-size:0.78rem; color:#888; margin-top:8px;">Image must be exactly 180 × 120 pixels. Accepted: JPG, PNG, GIF.</p>
+            </div>
+        </div>
+    </div>
+}
+
+@if (accessModalLocation != null)
+{
+    <LocationAccessModal Location="accessModalLocation"
+                         OnClose="@(async () => { accessModalLocation = null; await LoadData(); })" />
+}
+
+@code {
+    private List<TblLocation>? locations;
+    private List<TblDisplay>? displays;
+    private Dictionary<int, int> accessRuleCounts = new();
+    private HashSet<int> expandedLocations = new();
+    private string searchFilter = "";
+    private bool isLoading = true;
+
+    // Modal refs
+    private TblLocation? editingLocation;
+    private DisplayEditModal? displayEditModal;
+    private CreateLayoutModal? createLayoutModal;
+    private LocationBundleConfigureModal? bundleConfigureModal;
+
+    private ContentMetadataModal? contentMetadataModal;
+
+    // Location Image modal state
+    private bool showImageModal;
+    private TblLocation? imageLocation;
+    private string? imageError;
+
+    // Location Access modal state
+    private TblLocation? accessModalLocation;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    private async Task LoadData()
+    {
+        isLoading = true;
+        StateHasChanged();
+
+        try
+        {
+            await using var db = await DbFactory.CreateDbContextAsync();
+
+            locations = await db.TblLocations
+                .AsNoTracking()
+                .Include(l => l.LocationType)
+                .Include(l => l.LocationGroup)
+                .Where(l => !l.IsTransientCluster)
+                .OrderBy(l => l.LocationName)
+                .ToListAsync();
+
+            displays = await db.TblDisplays
+                .AsNoTracking()
+                .Include(d => d.Location)
+                .Include(d => d.Constraint)
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+
+            accessRuleCounts = await db.TblLocationAccessRules
+                .AsNoTracking()
+                .GroupBy(r => r.LocationId)
+                .ToDictionaryAsync(g => g.Key, g => g.Count());
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"Error loading locations: {ex.Message}");
+            locations = new();
+            displays = new();
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private string sortColumn = "name";
+    private bool sortAsc = true;
+
+    private void SetSort(string col)
+    {
+        if (sortColumn == col) sortAsc = !sortAsc;
+        else { sortColumn = col; sortAsc = true; }
+    }
+
+    private string SortCaret(string col) =>
+        sortColumn != col ? "" : sortAsc ? " ▲" : " ▼";
+
+    private IEnumerable<TblLocation> FilteredLocations
+    {
+        get
+        {
+            if (locations == null) return Enumerable.Empty<TblLocation>();
+
+            IEnumerable<TblLocation> result = locations;
+
+            if (!string.IsNullOrWhiteSpace(searchFilter))
+            {
+                var term = searchFilter.Trim();
+                result = result.Where(l =>
+                    (l.LocationName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (l.LocationType?.LocationTypeName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    (l.LocationGroup?.LocationGroupName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                    l.LocationId.ToString().Contains(term));
+            }
+
+            result = sortColumn switch
+            {
+                "group" => sortAsc ? result.OrderBy(l => l.LocationGroup?.LocationGroupName) : result.OrderByDescending(l => l.LocationGroup?.LocationGroupName),
+                "type"  => sortAsc ? result.OrderBy(l => l.LocationType?.LocationTypeName)  : result.OrderByDescending(l => l.LocationType?.LocationTypeName),
+                _       => sortAsc ? result.OrderBy(l => l.LocationName)                    : result.OrderByDescending(l => l.LocationName),
+            };
+
+            return result;
+        }
+    }
+
+    private List<TblDisplay> GetDisplaysForLocation(int locationId) =>
+        displays?.Where(d => d.LocationId == locationId).ToList() ?? new();
+
+    private void ToggleExpand(int locationId)
+    {
+        if (!expandedLocations.Remove(locationId))
+            expandedLocations.Add(locationId);
+    }
+
+    // Actions
+    private void EditLocation(TblLocation loc) => editingLocation = loc;
+    private void ManageAccess(TblLocation loc) { accessModalLocation = loc; StateHasChanged(); }
+    private void EditLayoutLocation(TblLocation loc) => createLayoutModal?.OpenForEdit(loc);
+    private void EditFloorplanLocation(TblLocation loc) => createLayoutModal?.OpenForEditVisual(loc);
+    private void EditPanoramaLocation(TblLocation loc) => createLayoutModal?.OpenForEditPanorama(loc);
+    private void EditVideoWallLocation(TblLocation loc) => createLayoutModal?.OpenForEditVideoWall(loc);
+    private async Task OpenMetadata(TblLocation loc)
+    {
+        if (contentMetadataModal != null)
+            await contentMetadataModal.OpenAsync(loc.LocationId);
+    }
+
+    private void OpenImage(TblLocation loc)
+    {
+        imageLocation = loc;
+        imageError = null;
+        showImageModal = true;
+        StateHasChanged();
+    }
+
+    private void CloseImageModal()
+    {
+        showImageModal = false;
+        imageLocation = null;
+        imageError = null;
+        StateHasChanged();
+    }
+
+    private async Task OnLocationImageUpload(InputFileChangeEventArgs e)
+    {
+        if (imageLocation == null) return;
+        imageError = null;
+
+        var file = e.File;
+        var ext = Path.GetExtension(file.Name).ToLowerInvariant();
+        if (ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".gif")
+        {
+            imageError = "Invalid file type. Accepted: JPG, PNG, GIF.";
+            StateHasChanged();
+            return;
+        }
+
+        try
+        {
+            using var ms = new MemoryStream();
+            await file.OpenReadStream(maxAllowedSize: 10 * 1024 * 1024).CopyToAsync(ms);
+            ms.Position = 0;
+
+            using (var image = System.Drawing.Image.FromStream(ms))
+            {
+                if (image.Width != 180 || image.Height != 120)
+                {
+                    imageError = $"Image must be exactly 180 × 120 pixels. Uploaded: {image.Width} × {image.Height}.";
+                    StateHasChanged();
+                    return;
+                }
+            }
+
+            DeleteLocationImageFile(imageLocation.LocationImagePath);
+
+            var folder = Path.Combine(MediaPaths.GetRoot(), "images", "Location Images");
+            Directory.CreateDirectory(folder);
+            var fileName = $"{imageLocation.LocationId}_{DateTimeOffset.UtcNow.ToUnixTimeSeconds()}{ext}";
+            var filePath = Path.Combine(folder, fileName);
+
+            ms.Position = 0;
+            using (var fs = new FileStream(filePath, FileMode.Create))
+            {
+                await ms.CopyToAsync(fs);
+            }
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var loc = await db.TblLocations.FindAsync(imageLocation.LocationId);
+            if (loc != null)
+            {
+                loc.LocationImagePath = $"images/Location Images/{fileName}";
+                await db.SaveChangesAsync();
+                imageLocation.LocationImagePath = loc.LocationImagePath;
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to upload location image for location {LocationId}", imageLocation.LocationId);
+            imageError = "Failed to upload image. Please try again.";
+            StateHasChanged();
+        }
+    }
+
+    private async Task RemoveLocationImage()
+    {
+        if (imageLocation == null) return;
+        imageError = null;
+
+        try
+        {
+            DeleteLocationImageFile(imageLocation.LocationImagePath);
+
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var loc = await db.TblLocations.FindAsync(imageLocation.LocationId);
+            if (loc != null)
+            {
+                loc.LocationImagePath = null;
+                await db.SaveChangesAsync();
+                imageLocation.LocationImagePath = null;
+            }
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Failed to remove location image for location {LocationId}", imageLocation.LocationId);
+            imageError = "Failed to remove image. Please try again.";
+            StateHasChanged();
+        }
+    }
+
+    private void DeleteLocationImageFile(string? relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath)) return;
+        try
+        {
+            var fullPath = Path.Combine(MediaPaths.GetRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(fullPath)) File.Delete(fullPath);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Failed to delete location image file: {Path}", relativePath);
+        }
+    }
+    private void OpenCreateLayout() => createLayoutModal?.Open();
+    private async Task EditDisplay(TblDisplay display, int locationId) { if (displayEditModal != null) await displayEditModal.Open(display, locationId); }
+
+    private async Task OpenBundleConfigure(TblLocation loc)
+    {
+        if (bundleConfigureModal != null)
+            await bundleConfigureModal.Open(loc.LocationId);
+    }
+
+    private async Task ReloadLocations()
+    {
+        await LoadData();
+    }
+
+    private async Task OnLocationSaved()
+    {
+        editingLocation = null;
+        await LoadData();
+    }
+
+    private async Task OnLocationDeleted()
+    {
+        editingLocation = null;
+        await LoadData();
+    }
+
+    public void Dispose() { }
+}

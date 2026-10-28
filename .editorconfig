@@ -1,0 +1,35 @@
+# EditorConfig for DXSuite. Defines shared formatting so the team's diffs stay
+# consistent regardless of editor. These are conventions applied by the IDE; they
+# do not fail the build (code-style enforcement in build is intentionally left off).
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+
+[*.cs]
+indent_size = 4
+# Common C# preferences, surfaced as suggestions (never build errors).
+csharp_new_line_before_open_brace = all
+csharp_prefer_braces = true:suggestion
+dotnet_sort_system_directives_first = true
+csharp_style_var_for_built_in_types = false:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_namespace_declarations = file_scoped:suggestion
+dotnet_style_qualification_for_field = false:suggestion
+dotnet_style_qualification_for_property = false:suggestion
+
+[*.{razor,cshtml}]
+indent_size = 4
+
+[*.{json,yml,yaml,csproj,props,targets}]
+indent_size = 2
+
+[*.sql]
+indent_size = 4
+
+[*.md]
+trim_trailing_whitespace = false

@@ -1,0 +1,100 @@
+@using DXSuite.Director.Services
+@inject IPlayerSyncSettingsService SettingsService
+@inject ISessionState sessionState
+
+<div style="padding:16px 0;">
+    <h3 style="margin-bottom:4px;">Player Sync</h3>
+    <p class="dx-text-muted" style="font-size:13px; margin-bottom:20px;">
+        Controls how often Engage players poll for content and commands. Changes reach the fleet within one poll.
+    </p>
+
+    @if (!string.IsNullOrEmpty(saveMessage))
+    {
+        <div class="dx-alert @(saveMessageIsError ? "dx-alert-danger" : "dx-alert-success")" style="max-width:520px; margin-bottom:16px;">
+            @saveMessage
+        </div>
+    }
+
+    <div style="max-width:520px;">
+        <div class="dx-form-group">
+            <label class="dx-form-label">Poll interval (seconds)</label>
+            <input type="number" class="dx-form-control" style="width:120px;"
+                   min="@PlayerSyncSettings.MinPollSeconds" max="@PlayerSyncSettings.MaxPollSeconds"
+                   @bind="pollIntervalSeconds" />
+            <div class="dx-text-muted" style="font-size:12px; margin-top:4px;">
+                How often each player checks in. Allowed range is @PlayerSyncSettings.MinPollSeconds to @PlayerSyncSettings.MaxPollSeconds seconds. Default is @PlayerSyncSettings.DefaultPollSeconds.
+                Raise this during an incident to reduce server load. Device online status and auto-heal thresholds adjust with it.
+            </div>
+        </div>
+
+        <div class="dx-form-group">
+            <label class="dx-form-label">Full inventory interval (minutes)</label>
+            <input type="number" class="dx-form-control" style="width:120px;" min="0" max="1440"
+                   @bind="fullInventoryMinutes" />
+            <div class="dx-text-muted" style="font-size:12px; margin-top:4px;">
+                How often players send their full device details (network, memory, model info) instead of the light check-in. Set 0 to send full details on every poll.
+            </div>
+        </div>
+
+        <div class="dx-form-group" style="font-size:12px; color:var(--dx-text-muted);">
+            Devices are considered offline after @FormatThreshold() without a check-in at the current interval.
+        </div>
+
+        <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@isSaving">
+            @(isSaving ? "Saving…" : "Save")
+        </button>
+    </div>
+</div>
+
+@code {
+    private int pollIntervalSeconds = PlayerSyncSettings.DefaultPollSeconds;
+    private int fullInventoryMinutes = 15;
+    private bool isSaving;
+    private string? saveMessage;
+    private bool saveMessageIsError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var settings = await SettingsService.GetAsync();
+        pollIntervalSeconds = settings.PollIntervalSeconds;
+        fullInventoryMinutes = settings.FullInventoryMinutes;
+    }
+
+    private string FormatThreshold()
+    {
+        var threshold = new PlayerSyncSettings { PollIntervalSeconds = pollIntervalSeconds }.OnlineThreshold;
+        return threshold.TotalMinutes >= 2
+            ? $"{threshold.TotalMinutes:0.#} minutes"
+            : $"{threshold.TotalSeconds:0} seconds";
+    }
+
+    private async Task Save()
+    {
+        isSaving = true;
+        saveMessage = null;
+        try
+        {
+            var settings = new PlayerSyncSettings
+            {
+                PollIntervalSeconds = pollIntervalSeconds,
+                FullInventoryMinutes = fullInventoryMinutes
+            };
+            await SettingsService.SaveAsync(settings, sessionState.User?.UserPrincipalName);
+
+            // Reflect server-side clamping back into the form
+            pollIntervalSeconds = settings.PollIntervalSeconds;
+            fullInventoryMinutes = settings.FullInventoryMinutes;
+            saveMessage = "Settings saved. Players re-pace on their next poll.";
+            saveMessageIsError = false;
+        }
+        catch (Exception ex)
+        {
+            saveMessage = $"Save failed: {ex.Message}";
+            saveMessageIsError = true;
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+}

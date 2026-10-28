@@ -1,0 +1,63 @@
+:root {
+    --bg: #f5f6f8;
+    --fg: #1c1c1e;
+    --card: #ffffff;
+    --accent: #0071bc;
+}
+
+body.dark {
+    --bg: #1c1c1e;
+    --fg: #f5f6f8;
+    --card: #2c2c2e;
+}
+
+* { box-sizing: border-box; }
+
+body {
+    margin: 0;
+    font-family: "Segoe UI", system-ui, sans-serif;
+    background: var(--bg);
+    color: var(--fg);
+}
+
+#app { max-width: 960px; margin: 0 auto; padding: 24px; }
+
+header h1 { margin: 0 0 4px; }
+#context-line { color: #888; margin: 0 0 24px; }
+
+section {
+    background: var(--card);
+    border-radius: 8px;
+    padding: 16px 20px;
+    margin-bottom: 16px;
+}
+
+h2 { margin-top: 0; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em; }
+
+#assets { display: flex; flex-wrap: wrap; gap: 12px; }
+
+.asset-card {
+    width: 140px;
+    text-align: center;
+    font-size: 0.8rem;
+    word-break: break-all;
+}
+
+.asset-card img { width: 100%; height: 80px; object-fit: cover; border-radius: 4px; }
+.asset-card .placeholder {
+    width: 100%; height: 80px; border-radius: 4px;
+    background: var(--accent); color: #fff;
+    display: flex; align-items: center; justify-content: center;
+}
+.asset-card.selected { outline: 3px solid var(--accent); border-radius: 6px; }
+
+textarea { width: 100%; margin-bottom: 8px; }
+
+button {
+    background: var(--accent);
+    border: 0; color: #fff;
+    padding: 8px 16px; border-radius: 6px;
+    cursor: pointer;
+}
+
+footer { display: flex; align-items: center; gap: 16px; }

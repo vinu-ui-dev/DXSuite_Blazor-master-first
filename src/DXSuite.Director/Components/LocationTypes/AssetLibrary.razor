@@ -1,0 +1,501 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using System.IO
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+@inject IConfiguration config
+@inject IWebHostEnvironment env
+@inject ITenantMediaPathResolver MediaPaths
+@inject AssetThumbnailCleanupService thumbnailCleanup
+@inject NavigationManager navMan
+@inject ILogger<AssetLibrary> Logger
+@inject ISessionState sessionState
+@inject IContentScopeService contentScopeService
+@inject IAssetSoftDeleteService assetSoftDelete
+@rendermode InteractiveServer
+
+@if (Location != null && globalConstraint != null)
+{
+    <section class="al-body">
+        <div class="al-header-bar">
+            <div class="al-toolbar">
+                @if (!IsViewOnly)
+                {
+                    <button class="dx-btn dx-btn-blue" @onclick="OpenUploadModal">Upload</button>
+                    @if (WebContentEnabled)
+                    {
+                        <button class="dx-btn dx-btn-gray" @onclick="OpenWebModal">Add Web Link</button>
+                    }
+                }
+                <input type="text" class="form-control form-control-sm al-search-input" placeholder="Search..."
+                       @bind="searchText" @bind:event="oninput" />
+            </div>
+        </div>
+
+        <table class="table table-hover al-table">
+            <thead>
+                <tr>
+                    <th style="width:320px;">Preview</th>
+                    <th class="al-th-sortable" @onclick="@(() => ToggleSort("name"))">
+                        File Name
+                        @if (sortColumn == "name")
+                        {
+                            <span class="al-sort-indicator">@(sortAscending ? "▲" : "▼")</span>
+                        }
+                    </th>
+                    @foreach (var field in metadataFields)
+                    {
+                        <th class="al-th-sortable" @onclick="@(() => ToggleSort(field))">
+                            @field
+                            @if (sortColumn == field)
+                            {
+                                <span class="al-sort-indicator">@(sortAscending ? "▲" : "▼")</span>
+                            }
+                        </th>
+                    }
+                    @if (Location!.EnableContentApproval)
+                    {
+                        <th>Status</th>
+                    }
+                    <th style="width:80px;"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var asset in sortedFilteredAssets)
+                {
+                    var approvalStatus = GetApprovalStatus(asset);
+                    <tr class="@(approvalStatus != null ? "al-row-unapproved" : "")">
+                        <td class="al-thumb-cell">
+                            <div class="al-thumb-frame">
+                                <AssetPreviewCard Asset="asset" Clickable="true" />
+                            </div>
+                        </td>
+                        <td>@GetDisplayName(asset)</td>
+                        @foreach (var field in metadataFields)
+                        {
+                            <td>@GetMetadataValue(asset, field)</td>
+                        }
+                        @if (Location!.EnableContentApproval)
+                        {
+                            <td>
+                                @if (approvalStatus == Types.ApprovalStatus.Pending)
+                                {
+                                    <span class="al-badge al-badge-pending">Awaiting Approval</span>
+                                }
+                                else if (approvalStatus == Types.ApprovalStatus.Declined)
+                                {
+                                    <span class="al-badge al-badge-declined">Declined</span>
+                                }
+                            </td>
+                        }
+                        <td class="text-end" style="white-space:nowrap;">
+                            @if (IsViewOnly)
+                            {
+                                @* View access lists content without any action on it. *@
+                            }
+                            else if (pendingDeleteAsset?.AssetId == asset.AssetId)
+                            {
+                                <span class="text-danger small fw-bold me-1">Delete?</span>
+                                <button class="dx-btn dx-btn-red dx-btn-sm me-1" @onclick="ConfirmDelete">Yes</button>
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => pendingDeleteAsset = null">Cancel</button>
+                            }
+                            else
+                            {
+                                var canControl = CanControl(asset);
+                                var lockReason = LockReason(asset);
+                                @if (lockReason != null)
+                                {
+                                    <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:4px;">@lockReason</div>
+                                }
+                                @* Only a web asset's source can be edited from this list. Every asset gets the
+                                   metadata editor, the one place tags on keys no longer used here can be cleared. *@
+                                @if (asset.AssetTypeId == (int)Types.AssetType.Web)
+                                {
+                                    <button class="dx-btn dx-btn-gray me-1" disabled="@(!canControl)" @onclick="() => webUploaderModal?.OpenForEdit(asset)">Edit</button>
+                                }
+                                <button class="dx-btn dx-btn-gray me-1" disabled="@(!canControl)"
+                                        @onclick="() => metadataEditModal?.Open(asset.AssetId, Location!.LocationId, GetDisplayName(asset), canControl, lockReason)">Edit metadata</button>
+                                <button class="dx-btn dx-btn-red" disabled="@(!canControl)" @onclick="() => pendingDeleteAsset = asset">Delete</button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+
+        @if (!sortedFilteredAssets.Any())
+        {
+            <p class="text-muted" style="padding:20px">No assets found.</p>
+        }
+    </section>
+
+    <MediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="OnUploadComplete" />
+    <WebContentUploader @ref="webUploaderModal" OnWebContentSubmit="OnUploadComplete" />
+    <AssetMetadataEditModal @ref="metadataEditModal" OnSaved="OnUploadComplete" />
+}
+else if (Location != null && globalConstraint == null)
+{
+    <p class="text-muted" style="padding: 20px;">Initializing Asset Library...</p>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+
+    private TblConstraint? globalConstraint;
+    private List<TblAsset> assets = new();
+    private IReadOnlyList<string> metadataFields = [];
+    private string searchText = "";
+    private string sortColumn = "name";
+    private bool sortAscending = true;
+    private bool useVideoMask;
+    private TblAsset? pendingDeleteAsset;
+
+    private ResolvedAccess? userAccess;
+    private ContentScopeContext? contentScope;
+    private HashSet<int> memberGroupIds = new();
+    private Dictionary<int, string> ownerGroupNames = new();
+
+    private MediaAssetUploader? mediaUploaderModal;
+    private WebContentUploader? webUploaderModal;
+    private AssetMetadataEditModal? metadataEditModal;
+
+    private IEnumerable<TblAsset> sortedFilteredAssets
+    {
+        get
+        {
+            // Scope never ANDs approval: a scoped manager sees Pending content in her scope.
+            var visible = contentScope?.IsEvaluated == true
+                ? assets.Where(a => contentScope.IsVisible(
+                    MetadataSubjectResolver.GroupValues(a.ContentMetadata.Select(m => (m.MetadataKey, m.MetadataValue)))))
+                : assets;
+
+            var filtered = string.IsNullOrWhiteSpace(searchText)
+                ? visible
+                : visible.Where(a =>
+                    GetDisplayName(a).Contains(searchText, StringComparison.OrdinalIgnoreCase) ||
+                    a.ContentMetadata.Any(m => m.MetadataValue.Contains(searchText, StringComparison.OrdinalIgnoreCase))
+                );
+
+            if (sortColumn == "name")
+                return sortAscending
+                    ? filtered.OrderBy(a => GetDisplayName(a))
+                    : filtered.OrderByDescending(a => GetDisplayName(a));
+
+            return sortAscending
+                ? filtered.OrderBy(a => a.ContentMetadata.FirstOrDefault(m => m.MetadataKey == sortColumn)?.MetadataValue ?? "")
+                : filtered.OrderByDescending(a => a.ContentMetadata.FirstOrDefault(m => m.MetadataKey == sortColumn)?.MetadataValue ?? "");
+        }
+    }
+
+    private void ToggleSort(string column)
+    {
+        if (sortColumn == column)
+            sortAscending = !sortAscending;
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+    }
+
+    private string GetDisplayName(TblAsset asset)
+        => !string.IsNullOrWhiteSpace(asset.AssetName) ? asset.AssetName : Path.GetFileName(asset.AssetPath) ?? "";
+
+    private Types.ApprovalStatus? GetApprovalStatus(TblAsset asset)
+    {
+        if (!Location!.EnableContentApproval || asset.AssetApproval == null) return null;
+        var status = (Types.ApprovalStatus)asset.AssetApproval.ApprovalStatus;
+        return status == Types.ApprovalStatus.Approved ? null : status;
+    }
+
+    private string GetMetadataValue(TblAsset asset, string key)
+    {
+        var values = asset.ContentMetadata?
+            .Where(m => MetadataEvaluator.KeyComparer.Equals(m.MetadataKey, key) && !string.IsNullOrWhiteSpace(m.MetadataValue))
+            .Select(m => m.MetadataValue.Trim())
+            .Distinct(MetadataEvaluator.ValueComparer)
+            .Order(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return values is { Count: > 0 } ? string.Join(", ", values) : "\u2014";
+    }
+
+    // An admin is full access whatever rule applies, matching the Playlist.
+    private string? EffectiveAccessLevel =>
+        sessionState.RoleEnum == Roles.Role.Admin ? "full" : userAccess?.AccessLevel;
+
+    private bool IsViewOnly => EffectiveAccessLevel == "view";
+
+    // Ownership gates edit, re-tag and delete; scope only decides what is listed.
+    private bool CanControl(TblAsset asset) =>
+        AssetOwnership.CanControl(EffectiveAccessLevel, sessionState.User?.UserId ?? 0, memberGroupIds,
+            asset.UploadedByUserId, asset.UploadedByUserGroupId);
+
+    private string? LockReason(TblAsset asset) =>
+        AssetOwnership.LockReason(EffectiveAccessLevel, sessionState.User?.UserId ?? 0, memberGroupIds,
+            asset.UploadedByUserId, asset.UploadedByUserGroupId,
+            asset.UploadedByUserGroupId is int g ? ownerGroupNames.GetValueOrDefault(g) : null);
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location == null) return;
+
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+        var extData = ExtendedDataHelper.Parse<LocationExtendedData>(Location.ExtendedData);
+        useVideoMask = extData?.UseVideoMask == true;
+
+        sessionState.LocationAccessMap.TryGetValue(Location.LocationId, out userAccess);
+        var userId = sessionState.User?.UserId ?? 0;
+        contentScope = await contentScopeService.GetAsync(userId, Location.LocationId,
+            sessionState.RoleEnum == Roles.Role.Admin ? null : userAccess);
+        metadataFields = contentScope.ParticipatingKeys;
+        memberGroupIds = (await dbContext.TblUserGroupMemberships.AsNoTracking()
+            .Where(m => m.UserId == userId)
+            .Select(m => m.UserGroupId)
+            .ToListAsync()).ToHashSet();
+        if (extData?.GlobalConstraintId != null)
+        {
+            globalConstraint = await dbContext.TblConstraints
+                .FirstOrDefaultAsync(c => c.ConstraintId == extData.GlobalConstraintId);
+        }
+
+        if (globalConstraint == null)
+        {
+            globalConstraint = new TblConstraint
+            {
+                ConstraintName = Location.LocationName,
+                OwningLocationId = Location.LocationId,
+                IsGlobal = true,
+                ResolutionWidth = 1920,
+                ResolutionHeight = 1080,
+                ResolutionMode = "aspect-ratio",
+                CreateDate = DateTime.UtcNow
+            };
+            dbContext.TblConstraints.Add(globalConstraint);
+            await dbContext.SaveChangesAsync();
+
+            var loc = await dbContext.TblLocations.FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+            if (loc != null)
+            {
+                loc.ExtendedData = ExtendedDataHelper.UpdateProperty<LocationExtendedData>(loc.ExtendedData, ed =>
+                {
+                    ed.GlobalConstraintId = globalConstraint.ConstraintId;
+                });
+                await dbContext.SaveChangesAsync();
+            }
+        }
+
+        assets = await dbContext.TblAssets
+            .Include(a => a.ContentMetadata)
+            .Include(a => a.AssetApproval)
+            .Where(a => a.ConstraintId == globalConstraint.ConstraintId
+                     && !a.IsDeleted
+                     // Mask files are Pixera luma-key artifacts — hide them from the asset picker
+                     && (!useVideoMask || !a.AssetPath.EndsWith("_mask.png")))
+            .OrderBy(a => a.AssetName)
+            .ToListAsync();
+
+        await LoadOwnerGroupNamesAsync(dbContext);
+
+        // Backfill VideoMaskPath for assets uploaded before the uploader bug was fixed.
+        // The mask file was always written to disk; only the DB column was never populated.
+        // Derive the expected path from the asset filename and verify the file exists before writing.
+        if (useVideoMask)
+            await BackfillVideoMaskPathsAsync(assets, dbContext);
+    }
+
+    private async Task BackfillVideoMaskPathsAsync(List<TblAsset> assetList, IDirectorDBContext dbContext)
+    {
+        var baseDir = MediaPaths.GetRoot();
+        bool anyUpdated = false;
+
+        foreach (var asset in assetList.Where(a => string.IsNullOrEmpty(a.VideoMaskPath)))
+        {
+            var maskFileName = Path.GetFileNameWithoutExtension(asset.AssetPath) + "_mask.png";
+            var expectedWebPath = Path.GetDirectoryName(asset.AssetPath)!.Replace('\\', '/').TrimEnd('/') + "/" + maskFileName;
+            var diskPath = Path.Combine(baseDir, expectedWebPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar));
+
+            if (!File.Exists(diskPath)) continue;
+
+            asset.VideoMaskPath = expectedWebPath;
+            anyUpdated = true;
+        }
+
+        if (anyUpdated)
+        {
+            await dbContext.SaveChangesAsync();
+            Logger.LogInformation("Backfilled VideoMaskPath for {Count} asset(s) in location {LocationId}",
+                assetList.Count(a => !string.IsNullOrEmpty(a.VideoMaskPath)), Location!.LocationId);
+        }
+    }
+
+    private string GetAssetPath(TblAsset asset) => asset.AssetPath;
+
+    private async Task LoadOwnerGroupNamesAsync(IDirectorDBContext dbContext)
+    {
+        var groupIds = assets.Where(a => a.UploadedByUserGroupId.HasValue).Select(a => a.UploadedByUserGroupId!.Value).Distinct().ToList();
+        ownerGroupNames = groupIds.Count == 0
+            ? new Dictionary<int, string>()
+            : await dbContext.TblUserGroups.AsNoTracking()
+                .Where(g => groupIds.Contains(g.UserGroupId))
+                .ToDictionaryAsync(g => g.UserGroupId, g => g.GroupName);
+    }
+
+    /// <summary>
+    /// Web links are opt-in per location (Location settings, Content Tools). Null defers to the
+    /// system default, which is off.
+    /// </summary>
+    private bool WebContentEnabled =>
+        ExtendedDataHelper.Parse<LocationExtendedData>(Location?.ExtendedData)?.EnableWebContent == true;
+
+    private void OpenWebModal()
+    {
+        if (globalConstraint == null) return;
+
+        // Zero means "no expected resolution", which the uploader treats as unconstrained and
+        // the thumbnail capture falls back to its own default viewport for.
+        webUploaderModal?.Open(
+            Location!.LocationId,
+            globalConstraint.ConstraintId,
+            globalConstraint.ResolutionWidth ?? 0,
+            globalConstraint.ResolutionHeight ?? 0);
+    }
+
+    private void OpenUploadModal()
+    {
+        if (globalConstraint == null) return;
+        var baseDir = MediaPaths.GetRoot();
+
+        var uploadConfig = new MediaUploadConfig
+        {
+            UploadFolder = baseDir,
+            LocationId = Location!.LocationId,
+            ConstraintId = globalConstraint.ConstraintId,
+            ExpectedWidth = globalConstraint.ResolutionWidth,
+            ExpectedHeight = globalConstraint.ResolutionHeight,
+            ResolutionMode = globalConstraint.ResolutionMode,
+            AddToSql = true,
+            IsSchedulable = false,
+            EnableContentApproval = Location!.EnableContentApproval,
+            VideoMask = useVideoMask,
+            UserAccess = userAccess,
+        };
+
+        mediaUploaderModal?.Open(uploadConfig);
+    }
+
+    private async Task OnUploadComplete()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        assets = await dbContext.TblAssets
+            .Include(a => a.ContentMetadata)
+            .Include(a => a.AssetApproval)
+            .Where(a => a.ConstraintId == globalConstraint!.ConstraintId
+                     && !a.IsDeleted
+                     && (!useVideoMask || !a.AssetPath.EndsWith("_mask.png")))
+            .OrderBy(a => a.AssetName)
+            .ToListAsync();
+        await LoadOwnerGroupNamesAsync(dbContext);
+        StateHasChanged();
+    }
+
+    private async Task ConfirmDelete()
+    {
+        if (pendingDeleteAsset == null) return;
+        var asset = pendingDeleteAsset;
+        pendingDeleteAsset = null;
+        await SoftDeleteAsset(asset);
+    }
+
+    private async Task SoftDeleteAsset(TblAsset asset)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var dbAsset = await dbContext.TblAssets.FirstOrDefaultAsync(a => a.AssetId == asset.AssetId);
+        if (dbAsset != null && CanControl(dbAsset) && await assetSoftDelete.SoftDeleteAsync(dbAsset.AssetId) is { } deleted)
+        {
+            await thumbnailCleanup.CleanUpAsync(deleted);
+            assets.Remove(asset);
+            StateHasChanged();
+        }
+    }
+}
+
+<style>
+    .al-body { padding: 20px; }
+    .al-header-bar { display: flex; justify-content: flex-end; align-items: center; margin-bottom: 16px; }
+    .al-toolbar { display: flex; gap: 8px; align-items: center; }
+    .al-search-input { width: 220px; }
+    .al-table { font-size: 13px; border: 1px solid #dee2e6; border-radius: 6px; overflow: hidden; }
+    .al-table thead th { background: #f8f9fa; border-bottom: 2px solid #dee2e6; font-weight: 600; font-size: 12px; text-transform: uppercase; color: #555; padding: 8px 12px; white-space: nowrap; }
+    .al-table tbody td { vertical-align: middle; padding: 6px 12px; border-bottom: 1px solid #eee; }
+    .al-th-sortable { cursor: pointer; user-select: none; }
+    .al-th-sortable:hover { background: #e9ecef !important; }
+    .al-sort-indicator { font-size: 10px; margin-left: 4px; color: #0071BC; }
+    .al-thumb-cell { width: 320px; padding: 6px 8px !important; }
+    /* The backdrop (for white/transparent content) shrink-wraps the media with a
+       small pad instead of filling the fixed column width */
+    .al-thumb-cell a { display: inline-block; padding: 3px; max-width: 300px; overflow: hidden; border-radius: 4px; border: 1px solid #ddd; background: #f8f8f8; line-height: 0; }
+    .al-thumb-frame { width: 200px; height: 112px; }
+    .al-thumb-img { display: block; width: auto; max-width: 100%; height: auto; max-height: 120px; object-fit: contain; }
+    .al-row-unapproved .al-thumb-frame { opacity: 0.5; filter: grayscale(100%); }
+    .al-badge { display: inline-block; padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; white-space: nowrap; }
+    .al-badge-pending { background: #fff3cd; color: #856404; }
+    .al-badge-declined { background: #f8d7da; color: #721c24; }
+
+    /* On narrow screens the table renders as stacked cards: thumbnail, name and
+       metadata inline, delete action on its own row. Header sorting is desktop-only. */
+    @@media (max-width: 768px) {
+        .al-body {
+            padding: 10px;
+        }
+
+        .al-header-bar {
+            justify-content: stretch;
+        }
+
+        .al-toolbar {
+            width: 100%;
+        }
+
+        .al-search-input {
+            width: auto;
+            flex: 1;
+        }
+
+        .al-table thead {
+            display: none;
+        }
+
+        .al-table tbody tr {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 4px 10px;
+            padding: 10px 4px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .al-table tbody td {
+            display: block;
+            border: none;
+            padding: 0;
+        }
+
+        .al-thumb-cell {
+            width: auto;
+            padding: 0 !important;
+        }
+
+        .al-table tbody td:last-child {
+            flex-basis: 100%;
+            margin-top: 6px;
+            text-align: left !important;
+        }
+    }
+</style>

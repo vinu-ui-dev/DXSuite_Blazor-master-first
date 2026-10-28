@@ -1,0 +1,722 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Globalization
+@inject IServiceScopeFactory scopeFactory
+@inject ILogger<VideoWallPreview> Logger
+
+@* Ephemeral wall compositor for the Ticket Counter Scheduler's Airline Content tab: renders the
+   wall's layer stack with one airline's content (including UNSAVED form values: background, mask,
+   logo, library constraint) sandboxed onto selected counters, live content everywhere else.
+   Logo zones replicate the wall's Role="logo" groups and light up when their midpoint falls within
+   the sandboxed span, matching PixeraAllocationService.BuildLogoZonesAsync. Pure view — nothing is
+   persisted and nothing reaches devices or Pixera. *@
+
+@if (isOpen && wallConfig != null && wallDisplays != null)
+{
+    <div class="vwp-overlay">
+        <div class="vwp-container">
+            <div class="vwp-header">
+                <h4>Wall Preview — @airlineName</h4>
+                <span class="vwp-ephemeral">Previewing current form values (including unsaved changes). Nothing is saved or sent to devices.</span>
+                <button class="vwp-close" @onclick="Close">&times;</button>
+            </div>
+
+            <div class="vwp-body">
+                <div class="vwp-panel dx-scrollable">
+                    <div class="vwp-section">
+                        <label class="vwp-check vwp-check-head">
+                            <input type="checkbox" checked="@hideCounterContent"
+                                   @onchange="e => hideCounterContent = (bool)(e.Value ?? false)" />
+                            <span>Layers only (hide counter content)</span>
+                        </label>
+                        <div class="vwp-hint">Clears the sandboxed counters so just the background, mask, and logo layers show.</div>
+                    </div>
+
+                    <div class="vwp-section">
+                        <div class="vwp-section-title">Sandboxed Counters</div>
+                        <div class="vwp-hint">Checked counters show @airlineName's content; unchecked counters keep their live content.</div>
+                        @foreach (var group in CounterGroups)
+                        {
+                            <div class="vwp-counter-group">
+                                <label class="vwp-check vwp-check-head">
+                                    <input type="checkbox"
+                                           checked="@group.DisplayIds.All(id => selectedCounterIds.Contains(id))"
+                                           @onchange="e => ToggleGroup(group, (bool)(e.Value ?? false))" />
+                                    <span>@(string.IsNullOrEmpty(group.GroupName) ? "Counter Row" : group.GroupName)</span>
+                                </label>
+                                @foreach (var displayId in group.DisplayIds)
+                                {
+                                    var display = wallDisplays.FirstOrDefault(d => d.DisplayId == displayId);
+                                    if (display == null) continue;
+                                    <label class="vwp-check">
+                                        <input type="checkbox"
+                                               checked="@selectedCounterIds.Contains(displayId)"
+                                               @onchange="e => ToggleCounter(displayId, (bool)(e.Value ?? false))" />
+                                        <span>@display.DisplayName</span>
+                                    </label>
+                                }
+                            </div>
+                        }
+                    </div>
+
+                    @if (libraryAssets.Count > 0)
+                    {
+                        <div class="vwp-section">
+                            <div class="vwp-section-title">Counter Status Content</div>
+                            <div class="vwp-hint">From the airline's resolved asset library. Applied to checked counters.</div>
+                            <div class="vwp-asset-grid">
+                                @foreach (var asset in libraryAssets)
+                                {
+                                    <div class="vwp-asset @(sandboxAsset?.AssetId == asset.AssetId ? "vwp-asset-selected" : "")"
+                                         @onclick="() => sandboxAsset = asset"
+                                         title="@(asset.AssetName ?? asset.AssetPath)">
+                                        <div class="vwp-asset-thumb">
+                                            <AssetPreviewCard Asset="asset" Small="true" />
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="vwp-hint">No assets found in the airline's resolved library.</div>
+                    }
+                </div>
+
+                <div class="vwp-stage-wrap dx-scrollable">
+                    <div style="@StageStyle()">
+                        @* Wall context background *@
+                        <div style="@WallBackgroundStyle()"></div>
+
+                        @* Wall layers and standalone placements — always live *@
+                        @foreach (var tile in wallTiles)
+                        {
+                            <div style="position:absolute; top:@Inv(tile.Top)px; left:@Inv(tile.Left)px; z-index:@tile.ZIndex; display:inline-block;">
+                                <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="tile.Display" ScaleFactor="@tile.Scale" />
+                            </div>
+                        }
+
+                        @* Airline background per contiguous selected run, behind counters, above wall
+                           layers. No airline background renders nothing here, so the wall's own live
+                           background layer (e.g. the background video) shows through — including
+                           through mask transparency. *@
+                        @{ var selectionRuns = SelectionRuns; }
+                        @if (!string.IsNullOrEmpty(draft?.BackgroundPath))
+                        {
+                            foreach (var run in selectionRuns)
+                            {
+                                var bgRunStyle = $"position:absolute; top:{Inv(run.Top)}px; left:{Inv(run.Left)}px; width:{Inv(run.Width)}px; height:{Inv(run.Height)}px; z-index:40; pointer-events:none; {LayerRenderMode.OpacityCss(draft.BackgroundOpacityPct)}";
+                                @if (LayerRenderMode.IsVideo(draft.BackgroundPath))
+                                {
+                                    <div style="@(bgRunStyle + " overflow:hidden;")">
+                                        <video src="@draft.BackgroundPath" autoplay muted loop playsinline
+                                               style="width:100%; height:100%; @LayerRenderMode.VideoCss(draft.BackgroundMode)"></video>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div style="@(bgRunStyle + $" {LayerRenderMode.ImageCss(draft.BackgroundPath, draft.BackgroundMode)}")"></div>
+                                }
+                            }
+                        }
+
+                        @* Counter tiles: sandbox content when selected (transparent tile so content alpha
+                           reveals the airline/wall background layers beneath), live otherwise *@
+                        @foreach (var tile in counterTiles)
+                        {
+                            <div style="position:absolute; top:@Inv(tile.Top)px; left:@Inv(tile.Left)px; z-index:@(tile.ZIndex + 100); display:inline-block;">
+                                @if (selectedCounterIds.Contains(tile.Display.DisplayId) && hideCounterContent)
+                                {
+                                    @* Layers-only mode: sandboxed counters render nothing so the
+                                       background/mask/logo composition is unobstructed *@
+                                }
+                                else if (selectedCounterIds.Contains(tile.Display.DisplayId))
+                                {
+                                    <div class="vwp-sandbox-tile" style="width:@Inv(tile.Width)px; height:@Inv(tile.Height)px;">
+                                        @if (sandboxAsset == null)
+                                        {
+                                            <div class="vwp-sandbox-empty">Select content</div>
+                                        }
+                                        else if (sandboxAsset.AssetTypeId == (int)Types.AssetType.Web)
+                                        {
+                                            <iframe src="@sandboxAsset.AssetPath" scrolling="no"
+                                                    style="width:@Inv(tile.NativeWidth)px; height:@Inv(tile.NativeHeight)px; transform:scale(@Inv(tile.Scale)); transform-origin:top left; border:0; background:transparent;"></iframe>
+                                        }
+                                        else if (sandboxAsset.AssetTypeId == (int)Types.AssetType.Video)
+                                        {
+                                            <video src="@sandboxAsset.AssetPath" autoplay muted loop playsinline
+                                                   style="width:100%; height:100%; object-fit:cover;"></video>
+                                        }
+                                        else
+                                        {
+                                            <img src="@sandboxAsset.AssetPath" style="width:100%; height:100%; object-fit:cover;" />
+                                        }
+                                        <div class="vwp-sandbox-chip">SANDBOX</div>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="tile.Display" ScaleFactor="@tile.Scale" />
+                                }
+                            </div>
+                        }
+
+                        @* Airline mask per contiguous selected run — same layer order as the real wall:
+                           background (40) under mask (50) under logo (60) under counter content (100+).
+                           Gaps between runs stay unmasked, matching how unassigned counters look on
+                           the real wall. *@
+                        @if (!string.IsNullOrEmpty(draft?.MaskPath))
+                        {
+                            foreach (var run in selectionRuns)
+                            {
+                                var maskStyle = $"position:absolute; top:{Inv(run.Top)}px; left:{Inv(run.Left)}px; width:{Inv(run.Width)}px; height:{Inv(run.Height)}px; z-index:50; border:none; pointer-events:none; {LayerRenderMode.OpacityCss(draft.MaskOpacityPct)}";
+                                @if (IsHtmlOrWebPath(draft.MaskPath))
+                                {
+                                    <iframe src="@draft.MaskPath" style="@maskStyle" scrolling="no"></iframe>
+                                }
+                                else if (LayerRenderMode.IsVideo(draft.MaskPath))
+                                {
+                                    <div style="@(maskStyle + " overflow:hidden;")">
+                                        <video src="@draft.MaskPath" autoplay muted loop playsinline
+                                               style="width:100%; height:100%; @LayerRenderMode.VideoCss(draft.MaskMode)"></video>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div style="@(maskStyle + $" {LayerRenderMode.ImageCss(draft.MaskPath, draft.MaskMode)}")"></div>
+                                }
+                            }
+                        }
+
+                        @* Logo zones from the wall's Role="logo" groups, lit when their midpoint falls
+                           within a contiguous selected run — same rule as PixeraAllocationService *@
+                        @if (draft != null)
+                        {
+                            foreach (var zone in logoZones)
+                            {
+                                var zoneMid = zone.Left + zone.Width / 2.0;
+                                if (!selectionRuns.Any(run => zoneMid >= run.Left && zoneMid < run.Left + run.Width)) continue;
+                                var (zonePath, zoneMode) = DraftLogoFor(zone.RoleKey);
+                                if (string.IsNullOrEmpty(zonePath)) continue;
+                                var zoneStyle = $"position:absolute; top:{Inv(zone.Top)}px; left:{Inv(zone.Left)}px; width:{Inv(zone.Width)}px; height:{Inv(zone.Height)}px; z-index:60; pointer-events:none;";
+                                @if (LayerRenderMode.IsVideo(zonePath))
+                                {
+                                    <div style="@(zoneStyle + " overflow:hidden;")">
+                                        <video src="@zonePath" autoplay muted loop playsinline
+                                               style="width:100%; height:100%; object-fit:contain;"></video>
+                                    </div>
+                                }
+                                else
+                                {
+                                    <div style="@(zoneStyle + $" background-image:url('{zonePath}'); background-size:contain; background-repeat:no-repeat; background-position:center;")"></div>
+                                }
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Unsaved Airline Content form values fed straight into the preview.</summary>
+    public class DraftAirlineContent
+    {
+        public int? ConstraintId { get; set; }
+        public string? BackgroundPath { get; set; }
+        public string BackgroundMode { get; set; } = "fill-width";
+        public string? MaskPath { get; set; }
+        public string MaskMode { get; set; } = "fill-width";
+        public string? LogoPath { get; set; }
+        /// <summary>Per-role logo content keyed by the wall's logo role keys.</summary>
+        public Dictionary<string, AirlineLogoContent> RoleLogos { get; set; } = new();
+        public int BackgroundOpacityPct { get; set; } = 100;
+        public int MaskOpacityPct { get; set; } = 100;
+    }
+
+    /// <summary>Draft content for a zone: its role's upload when roled, else the default logo.</summary>
+    private (string? Path, string Mode) DraftLogoFor(string? roleKey)
+    {
+        if (roleKey == null) return (draft?.LogoPath, "fit");
+        return draft?.RoleLogos.TryGetValue(roleKey, out var content) == true
+            ? (content.ContentPath, content.ContentMode)
+            : (null, "fit");
+    }
+
+    private bool isOpen;
+    private TblLocation? wallLocation;
+    private VideoWallConfiguration? wallConfig;
+    private IList<TblDisplay>? wallDisplays;
+    private string airlineName = "";
+    private DraftAirlineContent? draft;
+
+    private List<TblAsset> libraryAssets = new();
+    private TblAsset? sandboxAsset;
+    private bool hideCounterContent;
+    private readonly HashSet<int> selectedCounterIds = new();
+
+    private List<TileLayout> wallTiles = new();
+    private List<TileLayout> counterTiles = new();
+    private List<(double Top, double Left, double Width, double Height, string? RoleKey)> logoZones = new();
+
+    private IEnumerable<PanoramaGroup> CounterGroups =>
+        wallConfig?.Layout.Groups.Where(g => g.AllowAirlineAllocation) ?? Enumerable.Empty<PanoramaGroup>();
+
+    private class TileLayout
+    {
+        public TblDisplay Display { get; init; } = null!;
+        public double Top { get; init; }
+        public double Left { get; init; }
+        public double Width { get; init; }
+        public double Height { get; init; }
+        public double NativeWidth { get; init; }
+        public double NativeHeight { get; init; }
+        public double Scale { get; init; }
+        public int ZIndex { get; init; }
+    }
+
+    /// <summary>
+    /// Opens the preview for one airline using the Airline Content form's current (possibly
+    /// unsaved) values. All counters start selected so the airline's content is immediately
+    /// visible across the wall; uncheck counters to compare against live content.
+    /// </summary>
+    public async Task OpenForAirline(TblLocation location, VideoWallConfiguration config,
+        IList<TblDisplay> displays, string airline, DraftAirlineContent draftContent)
+    {
+        wallLocation = location;
+        wallConfig = config;
+        wallDisplays = await WithConfigReferencedDisplaysAsync(config, displays);
+        airlineName = airline;
+        draft = draftContent;
+        sandboxAsset = null;
+        libraryAssets = new();
+        hideCounterContent = false;
+
+        ComputeLayout();
+
+        selectedCounterIds.Clear();
+        foreach (var id in CounterGroups.SelectMany(g => g.DisplayIds))
+            selectedCounterIds.Add(id);
+
+        // Same constraint resolution chain production uses: airline value, then the wall's global library
+        var constraintId = draftContent.ConstraintId
+                           ?? ExtendedDataHelper.Parse<LocationExtendedData>(location.ExtendedData)?.GlobalConstraintId;
+        if (constraintId != null)
+        {
+            try
+            {
+                using var scope = scopeFactory.CreateScope();
+                var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+                libraryAssets = await db.TblAssets
+                    .AsNoTracking()
+                    .Where(a => a.ConstraintId == constraintId && !a.IsDeleted)
+                    .OrderBy(a => a.AssetName)
+                    .Take(60)
+                    .ToListAsync();
+            }
+            catch (Exception ex)
+            {
+                Logger.LogWarning(ex, "Wall preview could not load library assets for constraint {ConstraintId}", constraintId);
+            }
+        }
+
+        isOpen = true;
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        isOpen = false;
+    }
+
+    /// <summary>
+    /// The caller's display list may omit displays the wall config references (e.g. the scheduler
+    /// loads counter displays but not logo or wall-layer displays). Real display dimensions drive
+    /// zone geometry, so missing ones are fetched rather than falling back to 1920x1080 defaults —
+    /// the same reason PixeraAllocationService loads logo displays itself.
+    /// </summary>
+    private async Task<IList<TblDisplay>> WithConfigReferencedDisplaysAsync(VideoWallConfiguration config, IList<TblDisplay> displays)
+    {
+        var knownIds = displays.Select(d => d.DisplayId).ToHashSet();
+        var missingIds = config.Layout.Groups.SelectMany(g => g.DisplayIds)
+            .Concat(config.Layout.Placements.Select(p => p.DisplayId))
+            .Distinct()
+            .Where(id => !knownIds.Contains(id))
+            .ToList();
+        if (missingIds.Count == 0) return displays;
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            var missing = await db.TblDisplays.AsNoTracking()
+                .Include(d => d.OverrideAsset)
+                .Include(d => d.TblScheduleEvents)
+                .Where(d => missingIds.Contains(d.DisplayId))
+                .ToListAsync();
+            return displays.Concat(missing).ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Wall preview could not load {Count} config-referenced displays", missingIds.Count);
+            return displays;
+        }
+    }
+
+    private void ToggleCounter(int displayId, bool isChecked)
+    {
+        if (isChecked) selectedCounterIds.Add(displayId); else selectedCounterIds.Remove(displayId);
+    }
+
+    private void ToggleGroup(PanoramaGroup group, bool isChecked)
+    {
+        foreach (var id in group.DisplayIds) ToggleCounter(id, isChecked);
+    }
+
+    /// <summary>
+    /// Replicates VideoWall.razor's placement math (cyclic gap accumulation, per-group display
+    /// scale, HorizontalImageLoop tiling) into flat tile lists, and derives logo zones from
+    /// Role="logo" groups using the same accumulation PixeraAllocationService uses.
+    /// </summary>
+    private void ComputeLayout()
+    {
+        wallTiles = new();
+        counterTiles = new();
+        logoZones = new();
+        if (wallConfig == null || wallDisplays == null) return;
+        var contentScale = wallConfig.ContentScaleFactor;
+        // Admin-only shift of the whole content block against the context background;
+        // PositionTop values themselves are content-relative and reach the wall untouched.
+        var topOffset = wallConfig.ContentTopOffsetPx * contentScale;
+
+        foreach (var placement in wallConfig.Layout.Placements.OrderBy(p => p.ZIndex))
+        {
+            var display = wallDisplays.FirstOrDefault(d => d.DisplayId == placement.DisplayId);
+            if (display == null) continue;
+            var es = contentScale * placement.DisplayScale;
+            wallTiles.Add(MakeTile(display, topOffset + placement.PositionTop * contentScale, placement.PositionLeft * contentScale, es, placement.ZIndex));
+        }
+
+        foreach (var group in wallConfig.Layout.Groups.OrderBy(g => g.ZIndex))
+        {
+            var es = contentScale * group.DisplayScale;
+            var target = group.AllowAirlineAllocation ? counterTiles : wallTiles;
+            double accTop = topOffset + group.PositionTop * contentScale;
+            double accLeft = group.PositionLeft * contentScale;
+
+            for (int idx = 0; idx < group.DisplayIds.Count; idx++)
+            {
+                var display = wallDisplays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[idx]);
+                if (display == null) continue;
+                var w = (display.DisplayWidth > 0 ? display.DisplayWidth : 1920) * es;
+                var h = (display.DisplayHeight > 0 ? display.DisplayHeight : 1080) * es;
+
+                var top = group.Direction == "vertical" ? accTop : topOffset + group.PositionTop * contentScale;
+                var left = group.Direction == "vertical" ? group.PositionLeft * contentScale : accLeft;
+
+                var loopCount = group.AllowAirlineAllocation ? 1 : Math.Max(1, group.HorizontalImageLoop);
+                for (int tile = 0; tile < loopCount; tile++)
+                    target.Add(MakeTile(display, top, left + tile * w, es, group.ZIndex));
+
+                if (group.Direction == "vertical") accTop += h + group.GetGapAfter(idx) * contentScale;
+                else accLeft += w + group.GetGapAfter(idx) * contentScale;
+            }
+        }
+
+        // Logo zones: fixed slots defined by Role="logo" groups (raw canvas px), scaled into view px
+        foreach (var group in wallConfig.Layout.Groups.Where(g => string.Equals(g.Role, "logo", StringComparison.OrdinalIgnoreCase)))
+        {
+            var groupScale = group.DisplayScale > 0 ? group.DisplayScale : 1.0;
+            var scaledWidths = group.DisplayIds
+                .Select(id => wallDisplays.FirstOrDefault(d => d.DisplayId == id) is { DisplayWidth: > 0 } d
+                    ? d.DisplayWidth * groupScale : 1920 * groupScale)
+                .ToList();
+
+            for (int wi = 0; wi < group.DisplayIds.Count; wi++)
+            {
+                var display = wallDisplays.FirstOrDefault(d => d.DisplayId == group.DisplayIds[wi]);
+                var zoneH = (display?.DisplayHeight > 0 ? display.DisplayHeight : 648) * groupScale;
+                logoZones.Add((
+                    Top: topOffset + group.PositionTop * contentScale,
+                    Left: group.ComputeAccumulatedLeft(wi, scaledWidths) * contentScale,
+                    Width: scaledWidths[wi] * contentScale,
+                    Height: zoneH * contentScale,
+                    RoleKey: string.IsNullOrWhiteSpace(group.LogoRoleKey) ? null : group.LogoRoleKey));
+            }
+        }
+    }
+
+    private static TileLayout MakeTile(TblDisplay display, double top, double left, double scale, int zIndex)
+    {
+        var nativeW = display.DisplayWidth > 0 ? display.DisplayWidth : 1920;
+        var nativeH = display.DisplayHeight > 0 ? display.DisplayHeight : 1080;
+        return new TileLayout
+        {
+            Display = display,
+            Top = top,
+            Left = left,
+            Width = nativeW * scale,
+            Height = nativeH * scale,
+            NativeWidth = nativeW,
+            NativeHeight = nativeH,
+            Scale = scale,
+            ZIndex = zIndex
+        };
+    }
+
+    /// <summary>
+    /// Contiguous runs of selected counters (ordered left to right, like the real wall's counter
+    /// canvas), each with the same viewport-edge extensions GetClusterBoundsInView applies: a run
+    /// containing the leftmost counter extends to x=0, one containing the rightmost extends to the
+    /// wall canvas right boundary. Gaps between runs get no overlays.
+    /// </summary>
+    private List<(double Top, double Left, double Width, double Height)> SelectionRuns
+    {
+        get
+        {
+            var runs = new List<(double Top, double Left, double Width, double Height)>();
+            var ordered = counterTiles.OrderBy(t => t.Left).ToList();
+            var contentScale = wallConfig?.ContentScaleFactor ?? 0.4;
+
+            int i = 0;
+            while (i < ordered.Count)
+            {
+                if (!selectedCounterIds.Contains(ordered[i].Display.DisplayId)) { i++; continue; }
+                int start = i;
+                while (i < ordered.Count && selectedCounterIds.Contains(ordered[i].Display.DisplayId)) i++;
+
+                var run = ordered.Skip(start).Take(i - start).ToList();
+                var top = run.Min(t => t.Top);
+                var left = run.Min(t => t.Left);
+                var right = run.Max(t => t.Left + t.Width);
+                var bottom = run.Max(t => t.Top + t.Height);
+
+                if (start == 0 && left > 0)
+                    left = 0;
+                if (i >= ordered.Count && BackgroundExtent() is { W: > 0 } bgExt)
+                    right = Math.Max(right, bgExt.W);
+
+                runs.Add((top, left, right - left, bottom - top));
+            }
+            return runs;
+        }
+    }
+
+    private string StageStyle()
+    {
+        double maxRight = 0, maxBottom = 0;
+        foreach (var tile in wallTiles.Concat(counterTiles))
+        {
+            maxRight = Math.Max(maxRight, tile.Left + tile.Width);
+            maxBottom = Math.Max(maxBottom, tile.Top + tile.Height);
+        }
+        foreach (var zone in logoZones)
+        {
+            maxRight = Math.Max(maxRight, zone.Left + zone.Width);
+            maxBottom = Math.Max(maxBottom, zone.Top + zone.Height);
+        }
+        var (bgW, bgH) = BackgroundExtent();
+        var w = Math.Max(maxRight, bgW);
+        var h = Math.Max(maxBottom, bgH);
+        return $"position:relative; overflow:hidden; background-color:#1a1a2e; width:{Inv(w)}px; height:{Inv(h)}px;";
+    }
+
+    private (double W, double H) BackgroundExtent()
+    {
+        if (!(wallLocation?.BackgroundImageWidth > 0)) return (0, 0);
+        var scale = wallConfig?.BackgroundScaleFactor ?? 0.15;
+        var bgW = wallLocation.BackgroundImageWidth.Value * scale;
+        var bgH = (wallLocation.BackgroundImageHeight ?? 0) > 0
+            ? wallLocation.BackgroundImageHeight!.Value * scale
+            : bgW * (9.0 / 16.0);
+        return (bgW, bgH);
+    }
+
+    private string WallBackgroundStyle()
+    {
+        if (string.IsNullOrEmpty(wallConfig?.BackgroundImagePath) || !(wallLocation?.BackgroundImageWidth > 0))
+            return "display:none;";
+        var (bgW, bgH) = BackgroundExtent();
+        return $"position:absolute; top:0; left:0; z-index:0; width:{Inv(bgW)}px; height:{Inv(bgH)}px; " +
+               $"background-image:url('{wallConfig.BackgroundImagePath}'); background-size:100% 100%; background-repeat:no-repeat;";
+    }
+
+    private static bool IsHtmlOrWebPath(string? path) =>
+        !string.IsNullOrEmpty(path) &&
+        (path.EndsWith(".html", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("http://", StringComparison.OrdinalIgnoreCase) ||
+         path.StartsWith("https://", StringComparison.OrdinalIgnoreCase));
+
+    private static string Inv(double value) => value.ToString(CultureInfo.InvariantCulture);
+}
+
+<style>
+    /* Sits below the sticky main nav (3.5rem, z-index 5000) — the nav always stays on top */
+    .vwp-overlay {
+        position: fixed;
+        top: 3.5rem; left: 0; right: 0; bottom: 0;
+        background: rgba(0,0,0,0.7);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 1080;
+    }
+
+    .vwp-container {
+        background: #fff;
+        border-radius: 8px;
+        width: 96vw;
+        height: 96%;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+    }
+
+    .vwp-header {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 16px;
+        background-color: #0071BC;
+    }
+
+    .vwp-header h4 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: #fff;
+        flex: 1;
+    }
+
+    .vwp-ephemeral {
+        color: rgba(255,255,255,0.85);
+        font-size: 12px;
+    }
+
+    .vwp-close {
+        background: none;
+        border: none;
+        font-size: 22px;
+        cursor: pointer;
+        color: #fff;
+        line-height: 1;
+    }
+
+    .vwp-body {
+        display: flex;
+        flex: 1;
+        min-height: 0;
+    }
+
+    .vwp-panel {
+        width: 280px;
+        flex-shrink: 0;
+        border-right: 1px solid #e5e5e5;
+        padding: 14px;
+        overflow-y: auto;
+    }
+
+    .vwp-section {
+        margin-bottom: 18px;
+    }
+
+    .vwp-section-title {
+        font-size: 12px;
+        font-weight: 700;
+        color: #333;
+        text-transform: uppercase;
+        margin-bottom: 6px;
+    }
+
+    .vwp-hint {
+        font-size: 11px;
+        color: #888;
+        margin-bottom: 8px;
+    }
+
+    .vwp-counter-group {
+        margin-bottom: 10px;
+    }
+
+    .vwp-check {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        font-size: 13px;
+        cursor: pointer;
+        padding: 2px 0 2px 16px;
+    }
+
+    .vwp-check-head {
+        font-weight: 600;
+        padding-left: 0;
+    }
+
+    .vwp-asset-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 6px;
+    }
+
+    .vwp-asset {
+        border: 2px solid transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        overflow: hidden;
+    }
+
+    .vwp-asset-selected {
+        border-color: #0071BC;
+    }
+
+    .vwp-asset-thumb {
+        width: 100%;
+        aspect-ratio: 4 / 3;
+        overflow: hidden;
+    }
+
+    .vwp-stage-wrap {
+        flex: 1;
+        overflow: auto;
+        padding: 16px;
+        background: #101020;
+    }
+
+    /* Transparent so content alpha reveals the airline/wall background layers beneath */
+    .vwp-sandbox-tile {
+        position: relative;
+        overflow: hidden;
+        outline: 1px dashed rgba(22, 255, 0, 0.7);
+    }
+
+    .vwp-sandbox-empty {
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #16FF00;
+        font-size: 11px;
+        font-weight: 600;
+        background: rgba(0, 0, 0, 0.35);
+    }
+
+    .vwp-sandbox-chip {
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        background: rgba(22, 255, 0, 0.85);
+        color: #000;
+        font-size: 9px;
+        font-weight: 700;
+        padding: 1px 6px;
+        border-radius: 3px;
+        pointer-events: none;
+        z-index: 5;
+    }
+</style>

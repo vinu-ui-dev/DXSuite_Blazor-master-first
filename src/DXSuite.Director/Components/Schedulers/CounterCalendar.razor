@@ -1,0 +1,391 @@
+@implements IAsyncDisposable
+@inject IJSRuntime JS
+
+<div class="cc-scroll" @ref="_containerRef">
+    <div class="cc-inner">
+
+        @* ── Sticky time-axis header ─────────────────────────────────────── *@
+        <div class="cc-hdr-time">
+            <div class="cc-corner"></div>
+            @for (int h = 0; h < 24; h++)
+            {
+                <div class="cc-time-cell">@($"{h:D2}:00")</div>
+            }
+        </div>
+
+        @* ── Counter rows ────────────────────────────────────────────────── *@
+        <div class="cc-body">
+            @{
+                PanoramaGroup? prevGroup = null;
+            }
+            @foreach (var d in GetOrderedDisplays())
+            {
+                var displayId = d.DisplayId;
+                var group     = GetGroupForDisplay(displayId);
+
+                @* Group separator band when the group changes *@
+                @if (group != null && group != prevGroup)
+                {
+                    <div class="cc-group-separator">
+                        <div class="cc-group-separator-label">@group.GroupName</div>
+                    </div>
+                    prevGroup = group;
+                }
+
+                <div class="cc-row">
+                    <div class="cc-row-label" style="border-left: 3px solid @GetGroupColor(group);">
+                        @(d.DisplayName ?? $"Counter {d.DisplayId}")
+                    </div>
+                    <div class="cc-row-body" data-row-display-id="@displayId">
+                        @foreach (var ev in GetActiveEvents(displayId))
+                        {
+                            var leftPx  = GetEventLeft(ev);
+                            var widthPx = GetEventWidth(ev);
+                            var bgColor = GetGroupColor(ev.UserGroupId);
+
+                            <div class="cc-event"
+                                 data-event-id="@ev.ScheduleEventId"
+                                 style="left:@(leftPx)px; width:@(widthPx)px; background:@bgColor;">
+                                <div class="cc-event-content">
+                                    <span class="cc-event-name">@GetGroupName(ev.UserGroupId)</span>
+                                    <span class="cc-event-time">@FormatTime(ev)</span>
+                                </div>
+                                <div class="cc-event-resize" data-resize-handle="true"></div>
+                            </div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+    </div>
+</div>
+
+@code {
+    [Parameter] public VideoWallConfiguration? Config { get; set; }
+    [Parameter] public List<TblDisplay> Displays { get; set; } = new();
+    [Parameter] public List<TblScheduleEvent> Events { get; set; } = new();
+    [Parameter] public List<TblUserGroup> AirlineGroups { get; set; } = new();
+    [Parameter] public DateOnly SelectedDate { get; set; }
+    [Parameter] public EventCallback<CalendarSlotArgs>   SlotActivated  { get; set; }
+    [Parameter] public EventCallback<TblScheduleEvent>   EventActivated { get; set; }
+    [Parameter] public EventCallback<CalendarMoveArgs>   EventMoved     { get; set; }
+    [Parameter] public EventCallback<CalendarResizeArgs> EventResized   { get; set; }
+
+    private ElementReference _containerRef;
+    private DotNetObjectReference<CounterCalendar>? _dotNetRef;
+    private bool _jsInitialized;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            _dotNetRef ??= DotNetObjectReference.Create(this);
+            await JS.InvokeVoidAsync("schedulerInterop.init", _dotNetRef, _containerRef);
+            _jsInitialized = true;
+        }
+        else if (_jsInitialized)
+        {
+            await JS.InvokeVoidAsync("schedulerInterop.refresh", _dotNetRef, _containerRef);
+        }
+    }
+
+    [JSInvokable]
+    public Task OnSlotActivated(int displayId, int startMinutes, int endMinutes)
+        => SlotActivated.InvokeAsync(new CalendarSlotArgs(displayId, startMinutes, endMinutes));
+
+    [JSInvokable]
+    public Task OnEventActivated(int eventId)
+    {
+        var ev = Events.FirstOrDefault(e => e.ScheduleEventId == eventId);
+        return ev != null ? EventActivated.InvokeAsync(ev) : Task.CompletedTask;
+    }
+
+    [JSInvokable]
+    public Task OnEventMoved(int eventId, int newStartMinutes)
+        => EventMoved.InvokeAsync(new CalendarMoveArgs(eventId, newStartMinutes));
+
+    [JSInvokable]
+    public Task OnEventResized(int eventId, int newEndMinutes)
+        => EventResized.InvokeAsync(new CalendarResizeArgs(eventId, newEndMinutes));
+
+    // ── Data helpers ─────────────────────────────────────────────────────────
+
+    private IEnumerable<PanoramaGroup> GetAllocationGroups()
+        => Config?.Layout.Groups.Where(g => g.AllowAirlineAllocation)
+           ?? Enumerable.Empty<PanoramaGroup>();
+
+    private IEnumerable<TblDisplay> GetOrderedDisplays()
+        => GetAllocationGroups()
+            .SelectMany(g => g.DisplayIds)
+            .Distinct()
+            .Select(id => Displays.FirstOrDefault(d => d.DisplayId == id))
+            .Where(d => d != null)
+            .Select(d => d!);
+
+    private PanoramaGroup? GetGroupForDisplay(int displayId)
+        => GetAllocationGroups().FirstOrDefault(g => g.DisplayIds.Contains(displayId));
+
+    private IEnumerable<TblScheduleEvent> GetActiveEvents(int displayId)
+        => Events.Where(e => e.DisplayId == displayId && e.UserGroupId != null && IsDayActive(e));
+
+    private bool IsDayActive(TblScheduleEvent e)
+    {
+        bool anySet = e.Sunday || e.Monday || e.Tuesday || e.Wednesday ||
+                      e.Thursday || e.Friday || e.Saturday;
+        if (!anySet) return true;
+        return SelectedDate.DayOfWeek switch
+        {
+            DayOfWeek.Sunday    => e.Sunday,
+            DayOfWeek.Monday    => e.Monday,
+            DayOfWeek.Tuesday   => e.Tuesday,
+            DayOfWeek.Wednesday => e.Wednesday,
+            DayOfWeek.Thursday  => e.Thursday,
+            DayOfWeek.Friday    => e.Friday,
+            DayOfWeek.Saturday  => e.Saturday,
+            _ => false
+        };
+    }
+
+    // Left offset in px = minutes from midnight (1 px per minute)
+    private static int GetEventLeft(TblScheduleEvent ev)
+        => ev.StartTime.HasValue ? ev.StartTime.Value.Hour * 60 + ev.StartTime.Value.Minute : 0;
+
+    // Width in px = event duration in minutes, min 15
+    private static int GetEventWidth(TblScheduleEvent ev)
+    {
+        if (!ev.StartTime.HasValue || !ev.EndTime.HasValue) return 60;
+        return Math.Max(15, (int)(ev.EndTime.Value - ev.StartTime.Value).TotalMinutes);
+    }
+
+    private static readonly string[] _palette =
+    {
+        "#0071BC", "#dc3545", "#28a745",
+        "#ffa000", "#6610f2", "#00bcd4",
+        "#e83e8c", "#20c997"
+    };
+
+    private string GetGroupColor(int? groupId)
+    {
+        if (groupId == null) return "rgba(150,150,150,0.3)";
+        var idx = AirlineGroups.FindIndex(g => g.UserGroupId == groupId);
+        return idx < 0 ? "rgba(150,150,150,0.3)" : _palette[idx % _palette.Length] + "66"; // 40% opacity
+    }
+
+    private string GetGroupColor(PanoramaGroup? group)
+    {
+        if (group == null) return "#cccccc";
+        var idx = GetAllocationGroups().ToList().IndexOf(group);
+        return idx < 0 ? "#cccccc" : _palette[idx % _palette.Length];
+    }
+
+    private string GetGroupName(int? groupId)
+        => AirlineGroups.FirstOrDefault(g => g.UserGroupId == groupId)?.GroupName ?? "?";
+
+    private static string FormatTime(TblScheduleEvent ev)
+    {
+        var s = ev.StartTime?.ToString("H:mm") ?? "0:00";
+        var e = ev.EndTime?.ToString("H:mm")   ?? "24:00";
+        return $"{s}–{e}";
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_dotNetRef != null)
+        {
+            try { await JS.InvokeVoidAsync("schedulerInterop.destroy", _containerRef); } catch { }
+            _dotNetRef.Dispose();
+            _dotNetRef = null;
+        }
+    }
+}
+
+<style>
+    .cc-scroll {
+        overflow: auto;
+        max-height: calc(100vh - 220px);
+        border: 1px solid #e0e0e0;
+        border-radius: 4px;
+        background: #fff;
+    }
+
+    .cc-inner {
+        display: flex;
+        flex-direction: column;
+        min-width: max-content;
+    }
+
+    /* ── Time-axis header (sticky top) ───────────────────────────────────── */
+    .cc-hdr-time {
+        display: flex;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        background: #f0f0f0;
+        border-bottom: 1px solid #ccc;
+    }
+
+    /* Corner cell — aligns with the row-label column */
+    .cc-corner {
+        width: 120px;
+        min-width: 120px;
+        flex-shrink: 0;
+        height: 28px;
+        position: sticky;
+        left: 0;
+        z-index: 5;
+        background: #1a1a2e;
+    }
+
+    .cc-time-cell {
+        width: 60px;
+        min-width: 60px;
+        flex-shrink: 0;
+        height: 28px;
+        line-height: 28px;
+        padding-left: 4px;
+        font-size: 10px;
+        color: #555;
+        border-right: 1px solid #ddd;
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    /* ── Body ────────────────────────────────────────────────────────────── */
+    .cc-body {
+        display: flex;
+        flex-direction: column;
+    }
+
+    /* Group separator — dark band spanning the full row area */
+    .cc-group-separator {
+        display: flex;
+        height: 22px;
+        background: #1a1a2e;
+    }
+
+    .cc-group-separator-label {
+        position: sticky;
+        left: 0;
+        padding: 0 10px;
+        color: #eee;
+        font-size: 10px;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        line-height: 22px;
+        white-space: nowrap;
+        user-select: none;
+    }
+
+    /* ── Counter row ─────────────────────────────────────────────────────── */
+    .cc-row {
+        display: flex;
+        border-bottom: 1px solid #e8e8e8;
+    }
+
+    .cc-row:hover {
+        background: rgba(0,0,0,0.01);
+    }
+
+    /* Counter name label (sticky left) */
+    .cc-row-label {
+        width: 120px;
+        min-width: 120px;
+        flex-shrink: 0;
+        height: 50px;
+        line-height: 50px;
+        padding: 0 8px 0 10px;
+        font-size: 11px;
+        font-weight: 600;
+        color: #333;
+        background: #fafafa;
+        border-right: 1px solid #ddd;
+        position: sticky;
+        left: 0;
+        z-index: 10;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    /* Row timeline body — events are positioned absolutely within here */
+    .cc-row-body {
+        width: 1440px;
+        min-width: 1440px;
+        height: 50px;
+        position: relative;
+        flex-shrink: 0;
+        /* 15-min vertical tick marks via horizontal CSS gradient */
+        background-image: repeating-linear-gradient(
+            to right,
+            rgba(0,0,0,0.12) 0,    rgba(0,0,0,0.12) 1px,    /* hour line */
+            transparent      1px,  transparent      15px,
+            rgba(0,0,0,0.05) 15px, rgba(0,0,0,0.05) 16px,   /* 15-min */
+            transparent      16px, transparent      30px,
+            rgba(0,0,0,0.05) 30px, rgba(0,0,0,0.05) 31px,   /* 30-min */
+            transparent      31px, transparent      45px,
+            rgba(0,0,0,0.05) 45px, rgba(0,0,0,0.05) 46px,   /* 45-min */
+            transparent      46px, transparent      60px
+        );
+        background-size: 60px 100%;
+    }
+
+    /* ── Event blocks ────────────────────────────────────────────────────── */
+    .cc-event {
+        position: absolute;
+        top: 4px;
+        bottom: 4px;
+        border-radius: 3px;
+        border: 1px solid rgba(0,0,0,0.18);
+        overflow: hidden;
+        cursor: pointer;
+        box-sizing: border-box;
+        user-select: none;
+        min-width: 15px;
+    }
+
+    .cc-event-content {
+        padding: 2px 14px 2px 4px; /* right padding leaves room for resize handle */
+        pointer-events: none;
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        overflow: hidden;
+    }
+
+    .cc-event-name {
+        display: block;
+        font-size: 10px;
+        font-weight: 700;
+        color: #1a1a2e;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .cc-event-time {
+        display: block;
+        font-size: 9px;
+        color: #444;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    /* Resize handle — right edge strip */
+    .cc-event-resize {
+        position: absolute;
+        top: 0;
+        right: 0;
+        bottom: 0;
+        width: 8px;
+        cursor: ew-resize;
+        background: rgba(0,0,0,0.1);
+    }
+
+    .cc-event-resize:hover {
+        background: rgba(0,0,0,0.25);
+    }
+</style>

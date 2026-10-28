@@ -1,0 +1,77 @@
+@using DXSuite.Design.Entities
+
+<div class="ls-container">
+    <h4 class="ls-title">Labor</h4>
+    @if (!LaborRows.Any())
+    {
+        <p class="ct-empty">No labor types configured.</p>
+    }
+    else
+    {
+        <table class="ct-table">
+            <thead>
+                <tr>
+                    <th>Labor Type</th>
+                    <th>Sub Role</th>
+                    <th style="width:120px; text-align:right">Computed Hrs</th>
+                    <th style="width:80px; text-align:center">Override</th>
+                    <th style="width:130px; text-align:right">Override Hrs</th>
+                    <th style="width:120px; text-align:right">Effective Hrs</th>
+                    <th style="width:130px; text-align:right">Int. Rate/Hr</th>
+                    <th style="width:130px; text-align:right">Sub Rate/Hr</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var row in LaborRows)
+                {
+                    var computed = ComputedHours.GetValueOrDefault(row.LaborType.LaborTypeId);
+                    var effective = row.Entity.IsOverridden ? row.Entity.OverrideHours : computed;
+                    <tr>
+                        <td>@row.LaborType.TypeName</td>
+                        <td style="font-size:.8rem; color:var(--text-muted,#6c757d)">
+                            @row.LaborType.SubRole.ToString()
+                        </td>
+                        <td style="text-align:right">@computed.ToString("F2")</td>
+                        <td style="text-align:center">
+                            <input type="checkbox" checked="@row.Entity.IsOverridden"
+                                   @onchange="() => OnToggleOverride.InvokeAsync(row.Entity.LaborRowId)" />
+                        </td>
+                        <td style="text-align:right">
+                            @if (row.Entity.IsOverridden)
+                            {
+                                <input type="number" class="ct-field" style="width:110px; text-align:right"
+                                       value="@row.Entity.OverrideHours.ToString("F2")" min="0" step="0.25"
+                                       @onchange="e => HoursChanged(row.Entity.LaborRowId, e.Value?.ToString())" />
+                            }
+                            else
+                            {
+                                <span style="color:var(--text-muted,#6c757d)">—</span>
+                            }
+                        </td>
+                        <td style="text-align:right; font-weight:600">@effective.ToString("F2")</td>
+                        <td style="text-align:right">@row.LaborType.InternalPricePerHr.ToString("C")</td>
+                        <td style="text-align:right">@row.Entity.SubPricePerHr.ToString("C")</td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public List<WorksheetEditor.LaborRowView> LaborRows { get; set; } = [];
+    [Parameter, EditorRequired] public Dictionary<int, decimal> ComputedHours { get; set; } = [];
+    [Parameter, EditorRequired] public EventCallback<int> OnToggleOverride { get; set; }
+    [Parameter, EditorRequired] public EventCallback<(int LaborRowId, decimal Hours)> OnUpdateOverride { get; set; }
+
+    private void HoursChanged(int laborRowId, string? raw)
+    {
+        if (decimal.TryParse(raw, out var h))
+            OnUpdateOverride.InvokeAsync((laborRowId, Math.Max(0, h)));
+    }
+}
+
+<style>
+    .ls-container { margin-bottom: 24px; }
+    .ls-title { font-size: 1rem; font-weight: 600; margin: 0 0 8px; }
+</style>

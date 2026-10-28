@@ -1,0 +1,130 @@
+@page "/platform/elevation/pending"
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@inject ISessionState SessionState
+
+<div class="dx-platform-page">
+    <div class="dx-platform-header">
+        <h2>Pending Elevation Requests</h2>
+    </div>
+    <p class="dx-text-muted">Review and approve elevation requests from other operators.</p>
+
+    @if (!SessionState.IsPlatformOperator)
+    {
+        <div class="dx-alert dx-alert-danger">Access denied.</div>
+    }
+    else if (loading)
+    {
+        <p>Loading...</p>
+    }
+    else if (pendingElevations.Count == 0)
+    {
+        <p class="dx-text-muted">No pending requests.</p>
+    }
+    else
+    {
+        <div class="dx-table">
+            <div class="dx-table-header" style="grid-template-columns: 1.5fr 1fr 100px 60px 100px 2fr 130px 80px;">
+                <div>Operator</div>
+                <div>Tenant</div>
+                <div>Role</div>
+                <div>Duration</div>
+                <div>Ticket</div>
+                <div>Reason</div>
+                <div>Requested</div>
+                <div></div>
+            </div>
+            @foreach (var e in pendingElevations)
+            {
+                <div class="dx-table-row" style="grid-template-columns: 1.5fr 1fr 100px 60px 100px 2fr 130px 80px;">
+                    <div>@(e.PlatformUser?.DisplayName ?? e.PlatformUser?.PrimaryEmail ?? e.PlatformUserId.ToString("N")[..8])</div>
+                    <div>@e.TenantId</div>
+                    <div><span class="dx-badge @RoleBadgeClass(e.RoleName)">@e.RoleName</span></div>
+                    <div>@FormatDuration(e.IssuedAt, e.ExpiresAt)</div>
+                    <div>@(e.TicketRef ?? "—")</div>
+                    <div class="dx-truncate" title="@e.Reason">@e.Reason</div>
+                    <div>@e.IssuedAt.ToString("yyyy-MM-dd HH:mm") UTC</div>
+                    <div>
+                        @if (e.RequestedByPlatformUserId == SessionState.PlatformUserId)
+                        {
+                            <span class="dx-text-muted" title="You cannot approve your own request">Self</span>
+                        }
+                        else
+                        {
+                            <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                    @onclick="@(() => Approve(e.ElevationId))"
+                                    disabled="@(approving == e.ElevationId)">
+                                @(approving == e.ElevationId ? "..." : "Approve")
+                            </button>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+    }
+
+    @if (actionError != null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-top:12px;">@actionError</div>
+    }
+</div>
+
+@code {
+    [Inject] private IPlatformElevationService? ElevationService { get; set; }
+    [Inject] private IPlatformAuditService? AuditService { get; set; }
+
+    private List<TblPlatformElevation> pendingElevations = new();
+    private bool loading = true;
+    private Guid? approving;
+    private string? actionError;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (!SessionState.IsPlatformOperator || ElevationService == null) { loading = false; return; }
+        pendingElevations = await ElevationService.GetPendingElevationsAsync();
+        loading = false;
+    }
+
+    private async Task Approve(Guid elevationId)
+    {
+        if (SessionState.PlatformUserId == null || ElevationService == null) return;
+        actionError = null;
+        approving = elevationId;
+        try
+        {
+            var elevation = await ElevationService.ApproveElevationAsync(elevationId, SessionState.PlatformUserId.Value);
+
+            if (AuditService != null)
+                await AuditService.WriteAsync(
+                    AuditEventType.ElevationApproved,
+                    SessionState.PlatformUserId,
+                    elevation.TenantId,
+                    ticketRef: elevation.TicketRef,
+                    reason: elevation.Reason,
+                    elevationId: elevation.ElevationId);
+
+            pendingElevations.RemoveAll(e => e.ElevationId == elevationId);
+        }
+        catch (Exception ex)
+        {
+            actionError = ex.Message;
+        }
+        finally
+        {
+            approving = null;
+        }
+    }
+
+    private static string FormatDuration(DateTime issued, DateTime expires)
+    {
+        var hours = (int)Math.Round((expires - issued).TotalHours);
+        return $"{hours}h";
+    }
+
+    private static string RoleBadgeClass(string role) => role switch
+    {
+        PlatformRoles.TenantSupportWrite => "dx-badge-yellow",
+        _ => "dx-badge-blue"
+    };
+}

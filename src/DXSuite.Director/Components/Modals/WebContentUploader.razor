@@ -1,0 +1,509 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.Extensions.Options
+@inject IDirectorDBContext dbContext
+@inject WebPreviewService WebPreviewService
+@inject IOptions<WebPreviewOptions> WebPreviewOptions
+@inject IContentMetadataService contentMetadataService
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject IContentMetadataRuleEditor ruleEditor
+@inject ISessionState sessionState
+@inject IUploadIdentityService uploadIdentity
+@inject ILogger<WebContentUploader> Logger
+@inject IPublicationInvalidator publicationInvalidator
+
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="max-width:500px; position:relative;" @onclick:stopPropagation="true">
+
+            <div class="dx-modal-header">
+                <h5>@(IsEditMode ? "Edit Web Content" : "Add Web Content")</h5>
+                @if (!isLoading)
+                {
+                    <button class="btn-close btn-close-white" @onclick="Close"></button>
+                }
+            </div>
+
+            <div class="dx-modal-body">
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Website URL</label>
+                    <input type="url" class="dx-form-control" placeholder="https://example.com"
+                           @bind="webUrl" @bind:event="oninput" />
+                    <small class="dx-text-muted">Enter the full URL including https://</small>
+                </div>
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Preview Aspect</label>
+                    <select class="dx-form-control" @bind="aspectSelection">
+                        @if (displayWidth > 0 && displayHeight > 0)
+                        {
+                            <option value="display">Match display (@((int)displayWidth) &times; @((int)displayHeight))</option>
+                        }
+                        <option value="landscape">Landscape (1920 &times; 1080)</option>
+                        <option value="portrait">Portrait (1080 &times; 1920)</option>
+                        @if (hasCustomDimensions)
+                        {
+                            <option value="current">Current (@((int)currentWidth) &times; @((int)currentHeight))</option>
+                        }
+                    </select>
+                    <small class="dx-text-muted">Shape the page is captured at for the preview thumbnail — match it to the displays this content will run on</small>
+                    @if (!WebPreviewOptions.Value.CaptureEnabled)
+                    {
+                        <small style="display:block; margin-top:4px; color:#B45309;">
+                            Page capture is disabled on this server (WebPreview:CaptureEnabled), so thumbnails rely on
+                            the page's own preview image (og:image or icon) and the aspect selection has no effect.
+                        </small>
+                    }
+                </div>
+
+                @if (!string.IsNullOrWhiteSpace(webUrl) && IsValidUrl(webUrl))
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Preview</label>
+                        <div style="background:#f5f5f5; border-radius:4px; padding:14px; text-align:center;">
+                            @if (IsEditMode)
+                            {
+                                <div style="position:relative; background:white; border-radius:4px; border:1px solid #ddd; overflow:hidden;">
+                                    <img style="width:100%; max-height:220px; object-fit:contain; display:block; background:#F1F3F5;"
+                                         src="@($"{WebPreviewService.GetThumbnailWebPath(editAssetId.Value)}?t={thumbCacheBust}")"
+                                         onerror="this.style.display='none'; this.nextElementSibling.style.display='block';" />
+                                    <div style="display:none; padding:18px;">
+                                        <div style="font-size:22px; color:var(--dx-blue,#0071BC); font-family:monospace; margin-bottom:8px;">WWW</div>
+                                        <div style="font-size:12px; word-break:break-all; color:#333;">@webUrl</div>
+                                    </div>
+                                </div>
+                                <div style="margin-top:10px; display:flex; align-items:center; justify-content:center; gap:10px;">
+                                    <button class="dx-btn dx-btn-gray" style="padding:6px 14px; font-size:12px;"
+                                            @onclick="RefreshPreview" disabled="@isRefreshingPreview">
+                                        @(isRefreshingPreview ? "Capturing…" : "Refresh Preview")
+                                    </button>
+                                    @if (!string.IsNullOrEmpty(refreshMessage))
+                                    {
+                                        <span class="dx-text-muted" style="font-size:12px;">@refreshMessage</span>
+                                    }
+                                </div>
+                            }
+                            else
+                            {
+                                <div style="background:white; border-radius:4px; padding:18px; border:1px solid #ddd;">
+                                    <div style="font-size:22px; color:var(--dx-blue,#0071BC); font-family:monospace; margin-bottom:8px;">WWW</div>
+                                    <div style="font-size:12px; word-break:break-all; color:#333;">@webUrl</div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+
+                <div class="mb-3">
+                    <label class="form-label fw-semibold">Title <span class="dx-text-muted fw-normal">(optional)</span></label>
+                    <input type="text" class="dx-form-control" placeholder="My Web Page" @bind="webTitle" />
+                    <small class="dx-text-muted">A friendly name for this web content</small>
+                </div>
+
+                @if (ShowsUploadingAs)
+                {
+                    <div class="mb-3">
+                        <UploadingAsSection @ref="uploadingAs" LocationId="@(locationId ?? 0)" OnChanged="StateHasChanged" />
+                    </div>
+                }
+
+                @if (VisibleCustomFields.Count > 0)
+                {
+                    <div class="mb-3">
+                        <label class="form-label fw-semibold">Custom Fields</label>
+                        @foreach (var fieldName in VisibleCustomFields)
+                        {
+                            var fieldDef = metadataDefs.FirstOrDefault(d => d.MetadataKey == fieldName);
+                            <div style="margin-bottom:6px;">
+                                <label class="dx-text-muted" style="display:block; font-size:0.85rem;">@(fieldDef?.DisplayName ?? fieldName)</label>
+                                <MetadataValueInput FieldType="@(fieldDef?.FieldType ?? "string")"
+                                                    Values="@(customMetadataValues.GetValueOrDefault(fieldName) ?? new List<string>())"
+                                                    ValuesChanged="@((List<string> v) => customMetadataValues[fieldName] = v)"
+                                                    Options="@(fieldDef?.Options ?? new())" />
+                            </div>
+                        }
+                    </div>
+                }
+
+                <div class="mb-3">
+                    <div class="form-check">
+                        <input class="form-check-input" type="checkbox" id="wcu-health"
+                               checked="@enableHealthMonitoring"
+                               @onchange="@((e) => enableHealthMonitoring = (bool)(e.Value ?? false))" />
+                        <label class="form-check-label fw-semibold" for="wcu-health">Enable Health Monitoring</label>
+                    </div>
+                    <small class="dx-text-muted">
+                        When enabled, the player monitors whether this website's JavaScript is running correctly.
+                        Only enable for pages that include the content-health.js script.
+                    </small>
+                </div>
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="alert alert-danger mt-2">@errorMessage</div>
+                }
+            </div>
+
+            <div class="dx-modal-footer">
+                @if (UploadBlockReason is { } blockReason)
+                {
+                    <span class="dx-text-red" style="font-size:0.8rem; margin-right:auto;">@blockReason</span>
+                }
+                <button class="dx-btn dx-btn-blue" @onclick="HandleSubmit"
+                        disabled="@(UploadBlockReason != null)" title="@UploadBlockReason"
+                        style="@(isLoading ? "pointer-events:none;" : "")">
+                    @(IsEditMode ? "Save Changes" : "Add Web Content")
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="Close"
+                        style="@(isLoading ? "pointer-events:none;" : "")">
+                    Cancel
+                </button>
+            </div>
+
+            @if (isLoading)
+            {
+                <div style="position:absolute; inset:0; background:rgba(255,255,255,0.8); display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:inherit; z-index:10;">
+                    <div class="dx-spinner"></div>
+                    <p class="dx-text-muted mt-2" style="font-size:13px;">@(IsEditMode ? "Saving changes…" : "Adding web content…")</p>
+                </div>
+            }
+
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnWebContentSubmit { get; set; }
+
+    private bool isVisible;
+    private bool isLoading;
+
+    private int? locationId;
+    private int? constraintId;
+
+    private string webUrl = "";
+    private string webTitle = "";
+    private bool enableHealthMonitoring;
+    private string? errorMessage;
+
+    private int? editAssetId;
+    private long thumbCacheBust;
+    private bool isRefreshingPreview;
+    private string? refreshMessage;
+
+    private string aspectSelection = "landscape";
+    private double displayWidth;
+    private double displayHeight;
+    private double currentWidth;
+    private double currentHeight;
+    private bool hasCustomDimensions;
+
+    private List<string> customMetadataFields = new();
+    private Dictionary<string, List<string>> customMetadataValues = new();
+    private List<MetadataDefinitionDto> metadataDefs = new();
+
+    // Open and OpenForEdit are invoked from synchronous callbacks, so the location's metadata
+    // fields are fetched on the first render after the modal opens instead of inline.
+    private bool metadataLoadPending;
+
+    private bool IsEditMode => editAssetId != null;
+
+    private UploadingAsSection? uploadingAs;
+
+    // Only a new asset gets an identity; editing never re-picks the owner.
+    private bool ShowsUploadingAs => !IsEditMode && (locationId ?? 0) > 0;
+
+    private List<string> VisibleCustomFields =>
+        ShowsUploadingAs && uploadingAs != null
+            ? customMetadataFields.Where(f => !uploadingAs.ParticipatingKeys.Contains(f)).ToList()
+            : customMetadataFields;
+
+    private string? UploadBlockReason => ShowsUploadingAs && uploadingAs is { IsBlocked: true } section ? section.BlockReason : null;
+
+    public void Open(int? locationId = null, int? constraintId = null, double displayWidth = 0, double displayHeight = 0)
+    {
+        this.locationId  = locationId;
+        this.constraintId = constraintId;
+        this.displayWidth  = displayWidth;
+        this.displayHeight = displayHeight;
+
+        editAssetId           = null;
+        hasCustomDimensions   = false;
+        aspectSelection       = displayWidth > 0 && displayHeight > 0 ? "display" : "landscape";
+        webUrl                = "";
+        webTitle              = "";
+        enableHealthMonitoring = false;
+        errorMessage          = null;
+        refreshMessage        = null;
+        isLoading             = false;
+        isVisible             = true;
+
+        ResetMetadata();
+        StateHasChanged();
+    }
+
+    public void OpenForEdit(TblAsset asset)
+    {
+        locationId   = asset.LocationId;
+        constraintId = asset.ConstraintId;
+
+        // No opening-display context in edit mode; offer the canned shapes plus the asset's
+        // stored capture dimensions when they don't match one.
+        displayWidth  = 0;
+        displayHeight = 0;
+        currentWidth  = asset.AssetWidth;
+        currentHeight = asset.AssetHeight;
+        if ((asset.AssetWidth == 1920 && asset.AssetHeight == 1080) || asset.AssetWidth <= 0 || asset.AssetHeight <= 0)
+        {
+            hasCustomDimensions = false;
+            aspectSelection = "landscape";
+        }
+        else if (asset.AssetWidth == 1080 && asset.AssetHeight == 1920)
+        {
+            hasCustomDimensions = false;
+            aspectSelection = "portrait";
+        }
+        else
+        {
+            hasCustomDimensions = true;
+            aspectSelection = "current";
+        }
+
+        editAssetId           = asset.AssetId;
+        webUrl                = asset.AssetPath;
+        webTitle              = asset.AssetName ?? "";
+        enableHealthMonitoring = asset.EnableHealthMonitoring;
+        errorMessage          = null;
+        refreshMessage        = null;
+        thumbCacheBust        = DateTime.Now.Ticks;
+        isLoading             = false;
+        isVisible             = true;
+
+        ResetMetadata();
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        isVisible             = false;
+        editAssetId           = null;
+        webUrl                = "";
+        webTitle              = "";
+        enableHealthMonitoring = false;
+        errorMessage          = null;
+        refreshMessage        = null;
+
+        ResetMetadata();
+        metadataLoadPending = false;
+
+        StateHasChanged();
+    }
+
+    private void ResetMetadata()
+    {
+        customMetadataFields = new List<string>();
+        customMetadataValues = new Dictionary<string, List<string>>();
+        metadataDefs = new List<MetadataDefinitionDto>();
+        metadataLoadPending = true;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!metadataLoadPending) return;
+
+        metadataLoadPending = false;
+        await LoadMetadataFields();
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// Loads the location's custom metadata fields, the shared definitions that give them their
+    /// label and input type, and — when editing — the values already saved against the asset.
+    /// </summary>
+    private async Task LoadMetadataFields()
+    {
+        if (locationId == null) return;
+
+        try
+        {
+            customMetadataFields = (await ruleEditor.GetParticipatingKeysAsync(locationId.Value)).ToList();
+
+            if (customMetadataFields.Count == 0) return;
+
+            foreach (var field in customMetadataFields)
+                customMetadataValues[field] = new List<string>();
+
+            metadataDefs = await metadataDefinitionService.GetAllDefinitionsAsync();
+
+            if (editAssetId != null)
+            {
+                foreach (var saved in await contentMetadataService.GetMetadataForAssetAsync(editAssetId.Value))
+                    if (customMetadataValues.TryGetValue(saved.MetadataKey, out var savedValues))
+                        savedValues.Add(saved.MetadataValue ?? "");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading custom metadata fields for location {LocationId}", locationId);
+        }
+    }
+
+    private (double Width, double Height) SelectedDimensions() => aspectSelection switch
+    {
+        "display"  => (displayWidth, displayHeight),
+        "portrait" => (1080, 1920),
+        "current"  => (currentWidth, currentHeight),
+        _          => (1920, 1080)
+    };
+
+    /// <summary>
+    /// Re-captures the thumbnail for the asset being edited using the URL currently in the form,
+    /// so a corrected URL can be verified before saving. Capture can take up to the configured
+    /// timeout when headless capture is enabled.
+    /// </summary>
+    private async Task RefreshPreview()
+    {
+        if (editAssetId == null) return;
+        if (!IsValidUrl(webUrl))
+        {
+            refreshMessage = "Enter a valid URL first.";
+            return;
+        }
+
+        isRefreshingPreview = true;
+        refreshMessage = null;
+        await InvokeAsync(StateHasChanged);
+
+        var (previewWidth, previewHeight) = SelectedDimensions();
+        var success = await WebPreviewService.GenerateWebThumbnailAsync(editAssetId.Value, webUrl, previewWidth, previewHeight);
+        thumbCacheBust = DateTime.Now.Ticks;
+        refreshMessage = success
+            ? "Preview updated."
+            : WebPreviewOptions.Value.CaptureEnabled
+                ? "Could not capture a preview for this URL."
+                : "No preview available — page capture is disabled on this server and this page has no preview image metadata.";
+        isRefreshingPreview = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private bool IsValidUrl(string url)
+        => Uri.TryCreate(url, UriKind.Absolute, out var uri)
+           && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps);
+
+    private async Task HandleSubmit()
+    {
+        errorMessage = null;
+
+        if (string.IsNullOrWhiteSpace(webUrl))
+        {
+            errorMessage = "Please enter a URL.";
+            return;
+        }
+
+        if (!IsValidUrl(webUrl))
+        {
+            errorMessage = "Please enter a valid URL (must start with http:// or https://).";
+            return;
+        }
+
+        isLoading = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            if (editAssetId != null)
+            {
+                var entity = await dbContext.TblAssets.FirstOrDefaultAsync(a => a.AssetId == editAssetId.Value);
+                if (entity == null)
+                {
+                    errorMessage = "Asset not found. It may have been deleted.";
+                    return;
+                }
+
+                var (width, height) = SelectedDimensions();
+                var urlChanged = entity.AssetPath != webUrl;
+                var dimensionsChanged = entity.AssetWidth != width || entity.AssetHeight != height;
+                entity.AssetPath = webUrl;
+                entity.AssetName = string.IsNullOrWhiteSpace(webTitle) ? null : webTitle.Trim();
+                entity.EnableHealthMonitoring = enableHealthMonitoring;
+                entity.AssetWidth = width;
+                entity.AssetHeight = height;
+                await dbContext.SaveChangesAsync();
+                publicationInvalidator.AssetsChanged([entity.LocationId]);
+
+                // Before the thumbnail, which can fail on an unreachable page and must not take
+                // the metadata edit down with it.
+                foreach (var kvp in customMetadataValues)
+                    await contentMetadataService.SetMetadataAsync(entity.AssetId, kvp.Key, kvp.Value, sessionState.User?.UserId);
+
+                if (urlChanged || dimensionsChanged)
+                    await WebPreviewService.GenerateWebThumbnailAsync(entity.AssetId, entity.AssetPath, width, height);
+
+                await OnWebContentSubmit.InvokeAsync();
+                Close();
+                return;
+            }
+
+            // Re-checked at write time: a refused pick re-opens the picker on what the user still holds.
+            var prepared = await uploadIdentity.PrepareAsync(sessionState.User?.UserId ?? 0, locationId ?? 0,
+                uploadingAs?.PickedGroupId, uploadingAs?.Picks);
+            if (!prepared.IsValid)
+            {
+                errorMessage = prepared.Error;
+                if (uploadingAs != null)
+                    await uploadingAs.ReloadAfterRefusalAsync(prepared.Error);
+                return;
+            }
+
+            var (newWidth, newHeight) = SelectedDimensions();
+            var asset = new TblAsset
+            {
+                LocationId             = locationId   ?? 0,
+                ConstraintId           = constraintId ?? 0,
+                AssetPath              = webUrl,
+                AssetTypeId            = (int)Types.AssetType.Web,
+                AssetGroupId           = 1,
+                Duration               = 0,
+                AssetHeight            = newHeight,
+                AssetWidth             = newWidth,
+                SortOrder              = 0,
+                CreateDate             = DateTime.UtcNow,
+                IsDeleted              = false,
+                AssetName              = string.IsNullOrWhiteSpace(webTitle) ? null : webTitle.Trim(),
+                WebRenderMode          = "iframe",
+                EnableHealthMonitoring = enableHealthMonitoring,
+                UploadedByUserId       = prepared.OwnerUserId,
+                UploadedByUserGroupId  = prepared.OwnerGroupId
+            };
+
+            dbContext.TblAssets.Add(asset);
+            await dbContext.SaveChangesAsync();
+            publicationInvalidator.AssetsChanged([asset.LocationId]);
+
+            var participating = uploadingAs?.ParticipatingKeys ?? new HashSet<string>();
+            foreach (var (key, values) in prepared.Tags)
+                await contentMetadataService.SetMetadataAsync(asset.AssetId, key, values, sessionState.User?.UserId);
+            foreach (var kvp in customMetadataValues)
+                if (kvp.Value.Count > 0 && !participating.Contains(kvp.Key))
+                    await contentMetadataService.SetMetadataAsync(asset.AssetId, kvp.Key, kvp.Value, sessionState.User?.UserId);
+
+            // Thumbnail generation can take many seconds (headless capture); never block the save
+            await WebPreviewService.GenerateWebThumbnailAsync(asset.AssetId, asset.AssetPath, newWidth, newHeight);
+
+            await OnWebContentSubmit.InvokeAsync();
+            Close();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error adding web content: {ex.Message}";
+            Logger.LogError(ex, "Error saving web asset for location {LocationId}", locationId);
+        }
+        finally
+        {
+            isLoading = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

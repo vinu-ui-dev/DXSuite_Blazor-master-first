@@ -1,0 +1,847 @@
+@page "/overrides"
+@using DXSuite.Director.Entities
+@using DXSuite.Shared.Authorization
+@using Microsoft.EntityFrameworkCore
+@inject IDirectorDBContext dbContext
+@inject IOverrideService overrideService
+@inject NavigationManager navMan
+@inject ISessionState sessionState
+@inject ILogger<OverrideControl> Logger
+@rendermode InteractiveServer
+
+@if (isLoading)
+{
+    <div class="loading-overlay">
+        <div class="spinner-border text-primary" role="status" style="width: 3rem; height: 3rem;">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+}
+else
+{
+    if (isAuthorized == false)
+    {
+        <div class="unauthorized-wrapper">
+            <h1>Unauthorized</h1>
+            <p>You do not have permission to access this page.</p>
+            <a href="/director">Return Home</a>
+        </div>
+    }
+    else
+    {
+        <section class="Sub-Header">
+            <div class="Head-flex">
+                <h2>OVERRIDE CONTROL <DXSuite.Shared.Components.HelpLink Page="director/overrides" Title="Overrides help" /></h2>
+            </div>
+        </section>
+
+        <section class="Body">
+            <div class="override-container">
+                <div class="override-panel">
+                    <div class="panel-header">
+                        <div class="header-with-info">
+                            <h3>Override Priority List</h3>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <button class="dx-btn dx-btn-blue" style="padding: 5px 14px; font-size: 13px;" @onclick="CreateNewOverride">CREATE<span class="ov-create-full">&nbsp;OVERRIDE</span></button>
+                            <div class="info-tooltip-container">
+                                <span class="info-icon" @onclick="() => showInfoTooltip = !showInfoTooltip">i</span>
+                                <div class="info-tooltip @(showInfoTooltip ? "info-tooltip-open" : "")">
+                                    <div class="info-section">
+                                        <h4>Priority System</h4>
+                                        <p>When multiple overrides are active for the same device, the override higher in the list takes precedence.</p>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>Activation Methods</h4>
+                                        <ul>
+                                            <li><strong>Manual Toggle:</strong> Use the switch to activate/deactivate immediately</li>
+                                            <li><strong>Schedule:</strong> Set date/time ranges for automatic activation</li>
+                                            <li><strong>API:</strong> Trigger externally via REST endpoint</li>
+                                        </ul>
+                                    </div>
+                                    <div class="info-section">
+                                        <h4>API Endpoints</h4>
+                                        <code>POST /api/override/{"{id}"}/activate</code>
+                                        <code>POST /api/override/{"{id}"}/deactivate</code>
+                                        <code>GET /api/override/{"{id}"}/status</code>
+                                    </div>
+                                </div>
+                            </div>
+                            </div>
+                        </div>
+                        <p class="header-description">Higher items take priority when multiple overrides are active.</p>
+                    </div>
+                    <div class="panel-content">
+                        @if (overrides != null && overrides.Any())
+                        {
+                            <div class="override-list">
+                                @{ var orderedOverrides = overrides.OrderBy(o => o.Priority).ToList(); }
+                                @foreach (var over in orderedOverrides)
+                                {
+                                    var status = GetOverrideStatus(over);
+                                    var overrideIndex = orderedOverrides.IndexOf(over);
+                                    <div class="override-card @(status.IsEffectivelyActive ? "active" : "") @(draggedOverride == over ? "dragging" : "") @(dragOverTarget == over ? "drag-over" : "")"
+                                         draggable="true"
+                                         @ondragstart="() => OnDragStart(over)"
+                                         @ondragover="() => OnDragOver(over)"
+                                         @ondragover:preventDefault
+                                         @ondragleave="OnDragLeave"
+                                         @ondrop="() => OnDrop(over)"
+                                         @ondragend="OnDragEnd">
+                                        <div class="drag-handle" title="Drag to reorder">
+                                            <span>&#9776;</span>
+                                        </div>
+                                        <div class="override-info">
+                                            <div class="override-name">@over.OverrideName</div>
+                                            <div class="override-details">
+                                                <span class="override-id">ID: @over.OverrideId</span>
+                                                @if (over.IsScheduled)
+                                                {
+                                                    <span class="schedule-badge">Scheduled</span>
+                                                }
+                                            </div>
+                                            @if (!string.IsNullOrEmpty(over.Description))
+                                            {
+                                                <div class="override-description">@over.Description</div>
+                                            }
+                                        </div>
+                                        <div class="device-count">@over.OverrideDevices.Count devices</div>
+                                        <div class="override-status">
+                                            <div class="status-indicator @(status.IsEffectivelyActive ? "active" : "inactive")">
+                                                @(status.IsEffectivelyActive ? "ACTIVE" : "INACTIVE")
+                                            </div>
+                                            @if (status.IsActive)
+                                            {
+                                                <span class="status-source">(Manual)</span>
+                                            }
+                                            else if (status.IsScheduleActive)
+                                            {
+                                                <span class="status-source">(Schedule)</span>
+                                            }
+                                        </div>
+                                        <div class="override-toggle">
+                                            <label class="toggle-switch">
+                                                <input type="checkbox" checked="@over.IsActive" @onchange="() => ToggleOverride(over)" />
+                                                <span class="toggle-slider"></span>
+                                            </label>
+                                        </div>
+                                        <div class="override-actions">
+                                            <button class="btn-icon ov-move-btn" title="Move up (higher priority)"
+                                                    disabled="@(overrideIndex == 0)"
+                                                    @onclick="() => MoveOverride(over, -1)">
+                                                <span>&#9650;</span>
+                                            </button>
+                                            <button class="btn-icon ov-move-btn" title="Move down (lower priority)"
+                                                    disabled="@(overrideIndex == orderedOverrides.Count - 1)"
+                                                    @onclick="() => MoveOverride(over, 1)">
+                                                <span>&#9660;</span>
+                                            </button>
+                                            <button class="btn-icon" title="Edit" @onclick="() => EditOverride(over.OverrideId)">
+                                                <span>&#9998;</span>
+                                            </button>
+                                            <button class="btn-icon delete" title="Delete" @onclick="() => ConfirmDeleteOverride(over)">
+                                                <span>&#128465;</span>
+                                            </button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="no-overrides">
+                                <h4>No overrides configured</h4>
+                                <p>Create an override to control content on multiple devices during emergencies or special events.</p>
+                                <button class="dx-btn dx-btn-blue" @onclick="CreateNewOverride">Create First Override</button>
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        </section>
+    }
+}
+
+@if (showDeleteConfirm)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal">
+            <div class="dx-modal-header">
+                <h5 class="dx-modal-title">Confirm Delete</h5>
+                <button type="button" class="btn-close btn-close-white" @onclick="CancelDelete"></button>
+            </div>
+            <div class="dx-modal-body">
+                <p>Are you sure you want to delete the override "<strong>@overrideToDelete?.OverrideName</strong>"?</p>
+                <p class="dx-text-muted">This will remove all device associations and content assignments.</p>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CancelDelete">Cancel</button>
+                <button class="dx-btn dx-btn-red" @onclick="DeleteOverride">Delete</button>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .override-container {
+        padding: 20px;
+        height: calc(100vh - 200px);
+        display: flex;
+        flex-direction: column;
+    }
+
+    .override-panel {
+        background-color: white;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+        flex: 1;
+    }
+
+    .panel-header {
+        background-color: #CCCCCC;
+        color: #333333;
+        padding: 16px 20px;
+        position: relative;
+        z-index: 10;
+    }
+
+    .header-with-info {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+    }
+
+    .panel-header h3 {
+        margin: 0;
+        font-size: 1.25rem;
+        font-weight: 600;
+    }
+
+    .info-tooltip-container {
+        position: relative;
+        display: inline-block;
+    }
+
+    .info-icon {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 22px;
+        height: 22px;
+        background-color: #0071BC;
+        color: white;
+        border-radius: 50%;
+        font-size: 0.85rem;
+        font-weight: 600;
+        font-style: italic;
+        cursor: help;
+        font-family: Georgia, serif;
+    }
+
+    .info-tooltip {
+        position: absolute;
+        top: 100%;
+        right: 0;
+        margin-top: 10px;
+        background: white;
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        padding: 16px;
+        width: min(340px, 90vw);
+        z-index: 1000;
+        opacity: 0;
+        visibility: hidden;
+        transform: translateY(-10px);
+        transition: opacity 0.2s ease, transform 0.2s ease, visibility 0.2s;
+    }
+
+    /* Revealed on hover for mouse users, or pinned open via tap on the info icon */
+    .info-tooltip-container:hover .info-tooltip,
+    .info-tooltip.info-tooltip-open {
+        opacity: 1;
+        visibility: visible;
+        transform: translateY(0);
+    }
+
+    .info-tooltip::before {
+        content: "";
+        position: absolute;
+        top: -8px;
+        right: 6px;
+        border-left: 8px solid transparent;
+        border-right: 8px solid transparent;
+        border-bottom: 8px solid #ccc;
+    }
+
+    .info-tooltip::after {
+        content: "";
+        position: absolute;
+        top: -7px;
+        right: 7px;
+        border-left: 7px solid transparent;
+        border-right: 7px solid transparent;
+        border-bottom: 7px solid white;
+    }
+
+    .header-description {
+        margin: 8px 0 0 0;
+        font-size: 0.875rem;
+        color: #666;
+    }
+
+    .panel-content {
+        flex: 1;
+        overflow-y: auto;
+        padding: 20px;
+        position: relative;
+        z-index: 1;
+    }
+
+    .override-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+    }
+
+    .override-card {
+        display: grid;
+        grid-template-columns: 40px 1fr auto auto auto auto;
+        gap: 16px;
+        align-items: center;
+        padding: 16px;
+        background-color: #f8f9fa;
+        border: 2px solid #e0e0e0;
+        border-radius: 8px;
+        cursor: grab;
+        transition: all 0.2s;
+    }
+
+    .override-card:hover {
+        border-color: #0071BC;
+        box-shadow: 0 2px 8px rgba(0,113,188,0.2);
+    }
+
+    .override-card.active {
+        background-color: #e8f5e9;
+        border-color: #28a745;
+    }
+
+    .override-card:active {
+        cursor: grabbing;
+    }
+
+    .override-card.dragging {
+        opacity: 0.5;
+        border-style: dashed;
+    }
+
+    .override-card.drag-over {
+        border-color: #0071BC;
+        border-width: 3px;
+        background-color: #e3f2fd;
+        transform: scale(1.02);
+    }
+
+    .drag-handle {
+        color: #999;
+        font-size: 1.5rem;
+        cursor: grab;
+    }
+
+    .override-info {
+        min-width: 0;
+    }
+
+    .override-name {
+        font-weight: 600;
+        font-size: 1.1rem;
+        color: #333;
+        margin-bottom: 4px;
+    }
+
+    .override-details {
+        display: flex;
+        gap: 12px;
+        font-size: 0.875rem;
+        color: #666;
+    }
+
+    .override-id {
+        color: #888;
+        font-family: monospace;
+    }
+
+    .device-count {
+        color: #0071BC;
+        font-size: 0.875rem;
+        white-space: nowrap;
+    }
+
+    .schedule-badge {
+        background-color: #e3f2fd;
+        color: #1976d2;
+        padding: 2px 8px;
+        border-radius: 4px;
+        font-size: 0.75rem;
+    }
+
+    .override-description {
+        font-size: 0.875rem;
+        color: #666;
+        margin-top: 4px;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .override-status {
+        text-align: center;
+    }
+
+    .status-indicator {
+        font-weight: 600;
+        font-size: 0.875rem;
+        padding: 4px 12px;
+        border-radius: 4px;
+    }
+
+    .status-indicator.active {
+        background-color: #28a745;
+        color: white;
+    }
+
+    .status-indicator.inactive {
+        background-color: #6c757d;
+        color: white;
+    }
+
+    .status-source {
+        display: block;
+        font-size: 0.75rem;
+        color: #666;
+        margin-top: 4px;
+    }
+
+    .toggle-switch {
+        position: relative;
+        display: inline-block;
+        width: 50px;
+        height: 26px;
+    }
+
+    .toggle-switch input {
+        opacity: 0;
+        width: 0;
+        height: 0;
+    }
+
+    .toggle-slider {
+        position: absolute;
+        cursor: pointer;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: #ccc;
+        transition: 0.3s;
+        border-radius: 26px;
+    }
+
+    .toggle-slider:before {
+        position: absolute;
+        content: "";
+        height: 20px;
+        width: 20px;
+        left: 3px;
+        bottom: 3px;
+        background-color: white;
+        transition: 0.3s;
+        border-radius: 50%;
+    }
+
+    .toggle-switch input:checked + .toggle-slider {
+        background-color: #28a745;
+    }
+
+    .toggle-switch input:checked + .toggle-slider:before {
+        transform: translateX(24px);
+    }
+
+    .override-actions {
+        display: flex;
+        gap: 8px;
+    }
+
+    .btn-icon {
+        background: none;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        padding: 6px 10px;
+        cursor: pointer;
+        transition: all 0.2s;
+        font-size: 1rem;
+    }
+
+    .btn-icon:hover {
+        background-color: #0071BC;
+        border-color: #0071BC;
+        color: white;
+    }
+
+    .btn-icon.delete:hover {
+        background-color: #dc3545;
+        border-color: #dc3545;
+    }
+
+    .no-overrides {
+        text-align: center;
+        padding: 60px 20px;
+        color: #666;
+    }
+
+    .no-overrides h4 {
+        color: #333;
+        margin-bottom: 16px;
+    }
+
+    .no-overrides p {
+        margin-bottom: 24px;
+    }
+
+    .info-content {
+        background-color: #f8f9fa;
+    }
+
+    .info-section {
+        margin-bottom: 24px;
+    }
+
+    .info-section:last-child {
+        margin-bottom: 0;
+    }
+
+    .info-section h4 {
+        color: #333;
+        font-size: 1rem;
+        margin-bottom: 8px;
+    }
+
+    .info-section p {
+        color: #666;
+        font-size: 0.875rem;
+        margin: 0;
+    }
+
+    .info-section ul {
+        margin: 0;
+        padding-left: 20px;
+        color: #666;
+        font-size: 0.875rem;
+    }
+
+    .info-section li {
+        margin-bottom: 8px;
+    }
+
+    .info-section code {
+        display: block;
+        background-color: #e9ecef;
+        padding: 8px 12px;
+        border-radius: 4px;
+        font-size: 0.8rem;
+        margin-bottom: 8px;
+        word-break: break-all;
+    }
+
+    .loading-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(255, 255, 255, 0.9);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+
+    .unauthorized-wrapper {
+        text-align: center;
+        padding: 60px 20px;
+    }
+
+    /* --- Responsive layout --- */
+    /* On narrow screens the card becomes three rows — name/info, then
+       count/status/toggle, then a full-width action row so the buttons
+       never push past the viewport. Reordering is arrow-button only there. */
+    @@media (max-width: 768px) {
+        .override-container {
+            height: auto;
+        }
+
+        .override-card {
+            grid-template-columns: auto auto 1fr;
+            grid-template-areas:
+                "info info toggle"
+                "count status ."
+                "actions actions actions";
+            row-gap: 10px;
+        }
+
+        .override-card .drag-handle {
+            display: none;
+        }
+
+        .override-info { grid-area: info; }
+        .override-actions { grid-area: actions; }
+        .device-count { grid-area: count; }
+
+        .override-status {
+            grid-area: status;
+            text-align: left;
+        }
+
+        .override-toggle {
+            grid-area: toggle;
+            justify-self: end;
+            align-self: start;
+        }
+
+        .override-description {
+            white-space: normal;
+        }
+
+        .header-description,
+        .info-tooltip-container,
+        .ov-create-full {
+            display: none;
+        }
+    }
+
+    /* --- Touch devices --- */
+    /* Drag events never fire on touchscreens, so reordering falls back to arrow buttons */
+    .ov-move-btn {
+        display: none;
+    }
+
+    .btn-icon:disabled {
+        opacity: 0.4;
+        cursor: default;
+    }
+
+    @@media (pointer: coarse) {
+        .ov-move-btn {
+            display: inline-block;
+        }
+
+        .drag-handle {
+            display: none;
+        }
+
+        .btn-icon {
+            min-width: 40px;
+            min-height: 40px;
+        }
+    }
+</style>
+
+@code {
+    private List<TblOverride>? overrides;
+    private Dictionary<int, OverrideStatusInfo> overrideStatuses = new();
+    private bool isLoading = true;
+    private bool isAuthorized = false;
+
+    // Drag and drop
+    private TblOverride? draggedOverride;
+    private TblOverride? dragOverTarget;
+
+    // Delete confirmation
+    private bool showDeleteConfirm = false;
+    private TblOverride? overrideToDelete;
+    private bool showInfoTooltip = false;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (sessionState != null && await sessionState.HasPermissionAsync(PermissionKeys.PageOverrides))
+        {
+            isAuthorized = true;
+            await LoadData();
+        }
+        isLoading = false;
+    }
+
+    private async Task LoadData()
+    {
+        try
+        {
+            overrides = await overrideService.GetAllOverridesAsync();
+
+            var statuses = await overrideService.GetAllOverrideStatusesAsync();
+            overrideStatuses = statuses.ToDictionary(s => s.OverrideId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading overrides");
+        }
+    }
+
+    private OverrideStatusInfo GetOverrideStatus(TblOverride over)
+    {
+        if (overrideStatuses.TryGetValue(over.OverrideId, out var status))
+            return status;
+
+        return new OverrideStatusInfo
+        {
+            OverrideId = over.OverrideId,
+            OverrideName = over.OverrideName,
+            IsActive = over.IsActive,
+            IsScheduleActive = false,
+            IsEffectivelyActive = over.IsActive
+        };
+    }
+
+    private void CreateNewOverride()
+    {
+        navMan.NavigateTo("/OverrideEditor");
+    }
+
+    private void EditOverride(int overrideId)
+    {
+        navMan.NavigateTo($"/OverrideEditor/{overrideId}");
+    }
+
+    private async Task ToggleOverride(TblOverride over)
+    {
+        try
+        {
+            if (over.IsActive)
+            {
+                await overrideService.DeactivateOverrideAsync(over.OverrideId, "MANUAL", sessionState?.User?.UserPrincipalName, null);
+            }
+            else
+            {
+                await overrideService.ActivateOverrideAsync(over.OverrideId, "MANUAL", sessionState?.User?.UserPrincipalName, null);
+            }
+
+            await LoadData();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling override");
+        }
+    }
+
+    private void ConfirmDeleteOverride(TblOverride over)
+    {
+        overrideToDelete = over;
+        showDeleteConfirm = true;
+    }
+
+    private void CancelDelete()
+    {
+        overrideToDelete = null;
+        showDeleteConfirm = false;
+    }
+
+    private async Task DeleteOverride()
+    {
+        if (overrideToDelete == null) return;
+
+        try
+        {
+            await overrideService.DeleteOverrideAsync(overrideToDelete.OverrideId);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting override");
+        }
+        finally
+        {
+            overrideToDelete = null;
+            showDeleteConfirm = false;
+            StateHasChanged();
+        }
+    }
+
+    private void OnDragStart(TblOverride over)
+    {
+        draggedOverride = over;
+        dragOverTarget = null;
+    }
+
+    private void OnDragOver(TblOverride over)
+    {
+        if (draggedOverride != null && draggedOverride.OverrideId != over.OverrideId)
+        {
+            dragOverTarget = over;
+        }
+    }
+
+    private void OnDragLeave()
+    {
+        dragOverTarget = null;
+    }
+
+    private void OnDragEnd()
+    {
+        draggedOverride = null;
+        dragOverTarget = null;
+    }
+
+    private async Task OnDrop(TblOverride targetOverride)
+    {
+        if (draggedOverride == null || draggedOverride.OverrideId == targetOverride.OverrideId)
+            return;
+
+        try
+        {
+            var orderedList = overrides!.OrderBy(o => o.Priority).ToList();
+            var draggedIndex = orderedList.FindIndex(o => o.OverrideId == draggedOverride.OverrideId);
+            var targetIndex = orderedList.FindIndex(o => o.OverrideId == targetOverride.OverrideId);
+
+            orderedList.RemoveAt(draggedIndex);
+            orderedList.Insert(targetIndex, draggedOverride);
+
+            var newOrder = orderedList.Select(o => o.OverrideId).ToList();
+            await overrideService.ReorderOverridesAsync(newOrder);
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error reordering");
+        }
+        finally
+        {
+            draggedOverride = null;
+            StateHasChanged();
+        }
+    }
+
+    // Button-based reordering for touch devices, where HTML5 drag events never fire
+    private async Task MoveOverride(TblOverride over, int direction)
+    {
+        var orderedList = overrides!.OrderBy(o => o.Priority).ToList();
+        var index = orderedList.FindIndex(o => o.OverrideId == over.OverrideId);
+        var targetIndex = index + direction;
+        if (index < 0 || targetIndex < 0 || targetIndex >= orderedList.Count)
+            return;
+
+        try
+        {
+            orderedList.RemoveAt(index);
+            orderedList.Insert(targetIndex, over);
+            await overrideService.ReorderOverridesAsync(orderedList.Select(o => o.OverrideId).ToList());
+            await LoadData();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error reordering");
+        }
+    }
+}

@@ -1,0 +1,561 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@rendermode InteractiveServer
+
+<div class="zone-visual-editor">
+    <div class="zone-header d-flex justify-content-end mb-3">
+        <button class="dx-btn dx-btn-blue" @onclick="OpenSettingsModal" title="Layout Settings">
+            ⚙ Settings
+        </button>
+    </div>
+
+    @if (isLoading)
+    {
+        <div class="zone-loading">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+        </div>
+    }
+    else if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger">@errorMessage</div>
+    }
+    else
+    {
+        <div class="zone-canvas" style="width: @(CanvasWidth)px; height: @(CanvasHeight)px;">
+            @foreach (var zone in zoneDefinitions)
+            {
+                var display = GetDisplayForZone(zone.ZoneNumber);
+                var hasContent = display != null && HasZoneContent(display.ConstraintId);
+                var isWeather = zone.ZoneType == "weather";
+                var zoneColor = zone.Color;
+
+                <div class="zone-box @(hoveredZone == zone.ZoneNumber ? "hovered" : "")"
+                     style="left: @(zone.X * ScaleFactor)px; top: @(zone.Y * ScaleFactor)px; width: @(zone.Width * ScaleFactor)px; height: @(zone.Height * ScaleFactor)px; background-color: @(zoneColor); border-color: @(zoneColor); border-radius: @(zone.BorderRadius);"
+                     @onmouseenter="() => OnZoneHover(zone.ZoneNumber)"
+                     @onmouseleave="() => OnZoneLeave()"
+                     @onclick="() => OnZoneClick(zone)">
+                    <div class="zone-content">
+                        <div class="zone-label">Zone @zone.ZoneNumber</div>
+                        <div class="zone-name">@zone.ZoneName</div>
+                        @if (isWeather)
+                        {
+                            <div class="zone-icon"><i class="fa fa-cloud-sun"></i></div>
+                        }
+                        else if (hasContent)
+                        {
+                            <div class="zone-icon"><i class="fa fa-images"></i></div>
+                        }
+                        else
+                        {
+                            <div class="zone-icon"><i class="fa fa-plus-circle"></i></div>
+                        }
+                    </div>
+                </div>
+            }
+        </div>
+
+        <div class="zone-info mt-3">
+            @if (hoveredZone.HasValue)
+            {
+                var zone = zoneDefinitions.FirstOrDefault(z => z.ZoneNumber == hoveredZone.Value);
+                var display = GetDisplayForZone(hoveredZone.Value);
+                @if (zone != null)
+                {
+                    <div class="d-flex justify-content-between">
+                        <span><strong>Zone @zone.ZoneNumber:</strong> @zone.ZoneName</span>
+                        @if (zone.ZoneType == "weather")
+                        {
+                            <span class="badge bg-info">Weather Widget</span>
+                        }
+                        else if (display != null)
+                        {
+                            <span class="text-muted">Display: @display.DisplayName</span>
+                        }
+                    </div>
+                }
+            }
+            else
+            {
+                <span class="text-muted">Hover over a zone to see details. Click to edit content.</span>
+            }
+        </div>
+    }
+</div>
+
+@* Zone Content Modal *@
+@if (showZoneModal && selectedZone != null)
+{
+    <div class="zone-modal-overlay" @onclick="CloseZoneModal">
+        <div class="zone-modal" @onclick:stopPropagation="true">
+            <div class="zone-modal-header">
+                <h4>Zone @selectedZone.ZoneNumber: @selectedZone.ZoneName</h4>
+                <button class="zone-modal-close" @onclick="CloseZoneModal">&times;</button>
+            </div>
+            <div class="zone-modal-body">
+                @if (selectedZone.ZoneType == "weather")
+                {
+                    <div class="alert alert-info">
+                        <i class="fa fa-info-circle me-2"></i>
+                        Weather zones display live weather data based on the device's configured zip code.
+                        No content management is needed for this zone.
+                    </div>
+                    <p class="text-muted">
+                        To configure weather, set the <code>zipCode</code> metadata on the device in the Configuration page.
+                    </p>
+                }
+                else
+                {
+                    @if (selectedDisplay != null)
+                    {
+                        <p>This zone is linked to display: <strong>@selectedDisplay.DisplayName</strong></p>
+                        <p>Content Path: <code>/MediaAssets/@LocationId/@selectedDisplay.ConstraintId/</code></p>
+                        <button class="dx-btn dx-btn-blue" @onclick="NavigateToZoneContent">
+                            Manage Zone Content
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="alert alert-warning">
+                            <i class="fa fa-exclamation-triangle me-2"></i>
+                            No display configured for this zone. Please set up a display for Zone @selectedZone.ZoneNumber.
+                        </div>
+                    }
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@* Settings Modal (Layout URL) *@
+@if (showSettingsModal)
+{
+    <div class="zone-modal-overlay" @onclick="CloseSettingsModal">
+        <div class="zone-modal" @onclick:stopPropagation="true">
+            <div class="zone-modal-header">
+                <h4>Layout Settings</h4>
+                <button class="zone-modal-close" @onclick="CloseSettingsModal">&times;</button>
+            </div>
+            <div class="zone-modal-body">
+                <div class="mb-3">
+                    <label class="form-label fw-bold">Layout URL</label>
+                    <p class="text-muted small mb-2">The web URL that devices will load when assigned to this location.</p>
+
+                    @if (!string.IsNullOrEmpty(urlSaveMessage))
+                    {
+                        <div class="alert @(urlSaveSuccess ? "alert-success" : "alert-danger") py-1 px-2 mb-2">@urlSaveMessage</div>
+                    }
+
+                    <div class="input-group">
+                        <input type="text" class="dx-form-control" @bind="layoutUrl" placeholder="https://example.com/displays/hotel-demo/" />
+                        @if (!string.IsNullOrEmpty(layoutUrl))
+                        {
+                            <a href="@layoutUrl" target="_blank" class="dx-btn dx-btn-gray" title="Open in new tab">
+                                ↗
+                            </a>
+                        }
+                    </div>
+                </div>
+                <div class="d-flex justify-content-end gap-2">
+                    <button class="dx-btn dx-btn-gray" @onclick="CloseSettingsModal">Cancel</button>
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveLayoutUrl" disabled="@isSavingUrl">
+                        @if (isSavingUrl)
+                        {
+                            <span class="spinner-border spinner-border-sm me-1"></span>
+                        }
+                        Save
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+<style>
+    .zone-visual-editor {
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+    }
+
+    .zone-header {
+        border-bottom: 1px solid #e0e0e0;
+        padding-bottom: 15px;
+    }
+
+    .zone-loading {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        height: 300px;
+    }
+
+    .zone-canvas {
+        position: relative;
+        background: #1a1a2e;
+        border-radius: 8px;
+        margin: 0 auto;
+        box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .zone-box {
+        position: absolute;
+        border: 2px solid;
+        cursor: pointer;
+        transition: all 0.2s ease;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        opacity: 0.9;
+    }
+
+    .zone-box.hovered {
+        opacity: 1;
+        z-index: 10;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4);
+        filter: brightness(1.1);
+    }
+
+    .zone-content {
+        text-align: center;
+        color: white;
+        text-shadow: 1px 1px 3px rgba(0, 0, 0, 0.7);
+    }
+
+    .zone-label {
+        font-size: 0.7rem;
+        opacity: 0.9;
+        font-weight: 500;
+    }
+
+    .zone-name {
+        font-size: 0.9rem;
+        font-weight: 700;
+        margin: 4px 0;
+    }
+
+    .zone-icon {
+        font-size: 1.5rem;
+        opacity: 0.9;
+        margin-top: 4px;
+    }
+
+    .zone-info {
+        min-height: 30px;
+        padding: 10px;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+
+    /* Zone Modal */
+    .zone-modal-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        z-index: 9999;
+    }
+
+    .zone-modal {
+        background: white;
+        border-radius: 8px;
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
+        min-width: 400px;
+        max-width: 500px;
+    }
+
+    .zone-modal-header {
+        background-color: #0071BC;
+        color: white;
+        padding: 16px 20px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-radius: 8px 8px 0 0;
+    }
+
+    .zone-modal-header h4 {
+        margin: 0;
+        font-size: 1.1rem;
+        color: white;
+    }
+
+    .zone-modal-close {
+        background: none;
+        border: none;
+        color: white;
+        font-size: 1.5rem;
+        cursor: pointer;
+        line-height: 1;
+    }
+
+    .zone-modal-body {
+        padding: 20px;
+    }
+</style>
+
+@code {
+    [Parameter]
+    public int LocationId { get; set; }
+
+    [Parameter]
+    public int CanvasWidth { get; set; } = 960;
+
+    [Parameter]
+    public int CanvasHeight { get; set; } = 540;
+
+    private double ScaleFactor => CanvasWidth / 3840.0;
+
+    private TblLocation? location;
+    private List<TblDisplay> displays = new();
+    private Dictionary<int, bool> zoneContentStatus = new();
+    private bool isLoading = true;
+    private string errorMessage = "";
+    private int? hoveredZone = null;
+
+    private bool showZoneModal = false;
+    private ZoneDefinition? selectedZone = null;
+    private TblDisplay? selectedDisplay = null;
+
+    // Settings modal state
+    private bool showSettingsModal = false;
+
+    // Layout URL configuration
+    private string layoutUrl = "";
+    private bool isSavingUrl = false;
+    private string urlSaveMessage = "";
+    private bool urlSaveSuccess = false;
+
+    // Hotel-test 8-zone layout definition (4K coordinates: 3840x2160)
+    private static readonly List<ZoneDefinition> zoneDefinitions = new()
+    {
+        // Top row (Y=0, H=420)
+        new ZoneDefinition { ZoneNumber = 1, ZoneName = "Branding", ZoneType = "playlist", X = 0, Y = 0, Width = 1920, Height = 420, Color = "#3498db", BorderRadius = "8px 0 0 0" },
+        new ZoneDefinition { ZoneNumber = 2, ZoneName = "Weather", ZoneType = "weather", X = 1920, Y = 0, Width = 1920, Height = 420, Color = "#27ae60", BorderRadius = "0 8px 0 0" },
+        // Left column (X=0, W=747)
+        new ZoneDefinition { ZoneNumber = 3, ZoneName = "Image 1", ZoneType = "playlist", X = 0, Y = 420, Width = 747, Height = 660, Color = "#e67e22", BorderRadius = "0" },
+        new ZoneDefinition { ZoneNumber = 4, ZoneName = "Image 2", ZoneType = "playlist", X = 0, Y = 1080, Width = 747, Height = 660, Color = "#e91e63", BorderRadius = "0" },
+        // Center (X=747, W=2346)
+        new ZoneDefinition { ZoneNumber = 7, ZoneName = "Video", ZoneType = "playlist", X = 747, Y = 420, Width = 2346, Height = 1320, Color = "#7f8c8d", BorderRadius = "0" },
+        // Right column (X=3093, W=747)
+        new ZoneDefinition { ZoneNumber = 5, ZoneName = "Image 3", ZoneType = "playlist", X = 3093, Y = 420, Width = 747, Height = 660, Color = "#9b59b6", BorderRadius = "0" },
+        new ZoneDefinition { ZoneNumber = 6, ZoneName = "Image 4", ZoneType = "playlist", X = 3093, Y = 1080, Width = 747, Height = 660, Color = "#00bcd4", BorderRadius = "0" },
+        // Footer (Y=1740, H=420)
+        new ZoneDefinition { ZoneNumber = 8, ZoneName = "Footer", ZoneType = "playlist", X = 0, Y = 1740, Width = 3840, Height = 420, Color = "#795548", BorderRadius = "0 0 8px 8px" }
+    };
+
+    protected override async Task OnInitializedAsync()
+    {
+        await LoadData();
+    }
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (LocationId > 0)
+        {
+            await LoadData();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        if (LocationId <= 0)
+        {
+            isLoading = false;
+            return;
+        }
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            location = await db.TblLocations
+                .FirstOrDefaultAsync(l => l.LocationId == LocationId);
+
+            // Load layout URL from ExtendedData
+            if (location != null && !string.IsNullOrEmpty(location.ExtendedData))
+            {
+                try
+                {
+                    var extendedData = JsonSerializer.Deserialize<Dictionary<string, object>>(location.ExtendedData);
+                    if (extendedData != null && extendedData.TryGetValue("layoutUrl", out var urlValue))
+                    {
+                        layoutUrl = urlValue?.ToString() ?? "";
+                    }
+                }
+                catch
+                {
+                    // Ignore JSON parse errors
+                }
+            }
+
+            displays = await db.TblDisplays
+                .Where(d => d.LocationId == LocationId)
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+
+            // Check which zones have content
+            foreach (var display in displays)
+            {
+                if (display.ConstraintId > 0)
+                {
+                    zoneContentStatus[display.ConstraintId] = await CheckZoneHasContent(display.ConstraintId);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load zone data: {ex.Message}";
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private async Task<bool> CheckZoneHasContent(int constraintId)
+    {
+        return await Task.FromResult(true);
+    }
+
+    private void OpenSettingsModal()
+    {
+        urlSaveMessage = "";
+        showSettingsModal = true;
+    }
+
+    private void CloseSettingsModal()
+    {
+        showSettingsModal = false;
+    }
+
+    private async Task SaveLayoutUrl()
+    {
+        if (location == null) return;
+
+        isSavingUrl = true;
+        urlSaveMessage = "";
+        StateHasChanged();
+
+        try
+        {
+            using var scope = scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+
+            var loc = await db.TblLocations.FindAsync(LocationId);
+            if (loc == null)
+            {
+                urlSaveMessage = "Location not found.";
+                urlSaveSuccess = false;
+                return;
+            }
+
+            // Parse existing ExtendedData or create new
+            Dictionary<string, object> extendedData;
+            if (!string.IsNullOrEmpty(loc.ExtendedData))
+            {
+                try
+                {
+                    extendedData = JsonSerializer.Deserialize<Dictionary<string, object>>(loc.ExtendedData) ?? new();
+                }
+                catch
+                {
+                    extendedData = new();
+                }
+            }
+            else
+            {
+                extendedData = new();
+            }
+
+            // Update layout URL
+            extendedData["layoutUrl"] = layoutUrl;
+
+            // Save back to database
+            loc.ExtendedData = JsonSerializer.Serialize(extendedData);
+            await db.SaveChangesAsync();
+
+            urlSaveMessage = "Layout URL saved successfully.";
+            urlSaveSuccess = true;
+        }
+        catch (Exception ex)
+        {
+            urlSaveMessage = $"Failed to save: {ex.Message}";
+            urlSaveSuccess = false;
+        }
+        finally
+        {
+            isSavingUrl = false;
+            StateHasChanged();
+        }
+    }
+
+    private TblDisplay? GetDisplayForZone(int zoneNumber)
+    {
+        return displays.FirstOrDefault(d =>
+            d.DisplayName?.Contains($"Zone {zoneNumber}") == true ||
+            d.DisplayName?.Contains($"Zone{zoneNumber}") == true);
+    }
+
+    private bool HasZoneContent(int constraintId)
+    {
+        if (constraintId <= 0) return false;
+        return zoneContentStatus.TryGetValue(constraintId, out var hasContent) && hasContent;
+    }
+
+    private void OnZoneHover(int zoneNumber)
+    {
+        hoveredZone = zoneNumber;
+    }
+
+    private void OnZoneLeave()
+    {
+        hoveredZone = null;
+    }
+
+    private void OnZoneClick(ZoneDefinition zone)
+    {
+        selectedZone = zone;
+        selectedDisplay = GetDisplayForZone(zone.ZoneNumber);
+        showZoneModal = true;
+    }
+
+    private void CloseZoneModal()
+    {
+        showZoneModal = false;
+        selectedZone = null;
+        selectedDisplay = null;
+    }
+
+    private void NavigateToZoneContent()
+    {
+        if (selectedDisplay != null)
+        {
+            navMan.NavigateTo($"/Schedule/{selectedDisplay.DisplayId}");
+        }
+    }
+
+    private class ZoneDefinition
+    {
+        public int ZoneNumber { get; set; }
+        public string ZoneName { get; set; } = "";
+        public string ZoneType { get; set; } = "playlist";
+        public int X { get; set; }
+        public int Y { get; set; }
+        public int Width { get; set; }
+        public int Height { get; set; }
+        public string Color { get; set; } = "#0071BC";
+        public string BorderRadius { get; set; } = "0";
+    }
+}

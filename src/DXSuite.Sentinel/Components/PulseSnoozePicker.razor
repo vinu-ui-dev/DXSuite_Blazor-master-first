@@ -1,0 +1,53 @@
+@using System.Globalization
+
+<div style="display:flex; gap:6px; flex-wrap:wrap;">
+    @foreach (var (label, untilUtc) in QuickEnds())
+    {
+        <button type="button" class="dx-btn dx-btn-gray dx-btn-sm" disabled="@Disabled" @onclick="() => SetAsync(untilUtc)">@label</button>
+    }
+</div>
+<div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+    <label class="dx-form-label" style="margin:0;">Until</label>
+    <input type="datetime-local" class="dx-form-control dx-form-control-sm" style="width:auto;" disabled="@Disabled"
+           value="@LocalText" @onchange="OnInputAsync" />
+    <span class="dx-text-muted" style="font-size:0.8rem;">your local time (@Zone.Name)</span>
+</div>
+@if (UntilUtc is { } until && until <= DateTime.UtcNow)
+{
+    <div class="dx-text-red" style="font-size:0.85rem; margin-top:4px;">Pick a time in the future.</div>
+}
+
+@code {
+    [Parameter, EditorRequired] public ViewerTimeZone Zone { get; set; } = ViewerTimeZone.Utc;
+    [Parameter] public DateTime? UntilUtc { get; set; }
+    [Parameter] public EventCallback<DateTime?> UntilUtcChanged { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+
+    private string LocalText => UntilUtc is { } u ? Zone.ToLocal(u).ToString("yyyy-MM-ddTHH:mm", CultureInfo.InvariantCulture) : "";
+
+    private Task SetAsync(DateTime? untilUtc) => UntilUtcChanged.InvokeAsync(untilUtc);
+
+    private Task OnInputAsync(ChangeEventArgs e)
+    {
+        var text = e.Value?.ToString();
+        if (DateTime.TryParseExact(text, ["yyyy-MM-ddTHH:mm", "yyyy-MM-ddTHH:mm:ss"], CultureInfo.InvariantCulture, DateTimeStyles.None, out var local))
+            return SetAsync(Zone.ToUtc(local));
+        return SetAsync(null);
+    }
+
+    private IEnumerable<(string Label, DateTime UntilUtc)> QuickEnds()
+    {
+        var nowUtc = DateTime.UtcNow;
+        var local = Zone.ToLocal(nowUtc);
+        var sixPm = local.Date.AddHours(18);
+        if (sixPm <= local) sixPm = sixPm.AddDays(1);
+        var daysToMonday = ((int)DayOfWeek.Monday - (int)local.DayOfWeek + 7) % 7;
+        var monday = local.Date.AddDays(daysToMonday == 0 ? 7 : daysToMonday).AddHours(8);
+
+        yield return ("1 hour", nowUtc.AddHours(1));
+        yield return ("4 hours", nowUtc.AddHours(4));
+        yield return ("6 PM", Zone.ToUtc(sixPm));
+        yield return ("Tomorrow 8 AM", Zone.ToUtc(local.Date.AddDays(1).AddHours(8)));
+        yield return ("Monday 8 AM", Zone.ToUtc(monday));
+    }
+}

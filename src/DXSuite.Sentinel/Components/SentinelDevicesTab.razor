@@ -1,0 +1,751 @@
+@using System.Text.Json
+@using DXSuite.Sentinel.Entities
+@using DXSuite.Sentinel.Services
+@using DXSuite.Sentinel.Services.Pulse
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.EntityFrameworkCore
+@inject ISentinelDBContext sentinelDb
+@inject IConfiguration configuration
+@inject PulseReportingSettingsResolver settingsResolver
+@inject PulseGateway pulse
+@inject PulseLinkService links
+@inject ITenantContext tenant
+@inject IJSRuntime JS
+@inject ILogger<SentinelDevicesTab> Logger
+
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
+    <div class="dx-panel-header">
+        <h4>Devices <DXSuite.Shared.Components.HelpLink Page="devices/multi-angle" Title="Devices help" /></h4>
+        <div class="dx-panel-controls">
+            @if (reportingOn && pulseCustomerId.Length > 0)
+            {
+                <span class="dx-text-muted" style="font-size:0.85rem;">Pulse customer <strong>@pulseCustomerId</strong></span>
+            }
+            <input class="dx-search-input" placeholder="Filter devices" @bind="filter" @bind:event="oninput" />
+            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@loading" @onclick="LoadDevices">Refresh</button>
+        </div>
+    </div>
+
+    @if (configError is not null)
+    {
+        <div class="dx-alert dx-alert-danger" style="margin:6px 20px;">@configError</div>
+    }
+    @if (reportingOn && devices is not null)
+    {
+        var linkedStates = devices.Where(d => d.Instance.PulseDeviceId is not null && d.PulseState is not null).Select(d => d.PulseState!).ToList();
+        var lastSuccess = linkedStates.Max(st => st.LastSuccessUtc);
+        var failing = linkedStates.Count(st => st.ConsecutiveFailures > 0);
+        <div style="display:flex; gap:16px; flex-wrap:wrap; align-items:center; padding:8px 20px; font-size:0.85rem; border-bottom:1px solid #eef1f4;">
+            <span title="@(lastSuccess is { } lsFull ? zone.Full(lsFull) : "")">
+                Last successful publish <strong>@(lastSuccess is { } ls ? $"{zone.Short(ls)} ({Rel(ls)})" : "never")</strong>
+            </span>
+            @if (failing > 0)
+            {
+                <span class="dx-badge dx-badge-red" style="font-size:0.75rem;">@failing linked @(failing == 1 ? "device" : "devices") failing to publish</span>
+            }
+            else
+            {
+                <span class="dx-text-muted">No publish failures</span>
+            }
+            @if (pulseUnreachable)
+            {
+                <span class="dx-badge dx-badge-red" style="font-size:0.75rem;" title="Status, linking and snooze are unavailable until Pulse can be read. Publishing is unaffected.">Pulse unreachable</span>
+            }
+        </div>
+    }
+    @if (reportingOn && pulseReadError is not null)
+    {
+        <div class="dx-alert dx-alert-warning" style="margin:6px 20px;">@pulseReadError</div>
+    }
+    @if (reportingOn && UnattachedUrls() is { Count: > 0 } unattached)
+    {
+        <div style="padding:6px 20px; border-bottom:1px solid #eef1f4;">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => unattachedOpen = !unattachedOpen">
+                @(unattachedOpen ? "Hide" : "Show") unattached URL monitors (@unattached.Count)
+            </button>
+            <span class="dx-text-muted" style="font-size:0.8rem; margin-left:8px;">Monitored URLs with no reporting device never reach Pulse.</span>
+            @if (unattachedOpen)
+            {
+                var one = selected.Count == 1 ? devices!.FirstOrDefault(x => x.Id == selected.First()) : null;
+                <div class="dx-table" style="margin-top:6px;">
+                    @foreach (var u in unattached)
+                    {
+                        <div class="dx-table-row" style="grid-template-columns:minmax(120px, 0.8fr) 2fr 90px auto; align-items:center;">
+                            <div style="font-family:Consolas, monospace; font-weight:600;">@u.MonitorId</div>
+                            <div class="dx-text-muted" style="font-size:0.8rem; word-break:break-all;">
+                                @u.UrlKey
+                                @if (u.DeviceInstanceId is { } gone)
+                                {
+                                    <div>reporting device #@gone is retired</div>
+                                }
+                            </div>
+                            <div><span class="dx-badge @(u.IsMissing ? "dx-badge-red" : "dx-badge-green")" style="font-size:0.72rem; padding:2px 8px;">@(u.IsMissing ? "missing" : "online")</span></div>
+                            <div>
+                                @if (one is not null)
+                                {
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@busy" @onclick="() => AttachUnattachedAsync(one.Id, u.DirectorUrlId)">Attach to @one.Name</button>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+                @if (one is null)
+                {
+                    <div class="dx-text-muted" style="font-size:0.8rem; margin-top:4px;">Open a device to attach a URL to it.</div>
+                }
+            }
+        </div>
+    }
+    @if (!string.IsNullOrEmpty(message))
+    {
+        <div class="dx-alert @(messageIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin:6px 20px;">@message</div>
+    }
+
+    @if (devices is null)
+    {
+        <div style="position:relative; min-height:120px;">
+            <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+        </div>
+    }
+    else if (!devices.Any())
+    {
+        <div class="dx-text-muted" style="text-align:center; padding:40px 20px;">
+            <h5>No devices</h5>
+            <p>Devices appear here as sources (cloud connectors, the Engage heartbeat, gateway probes, or self-monitoring agents) report them.</p>
+        </div>
+    }
+    else
+    {
+        var list = SortedRows();
+        <div style="display:flex; flex-wrap:wrap; flex:1; min-height:0;">
+            <div class="dx-panel-content" style="flex:1 1 580px; min-width:0; max-height:100%; border-right:1px solid #ddd;">
+                <div class="dx-table" style="border:none;">
+                    <div class="dx-table-header" style="@GridStyle">
+                        @if (reportingOn)
+                        {
+                            <div><input type="checkbox" class="dx-checkbox" checked="@(list.Count > 0 && list.All(r => selected.Contains(r.Id)))" @onchange="e => SelectAll(list, e.Value is true)" /></div>
+                        }
+                        <div style="cursor:pointer;" @onclick="() => SortBy(SortKey.Name)">Device@(SortMark(SortKey.Name))</div>
+                        @if (reportingOn)
+                        {
+                            <div style="cursor:pointer;" @onclick="() => SortBy(SortKey.Pulse)">Pulse@(SortMark(SortKey.Pulse))</div>
+                            <div style="cursor:pointer;" @onclick="() => SortBy(SortKey.Heartbeat)">Last heartbeat@(SortMark(SortKey.Heartbeat))</div>
+                        }
+                    </div>
+                    @foreach (var d in list)
+                    {
+                        var hb = HealthBadge(d.Health);
+                        var isOpen = selected.Count == 1 && selected.Contains(d.Id);
+                        <div class="dx-table-row @(isOpen || selected.Contains(d.Id) ? "expanded" : "")"
+                             style="@GridStyle cursor:pointer; @(isOpen ? "box-shadow:inset 3px 0 0 var(--dx-blue);" : "")"
+                             @onclick="() => Open(d.Id)">
+                            @if (reportingOn)
+                            {
+                                <div @onclick:stopPropagation="true">
+                                    <input type="checkbox" class="dx-checkbox" checked="@selected.Contains(d.Id)" @onchange="e => Toggle(d.Id, e.Value is true)" />
+                                </div>
+                            }
+                            <div>
+                                <div style="font-weight:600;">@d.Name</div>
+                                <div style="display:flex; gap:4px; flex-wrap:wrap; margin-top:3px; align-items:center;">
+                                    <span class="dx-badge @hb.cls" style="font-size:0.72rem; padding:2px 8px;">@hb.label</span>
+                                    <span class="dx-text-muted" style="font-size:0.78rem;">@string.Join(" · ", d.Sources.Select(s => s.SourceType).Distinct())</span>
+                                </div>
+                            </div>
+                            @if (reportingOn)
+                            {
+                                <div>
+                                    @if (d.Instance.PulseDeviceId is { } pid)
+                                    {
+                                        <div style="font-family:Consolas, monospace; font-size:0.82rem;">@pid</div>
+                                    }
+                                    @{ var chip = ChipOf(d); }
+                                    <span class="dx-badge @chip.BadgeClass" style="font-size:0.72rem; padding:2px 8px;">@chip.Label</span>
+                                </div>
+                                <div class="dx-text-muted" style="font-size:0.84rem;" title="@(d.PulseState?.LastHeartbeatSentUtc is { } sent ? "Last heartbeat sent to Pulse: " + zone.Full(sent) : "")">
+                                    @(d.Instance.PulseDeviceId is null ? "" : d.PulseState?.LastHeartbeatSentUtc is { } h ? zone.Short(h) : "none yet")
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="dx-text-muted" style="padding:8px 16px; font-size:0.85rem;">
+                    @list.Count of @devices.Count devices@(reportingOn ? $" · {devices.Count(d => d.Instance.PulseDeviceId is not null)} linked to Pulse" : "")
+                </div>
+            </div>
+
+            <div style="flex:1 1 380px; min-width:0; max-height:100%; overflow-y:auto; padding:16px 20px; background:#fcfcfd;">
+                @if (selected.Count > 1 && reportingOn)
+                {
+                    <PulseBulkInspector Devices="BulkSelection()" PulseDevices="pulseDevices" LinkedPulseIds="linkedPulseIds"
+                                        CustomerId="@pulseCustomerId" Zone="zone" OnChanged="OnPulseChangedAsync" />
+                }
+                else if (selected.Count == 1 && devices.FirstOrDefault(x => x.Id == selected.First()) is { } d)
+                {
+                    var hb = HealthBadge(d.Health);
+                    <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+                        <h4 style="margin:0;">@d.Name</h4>
+                        <span class="dx-badge @hb.cls" style="font-size:0.78rem;">@hb.label</span>
+                        <span class="dx-text-muted" style="font-size:0.8rem;">#@d.Id · @d.CustomerId</span>
+                    </div>
+
+                    @if (reportingOn)
+                    {
+                        <PulseInspector Device="d.Instance" Health="d.Health" Sources="d.Sources" State="d.PulseState"
+                                        PulseDevices="pulseDevices" LinkedPulseIds="linkedPulseIds" CustomerId="@pulseCustomerId"
+                                        UrlMonitors="urlMonitors" DeviceNames="deviceNames"
+                                        Zone="zone" OnChanged="OnPulseChangedAsync" />
+                    }
+
+                    <div class="dx-card" style="margin-top:12px;">
+                        <div class="dx-card-header" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                            <span style="flex:1;">Device</span>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => { showDetail = !showDetail; mergeOpen = false; splitOpen = false; }">@(showDetail ? "Hide detail" : "Detail")</button>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => { mergeOpen = !mergeOpen; mergeTargetId = 0; splitOpen = false; }">Merge</button>
+                            @if (d.Sources.Count > 1)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => { splitOpen = !splitOpen; splitSourceId = 0; mergeOpen = false; }">Split</button>
+                            }
+                        </div>
+                        <div class="dx-card-body">
+                            @if (mergeOpen)
+                            {
+                                <label class="dx-form-label">Merge <strong>@d.Name</strong> into:</label>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <select class="dx-form-control dx-form-control-sm" style="width:auto; min-width:240px;" @bind="mergeTargetId">
+                                        <option value="0">Pick a device</option>
+                                        @foreach (var other in devices.Where(x => x.Id != d.Id).OrderBy(x => x.Name))
+                                        {
+                                            <option value="@other.Id">@other.Name (#@other.Id)</option>
+                                        }
+                                    </select>
+                                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(mergeTargetId <= 0 || busy)" @onclick="() => DoMerge(d.Id)">Merge</button>
+                                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => mergeOpen = false">Cancel</button>
+                                </div>
+                                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">Moves @d.Name's source angles and platform links onto the target and retires this record. Use when two records are the same physical device.</div>
+                            }
+                            else if (splitOpen)
+                            {
+                                <label class="dx-form-label">Detach a source from <strong>@d.Name</strong> into a new device:</label>
+                                <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+                                    <select class="dx-form-control dx-form-control-sm" style="width:auto; min-width:240px;" @bind="splitSourceId">
+                                        <option value="0">Pick a source</option>
+                                        @foreach (var s in d.Sources)
+                                        {
+                                            <option value="@s.DeviceSourceStateId">@s.SourceType : @s.SourceKey</option>
+                                        }
+                                    </select>
+                                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(splitSourceId <= 0 || busy)" @onclick="() => DoSplit(d.Id)">Split off</button>
+                                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => splitOpen = false">Cancel</button>
+                                </div>
+                            }
+                            else if (showDetail)
+                            {
+                                <h5 style="font-size:0.95rem; margin:0 0 8px;">Source angles</h5>
+                                @foreach (var s in d.Sources)
+                                {
+                                    var shb = HealthBadge((OverallHealthStatus)s.OverallHealth);
+                                    var ss = ParseState(s.LastStateJson);
+                                    <div class="dx-card" style="padding:10px 12px; margin-bottom:8px;">
+                                        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:8px; font-size:0.85rem;">
+                                            <span class="dx-badge @shb.cls" style="font-size:0.72rem; padding:2px 8px;">@shb.label</span>
+                                            <strong>@s.SourceType</strong>
+                                            <span style="font-family:Consolas, monospace; font-size:0.78rem;">@s.SourceKey</span>
+                                            <span class="dx-text-muted" style="margin-left:auto; font-size:0.78rem;" title="@zone.Full(s.LastSeenUtc)">seen @Rel(s.LastSeenUtc)</span>
+                                        </div>
+                                        @if (ss is not null && ss.MonitorReadings.Count > 0)
+                                        {
+                                            <div class="dx-table">
+                                                <div class="dx-table-header" style="grid-template-columns:2fr 1.5fr 110px;"><div>Monitor point</div><div>Value</div><div>Status</div></div>
+                                                @foreach (var r in ss.MonitorReadings.Values.OrderBy(r => r.Name))
+                                                {
+                                                    <div class="dx-table-row" style="grid-template-columns:2fr 1.5fr 110px;">
+                                                        <div>@r.Name</div>
+                                                        <div>@(r.DisplayValue ?? r.Value?.ToString())</div>
+                                                        <div><span class="dx-badge @ReadingCls(r.Status)" style="font-size:0.72rem; padding:2px 8px;">@r.Status</span></div>
+                                                    </div>
+                                                }
+                                            </div>
+                                        }
+                                        else
+                                        {
+                                            <div class="dx-text-muted" style="font-size:0.8rem; font-style:italic;">No detailed readings from this source.</div>
+                                        }
+                                        @foreach (var a in ss?.ActiveAlerts ?? [])
+                                        {
+                                            <div class="dx-alert @(a.Severity?.Trim().ToLowerInvariant() == "critical" ? "dx-alert-danger" : "dx-alert-warning")" style="margin:6px 0 0; font-size:0.82rem; padding:5px 8px;">
+                                                <strong style="text-transform:uppercase; font-size:0.72rem;">@a.Severity</strong> @a.Message
+                                            </div>
+                                        }
+                                    </div>
+                                }
+
+                                <h5 style="font-size:0.95rem; margin:14px 0 8px;">Diagnosis and remediation history</h5>
+                                @if (!d.RecentLogs.Any())
+                                {
+                                    <div class="dx-text-muted" style="font-size:0.8rem; font-style:italic;">No remediation activity yet. Tier-2 AI diagnoses appear here once the device trips an evaluation.</div>
+                                }
+                                else
+                                {
+                                    <div class="dx-table">
+                                        <div class="dx-table-header" style="grid-template-columns:130px 50px 1fr 100px 2fr;"><div>Time</div><div>Tier</div><div>Trigger</div><div>Result</div><div>Diagnosis / detail</div></div>
+                                        @foreach (var log in d.RecentLogs)
+                                        {
+                                            <div class="dx-table-row" style="grid-template-columns:130px 50px 1fr 100px 2fr;">
+                                                <div style="white-space:nowrap;" title="@zone.Full(log.CreateDate)">@zone.Short(log.CreateDate)</div>
+                                                <div>T@log.Tier</div>
+                                                <div>@log.TriggerCondition</div>
+                                                <div><span class="dx-badge @ResultCls(log.Result)" style="font-size:0.72rem; padding:2px 8px;">@log.Result</span></div>
+                                                <div style="white-space:pre-wrap;">@(string.IsNullOrWhiteSpace(log.ResultDetails) ? "None" : log.ResultDetails)</div>
+                                            </div>
+                                        }
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <div class="dx-text-muted" style="font-size:0.85rem;">
+                                    @string.Join(", ", d.Sources.Select(s => $"{s.SourceType} seen {Rel(s.LastSeenUtc)}"))
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div class="dx-text-muted" style="padding:40px; text-align:center;">
+                        @(reportingOn
+                            ? "Click a device to see and change its Pulse link, or tick several to add or snooze them together."
+                            : "Click a device to see its sources, or to merge or split it.")
+                    </div>
+                }
+            </div>
+        </div>
+    }
+</div>
+
+@code {
+    private enum SortKey { Name, Pulse, Heartbeat }
+
+    private List<DeviceRow>? devices;
+    private readonly HashSet<int> selected = new();
+    private string filter = "";
+    private SortKey sortKey = SortKey.Heartbeat;
+    private bool sortAscending = true;
+    private bool loading;
+
+    private bool showDetail;
+    private bool mergeOpen;
+    private int mergeTargetId;
+    private bool splitOpen;
+    private int splitSourceId;
+    private bool busy;
+    private string? message;
+    private bool messageIsError;
+
+    private bool reportingOn;
+    private string pulseCustomerId = "";
+    private string? configError;
+    private string? pulseReadError;
+    private bool pulseUnreachable;
+    private IReadOnlyList<PulseUrlMonitorRow>? urlMonitors;
+    private HashSet<int> enabledReportingDevices = new();
+    private IReadOnlyDictionary<int, string> deviceNames = new Dictionary<int, string>();
+    private bool unattachedOpen;
+    private IReadOnlyDictionary<string, PulseDevice>? pulseDevices;
+    private IReadOnlyDictionary<string, string> linkedPulseIds = new Dictionary<string, string>();
+    private ViewerTimeZone zone = ViewerTimeZone.Utc;
+    private DateTime loadedUtc = DateTime.UtcNow;
+
+    private string CustomerCode => configuration["CustomerInfo:CustomerCode"] ?? "RAD";
+
+    private string GridStyle => reportingOn
+        ? "grid-template-columns: 40px minmax(150px, 1.4fr) minmax(130px, 1.1fr) 110px;"
+        : "grid-template-columns: 1fr;";
+
+    protected override async Task OnInitializedAsync()
+    {
+        ReadReportingStatus();
+        await LoadDevices();
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        zone = await ViewerTimeZone.DetectAsync(JS);
+        StateHasChanged();
+    }
+
+    private void ReadReportingStatus()
+    {
+        try
+        {
+            var resolved = settingsResolver.Resolve(tenant.Subdomain);
+            reportingOn = resolved.Settings.Enabled;
+            pulseCustomerId = resolved.Settings.CustomerId;
+        }
+        catch (InvalidOperationException ex)
+        {
+            // The resolver only throws for a tenant that is switched on but cannot write.
+            reportingOn = true;
+            configError = ex.Message;
+        }
+    }
+
+    private async Task LoadDevices()
+    {
+        loading = true;
+        try
+        {
+            var now = DateTime.UtcNow;
+            var devs = await sentinelDb.DeviceInstances.AsNoTracking()
+                .Where(d => d.CustomerId == CustomerCode && d.IsEnabled)
+                .OrderBy(d => d.DisplayName)
+                .ToListAsync();
+            var ids = devs.Select(d => d.DeviceInstanceId).ToList();
+            var sources = await sentinelDb.DeviceSourceStates.AsNoTracking()
+                .Where(s => ids.Contains(s.DeviceInstanceId))
+                .ToListAsync();
+
+            // Recent remediation/diagnosis activity per device (the Tier-2 LLM diagnosis lands in ResultDetails).
+            var recentLogs = await sentinelDb.RemediationLogs.AsNoTracking()
+                .Where(r => ids.Contains(r.DeviceInstanceId))
+                .OrderByDescending(r => r.CreateDate)
+                .Take(300)
+                .ToListAsync();
+            var logsByDevice = recentLogs.GroupBy(r => r.DeviceInstanceId)
+                .ToDictionary(g => g.Key, g => g.Take(5).ToList());
+
+            var pulseStates = new Dictionary<int, SentinelPulseDeviceState>();
+            if (reportingOn)
+            {
+                pulseStates = await sentinelDb.SentinelPulseDeviceStates.AsNoTracking()
+                    .Where(s => ids.Contains(s.DeviceInstanceId))
+                    .ToDictionaryAsync(s => s.DeviceInstanceId);
+                await LoadPulseDevicesAsync();
+                linkedPulseIds = devs.Where(d => d.PulseDeviceId is not null)
+                    .GroupBy(d => d.PulseDeviceId!, StringComparer.OrdinalIgnoreCase)
+                    .ToDictionary(g => g.Key, g => g.First().DisplayName, StringComparer.OrdinalIgnoreCase);
+                deviceNames = devs.ToDictionary(d => d.DeviceInstanceId, d => d.DisplayName);
+                await LoadUrlMonitorsAsync();
+            }
+
+            loadedUtc = now;
+            devices = devs.Select(d =>
+            {
+                var ds = sources.Where(s => s.DeviceInstanceId == d.DeviceInstanceId).OrderBy(s => s.SourceType).ToList();
+                var state = pulseStates.GetValueOrDefault(d.DeviceInstanceId);
+                return new DeviceRow
+                {
+                    Instance = d,
+                    Sources = ds,
+                    RecentLogs = logsByDevice.TryGetValue(d.DeviceInstanceId, out var lg) ? lg : new List<RemediationLog>(),
+                    // Roll up source angles; fall back to the device's last canonical state for
+                    // devices that haven't gained per-source rows yet (e.g. legacy/not-yet-resynced).
+                    Health = ds.Count > 0 ? DeviceHealthRollup.Roll(ds, now) : ParseHealth(d.LastStateJson),
+                    PulseState = state,
+                };
+            }).ToList();
+
+            selected.IntersectWith(devices.Select(d => d.Id));
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading devices");
+            devices = new();
+        }
+        finally
+        {
+            loading = false;
+        }
+    }
+
+    // Display only: nothing read from Pulse feeds Sentinel's health or alerting.
+    private async Task LoadPulseDevicesAsync()
+    {
+        var result = await pulse.ReadDevicesAsync();
+        if (result.IsSuccess)
+        {
+            pulseDevices = result.Value!.ToDictionary(p => p.DeviceId, StringComparer.OrdinalIgnoreCase);
+            pulseReadError = null;
+            pulseUnreachable = false;
+            return;
+        }
+
+        Logger.LogWarning("Monitored Devices could not read Pulse devices: {Outcome} {Error}", result.Outcome, result.Error);
+        pulseDevices = null;
+        pulseUnreachable = result.Outcome != PulseOutcome.NotConfigured;
+        pulseReadError = pulseUnreachable
+            ? null
+            : "No Pulse connection is configured for this tenant, so Pulse devices cannot be listed or linked.";
+    }
+
+    private async Task LoadUrlMonitorsAsync()
+    {
+        try
+        {
+            urlMonitors = await links.ReadUrlMonitorsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Monitored Devices could not read Director URL monitors");
+            urlMonitors = null;
+            return;
+        }
+        if (urlMonitors is null) return;
+
+        // A merge retires a device without moving its URLs, which leaves them as invisible as unattached ones.
+        var referenced = urlMonitors.Where(u => u.DeviceInstanceId is not null).Select(u => u.DeviceInstanceId!.Value).Distinct().ToList();
+        enabledReportingDevices = (await sentinelDb.DeviceInstances.AsNoTracking()
+                .Where(d => referenced.Contains(d.DeviceInstanceId) && d.IsEnabled)
+                .Select(d => d.DeviceInstanceId)
+                .ToListAsync())
+            .ToHashSet();
+    }
+
+    private List<PulseUrlMonitorRow> UnattachedUrls() =>
+        urlMonitors?.Where(u => u.IsMonitored && (u.DeviceInstanceId is not { } id || !enabledReportingDevices.Contains(id))).ToList() ?? [];
+
+    private async Task AttachUnattachedAsync(int deviceInstanceId, int directorUrlId)
+    {
+        busy = true;
+        try
+        {
+            var result = await links.AttachUrlAsync(deviceInstanceId, directorUrlId);
+            await LoadDevices();
+            ShowMessage(result.Message, !result.Success);
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Attach URL failed"); ShowMessage($"Attach failed: {ex.Message}", true); }
+        finally { busy = false; }
+    }
+
+    private async Task OnPulseChangedAsync(string _)
+    {
+        message = null;
+        await LoadDevices();
+    }
+
+    private List<DeviceRow> SortedRows()
+    {
+        var rows = devices!.Where(d => filter.Length == 0 || d.Name.Contains(filter, StringComparison.OrdinalIgnoreCase)).ToList();
+        IOrderedEnumerable<DeviceRow> ordered = sortKey switch
+        {
+            SortKey.Name => sortAscending
+                ? rows.OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+                : rows.OrderByDescending(d => d.Name, StringComparer.OrdinalIgnoreCase),
+            SortKey.Pulse => sortAscending ? rows.OrderBy(d => ChipOf(d).Kind) : rows.OrderByDescending(d => ChipOf(d).Kind),
+            // Unlinked devices always sink to the bottom; a linked device with no heartbeat yet counts as oldest.
+            _ => sortAscending
+                ? rows.OrderBy(d => d.Instance.PulseDeviceId is null).ThenBy(d => d.PulseState?.LastHeartbeatSentUtc ?? DateTime.MinValue)
+                : rows.OrderBy(d => d.Instance.PulseDeviceId is null).ThenByDescending(d => d.PulseState?.LastHeartbeatSentUtc ?? DateTime.MinValue),
+        };
+        return ordered.ThenBy(d => d.Name, StringComparer.OrdinalIgnoreCase).ToList();
+    }
+
+    // Computed at render so snooze times follow the viewer's zone once the browser reports it.
+    private PulseStatusChip ChipOf(DeviceRow d) =>
+        PulseStatusChip.For(d.Instance.PulseDeviceId, d.PulseState, pulseDevices, loadedUtc, zone);
+
+    private void SortBy(SortKey key)
+    {
+        if (sortKey == key) sortAscending = !sortAscending;
+        else { sortKey = key; sortAscending = true; }
+    }
+
+    private MarkupString SortMark(SortKey key) =>
+        sortKey != key ? new MarkupString("") : new MarkupString(sortAscending ? " &#9650;" : " &#9660;");
+
+    private void Open(int id)
+    {
+        selected.Clear();
+        selected.Add(id);
+        ResetDevicePanels();
+    }
+
+    private void Toggle(int id, bool on)
+    {
+        if (on) selected.Add(id);
+        else selected.Remove(id);
+        ResetDevicePanels();
+    }
+
+    private void SelectAll(IEnumerable<DeviceRow> rows, bool on)
+    {
+        selected.Clear();
+        if (on) selected.UnionWith(rows.Select(r => r.Id));
+        ResetDevicePanels();
+    }
+
+    private void ResetDevicePanels()
+    {
+        showDetail = false;
+        mergeOpen = false;
+        splitOpen = false;
+        message = null;
+    }
+
+    private List<PulseBulkInspector.BulkDevice> BulkSelection() =>
+        devices!.Where(d => selected.Contains(d.Id))
+            .OrderBy(d => d.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(d => new PulseBulkInspector.BulkDevice(d.Instance, d.Sources))
+            .ToList();
+
+    private async Task DoMerge(int childId)
+    {
+        if (mergeTargetId <= 0 || mergeTargetId == childId) return;
+        busy = true;
+        try
+        {
+            var child = await sentinelDb.DeviceInstances.FindAsync(childId);
+            var target = await sentinelDb.DeviceInstances.FindAsync(mergeTargetId);
+            if (child is null || target is null) { ShowMessage("Device not found.", true); return; }
+
+            // Move source angles, skipping ones that would collide with an existing angle on the target.
+            var childSources = await sentinelDb.DeviceSourceStates.Where(s => s.DeviceInstanceId == childId).ToListAsync();
+            foreach (var s in childSources)
+            {
+                var collides = await sentinelDb.DeviceSourceStates.AnyAsync(
+                    t => t.DeviceInstanceId == mergeTargetId && t.SourceType == s.SourceType && t.SourceKey == s.SourceKey);
+                if (collides) sentinelDb.DeviceSourceStates.Remove(s);
+                else s.DeviceInstanceId = mergeTargetId;
+            }
+
+            var childLinks = await sentinelDb.PlatformDeviceLinks.Where(l => l.DeviceInstanceId == childId).ToListAsync();
+            foreach (var l in childLinks) l.DeviceInstanceId = mergeTargetId;
+
+            target.DirectorDeviceId ??= child.DirectorDeviceId;
+            target.SiteGatewayId ??= child.SiteGatewayId;
+            if (string.IsNullOrEmpty(target.MacAddress)) target.MacAddress = child.MacAddress;
+            child.IsEnabled = false; // retire the duplicate (history preserved)
+            child.LastEditDate = DateTime.UtcNow;
+            await sentinelDb.SaveChangesAsync();
+
+            await RecomputeRollupAsync(mergeTargetId);
+            mergeOpen = false;
+            var targetId = mergeTargetId;
+            await LoadDevices();
+            Open(targetId);
+            ShowMessage($"Merged into #{targetId}.", false);
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Merge failed"); ShowMessage($"Merge failed: {ex.Message}", true); }
+        finally { busy = false; }
+    }
+
+    private async Task DoSplit(int parentId)
+    {
+        if (splitSourceId <= 0) return;
+        busy = true;
+        try
+        {
+            var src = await sentinelDb.DeviceSourceStates.FindAsync(splitSourceId);
+            var parent = await sentinelDb.DeviceInstances.FindAsync(parentId);
+            if (src is null || parent is null) { ShowMessage("Not found.", true); return; }
+
+            var newDev = new DeviceInstance
+            {
+                DescriptorId = parent.DescriptorId,
+                DescriptorVersionId = parent.DescriptorVersionId,
+                CustomerId = parent.CustomerId,
+                DisplayName = $"{parent.DisplayName} ({src.SourceType})",
+                IsEnabled = true,
+                CreateDate = DateTime.UtcNow,
+                CommissionedSource = "manual-split"
+            };
+            sentinelDb.DeviceInstances.Add(newDev);
+            await sentinelDb.SaveChangesAsync();
+
+            src.DeviceInstanceId = newDev.DeviceInstanceId;
+
+            // If this is a cloud source (key "connectorId:platformDeviceId"), move its platform link too.
+            var parts = src.SourceKey.Split(':');
+            if (src.SourceType == DeviceIdentity.SourceCloudConnector && parts.Length == 2
+                && int.TryParse(parts[0], out var connId))
+            {
+                var link = await sentinelDb.PlatformDeviceLinks.FirstOrDefaultAsync(
+                    l => l.DeviceInstanceId == parentId && l.ConnectorId == connId && l.PlatformDeviceId == parts[1]);
+                if (link is not null) link.DeviceInstanceId = newDev.DeviceInstanceId;
+            }
+            await sentinelDb.SaveChangesAsync();
+
+            await RecomputeRollupAsync(parentId);
+            await RecomputeRollupAsync(newDev.DeviceInstanceId);
+            splitOpen = false;
+            await LoadDevices();
+            ShowMessage($"Split source into new device #{newDev.DeviceInstanceId}.", false);
+        }
+        catch (Exception ex) { Logger.LogError(ex, "Split failed"); ShowMessage($"Split failed: {ex.Message}", true); }
+        finally { busy = false; }
+    }
+
+    private async Task RecomputeRollupAsync(int deviceId)
+    {
+        var device = await sentinelDb.DeviceInstances.FindAsync(deviceId);
+        if (device is null) return;
+        var sources = await sentinelDb.DeviceSourceStates.Where(s => s.DeviceInstanceId == deviceId).ToListAsync();
+        device.LastStateJson = DeviceHealthRollup.BuildCanonicalStateJson(sources, DateTime.UtcNow);
+        device.LastStateUpdated = DateTime.UtcNow;
+        await sentinelDb.SaveChangesAsync();
+    }
+
+    private void ShowMessage(string m, bool err) { message = m; messageIsError = err; }
+
+    private static string Rel(DateTime utc)
+    {
+        var d = DateTime.UtcNow - utc;
+        if (d.TotalMinutes < 1) return "just now";
+        if (d.TotalMinutes < 60) return $"{(int)d.TotalMinutes}m ago";
+        if (d.TotalHours < 24) return $"{(int)d.TotalHours}h ago";
+        return $"{(int)d.TotalDays}d ago";
+    }
+
+    private static OverallHealthStatus ParseHealth(string? lastStateJson)
+    {
+        if (string.IsNullOrEmpty(lastStateJson)) return OverallHealthStatus.Unknown;
+        try { return JsonSerializer.Deserialize<DeviceState>(lastStateJson)?.OverallHealth ?? OverallHealthStatus.Unknown; }
+        catch { return OverallHealthStatus.Unknown; }
+    }
+
+    private static DeviceState? ParseState(string? json)
+    {
+        if (string.IsNullOrEmpty(json)) return null;
+        try { return JsonSerializer.Deserialize<DeviceState>(json); }
+        catch { return null; }
+    }
+
+    private static string ReadingCls(string? status) => status?.Trim().ToLowerInvariant() switch
+    {
+        "healthy" => "dx-badge-green",
+        "warning" => "dx-badge-yellow",
+        "critical" => "dx-badge-red",
+        _ => "dx-badge-gray"
+    };
+
+    private static string ResultCls(string? result) => result?.Trim().ToLowerInvariant() switch
+    {
+        "success" => "dx-badge-green",
+        "escalated" => "dx-badge-yellow",
+        "failed" or "failure" => "dx-badge-red",
+        _ => "dx-badge-gray"
+    };
+
+    private static (string label, string cls) HealthBadge(OverallHealthStatus h) => h switch
+    {
+        OverallHealthStatus.Healthy => ("Healthy", "dx-badge-green"),
+        OverallHealthStatus.Warning => ("Warning", "dx-badge-yellow"),
+        OverallHealthStatus.Critical => ("Critical", "dx-badge-red"),
+        OverallHealthStatus.Offline => ("Offline", "dx-badge-gray"),
+        _ => ("Unknown", "dx-badge-gray")
+    };
+
+    private class DeviceRow
+    {
+        public DeviceInstance Instance { get; set; } = null!;
+        public int Id => Instance.DeviceInstanceId;
+        public string Name => Instance.DisplayName;
+        public string CustomerId => Instance.CustomerId;
+        public List<DeviceSourceState> Sources { get; set; } = new();
+        public List<RemediationLog> RecentLogs { get; set; } = new();
+        public OverallHealthStatus Health { get; set; }
+        public SentinelPulseDeviceState? PulseState { get; set; }
+    }
+}

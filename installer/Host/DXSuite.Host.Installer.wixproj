@@ -1,0 +1,30 @@
+<Project Sdk="WixToolset.Sdk/6.0.0">
+
+  <PropertyGroup>
+    <OutputName>DXSuiteHost</OutputName>
+    <InstallerPlatform>x64</InstallerPlatform>
+    <Configuration Condition="'$(Configuration)' == ''">Release</Configuration>
+    <!-- Pin a single culture so the MSI lands flat at bin\<config>\DXSuiteHost.msi (where the
+         bundle expects it) rather than in a culture subfolder like bin\<config>\en-us\. -->
+    <Cultures>en-US</Cultures>
+
+    <!-- Harvest sources. Override any with -p:Name=<abs path ending in \>. -->
+    <HostPublishDir Condition="'$(HostPublishDir)' == ''">$(MSBuildThisFileDirectory)..\..\src\DXSuite.Host\bin\$(Configuration)\net10.0\publish\</HostPublishDir>
+    <DbToolPublishDir Condition="'$(DbToolPublishDir)' == ''">$(MSBuildThisFileDirectory)dbtool\bin\$(Configuration)\net10.0\win-x64\publish\</DbToolPublishDir>
+    <SeedScript Condition="'$(SeedScript)' == ''">$(MSBuildThisFileDirectory)..\..\db\scripts\director-seed.sql</SeedScript>
+
+    <DefineConstants>HostPublishDir=$(HostPublishDir);DbToolPublishDir=$(DbToolPublishDir);SeedScript=$(SeedScript)</DefineConstants>
+
+    <!-- The bundle lives in a subfolder of this project. The WiX SDK globs **\*.wxs into
+         Compile (in wix.targets, imported after this file), honoring DefaultItemExcludes.
+         Exclude the bundle's authoring here — it belongs to DXSuite.Host.Bundle.wixproj and
+         uses preprocessor variables defined only there. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);bundle\**\*.wxs</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="WixToolset.Iis.wixext" Version="6.0.0" />
+    <PackageReference Include="WixToolset.Util.wixext" Version="6.0.0" />
+  </ItemGroup>
+
+</Project>

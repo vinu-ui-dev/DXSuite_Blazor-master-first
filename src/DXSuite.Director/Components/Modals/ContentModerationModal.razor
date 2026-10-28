@@ -1,0 +1,70 @@
+@inject ILogger<ContentModerationModal> Logger
+
+<div class="modal @modalClass" tabindex="-1" role="dialog" style="display:@modalDisplay;">
+    <div class="modal-dialog modal-dialog-centered" role="document">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Content Flagged for Review</h5>
+                <button type="button" class="btn-close" @onclick="Cancel"></button>
+            </div>
+            <div class="modal-body">
+                <div class="alert alert-warning">
+                    <strong>Content found to include inappropriate content.</strong>
+                </div>
+                <p><strong>Reason:</strong> @ModerationReason</p>
+                <p>Would you like to submit this content for approval?</p>
+            </div>
+            <div class="modal-footer">
+                <button class="dx-btn dx-btn-blue" @onclick="SubmitForApproval">Submit for Approval</button>
+                <button class="dx-btn dx-btn-gray" @onclick="Cancel">Cancel</button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@if (showBackdrop)
+{
+    <div class="modal-backdrop fade show"></div>
+}
+
+@code {
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback OnSubmitForApproval { get; set; }
+
+    private string modalDisplay = "none;";
+    private string modalClass = "";
+    private bool showBackdrop = false;
+    public string ModerationReason { get; private set; } = "";
+
+    public void Open(ModerationResult result)
+    {
+        Logger.LogInformation("Opening moderation modal with reason: {Reason}", result.Reason);
+        ModerationReason = result.Reason;
+        modalDisplay = "inline-block;";
+        modalClass = "show";
+        showBackdrop = true;
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        modalDisplay = "none;";
+        modalClass = "";
+        showBackdrop = false;
+        StateHasChanged();
+    }
+
+    private async Task Cancel()
+    {
+        Logger.LogInformation("Moderation cancel button clicked");
+        Close();
+        await OnCancel.InvokeAsync();
+    }
+
+    private async Task SubmitForApproval()
+    {
+        Logger.LogInformation("Submit for Approval button clicked");
+        Close();
+        await OnSubmitForApproval.InvokeAsync();
+    }
+}

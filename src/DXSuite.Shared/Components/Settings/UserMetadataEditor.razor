@@ -1,0 +1,209 @@
+@using DXSuite.Shared.Entities.Identity
+@using DXSuite.Shared.Services.Identity
+@using DXSuite.Shared.Components
+@inject IUserMetadataService metadataService
+@inject IMetadataDefinitionService definitionService
+
+<div class="user-metadata-editor">
+    <div class="d-flex justify-content-between align-items-center mb-2">
+        <h6 class="mb-0">User Metadata</h6>
+        <small class="dx-text-muted">Key/value pairs for access control filtering</small>
+    </div>
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="dx-alert dx-alert-danger" style="margin-bottom:8px; padding:6px 10px; font-size:0.85rem;">@errorMessage</div>
+    }
+
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="dx-alert dx-alert-success" style="margin-bottom:8px; padding:6px 10px; font-size:0.85rem;">@successMessage</div>
+    }
+
+    @if (metadataRecords.Any())
+    {
+        <table class="table table-sm table-bordered mb-2">
+            <thead class="thead-light">
+                <tr>
+                    <th style="width: 35%">Key</th>
+                    <th style="width: 50%">Value</th>
+                    <th style="width: 15%"></th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var record in metadataRecords)
+                {
+                    <tr>
+                        <td>@record.MetadataKey</td>
+                        <td>@record.MetadataValue</td>
+                        <td>
+                            <button class="dx-btn dx-btn-red dx-btn-sm" style="padding:4px 10px;" @onclick="() => DeleteMetadata(record)">
+                                DELETE
+                            </button>
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    }
+    else
+    {
+        <p class="dx-text-muted" style="font-size:0.85rem; margin-bottom:8px;">No metadata configured for this user.</p>
+    }
+
+    <div class="dx-card">
+        <div class="dx-card-body" style="padding:8px 16px;">
+            <div class="row align-items-end g-2" style="--dx-meta-input-height: 38px;">
+                <div class="col-md-4">
+                    <div class="dx-form-group" style="margin-bottom:0;">
+                        <label class="dx-form-label" style="font-size:0.8rem;">Key</label>
+                        <select class="dx-form-control" style="height:var(--dx-meta-input-height);" @bind="selectedKey" @bind:after="OnKeyChanged">
+                            <option value="">Select key...</option>
+                            @foreach (var def in definitions)
+                            {
+                                <option value="@def.MetadataKey">@def.DisplayName (@def.MetadataKey)</option>
+                            }
+                        </select>
+                    </div>
+                </div>
+                <div class="col-md-7">
+                    <div class="dx-form-group" style="margin-bottom:0;">
+                        <label class="dx-form-label" style="font-size:0.8rem;">Value</label>
+                        <MetadataValueInput FieldType="@activeFieldType"
+                                            Values="@newValues"
+                                            ValuesChanged="v => newValues = v"
+                                            Options="@activeOptions" />
+                    </div>
+                </div>
+                <div class="col-md-1">
+                    <button class="dx-btn dx-btn-gray w-100" style="height:var(--dx-meta-input-height);" @onclick="AddMetadata">
+                        ADD
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    [Parameter]
+    public int UserId { get; set; }
+
+    private List<TblUserMetadata> metadataRecords = new();
+    private List<MetadataDefinitionDto> definitions = new();
+
+    private string selectedKey = "";
+    private List<string> newValues = new();
+    private string activeFieldType = "string";
+    private List<string> activeOptions = new();
+
+    private string errorMessage = "";
+    private string successMessage = "";
+
+    private int lastLoadedUserId;
+
+    protected override async Task OnParametersSetAsync()
+    {
+        if (UserId > 0 && UserId != lastLoadedUserId)
+        {
+            lastLoadedUserId = UserId;
+            await LoadData();
+        }
+    }
+
+    private async Task LoadData()
+    {
+        if (UserId <= 0) return;
+
+        try
+        {
+            metadataRecords = await metadataService.GetMetadataRecordsAsync(UserId);
+            definitions = await definitionService.GetAllDefinitionsAsync();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to load metadata: {ex.Message}";
+        }
+    }
+
+    private void OnKeyChanged()
+    {
+        var def = definitions.FirstOrDefault(d => d.MetadataKey == selectedKey);
+        if (def != null)
+        {
+            activeFieldType = def.FieldType;
+            activeOptions = def.Options;
+        }
+        else
+        {
+            activeFieldType = "string";
+            activeOptions = new();
+        }
+        newValues = new();
+    }
+
+    private async Task AddMetadata()
+    {
+        errorMessage = "";
+        successMessage = "";
+
+        if (string.IsNullOrWhiteSpace(selectedKey))
+        {
+            errorMessage = "Please select a key.";
+            return;
+        }
+
+        if (newValues.Count == 0)
+        {
+            errorMessage = "Please enter a value.";
+            return;
+        }
+
+        try
+        {
+            // Cardinality follows the key's type: a multi-select key gains the added values, any other
+            // key has its value replaced.
+            var existingValues = activeFieldType == MetadataFieldTypes.MultiSelect
+                ? metadataRecords
+                    .Where(r => string.Equals(r.MetadataKey, selectedKey, StringComparison.OrdinalIgnoreCase))
+                    .Select(r => r.MetadataValue)
+                : Enumerable.Empty<string>();
+            await metadataService.SetMetadataAsync(UserId, selectedKey, existingValues.Concat(newValues));
+            successMessage = $"Metadata '{selectedKey}' added.";
+
+            selectedKey = "";
+            newValues = new();
+            activeFieldType = "string";
+            activeOptions = new();
+
+            await LoadData();
+            StateHasChanged();
+        }
+        catch (ArgumentException ex)
+        {
+            errorMessage = ex.Message;
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to add metadata: {ex.Message}";
+        }
+    }
+
+    private async Task DeleteMetadata(TblUserMetadata record)
+    {
+        errorMessage = "";
+        successMessage = "";
+
+        try
+        {
+            await metadataService.DeleteMetadataByIdAsync(record.UserMetadataId);
+            successMessage = $"Metadata '{record.MetadataKey}' deleted.";
+            await LoadData();
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Failed to delete metadata: {ex.Message}";
+        }
+    }
+}

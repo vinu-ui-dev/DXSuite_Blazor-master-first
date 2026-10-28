@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<root>
+  <xsd:schema id="root" xmlns="" xmlns:xsd="http://www.w3.org/2001/XMLSchema" xmlns:msdata="urn:schemas-microsoft-com:xml-msdata">
+    <xsd:element name="root" msdata:IsDataSet="true">
+      <xsd:complexType>
+        <xsd:choice maxOccurs="unbounded">
+          <xsd:element name="data">
+            <xsd:complexType>
+              <xsd:sequence>
+                <xsd:element name="value" type="xsd:string" minOccurs="0" msdata:Ordinal="1" />
+              </xsd:sequence>
+              <xsd:attribute name="name" type="xsd:string" use="required" />
+            </xsd:complexType>
+          </xsd:element>
+        </xsd:choice>
+      </xsd:complexType>
+    </xsd:element>
+  </xsd:schema>
+  <data name="Header_ServerInformation">
+    <value>Informations sur le serveur</value>
+  </data>
+  <data name="Label_Hostname">
+    <value>Nom d'h&#xF4;te</value>
+  </data>
+  <data name="Label_IpAddresses">
+    <value>Adresses IP</value>
+  </data>
+  <data name="Label_InstanceId">
+    <value>ID d'instance</value>
+  </data>
+  <data name="Label_AppVersion">
+    <value>Version de l'application</value>
+  </data>
+  <data name="Label_Environment">
+    <value>Environnement</value>
+  </data>
+  <data name="Label_FailoverMode">
+    <value>Mode de basculement</value>
+  </data>
+  <data name="Label_FailoverEnabled">
+    <value>Activ&#xE9;</value>
+  </data>
+  <data name="Label_FailoverDisabled">
+    <value>D&#xE9;sactiv&#xE9;</value>
+  </data>
+  <data name="Label_ServerTime">
+    <value>Heure du serveur</value>
+  </data>
+</root>

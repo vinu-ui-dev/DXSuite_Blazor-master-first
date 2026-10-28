@@ -1,0 +1,645 @@
+@using DXSuite.Sentinel.Entities
+@using DXSuite.Sentinel.Services
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject ISentinelDBContext sentinelDb
+@inject IConfiguration configuration
+@inject ILogger<SentinelProbeProfilesTab> Logger
+
+<div class="tab-panel">
+    <div class="panel-header" style="margin-bottom: 20px;">
+        <h3>Probe Profiles <DXSuite.Shared.Components.HelpLink Page="devices/probe-profiles" Title="Probe profiles help" /></h3>
+        <button class="dx-btn dx-btn-blue" @onclick="StartAddProfile">ADD PROFILE</button>
+    </div>
+    <div class="panel-content">
+
+        @if (showProfileForm)
+        {
+            <div class="sentinel-inline-form">
+                <h4>@(editingProfile?.ProfileId > 0 ? "Edit Profile" : "New Profile")</h4>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label>Profile Name</label>
+                        <input class="dx-form-control" @bind="formProfileName" placeholder="e.g., BrightSign with DWS" />
+                    </div>
+                    <div class="form-group">
+                        <label>Scope</label>
+                        <select class="dx-form-control" @bind="formScope">
+                            <option value="environment">Environment Default</option>
+                            <option value="make-model">Make / Model</option>
+                        </select>
+                    </div>
+                </div>
+                @if (formScope == "make-model")
+                {
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Manufacturer</label>
+                            <input class="dx-form-control" @bind="formManufacturer" placeholder="e.g., BrightSign" />
+                        </div>
+                        <div class="form-group">
+                            <label>Model (optional)</label>
+                            <input class="dx-form-control" @bind="formModel" placeholder="e.g., XT1144 (blank = all models)" />
+                        </div>
+                    </div>
+                }
+                <div class="form-row">
+                    <div class="form-group" style="flex: 2;">
+                        <label>Description (optional)</label>
+                        <input class="dx-form-control" @bind="formDescription" placeholder="Brief description of this profile" />
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label>Priority</label>
+                        <input type="number" class="dx-form-control" @bind="formPriority" min="0" />
+                    </div>
+                </div>
+
+                <h5 style="margin-top: 16px; margin-bottom: 8px;">Probe Steps (executed top-to-bottom, stops at first success)</h5>
+                <table class="probe-steps-editor">
+                    <thead>
+                        <tr>
+                            <th style="width: 40px;">#</th>
+                            <th>Method</th>
+                            <th>Port</th>
+                            <th>Label</th>
+                            <th>Timeout (ms)</th>
+                            <th>Expected</th>
+                            <th style="width: 60px;"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        @for (int i = 0; i < formSteps.Count; i++)
+                        {
+                            var idx = i;
+                            var step = formSteps[idx];
+                            <tr>
+                                <td>@(idx + 1)</td>
+                                <td>
+                                    <select class="dx-form-control" @bind="step.Method">
+                                        <option value="tcp">TCP</option>
+                                        <option value="icmp">ICMP Ping</option>
+                                        <option value="http">HTTP</option>
+                                    </select>
+                                </td>
+                                <td>
+                                    @if (step.Method != "icmp")
+                                    {
+                                        <input type="number" class="dx-form-control" @bind="step.Port" style="width: 80px;" />
+                                    }
+                                    else
+                                    {
+                                        <span class="dx-text-muted">—</span>
+                                    }
+                                </td>
+                                <td><input class="dx-form-control" @bind="step.Label" /></td>
+                                <td><input type="number" class="dx-form-control" @bind="step.TimeoutMs" style="width: 100px;" /></td>
+                                <td style="text-align: center;">
+                                    <input type="checkbox" class="dx-checkbox" @bind="step.Expected" />
+                                </td>
+                                <td>
+                                    <div style="display: flex; gap: 4px;">
+                                        @if (idx > 0)
+                                        {
+                                            <button class="btn-icon" title="Move up" @onclick="@(() => MoveStep(idx, -1))">&#9650;</button>
+                                        }
+                                        @if (idx < formSteps.Count - 1)
+                                        {
+                                            <button class="btn-icon" title="Move down" @onclick="@(() => MoveStep(idx, 1))">&#9660;</button>
+                                        }
+                                        <button class="btn-icon btn-danger-icon" title="Remove" @onclick="@(() => RemoveStep(idx))">&#10005;</button>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                    </tbody>
+                </table>
+                <button class="dx-btn dx-btn-gray" style="margin-top: 8px;" @onclick="AddStep">+ Add Step</button>
+
+                <div class="form-actions" style="margin-top: 16px;">
+                    <button class="dx-btn dx-btn-blue" @onclick="SaveProfile" disabled="@isSaving">
+                        @if (isSaving)
+                        {
+                            <span class="dx-spinner"></span>
+                        }
+                        else
+                        {
+                            <span>@(editingProfile?.ProfileId > 0 ? "UPDATE" : "CREATE")</span>
+                        }
+                    </button>
+                    <button class="dx-btn dx-btn-gray" @onclick="CancelForm">CANCEL</button>
+                    @if (!string.IsNullOrEmpty(formError))
+                    {
+                        <span class="form-error">@formError</span>
+                    }
+                </div>
+            </div>
+        }
+
+        @if (isLoading)
+        {
+            <div style="padding: 40px; text-align: center;">
+                <div class="dx-spinner" role="status" style="width: 2rem; height: 2rem;">
+                    <span class="visually-hidden">Loading...</span>
+                </div>
+            </div>
+        }
+        else
+        {
+            @if (environmentProfiles.Count > 0)
+            {
+                <div class="profile-section">
+                    <h4 class="profile-section-title">Environment Defaults</h4>
+                    @foreach (var profile in environmentProfiles)
+                    {
+                        <div class="profile-card">
+                            <div class="profile-card-header">
+                                <span class="profile-name">@profile.ProfileName</span>
+                                <span class="profile-scope-badge scope-environment">Environment</span>
+                                @if (!profile.IsActive)
+                                {
+                                    <span class="profile-inactive-badge">Inactive</span>
+                                }
+                                <div class="profile-actions">
+                                    <button class="btn-icon" title="Edit" @onclick="@(() => StartEditProfile(profile))">&#9998;</button>
+                                    <button class="btn-icon btn-danger-icon" title="Delete" @onclick="@(() => DeleteProfile(profile))">&#10005;</button>
+                                </div>
+                            </div>
+                            @if (!string.IsNullOrEmpty(profile.Description))
+                            {
+                                <div class="profile-description">@profile.Description</div>
+                            }
+                            <div class="profile-steps-preview">
+                                @{ var steps = ParseSteps(profile.StrategyJson); }
+                                @foreach (var step in steps)
+                                {
+                                    <span class="step-chip @(step.Expected ? "step-expected" : "")">
+                                        @step.Method.ToUpper()@(step.Port.HasValue ? $":{step.Port}" : "")
+                                        @if (step.Expected) { <span class="step-expected-marker" title="Expected">*</span> }
+                                    </span>
+                                }
+                            </div>
+                        </div>
+                    }
+                </div>
+            }
+
+            @if (makeModelProfiles.Count > 0)
+            {
+                <div class="profile-section">
+                    <h4 class="profile-section-title">Make / Model Profiles</h4>
+                    @foreach (var group in makeModelProfiles.GroupBy(p => p.MatchManufacturer ?? "Unknown"))
+                    {
+                        <h5 class="profile-group-title">@group.Key</h5>
+                        @foreach (var profile in group)
+                        {
+                            <div class="profile-card">
+                                <div class="profile-card-header">
+                                    <span class="profile-name">@profile.ProfileName</span>
+                                    <span class="profile-scope-badge scope-makemodel">
+                                        @profile.MatchManufacturer@(!string.IsNullOrEmpty(profile.MatchModel) ? $" / {profile.MatchModel}" : " (all models)")
+                                    </span>
+                                    @if (!profile.IsActive)
+                                    {
+                                        <span class="profile-inactive-badge">Inactive</span>
+                                    }
+                                    <div class="profile-actions">
+                                        <button class="btn-icon" title="Edit" @onclick="@(() => StartEditProfile(profile))">&#9998;</button>
+                                        <button class="btn-icon btn-danger-icon" title="Delete" @onclick="@(() => DeleteProfile(profile))">&#10005;</button>
+                                    </div>
+                                </div>
+                                @if (!string.IsNullOrEmpty(profile.Description))
+                                {
+                                    <div class="profile-description">@profile.Description</div>
+                                }
+                                <div class="profile-steps-preview">
+                                    @{ var steps = ParseSteps(profile.StrategyJson); }
+                                    @foreach (var step in steps)
+                                    {
+                                        <span class="step-chip @(step.Expected ? "step-expected" : "")">
+                                            @step.Method.ToUpper()@(step.Port.HasValue ? $":{step.Port}" : "")
+                                            @if (step.Expected) { <span class="step-expected-marker" title="Expected">*</span> }
+                                        </span>
+                                    }
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            }
+
+            @if (environmentProfiles.Count == 0 && makeModelProfiles.Count == 0 && !showProfileForm)
+            {
+                <div class="empty-state" style="padding: 40px; text-align: center; color: #888;">
+                    <p>No probe profiles configured yet.</p>
+                    <p>Devices will use a built-in fallback strategy (ICMP ping only).</p>
+                    <p>Click <strong>ADD PROFILE</strong> to configure probe cascades for your environment.</p>
+                </div>
+            }
+        }
+    </div>
+</div>
+
+@code {
+    private List<ProbeProfile> environmentProfiles = new();
+    private List<ProbeProfile> makeModelProfiles = new();
+    private bool isLoading = true;
+    private bool isSaving = false;
+    private bool showProfileForm = false;
+    private string? formError;
+
+    // Form fields
+    private ProbeProfile? editingProfile;
+    private string formProfileName = "";
+    private string formScope = "environment";
+    private string? formManufacturer;
+    private string? formModel;
+    private string? formDescription;
+    private int formPriority = 0;
+    private List<ProbeStepConfig> formSteps = new();
+
+    private string customerId = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        customerId = configuration["CustomerInfo:CustomerCode"] ?? "";
+        await LoadProfiles();
+    }
+
+    private async Task LoadProfiles()
+    {
+        isLoading = true;
+        try
+        {
+            var allProfiles = await sentinelDb.ProbeProfiles
+                .Where(p => p.CustomerId == customerId)
+                .OrderBy(p => p.Priority)
+                .ThenBy(p => p.ProfileName)
+                .AsNoTracking()
+                .ToListAsync();
+
+            environmentProfiles = allProfiles.Where(p => p.Scope == "environment").ToList();
+            makeModelProfiles = allProfiles.Where(p => p.Scope == "make-model").ToList();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading probe profiles");
+        }
+        finally
+        {
+            isLoading = false;
+        }
+    }
+
+    private void StartAddProfile()
+    {
+        editingProfile = null;
+        formProfileName = "";
+        formScope = "environment";
+        formManufacturer = null;
+        formModel = null;
+        formDescription = null;
+        formPriority = 0;
+        formSteps = new List<ProbeStepConfig>
+        {
+            new() { Method = "tcp", Port = 80, Label = "HTTP", TimeoutMs = 3000, Expected = false },
+            new() { Method = "icmp", Label = "ICMP Ping", TimeoutMs = 3000, Expected = true }
+        };
+        formError = null;
+        showProfileForm = true;
+    }
+
+    private void StartEditProfile(ProbeProfile profile)
+    {
+        editingProfile = profile;
+        formProfileName = profile.ProfileName;
+        formScope = profile.Scope;
+        formManufacturer = profile.MatchManufacturer;
+        formModel = profile.MatchModel;
+        formDescription = profile.Description;
+        formPriority = profile.Priority;
+        formSteps = ParseSteps(profile.StrategyJson);
+        formError = null;
+        showProfileForm = true;
+    }
+
+    private void CancelForm()
+    {
+        showProfileForm = false;
+        editingProfile = null;
+        formError = null;
+    }
+
+    private async Task SaveProfile()
+    {
+        if (string.IsNullOrWhiteSpace(formProfileName))
+        {
+            formError = "Profile name is required.";
+            return;
+        }
+
+        if (formSteps.Count == 0)
+        {
+            formError = "At least one probe step is required.";
+            return;
+        }
+
+        if (formScope == "make-model" && string.IsNullOrWhiteSpace(formManufacturer))
+        {
+            formError = "Manufacturer is required for Make/Model scope.";
+            return;
+        }
+
+        isSaving = true;
+        formError = null;
+
+        try
+        {
+            var strategyJson = JsonSerializer.Serialize(new ProbeStrategyConfig { Steps = formSteps },
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+
+            if (editingProfile?.ProfileId > 0)
+            {
+                // Update existing
+                var existing = await sentinelDb.ProbeProfiles.FindAsync(editingProfile.ProfileId);
+                if (existing != null)
+                {
+                    existing.ProfileName = formProfileName;
+                    existing.Description = formDescription;
+                    existing.Scope = formScope;
+                    existing.MatchManufacturer = formScope == "make-model" ? formManufacturer : null;
+                    existing.MatchModel = formScope == "make-model" ? formModel : null;
+                    existing.StrategyJson = strategyJson;
+                    existing.Priority = formPriority;
+                    existing.LastEditDate = DateTime.UtcNow;
+                }
+            }
+            else
+            {
+                // Create new
+                sentinelDb.ProbeProfiles.Add(new ProbeProfile
+                {
+                    ProfileName = formProfileName,
+                    Description = formDescription,
+                    Scope = formScope,
+                    MatchManufacturer = formScope == "make-model" ? formManufacturer : null,
+                    MatchModel = formScope == "make-model" ? formModel : null,
+                    StrategyJson = strategyJson,
+                    IsActive = true,
+                    Priority = formPriority,
+                    CustomerId = customerId,
+                    CreateDate = DateTime.UtcNow
+                });
+            }
+
+            await sentinelDb.SaveChangesAsync();
+            showProfileForm = false;
+            await LoadProfiles();
+        }
+        catch (Exception ex)
+        {
+            formError = $"Error saving profile: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+        }
+    }
+
+    private async Task DeleteProfile(ProbeProfile profile)
+    {
+        try
+        {
+            var entity = await sentinelDb.ProbeProfiles.FindAsync(profile.ProfileId);
+            if (entity != null)
+            {
+                sentinelDb.ProbeProfiles.Remove(entity);
+                await sentinelDb.SaveChangesAsync();
+                await LoadProfiles();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error deleting profile");
+        }
+    }
+
+    private void AddStep()
+    {
+        formSteps.Add(new ProbeStepConfig
+        {
+            Method = "tcp",
+            Port = 80,
+            Label = "",
+            TimeoutMs = 3000,
+            Expected = false
+        });
+    }
+
+    private void RemoveStep(int index)
+    {
+        if (index >= 0 && index < formSteps.Count)
+            formSteps.RemoveAt(index);
+    }
+
+    private void MoveStep(int index, int direction)
+    {
+        var newIndex = index + direction;
+        if (newIndex < 0 || newIndex >= formSteps.Count) return;
+        var item = formSteps[index];
+        formSteps.RemoveAt(index);
+        formSteps.Insert(newIndex, item);
+    }
+
+    private static List<ProbeStepConfig> ParseSteps(string? strategyJson)
+    {
+        if (string.IsNullOrEmpty(strategyJson)) return new();
+        try
+        {
+            var config = JsonSerializer.Deserialize<ProbeStrategyConfig>(strategyJson,
+                new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase });
+            return config?.Steps ?? new();
+        }
+        catch { return new(); }
+    }
+}
+
+<style>
+    .profile-section {
+        padding: 16px 20px;
+    }
+
+    .profile-section-title {
+        font-size: 1rem;
+        font-weight: 600;
+        color: #555;
+        margin-bottom: 12px;
+        border-bottom: 1px solid #eee;
+        padding-bottom: 8px;
+    }
+
+    .profile-group-title {
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: #666;
+        margin: 12px 0 8px 0;
+    }
+
+    .profile-card {
+        background: #f8f9fa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 12px 16px;
+        margin-bottom: 10px;
+    }
+
+    .profile-card-header {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+    }
+
+    .profile-name {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #333;
+    }
+
+    .profile-scope-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        font-weight: 600;
+    }
+
+    .scope-environment { background: #e3f2fd; color: #1565c0; }
+    .scope-makemodel { background: #f3e5f5; color: #6a1b9a; }
+
+    .profile-inactive-badge {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 10px;
+        font-size: 0.75rem;
+        background: #ffebee;
+        color: #c62828;
+    }
+
+    .profile-actions {
+        margin-left: auto;
+        display: flex;
+        gap: 6px;
+    }
+
+    .profile-description {
+        font-size: 0.85rem;
+        color: #666;
+        margin-top: 4px;
+    }
+
+    .profile-steps-preview {
+        display: flex;
+        gap: 6px;
+        margin-top: 8px;
+        flex-wrap: wrap;
+    }
+
+    .step-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        padding: 2px 10px;
+        border-radius: 12px;
+        font-size: 0.8rem;
+        font-weight: 600;
+        background: #e8eaf6;
+        color: #283593;
+    }
+
+    .step-chip.step-expected {
+        background: #e8f5e9;
+        color: #2e7d32;
+    }
+
+    .step-expected-marker {
+        color: #f57f17;
+        font-weight: 700;
+    }
+
+    .btn-icon {
+        background: none;
+        border: 1px solid #ccc;
+        border-radius: 4px;
+        cursor: pointer;
+        padding: 2px 6px;
+        font-size: 0.8rem;
+        color: #555;
+    }
+
+    .btn-icon:hover { background: #f0f0f0; }
+    .btn-danger-icon { color: #c62828; border-color: #e57373; }
+    .btn-danger-icon:hover { background: #ffebee; }
+
+    .probe-steps-editor {
+        width: 100%;
+        border-collapse: collapse;
+    }
+
+    .probe-steps-editor th {
+        background: #f0f0f0;
+        padding: 6px 8px;
+        text-align: left;
+        font-size: 0.85rem;
+        border-bottom: 2px solid #ddd;
+    }
+
+    .probe-steps-editor td {
+        padding: 6px 8px;
+        border-bottom: 1px solid #eee;
+    }
+
+    .form-error {
+        color: #c62828;
+        font-size: 0.85rem;
+        margin-left: 12px;
+    }
+
+    .sentinel-inline-form {
+        background: #fafafa;
+        border: 1px solid #e0e0e0;
+        border-radius: 6px;
+        padding: 20px;
+        margin: 16px 20px;
+    }
+
+    .sentinel-inline-form h4 {
+        margin: 0 0 16px 0;
+        font-size: 1rem;
+        font-weight: 600;
+    }
+
+    .form-row {
+        display: flex;
+        gap: 16px;
+        margin-bottom: 12px;
+    }
+
+    .form-group {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+    }
+
+    .form-group label {
+        font-size: 0.85rem;
+        font-weight: 600;
+        color: #555;
+    }
+
+    .form-actions {
+        display: flex;
+        gap: 10px;
+        align-items: center;
+    }
+</style>

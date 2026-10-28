@@ -1,0 +1,263 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using DXSuite.Director.Services
+@inject IContentMetadataService contentMetadataService
+@inject IMetadataDefinitionService metadataDefinitionService
+@inject IContentMetadataRuleEditor ruleEditor
+@inject ISessionState sessionState
+@inject ILogger<AssetMetadataEditModal> Logger
+
+@*
+    The single re-tagging surface for an existing asset. It also lists tags on keys this location no longer
+    reads, because nothing else in the product shows them and removing a field keeps every tag.
+*@
+@if (isVisible)
+{
+    <div class="dx-modal-overlay" @onclick="Close">
+        <div class="dx-modal" style="max-width:460px; position:relative;" @onclick:stopPropagation="true">
+
+            <div class="dx-modal-header">
+                <h5>Edit Metadata</h5>
+                @if (!isSaving)
+                {
+                    <button class="btn-close btn-close-white" @onclick="Close"></button>
+                }
+            </div>
+
+            <div class="dx-modal-body">
+                <p class="dx-text-muted" style="margin-bottom:14px; word-break:break-word;">@assetName</p>
+
+                @if (lockReason != null)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-bottom:12px;">@lockReason</div>
+                }
+
+                @if (isLoading)
+                {
+                    <p class="dx-text-muted">Loading...</p>
+                }
+                else
+                {
+                    <fieldset disabled="@(!canControl)">
+                        @if (fields.Count == 0)
+                        {
+                            <p class="dx-text-muted">This location has no content metadata fields.</p>
+                        }
+                        else
+                        {
+                            @foreach (var fieldName in fields)
+                            {
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label">@DisplayName(fieldName)</label>
+                                    <MetadataValueInput FieldType="@(Definition(fieldName)?.FieldType ?? "string")"
+                                                        Values="@(values.GetValueOrDefault(fieldName) ?? new List<string>())"
+                                                        ValuesChanged="@((List<string> v) => values[fieldName] = v)"
+                                                        Options="@(Definition(fieldName)?.Options ?? new())" />
+                                </div>
+                            }
+                        }
+
+                        @if (orphanedTags.Count > 0)
+                        {
+                            <div class="dx-section-title" style="margin-top:16px;">Not used at this location</div>
+                            <p class="dx-form-hint">These tags have no effect here. Clear one to remove it from this asset when you save.</p>
+                            @foreach (var tag in orphanedTags)
+                            {
+                                var pending = clearedKeys.Contains(tag.Key);
+                                <div class="dx-form-group" style="display:flex; align-items:center; gap:8px;">
+                                    <div style="flex:1; min-width:0; @(pending ? "text-decoration:line-through; opacity:0.6;" : "")">
+                                        <div class="dx-form-label" style="margin-bottom:2px;">@DisplayName(tag.Key)</div>
+                                        <div class="dx-text-muted" style="word-break:break-word;">@string.Join(", ", tag.Values)</div>
+                                    </div>
+                                    @if (pending)
+                                    {
+                                        <button type="button" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => clearedKeys.Remove(tag.Key)">Undo</button>
+                                    }
+                                    else
+                                    {
+                                        <button type="button" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => clearedKeys.Add(tag.Key)">Clear</button>
+                                    }
+                                </div>
+                            }
+                        }
+                    </fieldset>
+                }
+
+                @if (!string.IsNullOrEmpty(errorMessage))
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:8px;">@errorMessage</div>
+                }
+            </div>
+
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-blue" @onclick="Save" disabled="@(!canControl || isSaving || isLoading || loadFailed)">
+                    Save Changes
+                </button>
+                <button class="dx-btn dx-btn-gray" @onclick="Close"
+                        style="@(isSaving ? "pointer-events:none;" : "")">
+                    Cancel
+                </button>
+            </div>
+
+            @if (isSaving)
+            {
+                <div style="position:absolute; inset:0; background:rgba(255,255,255,0.8); display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:inherit; z-index:10;">
+                    <div class="dx-spinner"></div>
+                    <p class="dx-text-muted mt-2" style="font-size:13px;">Saving changes...</p>
+                </div>
+            }
+
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private bool isVisible;
+    private bool isLoading;
+    private bool loadFailed;
+    private bool isSaving;
+    private string? errorMessage;
+
+    private int assetId;
+    private int locationId;
+    private string assetName = "";
+    private bool canControl;
+    private string? lockReason;
+
+    private List<string> fields = new();
+    private Dictionary<string, List<string>> values = new(MetadataEvaluator.KeyComparer);
+    private Dictionary<string, List<string>> loadedValues = new(MetadataEvaluator.KeyComparer);
+    private IReadOnlyList<OrphanedTag> orphanedTags = [];
+    private HashSet<string> clearedKeys = new(MetadataEvaluator.KeyComparer);
+    private List<MetadataDefinitionDto> metadataDefs = new();
+
+    // Open is called from a synchronous row callback, so the values load on the first render after
+    // the modal appears rather than inline.
+    private bool loadPending;
+
+    // Bumped by every Open, so a load still in flight from an earlier Open cannot overwrite a later one.
+    private int loadGeneration;
+
+    /// <summary>
+    /// Opens the editor for one asset at the location whose rules decide which keys are fields. The caller
+    /// has already resolved ownership; without it every control is disabled and the reason is shown.
+    /// </summary>
+    public void Open(int assetId, int locationId, string displayName, bool canControl, string? lockReason)
+    {
+        this.assetId = assetId;
+        this.locationId = locationId;
+        assetName = displayName;
+        this.canControl = canControl;
+        this.lockReason = canControl ? null : lockReason ?? AssetOwnership.FullAccessOnlyReason;
+        fields = new List<string>();
+        values = new Dictionary<string, List<string>>(MetadataEvaluator.KeyComparer);
+        loadedValues = new Dictionary<string, List<string>>(MetadataEvaluator.KeyComparer);
+        orphanedTags = [];
+        clearedKeys = new HashSet<string>(MetadataEvaluator.KeyComparer);
+        metadataDefs = new List<MetadataDefinitionDto>();
+        errorMessage = null;
+        isSaving = false;
+        loadFailed = false;
+        isLoading = true;
+        loadPending = true;
+        loadGeneration++;
+        isVisible = true;
+
+        StateHasChanged();
+    }
+
+    public void Close()
+    {
+        if (isSaving) return;
+
+        isVisible = false;
+        loadPending = false;
+        errorMessage = null;
+
+        StateHasChanged();
+    }
+
+    private static bool SameValues(List<string> current, List<string>? loaded) =>
+        MetadataEvaluator.NormalizeValues(current).SetEquals(MetadataEvaluator.NormalizeValues(loaded));
+
+    private MetadataDefinitionDto? Definition(string key) =>
+        metadataDefs.FirstOrDefault(d => MetadataEvaluator.KeyComparer.Equals(d.MetadataKey, key));
+
+    private string DisplayName(string key) =>
+        Definition(key)?.DisplayName is { Length: > 0 } name ? name : key;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!loadPending) return;
+
+        loadPending = false;
+        var generation = loadGeneration;
+        var loadingAssetId = assetId;
+        try
+        {
+            var participating = await ruleEditor.GetParticipatingKeysAsync(locationId);
+            var definitions = await metadataDefinitionService.GetAllDefinitionsAsync();
+            var saved = MetadataSubjectResolver.GroupValues(
+                (await contentMetadataService.GetMetadataForAssetAsync(loadingAssetId))
+                    .Select(m => (m.MetadataKey, m.MetadataValue ?? "")));
+
+            // A second Open while this load was in flight owns the modal now.
+            if (generation != loadGeneration) return;
+
+            metadataDefs = definitions;
+            fields = participating.ToList();
+            values = fields.ToDictionary(
+                f => f,
+                f => saved.TryGetValue(f, out var set) ? set.Order(StringComparer.OrdinalIgnoreCase).ToList() : new List<string>(),
+                MetadataEvaluator.KeyComparer);
+            loadedValues = values.ToDictionary(kv => kv.Key, kv => kv.Value.ToList(), MetadataEvaluator.KeyComparer);
+            orphanedTags = AssetMetadataEdit.OrphanedTags(saved, fields);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading metadata for asset {AssetId}", loadingAssetId);
+            if (generation != loadGeneration) return;
+            errorMessage = "Could not load the current values.";
+            loadFailed = true;
+        }
+
+        isLoading = false;
+        StateHasChanged();
+    }
+
+    private async Task Save()
+    {
+        if (!canControl || isLoading || loadFailed) return;
+
+        errorMessage = null;
+        isSaving = true;
+        await InvokeAsync(StateHasChanged);
+
+        try
+        {
+            // An empty set removes the key's rows rather than storing a blank, so a cleared field
+            // reads the same as one that was never set. Untouched keys are skipped so a stale load
+            // cannot write back over a change someone else made while the modal was open.
+            foreach (var kvp in values.Where(kv => !SameValues(kv.Value, loadedValues.GetValueOrDefault(kv.Key))))
+                await contentMetadataService.SetMetadataAsync(assetId, kvp.Key, kvp.Value, sessionState.User?.UserId);
+
+            foreach (var key in clearedKeys)
+                await contentMetadataService.RemoveMetadataAsync(assetId, key);
+
+            isVisible = false;
+            await OnSaved.InvokeAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error saving metadata for asset {AssetId}", assetId);
+            errorMessage = $"Error saving metadata: {ex.Message}";
+        }
+        finally
+        {
+            isSaving = false;
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+}

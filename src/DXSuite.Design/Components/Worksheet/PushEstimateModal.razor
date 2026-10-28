@@ -1,0 +1,326 @@
+@using DXSuite.Design.Models
+@using DXSuite.Design.Services
+@inject INetsuiteService NetsuiteService
+
+<div class="dx-modal-overlay">
+    <div class="dx-modal" style="min-width:580px;max-width:680px">
+        <div class="dx-modal-header">
+            <span>Push to NetSuite — Estimate Setup</span>
+            <button class="dx-modal-close" @onclick="OnClose">&times;</button>
+        </div>
+
+        @if (_loading)
+        {
+            <div class="dx-modal-body" style="display:flex;align-items:center;gap:12px;min-height:100px">
+                <div class="dx-spinner"></div>
+                <span style="color:var(--dx-text-muted,#6c757d);font-size:.88rem">Loading NetSuite data…</span>
+            </div>
+        }
+        else
+        {
+            <div class="dx-modal-body">
+                <p style="font-size:.82rem;color:var(--dx-text-muted,#6c757d);margin-bottom:16px">
+                    These fields are required by NetSuite for new estimates. They will not be shown again on re-push.
+                </p>
+
+                @if (_error is not null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-bottom:14px">@_error</div>
+                }
+
+                <div class="pem-grid">
+                    <!-- Location -->
+                    <div class="dx-form-group" style="margin-bottom:0">
+                        <label class="dx-form-label">Location <span class="pem-req">*</span></label>
+                        <select class="dx-form-control" @bind="_locationId">
+                            <option value="">— Select —</option>
+                            @foreach (var loc in _locations)
+                            {
+                                <option value="@loc.Id">@loc.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Terms -->
+                    <div class="dx-form-group" style="margin-bottom:0">
+                        <label class="dx-form-label">Terms <span class="pem-req">*</span></label>
+                        <select class="dx-form-control" @bind="_termsId">
+                            <option value="">— Select —</option>
+                            @foreach (var t in _terms)
+                            {
+                                <option value="@t.Id">@t.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Opportunity Type -->
+                    <div class="dx-form-group" style="margin-bottom:0">
+                        <label class="dx-form-label">Opportunity Type <span class="pem-req">*</span></label>
+                        <select class="dx-form-control" @bind="_opportunityTypeId">
+                            <option value="">— Select —</option>
+                            @foreach (var ot in _opportunityTypes)
+                            {
+                                <option value="@ot.Id">@ot.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Lead Source -->
+                    <div class="dx-form-group" style="margin-bottom:0">
+                        <label class="dx-form-label">Lead Source <span class="pem-req">*</span></label>
+                        <select class="dx-form-control" @bind="_leadSourceId">
+                            <option value="">— Select —</option>
+                            @foreach (var ls in _leadSources)
+                            {
+                                <option value="@ls.Id">@ls.Name</option>
+                            }
+                        </select>
+                    </div>
+
+                    <!-- Bill To -->
+                    <div class="dx-form-group pem-full" style="margin-bottom:0">
+                        <label class="dx-form-label" style="display:flex;align-items:center;gap:8px">
+                            Bill To <span class="pem-req">*</span>
+                            <button class="pem-new-addr-btn" @onclick='() => OpenAddressModal("bill")'>+ New Address</button>
+                        </label>
+                        <select class="dx-form-control" @bind="_billAddressId">
+                            <option value="">— Select —</option>
+                            @foreach (var addr in _addresses)
+                            {
+                                <option value="@addr.Id">@addr.Label</option>
+                            }
+                        </select>
+                        @if (!string.IsNullOrEmpty(_billAddressId))
+                        {
+                            var preview = _addresses.FirstOrDefault(a => a.Id == _billAddressId)?.AddrText;
+                            @if (!string.IsNullOrEmpty(preview))
+                            {
+                                <small class="pem-addr-preview">@preview</small>
+                            }
+                        }
+                    </div>
+
+                    <!-- Ship To -->
+                    <div class="dx-form-group pem-full" style="margin-bottom:0">
+                        <label class="dx-form-label" style="display:flex;align-items:center;gap:8px">
+                            Ship To <span class="pem-req">*</span>
+                            <button class="pem-new-addr-btn" @onclick='() => OpenAddressModal("ship")'>+ New Address</button>
+                        </label>
+                        <select class="dx-form-control" @bind="_shipAddressId">
+                            <option value="">— Select —</option>
+                            @foreach (var addr in _addresses)
+                            {
+                                <option value="@addr.Id">@addr.Label</option>
+                            }
+                        </select>
+                        @if (!string.IsNullOrEmpty(_shipAddressId))
+                        {
+                            var preview = _addresses.FirstOrDefault(a => a.Id == _shipAddressId)?.AddrText;
+                            @if (!string.IsNullOrEmpty(preview))
+                            {
+                                <small class="pem-addr-preview">@preview</small>
+                            }
+                        }
+                    </div>
+                </div>
+            </div>
+
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="OnClose" disabled="@_saving">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="ConfirmAsync" disabled="@(!CanSubmit || _saving)">
+                    @if (_saving)
+                    {
+                        <span class="pem-inline-spinner"></span>
+                        <span>Pushing…</span>
+                    }
+                    else
+                    {
+                        <span>Push to NetSuite</span>
+                    }
+                </button>
+            </div>
+        }
+    </div>
+</div>
+
+@if (_showAddressModal && _customerId is not null)
+{
+    <AddressModal
+        CustomerId="@_customerId"
+        Title="@(_addressModalTarget == "bill" ? "New Bill To Address" : "New Ship To Address")"
+        OnCreated="OnAddressCreated"
+        OnClose="@(() => _showAddressModal = false)" />
+}
+
+@code {
+    [Parameter, EditorRequired] public string OpportunityId { get; set; } = "";
+    [Parameter, EditorRequired] public EventCallback<EstimateConfig> OnConfirm { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnClose { get; set; }
+
+    private bool _loading = true;
+    private bool _saving;
+    private string? _error;
+    private string? _customerId;
+
+    private List<NetsuiteLocation> _locations = [];
+    private List<NetsuiteTermsOption> _terms = [];
+    private List<NetsuiteLeadSource> _leadSources = [];
+    private List<NetsuiteOpportunityType> _opportunityTypes = [];
+    private List<NetsuiteAddressEntry> _addresses = [];
+
+    private string _locationId = "";
+    private string _termsId = "";
+    private string _opportunityTypeId = "";
+    private string _leadSourceId = "";
+    private string _billAddressId = "";
+    private string _shipAddressId = "";
+
+    private bool _showAddressModal;
+    private string _addressModalTarget = "bill";
+
+    private bool CanSubmit =>
+        !string.IsNullOrEmpty(_locationId) &&
+        !string.IsNullOrEmpty(_termsId) &&
+        !string.IsNullOrEmpty(_opportunityTypeId) &&
+        !string.IsNullOrEmpty(_leadSourceId) &&
+        !string.IsNullOrEmpty(_billAddressId) &&
+        !string.IsNullOrEmpty(_shipAddressId);
+
+    protected override async Task OnInitializedAsync()
+    {
+        _loading = true;
+        try
+        {
+            // Resolve the customer entity ID linked to this opportunity
+            _customerId = await NetsuiteService.GetOpportunityEntityIdAsync(OpportunityId);
+
+            // Load all reference lists in parallel
+            var locTask     = NetsuiteService.GetLocationsAsync();
+            var termsTask   = NetsuiteService.GetTermsAsync();
+            var lsTask      = NetsuiteService.GetLeadSourcesAsync();
+            var otTask      = NetsuiteService.GetOpportunityTypesAsync();
+            var addrTask    = _customerId is not null
+                ? NetsuiteService.GetCustomerAddressBookAsync(_customerId)
+                : Task.FromResult(new List<NetsuiteAddressEntry>());
+
+            await Task.WhenAll(locTask, termsTask, lsTask, otTask, addrTask);
+
+            _locations        = locTask.Result;
+            _terms            = termsTask.Result;
+            _leadSources      = lsTask.Result;
+            _opportunityTypes = otTask.Result;
+            _addresses        = addrTask.Result;
+
+            // Pre-select defaults based on NetSuite flags
+            var defaultBill = _addresses.FirstOrDefault(a => a.DefaultBilling);
+            var defaultShip = _addresses.FirstOrDefault(a => a.DefaultShipping);
+            if (defaultBill is not null) _billAddressId = defaultBill.Id;
+            if (defaultShip is not null) _shipAddressId = defaultShip.Id;
+        }
+        catch (Exception ex)
+        {
+            _error = $"Failed to load data: {ex.Message}";
+        }
+        finally
+        {
+            _loading = false;
+        }
+    }
+
+    private void OpenAddressModal(string target)
+    {
+        _addressModalTarget = target;
+        _showAddressModal = true;
+    }
+
+    private async Task OnAddressCreated(NetsuiteAddressEntry newAddr)
+    {
+        _showAddressModal = false;
+
+        // Refresh address book and auto-select the new entry
+        if (_customerId is not null)
+        {
+            _addresses = await NetsuiteService.GetCustomerAddressBookAsync(_customerId);
+        }
+        else
+        {
+            _addresses.Add(newAddr);
+        }
+
+        if (_addressModalTarget == "bill")
+            _billAddressId = newAddr.Id;
+        else
+            _shipAddressId = newAddr.Id;
+    }
+
+    private async Task ConfirmAsync()
+    {
+        if (!CanSubmit) return;
+        _saving = true;
+        _error = null;
+        try
+        {
+            var config = new EstimateConfig(
+                _locationId,
+                _billAddressId,
+                _shipAddressId,
+                _termsId,
+                _opportunityTypeId,
+                _leadSourceId,
+                _customerId ?? "");
+            await OnConfirm.InvokeAsync(config);
+        }
+        catch (Exception ex)
+        {
+            _error = $"Push failed: {ex.Message}";
+            _saving = false;
+        }
+    }
+}
+
+<style>
+    .pem-grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px 20px;
+    }
+
+    .pem-full { grid-column: 1 / -1; }
+
+    .pem-req { color: var(--dx-red, #dc3545); font-size: .85em; }
+
+    .pem-addr-preview {
+        font-size: .75rem;
+        color: var(--dx-text-muted, #6c757d);
+        line-height: 1.4;
+        white-space: pre-line;
+        margin-top: 4px;
+    }
+
+    .pem-new-addr-btn {
+        background: none;
+        border: none;
+        padding: 0;
+        font-size: .75rem;
+        color: var(--dx-blue, #0071BC);
+        cursor: pointer;
+        text-decoration: underline;
+        margin-left: auto;
+        font-weight: 400;
+    }
+
+    .pem-new-addr-btn:hover { color: var(--dx-blue-hover, #004f87); }
+
+    .pem-inline-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255,255,255,.35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: pem-spin .7s linear infinite;
+        vertical-align: middle;
+    }
+
+    @@keyframes pem-spin { to { transform: rotate(360deg); } }
+</style>

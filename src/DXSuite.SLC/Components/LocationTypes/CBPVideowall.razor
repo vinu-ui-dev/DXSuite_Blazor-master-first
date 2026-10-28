@@ -1,0 +1,101 @@
+@inject IServiceScopeFactory scopeFactory
+
+@if (Location != null)
+{
+    <section class="body">
+        <div style="display:flex; flex-wrap:nowrap; position:relative; justify-content:center; overflow-x: auto; margin-top:10px; width:1800px;">
+            @* Zone 1 - Global Entry / Visitors *@
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <div style="height: @(432 * scaleFactor)px; width: @(4142 * scaleFactor)px;">
+                    <PlaylistDisplay Location="Location"
+                                     PlaylistName="Global Entry/Visitors"
+                                     ContentHeight="432"
+                                     ContentWidth="4142"
+                                     ConstraintId="8"
+                                     ScaleFactor="scaleFactor" />
+                </div>
+                <button class="dx-btn dx-btn-blue @(selectedZone == "Zone1" ? "active" : "")"
+                        style="width:100%; border-radius: 0 0 10px 10px;"
+                        @onclick="@(() => OpenZoneControls("Zone1"))">EDIT</button>
+            </div>
+
+            @* Zone 2 - Citizens / Residents (static image) *@
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <img style="height: @(432 * scaleFactor)px; width: @(880 * scaleFactor)px;" src="images/CBPVideoWall/Citizens_Residents.png" alt="Citizens & Residents" />
+            </div>
+
+            @* Zone 3 - Welcome Background + Zone 4 Mask overlay *@
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <div style="height: @(432 * scaleFactor)px; width: @(7131 * scaleFactor)px; position:relative;">
+                    <div style="width: 100%; height: 100%;">
+                        <PlaylistDisplay Location="Location"
+                                         PlaylistName="Welcome Background"
+                                         ContentHeight="432"
+                                         ContentWidth="7131"
+                                         ConstraintId="9"
+                                         ScaleFactor="scaleFactor" />
+                    </div>
+                    <div style="position: absolute; top: 0; left: 0; width: 100%; height: 100%;">
+                        <PlaylistDisplay Location="Location"
+                                         PlaylistName="Welcome Mask"
+                                         ContentHeight="432"
+                                         ContentWidth="7131"
+                                         ConstraintId="10"
+                                         ScaleFactor="scaleFactor" />
+                    </div>
+                </div>
+                <button class="dx-btn dx-btn-blue @(selectedZone == "Zone3" ? "active" : "")"
+                        style="width:100%; border-radius: 0 0 10px 10px;"
+                        @onclick="@(() => OpenZoneControls("Zone3"))">EDIT</button>
+            </div>
+
+            @* Zone 5 - Weather (static image) *@
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <img style="height: @(432 * scaleFactor)px; width: @(787 * scaleFactor)px;" src="images/CBPVideoWall/Weather.png" alt="Weather" />
+            </div>
+
+            @* Zone 6 - Crew (static image) *@
+            <div style="display:flex; flex-direction:column; align-items:center;">
+                <img style="height: @(432 * scaleFactor)px; width: @(884 * scaleFactor)px;" src="images/CBPVideoWall/Crew.png" alt="Crew" />
+            </div>
+        </div>
+
+        <div style="background-color: #f5f5f5; border-radius: 5px; margin-top: 20px; padding: 10px;">
+            @switch (selectedZone)
+            {
+                case "Zone1":
+                    <AssetPlaylist_Languages_Zones Location="Location"
+                                                   PlaylistName="Global Entry/Visitors"
+                                                   contentHeight="432"
+                                                   contentWidth="4142"
+                                                   constraintId="8"
+                                                   ContainerWidth="500" />
+                    break;
+
+                case "Zone3":
+                    <AssetPlaylist_Zones Location="Location"
+                                         PlaylistName="Welcome Background"
+                                         contentHeight="432"
+                                         contentWidth="7131"
+                                         constraintId="9"
+                                         ContainerWidth="600" />
+                    <AssetPlaylist_Zones Location="Location"
+                                         PlaylistName="Welcome Mask"
+                                         contentHeight="432"
+                                         contentWidth="7131"
+                                         constraintId="10"
+                                         ContainerWidth="600" />
+                    break;
+            }
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+
+    private double scaleFactor = 0.125;
+    private string selectedZone = "Zone1";
+
+    private void OpenZoneControls(string zoneName) => selectedZone = zoneName;
+}

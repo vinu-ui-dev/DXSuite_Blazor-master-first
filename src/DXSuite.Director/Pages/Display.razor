@@ -1,0 +1,35 @@
+@page "/display/{DisplayId:int}"
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@inject IServiceScopeFactory scopeFactory
+
+@if (loaded)
+{
+    @if (displayMode == (int)Types.DisplayMode.StatusSelector)
+    {
+        <DXSuite.Director.Pages.StatusSelectorPage DisplayId="@DisplayId" />
+    }
+    else
+    {
+        <DXSuite.Director.Pages.Schedule DisplayId="@DisplayId" />
+    }
+}
+
+@code {
+    [Parameter] public int DisplayId { get; set; }
+    private int displayMode;
+    private bool loaded;
+
+    protected override async Task OnInitializedAsync()
+    {
+        using var scope = scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        var display = await db.TblDisplays.AsNoTracking()
+            .Where(d => d.DisplayId == DisplayId)
+            .Select(d => new { d.DisplayMode })
+            .FirstOrDefaultAsync();
+        displayMode = display?.DisplayMode ?? 0;
+        loaded = true;
+    }
+}

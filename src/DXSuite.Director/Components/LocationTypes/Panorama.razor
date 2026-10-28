@@ -1,0 +1,239 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Models
+@using Microsoft.EntityFrameworkCore
+@using System.Text.Json
+@inject IServiceScopeFactory scopeFactory
+@inject NavigationManager navMan
+@inject IJSRuntime JSRuntime
+@inject IDisplayOverrideService displayOverrides
+@rendermode InteractiveServer
+
+@if (Location != null)
+{
+    <section class="body">
+        <div class="pano-scroll-container" @ref="scrollContainerRef">
+            <div class="pano-image-container" style="@GetContainerStyle()">
+
+                @if (displays != null && config != null)
+                {
+                    @* Render all placements by z-index *@
+                    @foreach (var placement in config.Placements.OrderBy(p => p.ZIndex))
+                    {
+                        var display = displays.FirstOrDefault(d => d.DisplayId == placement.DisplayId);
+                        if (display == null) continue;
+
+                        <div style="position:absolute; top:@(placement.PositionTop * scale)px; left:@(placement.PositionLeft * scale)px; z-index:@placement.ZIndex; display:inline-block;">
+                            <div class="pano-display-wrapper">
+                                <div style="position:relative; display:inline-block; vertical-align:top;"
+                                     @onmouseover="(() => OnMouseOver(display.DisplayId))"
+                                     @onmouseout="OnMouseOut">
+
+                                    <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display" ScaleFactor="@(scale * placement.DisplayScale)" />
+
+                                    @if (display.DisplayId == hoverDisplayId && SelectedAsset != null)
+                                    {
+                                        <div class="pano-hover-overlay" style="border: 2px dashed red;"></div>
+                                        <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
+                                        <div class="pano-bottom-banner" @onclick="@(() => OnOverride(display.DisplayId))">OVERRIDE</div>
+                                    }
+                                    else if (display.DisplayId == hoverDisplayId)
+                                    {
+                                        <div class="pano-hover-overlay" style="border: 2px solid #16FF00;"></div>
+                                        <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
+                                        <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT SCHEDULE</div>
+                                    }
+                                </div>
+
+                                @if (display.DisplayMode == (int)Types.DisplayMode.Override)
+                                {
+                                    <div class="pano-override-banner" @onclick="(() => BackToSchedule(display.DisplayId))">CANCEL OVERRIDE</div>
+                                }
+                            </div>
+                        </div>
+                    }
+
+                    @* Render groups *@
+                    @foreach (var group in config.Groups.OrderBy(g => g.ZIndex))
+                    {
+                        int idx = 0;
+                        var effectiveScale = scale * group.DisplayScale;
+                        @foreach (var displayId in group.DisplayIds)
+                        {
+                            var display = displays.FirstOrDefault(d => d.DisplayId == displayId);
+                            if (display == null) { idx++; continue; }
+
+                            var displayW = (display.DisplayWidth > 0 ? display.DisplayWidth : 1920) * effectiveScale;
+                            var displayH = (display.DisplayHeight > 0 ? display.DisplayHeight : 1080) * effectiveScale;
+
+                            double top, left;
+                            if (group.Direction == "vertical")
+                            {
+                                top = group.PositionTop * scale + idx * (displayH + group.Spacing * scale);
+                                left = group.PositionLeft * scale;
+                            }
+                            else
+                            {
+                                top = group.PositionTop * scale;
+                                left = group.PositionLeft * scale + idx * (displayW + group.Spacing * scale);
+                            }
+
+                            <div style="position:absolute; top:@(top)px; left:@(left)px; z-index:@group.ZIndex; display:inline-block;">
+                                <div class="pano-display-wrapper">
+                                    <div style="position:relative; display:inline-block; vertical-align:top;"
+                                         @onmouseover="(() => OnMouseOver(display.DisplayId))"
+                                         @onmouseout="OnMouseOut">
+
+                                        <DXSuite.Director.Components.DisplayTypes.StandardDisplay Display="display" ScaleFactor="@effectiveScale" />
+
+                                        @if (display.DisplayId == hoverDisplayId && SelectedAsset != null)
+                                        {
+                                            <div class="pano-hover-overlay" style="border: 2px dashed red;"></div>
+                                            <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
+                                            <div class="pano-bottom-banner" @onclick="@(() => OnOverride(display.DisplayId))">OVERRIDE</div>
+                                        }
+                                        else if (display.DisplayId == hoverDisplayId)
+                                        {
+                                            <div class="pano-hover-overlay" style="border: 2px solid #16FF00;"></div>
+                                            <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
+                                            <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT SCHEDULE</div>
+                                        }
+                                    </div>
+
+                                    @if (display.DisplayMode == (int)Types.DisplayMode.Override)
+                                    {
+                                        <div class="pano-override-banner" @onclick="(() => BackToSchedule(display.DisplayId))">CANCEL OVERRIDE</div>
+                                    }
+                                </div>
+                            </div>
+
+                            idx++;
+                        }
+                    }
+                }
+
+            </div>
+        </div>
+    </section>
+}
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+    [Parameter] public int? SelectedAsset { get; set; }
+
+    private IList<TblDisplay>? displays;
+    private PanoramaConfiguration? config;
+    private double scale = 0.4;
+    private int? hoverDisplayId;
+    private ElementReference scrollContainerRef;
+    private double availableHeight;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (Location != null)
+        {
+            ParseConfig();
+            using var scope = scopeFactory.CreateScope();
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            await RefreshData(dataContext);
+        }
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Location?.BackgroundImageHeight > 0)
+        {
+            availableHeight = await JSRuntime.InvokeAsync<double>(
+                "panoramaInterop.getAvailableHeight", scrollContainerRef);
+            if (availableHeight > 0)
+            {
+                scale = availableHeight / Location.BackgroundImageHeight.Value;
+                StateHasChanged();
+            }
+        }
+    }
+
+    private void ParseConfig()
+    {
+        if (!string.IsNullOrEmpty(Location?.ExtendedData))
+        {
+            try
+            {
+                config = JsonSerializer.Deserialize<PanoramaConfiguration>(Location.ExtendedData, new JsonSerializerOptions
+                {
+                    PropertyNameCaseInsensitive = true
+                });
+            }
+            catch
+            {
+                config = new PanoramaConfiguration();
+            }
+        }
+        else
+        {
+            config = new PanoramaConfiguration();
+        }
+    }
+
+    private string GetContainerStyle()
+    {
+        var style = "";
+        if (Location?.BackgroundImageHeight > 0)
+            style += $"height:{Location.BackgroundImageHeight * scale}px;";
+        if (Location?.BackgroundImageWidth > 0)
+            style += $"width:{Location.BackgroundImageWidth * scale}px;";
+        if (!string.IsNullOrEmpty(Location?.BackgroundImagePath))
+            style += $"background-image:url('{Location.BackgroundImagePath}');";
+        return style;
+    }
+
+    private async Task RefreshData(IDirectorDBContext dataContext)
+    {
+        if (Location != null)
+        {
+            displays = await dataContext.TblDisplays
+                .Where(x => x.LocationId == Location.LocationId)
+                .Include(d => d.OverrideAsset)
+                .Include(e => e.TblScheduleEvents)
+                .Include(f => f.Constraint)
+                .ToListAsync();
+        }
+    }
+
+    private void OnMouseOver(int id) => hoverDisplayId = id;
+    private void OnMouseOut() => hoverDisplayId = null;
+
+    private async Task OnOverride(int displayId)
+    {
+        if (SelectedAsset != null)
+        {
+            using var scope = scopeFactory.CreateScope();
+            var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+            if (await displayOverrides.SetOverrideAsync(displayId, SelectedAsset!.Value))
+            {
+                await RefreshData(dataContext);
+            }
+        }
+    }
+
+    private async Task BackToSchedule(int displayId)
+    {
+        using var scope = scopeFactory.CreateScope();
+        var dataContext = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        if (await displayOverrides.ReturnToScheduleAsync(displayId))
+        {
+            await RefreshData(dataContext);
+        }
+    }
+}
+
+<style>
+    .pano-scroll-container { overflow-x: auto; overflow-y: hidden; }
+    .pano-image-container { position: relative; background-size: 100% 100%; background-repeat: no-repeat; background-color: #1a1a2e; }
+    .pano-display-wrapper { display: flex; flex-direction: column; align-items: center; }
+    .pano-hover-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 100; pointer-events: none; }
+    .pano-top-banner { position: absolute; top: 0; left: 0; right: 0; background: rgba(0,0,0,0.7); color: white; text-align: center; font-size: 11px; padding: 2px 4px; z-index: 101; pointer-events: none; font-weight: bold; letter-spacing: 0.5px; }
+    .pano-bottom-banner { position: absolute; bottom: 0; left: 0; right: 0; background: rgba(0,113,188,0.9); color: white; text-align: center; font-size: 11px; padding: 4px; z-index: 101; cursor: pointer; font-weight: bold; }
+    .pano-bottom-banner:hover { background: rgba(0,90,150,1); }
+    .pano-override-banner { background: #dc3545; color: white; text-align: center; font-size: 11px; padding: 3px 8px; cursor: pointer; margin-top: 2px; border-radius: 3px; font-weight: bold; }
+    .pano-override-banner:hover { background: #c82333; }
+</style>

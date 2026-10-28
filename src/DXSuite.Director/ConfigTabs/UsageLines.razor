@@ -1,0 +1,15 @@
+@using DXSuite.Shared.Services.Identity
+
+@* Tags and references are listed apart: an orphaned tag is invisible, an orphaned reference degrades a screen. *@
+@if (Usage.DescribeReferences() is { } references)
+{
+    <p style="margin-bottom:6px;">Referenced by @references.</p>
+}
+@if (Usage.DescribeTags() is { } tags)
+{
+    <p style="margin-bottom:6px;">Tagged on @tags.</p>
+}
+
+@code {
+    [Parameter, EditorRequired] public KeyUsageSummary Usage { get; set; } = new();
+}

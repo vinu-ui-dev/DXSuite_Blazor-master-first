@@ -1,0 +1,371 @@
+@inject IDbContextFactory<DesignDbContext> DbFactory
+@inject ITenantContext Tenant
+@inject INetsuiteService NetsuiteService
+
+<div class="dx-modal-overlay" @onclick="CloseAsync">
+    <div class="dx-modal" style="min-width:560px;max-width:660px" @onclick:stopPropagation>
+        <div class="dx-modal-header">
+            <span>Create New NetSuite Item</span>
+            <button class="dx-modal-close" @onclick="CloseAsync">&times;</button>
+        </div>
+
+        @if (!_loaded)
+        {
+            <div class="dx-modal-body"><div class="dx-spinner"></div></div>
+        }
+        else
+        {
+            <div class="dx-modal-body" style="max-height:74vh;overflow-y:auto">
+
+                <!-- Item Name -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Item Name (ID) <span class="cni-req">*</span></label>
+                    <input class="dx-form-control" @bind="_itemName" placeholder="e.g. LG-65UN640" />
+                </div>
+
+                <!-- Purchase Price / Sales Price -->
+                <div class="cni-row">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Purchase Price <span class="cni-req">*</span></label>
+                        <div class="cni-money-wrap">
+                            <span class="cni-dollar">$</span>
+                            <input type="number" step="0.01" min="0" class="dx-form-control" @bind="_cost" />
+                        </div>
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Sales Price <span class="cni-req">*</span></label>
+                        <div class="cni-money-wrap">
+                            <span class="cni-dollar">$</span>
+                            <input type="number" step="0.01" min="0" class="dx-form-control" @bind="_rate" />
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Purchase Description -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Purchase Description <span class="cni-req">*</span></label>
+                    <textarea class="dx-form-control" rows="2" @bind="_purchaseDescription"></textarea>
+                </div>
+
+                <!-- Sales Description (optional, toggle) -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label" style="display:flex;align-items:center;gap:10px">
+                        Sales Description
+                        <label style="font-weight:400;font-size:.79rem;display:flex;align-items:center;gap:5px;cursor:pointer">
+                            <input type="checkbox" @bind="_showSalesDesc" />
+                            Different from purchase description
+                        </label>
+                    </label>
+                    @if (_showSalesDesc)
+                    {
+                        <textarea class="dx-form-control" rows="2" @bind="_salesDescription"></textarea>
+                    }
+                </div>
+
+                <!-- MPN / Manufacturer -->
+                <div class="cni-row">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">MPN</label>
+                        <input class="dx-form-control" @bind="_mpn" placeholder="Manufacturer part number" />
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Manufacturer</label>
+                        <input class="dx-form-control" @bind="_manufacturer" />
+                    </div>
+                </div>
+
+                <!-- Category (DXSuite catalog only — not sent to NetSuite) -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Category</label>
+                    <select class="dx-form-control" @bind="_categoryId">
+                        <option value="0">— None —</option>
+                        @foreach (var cat in _categories)
+                        {
+                            <option value="@cat.CategoryId">@cat.Name</option>
+                        }
+                    </select>
+                </div>
+
+                <!-- Unit of Measure — only shown when account has the feature enabled -->
+                @if (_unitTypes.Count > 0)
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Unit of Measure</label>
+                        <select class="dx-form-control" @bind="_unitTypeId">
+                            <option value="">— Default —</option>
+                            @foreach (var ut in _unitTypes)
+                            {
+                                <option value="@ut.Id">@ut.Name</option>
+                            }
+                        </select>
+                    </div>
+                }
+
+                <!-- Preferred Vendor (debounced search) -->
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Preferred Vendor</label>
+                    <div class="ct-search-wrap" style="position:relative">
+                        <input class="dx-form-control"
+                               value="@(_selectedVendor?.Name ?? _vendorSearch)"
+                               @oninput="OnVendorSearchInput"
+                               placeholder="Search vendors…" />
+                        @if (_selectedVendor is not null)
+                        {
+                            <button class="cni-clear-btn" @onclick="ClearVendor" title="Clear vendor">×</button>
+                        }
+                        @if (_vendorResults.Count > 0 && _selectedVendor is null)
+                        {
+                            <div class="ct-search-results">
+                                @foreach (var v in _vendorResults)
+                                {
+                                    var vLocal = v;
+                                    <div class="ct-search-result" @onclick="() => SelectVendor(vLocal)">@v.Name</div>
+                                }
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @if (_error is not null)
+                {
+                    <div class="dx-alert dx-alert-danger" style="margin-top:8px">@_error</div>
+                }
+            </div>
+
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseAsync" disabled="@_saving">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveAsync" disabled="@_saving">
+                    @if (_saving)
+                    {
+                        <span class="cni-spinner"></span>
+                        <span>Creating…</span>
+                    }
+                    else
+                    {
+                        <span>Create Item</span>
+                    }
+                </button>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    [Parameter, EditorRequired] public EventCallback<CreatedItemInfo> OnCreated { get; set; }
+    [Parameter, EditorRequired] public EventCallback OnClose { get; set; }
+
+    private bool _loaded;
+    private bool _saving;
+    private string? _error;
+
+    // Form fields
+    private string _itemName = "";
+    private decimal _cost;
+    private decimal _rate;
+    private string _purchaseDescription = "";
+    private bool _showSalesDesc;
+    private string _salesDescription = "";
+    private string _mpn = "";
+    private string _manufacturer = "";
+    private string _unitTypeId = "";
+    private List<NetsuiteUnitType> _unitTypes = [];
+    private int _categoryId;
+    private List<TblDesignCategory> _categories = [];
+
+    // Vendor search
+    private string _vendorSearch = "";
+    private List<NetsuiteVendor> _vendorResults = [];
+    private NetsuiteVendor? _selectedVendor;
+    private CancellationTokenSource? _vendorCts;
+
+    protected override async Task OnInitializedAsync()
+    {
+        await using var db = await DbFactory.CreateDbContextAsync();
+        _categories = await db.TblDesignCategories
+            .Where(c => c.CustomerId == Tenant.CustomerCode)
+            .OrderBy(c => c.Name)
+            .ToListAsync();
+
+        try
+        {
+            // Unit types only exist when the NetSuite account has the UoM feature enabled.
+            // Failure here is expected for accounts without it; the field is simply hidden.
+            _unitTypes = await NetsuiteService.GetUnitTypesAsync();
+
+            // Pre-select "Each" — the standard default for physical inventory items.
+            var each = _unitTypes.FirstOrDefault(u =>
+                string.Equals(u.Name, "Each", StringComparison.OrdinalIgnoreCase));
+            if (each is not null)
+                _unitTypeId = each.Id;
+        }
+        catch { /* silently suppress — UoM is optional */ }
+        _loaded = true;
+    }
+
+    private async Task OnVendorSearchInput(ChangeEventArgs e)
+    {
+        _vendorSearch = e.Value?.ToString() ?? "";
+        _selectedVendor = null;
+        _vendorCts?.Cancel();
+        _vendorCts = new CancellationTokenSource();
+        var cts = _vendorCts;
+
+        if (_vendorSearch.Length < 2) { _vendorResults = []; return; }
+
+        try
+        {
+            await Task.Delay(300, cts.Token);
+            _vendorResults = await NetsuiteService.GetVendorsAsync(_vendorSearch, cts.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch { _vendorResults = []; }
+
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void SelectVendor(NetsuiteVendor v)
+    {
+        _selectedVendor = v;
+        _vendorSearch = v.Name;
+        _vendorResults = [];
+    }
+
+    private void ClearVendor()
+    {
+        _selectedVendor = null;
+        _vendorSearch = "";
+        _vendorResults = [];
+    }
+
+    private async Task SaveAsync()
+    {
+        _error = null;
+        if (string.IsNullOrWhiteSpace(_itemName)) { _error = "Item Name is required."; return; }
+        if (string.IsNullOrWhiteSpace(_purchaseDescription)) { _error = "Purchase Description is required."; return; }
+        if (_cost <= 0) { _error = "Purchase Price must be greater than zero."; return; }
+        if (_rate <= 0) { _error = "Sales Price must be greater than zero."; return; }
+
+        _saving = true;
+        try
+        {
+            var purchDesc = _purchaseDescription.Trim();
+            var req = new CreateNetsuiteItemRequest
+            {
+                ItemId = _itemName.Trim(),
+                PurchaseDescription = purchDesc,
+                Cost = _cost,
+                Rate = _rate,
+                // When the user hasn't set a different sales description, default to the purchase
+                // description — NetSuite requires the salesdescription field on inventory items.
+                SalesDescription = _showSalesDesc && !string.IsNullOrWhiteSpace(_salesDescription)
+                    ? _salesDescription.Trim() : purchDesc,
+                Mpn = string.IsNullOrWhiteSpace(_mpn) ? null : _mpn.Trim(),
+                Manufacturer = string.IsNullOrWhiteSpace(_manufacturer) ? null : _manufacturer.Trim(),
+                VendorId = _selectedVendor?.Id,
+                UnitTypeId = string.IsNullOrEmpty(_unitTypeId) ? null : _unitTypeId,
+            };
+
+            var result = await NetsuiteService.CreateItemAsync(req);
+            if (!result.Success)
+            {
+                _error = result.Error ?? "NetSuite returned an error. Check the item details and try again.";
+                return;
+            }
+
+            // Build a NetsuiteItem snapshot from what we submitted so we don't need to re-fetch.
+            var nsItem = new NetsuiteItem
+            {
+                Id = result.NetsuiteItemId!,
+                ItemId = req.ItemId,
+                Manufacturer = req.Manufacturer ?? "",
+                PurchaseDescription = req.PurchaseDescription,
+                Cost = req.Cost,
+                Rate = req.Rate,
+            };
+
+            // Immediately add the new item to the catalog so it's available for worksheet searches.
+            await using var db = await DbFactory.CreateDbContextAsync();
+            var catalogItem = new TblDesignCatalogItem
+            {
+                CustomerId = Tenant.CustomerCode,
+                NetsuiteItemId = nsItem.Id,
+                CategoryId = _categoryId == 0 ? null : _categoryId,
+                Description = nsItem.PurchaseDescription,
+                Manufacturer = nsItem.Manufacturer,
+                ModelName = nsItem.ItemId,
+                Cost = nsItem.Cost,
+                SnapshotJson = System.Text.Json.JsonSerializer.Serialize(nsItem),
+                LastSyncDate = DateTime.UtcNow,
+            };
+            db.TblDesignCatalogItems.Add(catalogItem);
+            await db.SaveChangesAsync();
+
+            await OnCreated.InvokeAsync(new CreatedItemInfo(nsItem, catalogItem.ItemId));
+        }
+        catch (Exception ex)
+        {
+            _error = $"Unexpected error: {ex.Message}";
+        }
+        finally
+        {
+            _saving = false;
+        }
+    }
+
+    private async Task CloseAsync() => await OnClose.InvokeAsync();
+}
+
+<style>
+    .cni-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 0 14px;
+    }
+
+    .cni-money-wrap {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+    }
+
+    .cni-dollar {
+        font-size: .82rem;
+        color: var(--text-muted, #6c757d);
+        flex-shrink: 0;
+    }
+
+    .cni-req {
+        color: #dc2626;
+    }
+
+    .cni-clear-btn {
+        position: absolute;
+        right: 8px;
+        top: 50%;
+        transform: translateY(-50%);
+        background: none;
+        border: none;
+        font-size: 1.15rem;
+        line-height: 1;
+        color: var(--text-muted, #6c757d);
+        cursor: pointer;
+        padding: 2px 4px;
+        z-index: 1;
+    }
+
+    .cni-clear-btn:hover { color: #dc2626; }
+
+    .cni-spinner {
+        display: inline-block;
+        width: 12px;
+        height: 12px;
+        border: 2px solid rgba(255, 255, 255, .35);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: cni-spin .7s linear infinite;
+        margin-right: 6px;
+        vertical-align: middle;
+    }
+
+    @@keyframes cni-spin { to { transform: rotate(360deg); } }
+</style>

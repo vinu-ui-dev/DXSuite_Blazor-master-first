@@ -1,0 +1,1613 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Shared.Authorization
+@using DXSuite.Director.Services
+@using static DXSuite.Director.Models.Types
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Hosting
+@using Microsoft.JSInterop
+@using DXSuite.Director.Models
+@using System.Xml
+@inject IServiceScopeFactory scopeFactory;
+@inject IWebHostEnvironment env;
+@inject ITenantMediaPathResolver MediaPaths
+@inject NavigationManager navMan;
+@inject IJSRuntime JSRuntime
+@inject IDirectorDBContext dbContext
+@inject ISessionState sessionState
+@inject IAssetApprovalService approvalService
+@inject IContentScopeService contentScopeService
+@inject ILogger<Playlist> Logger
+@inject IUploadStateService uploadStateService
+@inject ILocationPlaybackService locationPlayback
+@inject IPublicationInvalidator publicationInvalidator
+@rendermode InteractiveServer
+
+@if(Location != null){
+    <section>
+        <div class="dx-section">
+            <div class="dx-section-header">
+                <h3 class="dx-section-title">
+                    PLAYLIST
+                    @if (isInitialized)
+                    {
+                        var loopStats = ComputeLoopStats();
+                        if (loopStats.Plays > 0)
+                        {
+                            <span class="dx-loop-badge" title="Estimated loop length for the listed items, using plays per loop and item durations">
+                                <i class="bi bi-arrow-repeat"></i> @FormatLoopSeconds(loopStats.Seconds) · @loopStats.Plays plays
+                            </span>
+                        }
+                    }
+                </h3>
+
+                <div style="display:flex; gap: 10px; align-items:center; flex-wrap:wrap;">
+                    @foreach (var cfName in participatingKeys)
+                    {
+                        var cfValues = customFieldFilterValues.ContainsKey(cfName) ? customFieldFilterValues[cfName] : new List<string>();
+                        <div style="position:relative;">
+                            <button class="dx-filter-btn @(customFieldDropdownOpen.GetValueOrDefault(cfName) ? "opened" : "")"
+                                    @onclick="() => ToggleCustomFieldDropdown(cfName)">
+                                @cfName.ToUpper(): @(string.IsNullOrEmpty(customFieldSelectedFilters.GetValueOrDefault(cfName)) ? "ALL" : customFieldSelectedLabels.GetValueOrDefault(cfName, ""))
+                                <svg class="dx-chevron @(customFieldDropdownOpen.GetValueOrDefault(cfName) ? "rotate" : "")" width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                    <path d="M7 10l5 5 5-5" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+                                </svg>
+                            </button>
+                            @if (customFieldDropdownOpen.GetValueOrDefault(cfName))
+                            {
+                                <div class="dx-filter-menu">
+                                    <button @onclick="() => ApplyCustomFieldFilter(cfName, null)">All</button>
+                                    @foreach (var val in cfValues)
+                                    {
+                                        var v = val;
+                                        <button @onclick="() => ApplyCustomFieldFilter(cfName, v)">@v</button>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    }
+                    <button class="dx-btn dx-btn-blue" style="align-content:space-between;" @onclick="@(() => contentPreviewModal!.OpenForPlaylist(Location!.LocationId))">PREVIEW</button>
+                    @if (!isViewOnly && userAccess?.AccessLevel != "partial")
+                    {
+                        @if (showShuffleButton)
+                        {
+                            <button class="dx-btn dx-btn-blue"
+                                    style="align-content:space-between;"
+                                    onclick="@ToggleShuffle">
+                                @(isShuffleEnabled ? "SHUFFLE ON" : "SHUFFLE OFF")
+                            </button>
+                        }
+                        @if (showFadeButton)
+                        {
+                            <button class="dx-btn dx-btn-blue"
+                                    style="align-content:space-between;"
+                                    onclick="@ToggleFade">
+                                @(isFadeEnabled ? "FADE ON" : "FADE OFF")
+                            </button>
+                        }
+                    }
+                    @if (canUpload)
+                    {
+                        @if (showMediaUploadButton)
+                        {
+                            <button class="dx-btn dx-btn-blue" style="align-content:space-between;" onclick="@(() => OpenMediaUploader(null))">ADD MEDIA +</button>
+                        }
+                        @if (showCreateButton)
+                        {
+                            <button class="dx-btn dx-btn-blue" style="align-content:space-between;" @onclick="OpenMediaCreator">CREATE MEDIA +</button>
+                        }
+                    }
+                </div>
+            </div>
+
+            @if (!isInitialized)
+            {
+                <div style="display:flex; justify-content:center; padding:48px 0;">
+                    <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+                </div>
+            }
+            else if (!isShuffleEnabled)
+            {
+                @* NON-SHUFFLE MODE: drag-drop reorder with play order badges *@
+                <div class="dx-asset-container dx-card-align">
+                            @{
+                                var filteredFiles = GetFilteredMediaFiles();
+                                var visibleFiles = displayLimit < filteredFiles.Count
+                                    ? filteredFiles.Take(displayLimit).ToList()
+                                    : filteredFiles;
+                            }
+                            @if (filteredFiles.Count == 0)
+                            {
+                                <div class="dx-no-media">
+                                    <h5>Click ADD MEDIA + to begin assigning content.</h5>
+                                </div>
+                            }
+                            else
+                            {
+                                @for (int i = 0; i < visibleFiles.Count; i++)
+                                {
+                                    var mediaFile = visibleFiles[i];
+                                    var index = i;
+                                    var approval = GetApprovalForMediaFile(mediaFile);
+                                    var showApprovalOverlay = ShouldShowApprovalOverlay(approval);
+                                    var approvalStatusText = GetApprovalStatusText(approval);
+                                    var cardCanEdit = CanEditCard(mediaFile);
+                                    var cardCanDelete = CanDeleteCard(mediaFile);
+
+                                    <div class="dx-asset-card @(draggedFromIndex == index ? "dragging" : "") @(dropTargetIndex == index ? "drag-over" : "")"
+                                         draggable="@((!isViewOnly).ToString().ToLower())"
+                                         @ondragstart="@(() => {draggedMediaFile = mediaFile; draggedFromIndex = index;})"
+                                         @ondragend="@(() => {draggedMediaFile = null;})"
+                                         @ondrop="@(() => HandlePlaylistDrop(mediaFile))"
+                                         ondragover="event.preventDefault();"
+                                         @ondragenter="@(() => {dropTargetIndex = index;})"
+                                         @ondragleave="@(() => {dropTargetIndex = -1;})">
+
+                                        @* Play order badge *@
+                                        <div class="dx-play-order">
+                                            @{
+                                                var playOrderMetadata = mediaFile.Metadata.FirstOrDefault(m => m.Name == "PlayOrder");
+                                                var playOrder = playOrderMetadata?.Value ?? (index + 1).ToString();
+                                            }
+                                            @playOrder
+                                        </div>
+
+                                        @if (!isViewOnly)
+                                        {
+                                            <div class="dx-drag-handle" title="Drag to reorder">
+                                                ::
+                                            </div>
+
+                                            @* Reorder buttons for touch devices, where HTML5 drag events never fire *@
+                                            <div class="pl-move-controls">
+                                                <button type="button" class="pl-move-btn" title="Move earlier"
+                                                        disabled="@(index == 0)"
+                                                        @onclick="() => MoveMediaFile(index, -1)">&#9650;</button>
+                                                <button type="button" class="pl-move-btn" title="Move later"
+                                                        disabled="@(index == visibleFiles.Count - 1)"
+                                                        @onclick="() => MoveMediaFile(index, 1)">&#9660;</button>
+                                            </div>
+                                        }
+
+                                        <article class="collapsed" id="@mediaFile.DiskPath" name="mediaAsset">
+                                            @RenderMediaPreview(mediaFile, showApprovalOverlay, approvalStatusText)
+                                            @RenderMetadataAndButtons(mediaFile, cardCanEdit, cardCanDelete, approval)
+                                        </article>
+                                    </div>
+                                }
+                                @if (filteredFiles.Count > displayLimit)
+                                {
+                                    <div class="dx-playlist-show-more">
+                                        Showing first @displayLimit of @filteredFiles.Count items
+                                        <button class="dx-btn dx-btn-blue btn-sm" @onclick="ShowAllItems">
+                                            Show all @filteredFiles.Count
+                                        </button>
+                                    </div>
+                                }
+                            }
+                </div>
+            }
+            else
+            {
+                @* SHUFFLE MODE: no drag handles, no play order badges *@
+                <div class="dx-asset-container dx-card-align">
+                            @{
+                                var shuffleFilteredFiles = GetFilteredMediaFiles();
+                                var shuffleVisibleFiles = displayLimit < shuffleFilteredFiles.Count
+                                    ? shuffleFilteredFiles.Take(displayLimit).ToList()
+                                    : shuffleFilteredFiles;
+                            }
+                            @if (shuffleFilteredFiles.Count == 0)
+                            {
+                                <div class="dx-no-media">
+                                    <h5>Click ADD MEDIA + to begin assigning content.</h5>
+                                </div>
+                            }
+                            else
+                            {
+                                @foreach (var mediaFile in shuffleVisibleFiles)
+                                {
+                                    var approval = GetApprovalForMediaFile(mediaFile);
+                                    var showApprovalOverlay = ShouldShowApprovalOverlay(approval);
+                                    var approvalStatusText = GetApprovalStatusText(approval);
+                                    var cardCanEdit = CanEditCard(mediaFile);
+                                    var cardCanDelete = CanDeleteCard(mediaFile);
+
+                                    <div class="dx-asset-card">
+                                        <article class="collapsed" id="@mediaFile.DiskPath" name="mediaAsset">
+                                            @RenderMediaPreview(mediaFile, showApprovalOverlay, approvalStatusText)
+                                            @RenderMetadataAndButtons(mediaFile, cardCanEdit, cardCanDelete, approval)
+                                        </article>
+                                    </div>
+                                }
+                                @if (shuffleFilteredFiles.Count > displayLimit)
+                                {
+                                    <div class="dx-playlist-show-more">
+                                        Showing first @displayLimit of @shuffleFilteredFiles.Count items
+                                        <button class="dx-btn dx-btn-blue btn-sm" @onclick="ShowAllItems">
+                                            Show all @shuffleFilteredFiles.Count
+                                        </button>
+                                    </div>
+                                }
+                            }
+                </div>
+            }
+        </div>
+    </section>
+
+    @if (showLiveView)
+    {
+        <LivePlayersPanel LocationId="Location.LocationId" />
+    }
+}
+
+<MediaAssetUploader @ref="mediaUploaderModal" OnAssetSubmit="OnUploadComplete">
+
+</MediaAssetUploader>
+
+<ContentReplaceModal @ref="replaceModal" OnReplaced="OnUploadComplete" />
+
+<AssetMetadataEditModal @ref="metadataEditModal" OnSaved="OnMetadataSaved" />
+
+<ContentPreviewModal @ref="contentPreviewModal" />
+
+<AssetDeleteConfirmation @ref="assetDeleteModal" OnAssetDeletedMediaFile="DeleteMediaFile">
+
+</AssetDeleteConfirmation>
+
+@code {
+    [Parameter] public TblLocation? Location { get; set; }
+
+    public double scaleFactor { get; set; } = 0.2;
+
+    private MediaAssetUploader? mediaUploaderModal { get; set; }
+    private AssetDeleteConfirmation? assetDeleteModal { get; set; }
+
+    private string? baseDirectory;
+
+    List<MediaFile> MediaFiles = new List<MediaFile>();
+
+    // True once OnInitializedAsync has finished the first full load
+    private bool isInitialized = false;
+
+    private ContentReplaceModal? replaceModal;
+    private AssetMetadataEditModal? metadataEditModal;
+    private ContentPreviewModal? contentPreviewModal;
+    private bool requireOverwriteApproval;
+    private bool showLiveView;
+
+    // Maximum cards rendered at once; "Show all" sets this to int.MaxValue
+    private const int DefaultDisplayLimit = 50;
+    private int displayLimit = DefaultDisplayLimit;
+
+    private double? contentHeight;
+    private double? contentWidth;
+
+    private bool alignAssetsVertically = false;
+
+    private bool isShuffleEnabled = false;
+    private bool isFadeEnabled = true;
+    private bool showCreateButton = false;
+    private bool showMediaUploadButton = true;
+
+    private int? imageDurationSeconds;
+
+    // Button visibility flags (controlled via Location edit modal)
+    private bool showShuffleButton = true;
+    private bool showFadeButton = true;
+
+    // Access control flags
+    private ResolvedAccess? userAccess;
+    private bool canUpload;
+    private bool canEdit;
+    private bool canDelete;
+    private bool isViewOnly;
+
+    // Role permission grants, preloaded because visibility filters run in sync lambdas
+    private bool permUpload;
+    private bool permEdit;
+    private bool permDelete;
+
+    // Content approval workflow
+    private Dictionary<string, TblAssetApproval> assetApprovals = new();
+
+    // Content scope and the location's participating keys, both read from the rule table
+    private ContentScopeContext? contentScope;
+    private Dictionary<int, IReadOnlyDictionary<string, IReadOnlySet<string>>> assetValuesMap = new();
+
+    // False while the tag maps are missing or being rebuilt. A file absent from the maps reads as legacy
+    // content and is visible, so an evaluated scope shows nothing until they are whole.
+    private bool assetValuesLoaded;
+    private Dictionary<string, int> assetPathToIdMap = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<string, (int AssetId, int? UserId, int? GroupId)> assetOwnership = new(StringComparer.OrdinalIgnoreCase);
+    private Dictionary<int, string> ownerGroupNames = new();
+    private HashSet<int> memberGroupIds = new();
+
+    private IReadOnlyList<string> participatingKeys = [];
+
+    // Per-key filter state for the participating keys
+    private Dictionary<string, string?> customFieldSelectedFilters = new();
+    private Dictionary<string, string> customFieldSelectedLabels = new();
+    private Dictionary<string, bool> customFieldDropdownOpen = new();
+    private Dictionary<string, List<string>> customFieldFilterValues = new();
+
+    // Drag-drop state
+    private MediaFile? draggedMediaFile = null;
+    private int draggedFromIndex = -1;
+    private int dropTargetIndex = -1;
+
+    protected override async Task OnInitializedAsync()
+    {
+        if(Location is not null)
+        {
+            if (!string.IsNullOrWhiteSpace(Location.BackgroundImageHeight.ToString()) || !string.IsNullOrWhiteSpace(Location.BackgroundImageWidth.ToString()))
+            {
+                contentHeight = (double)Location.BackgroundImageHeight;
+                contentWidth = (double)Location.BackgroundImageWidth;
+                showCreateButton = true;
+            }
+
+            isShuffleEnabled = Location.EnableShuffle;
+            isFadeEnabled = Location.EnableFade;
+
+            // Load button visibility flags set by admins via the Location edit modal
+            var extData = ExtendedDataHelper.Parse<LocationExtendedData>(Location.ExtendedData);
+            showShuffleButton = extData?.ShowShuffleButton ?? true;
+            showFadeButton    = extData?.ShowFadeButton    ?? true;
+            // Respect the admin toggles — CreateMedia requires both valid dimensions AND the resolved flag
+            var uploadTypes = UploadTypeSettings.Resolve(null, extData);
+            showMediaUploadButton = uploadTypes.MediaUpload;
+            if (showCreateButton && !uploadTypes.CreateMedia)
+                showCreateButton = false;
+            imageDurationSeconds = extData?.ImageDurationSeconds;
+            requireOverwriteApproval = (extData?.RequireApprovalOnOverwrite ?? false) && Location.EnableContentApproval;
+            showLiveView = extData?.ShowLiveView ?? false;
+
+            // Resolve access control for this location
+            permUpload = await sessionState.HasPermissionAsync(PermissionKeys.ContentUpload);
+            permEdit = await sessionState.HasPermissionAsync(PermissionKeys.ContentEdit);
+            permDelete = await sessionState.HasPermissionAsync(PermissionKeys.ContentDelete);
+            ResolveAccessFlags();
+
+            await LoadShuffleState();
+            await LoadFadeState();
+            await LoadApprovalData();
+            await LoadOwnershipAsync();
+            await LoadContentScopeAsync();
+        }
+
+        await UpdateMediaFiles();
+
+        isInitialized = true;
+    }
+
+    // Compute access control flags once from the session's location access map
+    private void ResolveAccessFlags()
+    {
+        sessionState.LocationAccessMap.TryGetValue(Location!.LocationId, out userAccess);
+        bool isAdmin = sessionState.RoleEnum == Roles.Role.Admin;
+
+        if (userAccess == null || userAccess.AccessLevel == "full" || isAdmin)
+        {
+            canUpload = true; canEdit = true; canDelete = true; isViewOnly = false;
+        }
+        else if (userAccess.AccessLevel == "partial")
+        {
+            canUpload = true; canEdit = true; canDelete = true; isViewOnly = false;
+        }
+        else // "view"
+        {
+            canUpload = false; canEdit = false; canDelete = false; isViewOnly = true;
+        }
+
+        // Location access grants the ceiling; role permission grants can only narrow it
+        canUpload &= permUpload;
+        canEdit &= permEdit;
+        canDelete &= permDelete;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender && Location != null && mediaUploaderModal != null)
+        {
+            var pendingId = uploadStateService.PendingExpandTaskId;
+            if (pendingId.HasValue)
+            {
+                var task = uploadStateService.GetTask(pendingId.Value);
+                if (task != null && task.LocationId == Location.LocationId)
+                {
+                    mediaUploaderModal.ResumeFromTask(task);
+                    await InvokeAsync(StateHasChanged);
+                }
+            }
+        }
+    }
+
+    // Ownership gates edit, replace, delete and resubmit; scope only decides what is listed. An admin is
+    // treated as full access whatever rule applies.
+    private string? EffectiveAccessLevel =>
+        sessionState.RoleEnum == Roles.Role.Admin ? "full" : userAccess?.AccessLevel;
+
+    private bool CanControlCard(MediaFile mediaFile)
+    {
+        var owner = GetOwnership(mediaFile);
+        return AssetOwnership.CanControl(EffectiveAccessLevel, sessionState.User?.UserId ?? 0, memberGroupIds,
+            owner.UserId, owner.GroupId);
+    }
+
+    private bool CanEditCard(MediaFile mediaFile) => canEdit && CanControlCard(mediaFile);
+
+    private bool CanDeleteCard(MediaFile mediaFile) => canDelete && CanControlCard(mediaFile);
+
+    // The reason sits above the disabled buttons. Nothing is shown when a control is available, or when
+    // view access hides the action row entirely.
+    private string? OwnershipLockReason(MediaFile mediaFile)
+    {
+        var owner = GetOwnership(mediaFile);
+        return AssetOwnership.LockReason(EffectiveAccessLevel, sessionState.User?.UserId ?? 0, memberGroupIds,
+            owner.UserId, owner.GroupId, owner.GroupId is int g ? ownerGroupNames.GetValueOrDefault(g) : null);
+    }
+
+    // Keyed by AssetPath, the same way the rest of this page matches a file to its row.
+    private (int? AssetId, int? UserId, int? GroupId) GetOwnership(MediaFile mediaFile) =>
+        assetOwnership.TryGetValue($"/MediaAssets/{Location?.LocationId}/{Path.GetFileName(mediaFile.DiskPath)}", out var owner)
+            ? owner
+            : (null, null, null);
+
+    private async Task LoadOwnershipAsync()
+    {
+        if (Location == null) return;
+        try
+        {
+            var owners = await dbContext.TblAssets.AsNoTracking()
+                .Where(a => a.LocationId == Location.LocationId && !a.IsDeleted)
+                .OrderBy(a => a.AssetId)
+                .Select(a => new { a.AssetId, a.AssetPath, a.UploadedByUserId, a.UploadedByUserGroupId })
+                .ToListAsync();
+            // A path held by two live rows resolves to the newer one, as the manifest does.
+            assetOwnership = owners
+                .Where(o => !string.IsNullOrEmpty(o.AssetPath))
+                .GroupBy(o => o.AssetPath, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => (g.Last().AssetId, g.Last().UploadedByUserId, g.Last().UploadedByUserGroupId), StringComparer.OrdinalIgnoreCase);
+
+            var groupIds = owners.Where(o => o.UploadedByUserGroupId.HasValue).Select(o => o.UploadedByUserGroupId!.Value).Distinct().ToList();
+            ownerGroupNames = groupIds.Count == 0
+                ? new Dictionary<int, string>()
+                : await dbContext.TblUserGroups.AsNoTracking()
+                    .Where(g => groupIds.Contains(g.UserGroupId))
+                    .ToDictionaryAsync(g => g.UserGroupId, g => g.GroupName);
+
+            var userId = sessionState.User?.UserId ?? 0;
+            memberGroupIds = (await dbContext.TblUserGroupMemberships.AsNoTracking()
+                .Where(m => m.UserId == userId)
+                .Select(m => m.UserGroupId)
+                .ToListAsync()).ToHashSet();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading asset ownership for location {LocationId}", Location.LocationId);
+        }
+    }
+
+    // --- Unified card rendering helpers ---
+
+    // Consolidated media preview: handles expired, approval overlay, and normal states for both video and image
+    private RenderFragment RenderMediaPreview(MediaFile mediaFile, bool showApprovalOverlay, string approvalStatusText, bool isCardReadOnly = false) => __builder =>
+    {
+        bool isVideo = mediaFile.WebPath.ToUpper().Contains(".MP4") || mediaFile.WebPath.ToUpper().Contains(".AVI");
+        var thumbnailPath = isVideo ? GetThumbnailPath(mediaFile.DiskPath, mediaFile.WebPath) : null;
+
+        string? overlayText = mediaFile.IsExpired
+            ? "CONTENT EXPIRED"
+            : (showApprovalOverlay ? approvalStatusText : null);
+
+        string imageOpacity = mediaFile.IsExpired
+            ? "opacity:0.5;"
+            : (showApprovalOverlay ? "opacity:0.5; filter: grayscale(100%);" : "");
+
+        bool isApprovalOverlay = !mediaFile.IsExpired && showApprovalOverlay;
+
+        <div class="dx-asset-preview">
+            <h3>@mediaFile.Metadata.FirstOrDefault(m => m.Name == "FileName")?.Value</h3>
+
+            <div class="dx-asset-thumb-well">
+                @* draggable="false" on the anchor/images keeps thumbnail grabs from
+                   starting a native drag instead of the card's reorder drag *@
+                @if (isVideo)
+                {
+                    <a href="@mediaFile.WebPath" target="_blank" draggable="false">
+                        <div class="dx-thumb-fill" style="@imageOpacity">
+                            @if (!string.IsNullOrEmpty(thumbnailPath))
+                            {
+                                <img src="@thumbnailPath" class="dx-asset-thumb-video" alt="Video Thumbnail" draggable="false" />
+                            }
+                            else
+                            {
+                                <div class="dx-video-placeholder">
+                                    <div class="dx-video-placeholder-inner">▶</div>
+                                </div>
+                            }
+                        </div>
+                    </a>
+                }
+                else
+                {
+                    <div class="dx-thumb-fill" style="@imageOpacity">
+                        <img src="@mediaFile.WebPath" name="@mediaFile.WebPath" draggable="false" />
+                    </div>
+                }
+
+                @if (overlayText != null)
+                {
+                    @if (isApprovalOverlay)
+                    {
+                        <div class="dx-approval-overlay">
+                            <span>@overlayText</span>
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="dx-expired-overlay">
+                            <span>@overlayText</span>
+                        </div>
+                    }
+                }
+            </div>
+
+            @if (isViewOnly || isCardReadOnly)
+            {
+                <div class="dx-readonly-badge">VIEW ONLY</div>
+            }
+        </div>
+    };
+
+    // Metadata table and action buttons
+    private RenderFragment RenderMetadataAndButtons(MediaFile mediaFile, bool cardCanEdit, bool cardCanDelete, TblAssetApproval? approval) => __builder =>
+    {
+        var isDeclined = approval?.ApprovalStatus == (int)ApprovalStatus.Declined;
+        var canResubmit = isDeclined && CanControlCard(mediaFile);
+        var lockReason = OwnershipLockReason(mediaFile);
+        <div class="dx-asset-info">
+            @{
+                var startDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartDate");
+                var hasStartDate = DateTime.TryParse(startDateField?.Value, out DateTime parsedStartDate);
+                var startDateText = hasStartDate ? parsedStartDate.ToString("MM/dd/yyyy") : "Now";
+                var endDateField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndDate");
+                var hasEndDate = DateTime.TryParse(endDateField?.Value, out DateTime parsedEndDate);
+                var endDateText = hasEndDate ? parsedEndDate.ToString("MM/dd/yyyy") : "Never";
+
+                var startTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "StartTime")?.Value;
+                var hasStartTime = DateTime.TryParse(startTimeMetadata, out DateTime parsedStartTime);
+                var endTimeMetadata = mediaFile.Metadata.FirstOrDefault(x => x.Name == "EndTime")?.Value;
+                var hasEndTime = DateTime.TryParse(endTimeMetadata, out DateTime parsedEndTime);
+                var startTimeText = hasStartTime ? parsedStartTime.ToString("h:mm tt") : "12:00 AM";
+                var endTimeText = hasEndTime ? parsedEndTime.ToString("h:mm tt") : "11:59 PM";
+
+                var daysField = mediaFile.Metadata.FirstOrDefault(x => x.Name == "Days");
+                var daysDisplay = (daysField != null && !string.IsNullOrEmpty(daysField.Value))
+                    ? daysField.Value : "Every Day";
+                var hasDays = daysDisplay != "Every Day";
+            }
+            <div class="dx-sched-chips">
+                @if (!hasStartDate && !hasEndDate && !hasStartTime && !hasEndTime && !hasDays)
+                {
+                    <span class="dx-sched-chip dx-sched-chip-muted">
+                        <i class="bi bi-calendar-check"></i> Always plays
+                    </span>
+                }
+                else
+                {
+                    @if (hasStartDate || hasEndDate)
+                    {
+                        <span class="dx-sched-chip" title="Date range">
+                            <i class="bi bi-calendar-event"></i>
+                            <span id="@String.Format("{0}_{1}", mediaFile.DiskPath, "StartDate")">@startDateText</span>
+                            <span>to</span>
+                            <span id="@String.Format("{0}_{1}", mediaFile.DiskPath, "EndDate")">@endDateText</span>
+                        </span>
+                    }
+                    @if (hasStartTime || hasEndTime)
+                    {
+                        <span class="dx-sched-chip" title="Daily time window">
+                            <i class="bi bi-clock"></i>
+                            <span id="@String.Format("{0}_{1}", mediaFile.DiskPath, "StartTime")">@startTimeText</span>
+                            <span>to</span>
+                            <span id="@String.Format("{0}_{1}", mediaFile.DiskPath, "EndTime")">@endTimeText</span>
+                        </span>
+                    }
+                    @if (hasDays)
+                    {
+                        <span class="dx-sched-chip" title="Active days">
+                            <i class="bi bi-calendar-week"></i>
+                            @foreach (var day in daysDisplay.Split(',', StringSplitOptions.TrimEntries))
+                            {
+                                <span class="dx-day-badge">@day</span>
+                            }
+                        </span>
+                    }
+                }
+            </div>
+            @* One element per card section, so a card can hand its sections to the container's
+               row tracks and line them up with its neighbours (see .dx-card-align). *@
+            <div class="dx-asset-meta-block">
+            @if (participatingKeys.Count > 0)
+            {
+                <div class="dx-metadata-divider">METADATA</div>
+                <div class="dx-meta-list">
+                    @foreach (var fieldName in participatingKeys)
+                    {
+                        var customVal = GetCardMetadataForMediaFile(mediaFile, fieldName);
+                        <div class="dx-meta-line">
+                            <span class="dx-meta-key">@fieldName.ToUpper()</span>
+                            @if (customVal is not { } shownValues)
+                            {
+                                <span class="dx-meta-val dx-meta-val-none">None</span>
+                            }
+                            else
+                            {
+                                <span class="dx-meta-val">@shownValues.Shown</span>
+                                @if (shownValues.Hidden > 0)
+                                {
+                                    <span class="dx-meta-more">+@shownValues.Hidden</span>
+                                }
+                            }
+                        </div>
+                    }
+                </div>
+            }
+            </div>
+            <div class="dx-asset-footer">
+            @* Weights only apply to shuffled playlists; ordered playlists express repeats
+               by uploading the item at each position it should play *@
+            @if (isShuffleEnabled)
+            {
+                var itemWeight = GetWeight(mediaFile);
+                <div class="dx-weight-row">
+                    <span class="dx-weight-label">Plays per loop</span>
+                    <div class="dx-weight-stepper">
+                        <button type="button" disabled="@(isViewOnly || !cardCanEdit || itemWeight <= 1)"
+                                @onclick="() => ChangeWeightAsync(mediaFile, -1)">-</button>
+                        <span class="dx-weight-value">@itemWeight</span>
+                        <button type="button" disabled="@(isViewOnly || !cardCanEdit || itemWeight >= 10)"
+                                @onclick="() => ChangeWeightAsync(mediaFile, 1)">+</button>
+                    </div>
+                </div>
+            }
+            @if (!isViewOnly)
+            {
+                @if (lockReason != null)
+                {
+                    <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:4px;">@lockReason</div>
+                }
+                <div class="dx-asset-actions">
+                    @if (canResubmit)
+                    {
+                        <button name="@mediaFile.WebPath"
+                                class="dx-btn dx-btn-blue"
+                                @onclick="@(() => OpenResubmitUploader(mediaFile, approval!))">
+                            Resubmit
+                        </button>
+                    }
+                    else
+                    {
+                        <button name="@mediaFile.WebPath"
+                                class="@(cardCanEdit ? "dx-btn dx-btn-blue" : "dx-btn dx-btn-gray")"
+                                style="@(!cardCanEdit ? "opacity:0.5; cursor:default;" : "")"
+                                disabled="@(!cardCanEdit)"
+                                @onclick="@(() => { if (cardCanEdit) OpenMediaUploader(mediaFile); })">
+                            Edit
+                        </button>
+                    }
+                    @if (GetOwnership(mediaFile).AssetId is int metadataAssetId)
+                    {
+                        <button class="@(cardCanEdit ? "dx-btn dx-btn-blue" : "dx-btn dx-btn-gray")"
+                                style="@(!cardCanEdit ? "opacity:0.5; cursor:default;" : "")"
+                                disabled="@(!cardCanEdit)"
+                                @onclick="@(() => { if (cardCanEdit) metadataEditModal?.Open(metadataAssetId, Location!.LocationId, mediaFile.Metadata.FirstOrDefault(m => m.Name == "FileName")?.Value ?? Path.GetFileName(mediaFile.DiskPath), true, null); })">
+                            Edit metadata
+                        </button>
+                    }
+                    @if (canUpload && !canResubmit)
+                    {
+                        <button class="@(cardCanEdit ? "dx-btn dx-btn-blue" : "dx-btn dx-btn-gray")"
+                                style="@(!cardCanEdit ? "opacity:0.5; cursor:default;" : "")"
+                                disabled="@(!cardCanEdit)"
+                                @onclick="@(() => { if (cardCanEdit) replaceModal?.OpenForPlaylistFile(Location!.LocationId, mediaFile, requireOverwriteApproval); })">
+                            Replace
+                        </button>
+                    }
+                    <button class="@(cardCanDelete ? "dx-btn dx-btn-red" : "dx-btn dx-btn-gray")"
+                            name="@mediaFile.DiskPath"
+                            style="@(!cardCanDelete ? "opacity:0.5; cursor:default;" : "")"
+                            disabled="@(!cardCanDelete)"
+                            @onclick="@(async () => {
+                        if (cardCanDelete)
+                        {
+                            await JSRuntime.InvokeVoidAsync("unloadUploaderVideo");
+                            await Task.Delay(100);
+                            await assetDeleteModal.Open(0, Location.LocationId, mediaFile);
+                        }
+                    })">
+                        Delete
+                    </button>
+                </div>
+            }
+            </div>
+        </div>
+    };
+
+    // --- File operations ---
+
+    private async Task DeleteMediaFile(MediaFile mediaFileToDelete)
+    {
+        try
+        {
+            await JSRuntime.InvokeVoidAsync("unloadUploaderVideo");
+            await Task.Delay(2000);
+
+            if (!string.IsNullOrEmpty(mediaFileToDelete.DiskPath))
+            {
+                // Delete the sidecar metadata first — this prevents the file from
+                // reappearing in UpdateMediaFiles even if the media file itself is
+                // temporarily locked by an active device download.
+                var metadataPath = mediaFileToDelete.DiskPath + ".metadata";
+                if (File.Exists(metadataPath))
+                    await DeleteMediaFileWithRetry(metadataPath);
+
+                // Best-effort delete of the media file. If it's locked (e.g. being
+                // served to a device right now) log a warning and continue — the
+                // sidecar is already gone so it won't reappear in the playlist.
+                try
+                {
+                    await DeleteMediaFileWithRetry(mediaFileToDelete.DiskPath);
+                }
+                catch (IOException ex)
+                {
+                    Logger.LogWarning(ex, "Media file locked during delete for {Path} — sidecar removed, file will be orphaned on disk", mediaFileToDelete.DiskPath);
+                }
+
+                // Delete video thumbnail if present (stored in Thumbnails/ subfolder)
+                var thumbnailPath = Path.Combine(
+                    Path.GetDirectoryName(mediaFileToDelete.DiskPath)!,
+                    "Thumbnails",
+                    Path.GetFileNameWithoutExtension(mediaFileToDelete.DiskPath) + ".png");
+                if (File.Exists(thumbnailPath))
+                    await DeleteMediaFileWithRetry(thumbnailPath);
+            }
+
+            // Hard-delete the TblAsset record — playlist content is either present or gone
+            if (!string.IsNullOrEmpty(mediaFileToDelete.WebPath) && Location != null)
+            {
+                var asset = await dbContext.TblAssets
+                    .Where(a => a.AssetPath == mediaFileToDelete.WebPath && a.LocationId == Location.LocationId)
+                    .FirstOrDefaultAsync();
+                if (asset != null)
+                {
+                    await approvalService.WithdrawPendingForAssetAsync(asset.AssetId);
+                    dbContext.TblAssets.Remove(asset);
+                    await dbContext.SaveChangesAsync();
+                    publicationInvalidator.AssetsChanged([asset.LocationId]);
+                }
+            }
+
+            MediaFiles.Remove(mediaFileToDelete);
+            StateHasChanged();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Final delete failed");
+        }
+    }
+
+    private async Task DeleteMediaFileWithRetry(string path, int maxAttempts = 5, int delayMs = 500)
+    {
+        for (int attempt = 1; attempt <= maxAttempts; attempt++)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+                return;
+            }
+            catch (IOException) when (attempt < maxAttempts)
+            {
+                await Task.Delay(delayMs);
+            }
+        }
+
+        throw new IOException($"File still locked after {maxAttempts} attempts: {path}");
+    }
+
+    // The tags are already saved, so a failed reload is logged here rather than reported as a failed save.
+    private async Task OnMetadataSaved()
+    {
+        try
+        {
+            await LoadContentMetadataMapAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error reloading content metadata after an edit");
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async Task OnUploadComplete()
+    {
+        await LoadApprovalData();
+        await LoadOwnershipAsync();
+        await UpdateMediaFiles();
+    }
+
+    private async Task UpdateMediaFiles()
+    {
+        try
+        {
+            DateTime now = DateTime.Now;
+            baseDirectory = MediaPaths.GetRoot();
+
+            if (baseDirectory != null && Location != null)
+            {
+                string uploadDirectory = Path.Combine(baseDirectory, "MediaAssets", Location.LocationId.ToString());
+
+                List<MediaFile> tempMediaFiles = new List<MediaFile>();
+
+                Directory.CreateDirectory(uploadDirectory);
+
+                foreach (string file in Directory.GetFiles(uploadDirectory, "", SearchOption.AllDirectories).Where(s => s.EndsWith(".metadata") == false && s.EndsWith(".db") == false))
+                {
+                    List<MetadataField> metadata = new List<MetadataField>();
+                    string metadataFilePath = file + ".metadata";
+
+                    if (File.Exists(metadataFilePath))
+                    {
+                        XmlDocument doc = new XmlDocument();
+                        doc.Load(metadataFilePath);
+                        XmlNodeList nodes = doc.SelectNodes("usermetadata");
+
+                        foreach (XmlNode node in nodes)
+                        {
+                            foreach (XmlNode line in node.ChildNodes)
+                            {
+                                if (line.NodeType == XmlNodeType.Element && line.Name == "field")
+                                {
+                                    var nameAttr = line.Attributes["name"];
+                                    var dataTypeAttr = line.Attributes["datatype"];
+                                    var valueAttr = line.Attributes["value"];
+
+                                    if (nameAttr != null && dataTypeAttr != null && valueAttr != null)
+                                    {
+                                        MetadataField mdf = new MetadataField()
+                                            {
+                                                Name = nameAttr.Value,
+                                                DataType = dataTypeAttr.Value,
+                                                Value = valueAttr.Value
+                                            };
+                                        metadata.Add(mdf);
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    MetadataField? location = metadata.Where(x => x.Name == "Location").FirstOrDefault();
+
+                    if (location != null && location.Value == Location.LocationId.ToString())
+                    {
+                        bool isExpired = false;
+                        DateTime? parsedEndDate = null;
+
+                        MetadataField? endDate = metadata.Where(x => x.Name == "EndDate").FirstOrDefault();
+                        if (endDate != null && DateTime.TryParse(endDate.Value, out DateTime parsedDate))
+                        {
+                            parsedEndDate = parsedDate;
+                            // Expire only after the end date has fully passed (compare date only)
+                            if (parsedDate.Date < now.Date)
+                            {
+                                isExpired = true;
+                            }
+                        }
+                        MediaFile mf = new MediaFile()
+                            {
+                                WebPath = String.Format(@"/MediaAssets/{0}/{1}", Location.LocationId, Path.GetFileName(file)),
+                                DiskPath = file,
+                                Metadata = metadata,
+                                IsExpired = isExpired,
+                                EndDate = parsedEndDate
+                            };
+                        tempMediaFiles.Add(mf);
+                    }
+                }
+
+                // Sort by PlayOrder first, then by existing criteria
+                MediaFiles = tempMediaFiles
+                    .OrderBy(x =>
+                    {
+                        var playOrderMetadata = x.Metadata.FirstOrDefault(m => m.Name == "PlayOrder");
+                        if (playOrderMetadata != null && int.TryParse(playOrderMetadata.Value, out int order))
+                        {
+                            return order;
+                        }
+                        return int.MaxValue;
+                    })
+                    .ThenBy(x => x.EndDate.HasValue ? 0 : 1)
+                    .ThenBy(x => x.EndDate ?? DateTime.MaxValue)
+                    .ThenBy(x => x.Metadata.FirstOrDefault(m => m.Name == "FileName")?.Value)
+                    .ToList();
+
+                await AssignMissingPlayOrders();
+
+                if (participatingKeys.Count > 0 || contentScope?.IsEvaluated == true)
+                {
+                    await LoadContentMetadataMapAsync();
+                }
+
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating media files");
+        }
+    }
+
+    private void UpdateAspectRatio()
+    {
+        if (contentHeight.HasValue && contentWidth.HasValue)
+        {
+            double? aspectRatio = contentHeight / contentWidth;
+            if (aspectRatio < 0.3)
+            {
+                alignAssetsVertically = true;
+            }
+        }
+    }
+
+    private async Task OpenMediaUploader(MediaFile? editMediaFile)
+    {
+        sessionState.LocationAccessMap.TryGetValue(Location!.LocationId, out var access);
+
+        var config = new MediaUploadConfig
+        {
+            UploadFolder = baseDirectory,
+            LocationId = Location.LocationId,
+            ConstraintId = 0,
+            ExpectedWidth = contentWidth,
+            ExpectedHeight = contentHeight,
+            EditMediaFile = editMediaFile,
+            AddToSql = true,
+            IsSchedulable = true,
+            EnableContentApproval = Location.EnableContentApproval,
+            UserAccess = access,
+            EnablePlaylistPreview = true,
+            PlaylistFiles = MediaFiles,
+            ImageDurationSeconds = imageDurationSeconds,
+        };
+
+        await mediaUploaderModal.Open(config);
+    }
+
+    private async Task OpenResubmitUploader(MediaFile editMediaFile, TblAssetApproval approval)
+    {
+        sessionState.LocationAccessMap.TryGetValue(Location!.LocationId, out var access);
+
+        var config = new MediaUploadConfig
+        {
+            UploadFolder = baseDirectory,
+            LocationId = Location.LocationId,
+            ConstraintId = 0,
+            ExpectedWidth = contentWidth,
+            ExpectedHeight = contentHeight,
+            EditMediaFile = editMediaFile,
+            AddToSql = true,
+            IsSchedulable = true,
+            EnableContentApproval = Location.EnableContentApproval,
+            UserAccess = access,
+            ExistingApproval = approval,
+        };
+
+        await mediaUploaderModal.Open(config);
+    }
+
+    private string? GetThumbnailPath(string mediaDiskPath, string mediaWebPath)
+    {
+        var directory = Path.GetDirectoryName(mediaDiskPath);
+        var fileNameWithoutExt = Path.GetFileNameWithoutExtension(mediaDiskPath);
+        var thumbnailPath = Path.Combine(directory!, "Thumbnails", $"{fileNameWithoutExt}.png");
+
+        if (System.IO.File.Exists(thumbnailPath))
+        {
+            var webThumbnailPath = Path.Combine(Path.GetDirectoryName(mediaWebPath)!, "Thumbnails", $"{fileNameWithoutExt}.png").Replace("\\", "/");
+            return webThumbnailPath;
+        }
+
+        return null;
+    }
+
+    // --- Shuffle / Fade toggles ---
+
+    private async Task ToggleShuffle()
+    {
+        try
+        {
+            if (Location != null)
+            {
+                if (await locationPlayback.ToggleShuffleAsync(Location.LocationId) is bool enabled)
+                {
+                    isShuffleEnabled = enabled;
+                    Location.EnableShuffle = enabled;
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling shuffle");
+        }
+    }
+
+    private async Task LoadShuffleState()
+    {
+        try
+        {
+            if (Location != null)
+            {
+                var location = await dbContext.TblLocations.AsNoTracking().FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+                if (location != null)
+                {
+                    isShuffleEnabled = location.EnableShuffle;
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading shuffle state");
+        }
+    }
+
+    private async Task ToggleFade()
+    {
+        try
+        {
+            if (Location != null)
+            {
+                if (await locationPlayback.ToggleFadeAsync(Location.LocationId) is bool enabled)
+                {
+                    isFadeEnabled = enabled;
+                    Location.EnableFade = enabled;
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error toggling fade");
+        }
+    }
+
+    private async Task LoadFadeState()
+    {
+        try
+        {
+            if (Location != null)
+            {
+                var location = await dbContext.TblLocations.AsNoTracking().FirstOrDefaultAsync(l => l.LocationId == Location.LocationId);
+                if (location != null)
+                {
+                    isFadeEnabled = location.EnableFade;
+                    StateHasChanged();
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading fade state");
+        }
+    }
+
+    // --- Drag-drop reorder ---
+
+    // Drop target is passed as the MediaFile itself: the rendered card index is
+    // relative to the filtered/limited visible list, not MediaFiles, so indexes
+    // must be resolved against the master list here.
+    private async Task HandlePlaylistDrop(MediaFile targetFile)
+    {
+        if (draggedMediaFile != null && !ReferenceEquals(draggedMediaFile, targetFile))
+        {
+            try
+            {
+                var fromIndex = MediaFiles.IndexOf(draggedMediaFile);
+                var toIndex = MediaFiles.IndexOf(targetFile);
+                if (fromIndex >= 0 && toIndex >= 0)
+                {
+                    await ReorderMediaFiles(fromIndex, toIndex);
+                    await UpdateMediaFiles();
+                }
+            }
+            catch (Exception ex)
+            {
+                Logger.LogError(ex, "Playlist - reorder failed");
+            }
+        }
+
+        draggedMediaFile = null;
+        draggedFromIndex = -1;
+        dropTargetIndex = -1;
+        StateHasChanged();
+    }
+
+    private async Task ReorderMediaFiles(int fromIndex, int toIndex)
+    {
+        if (fromIndex < 0 || toIndex < 0 || fromIndex >= MediaFiles.Count) return;
+
+        var reorderedFiles = new List<MediaFile>(MediaFiles);
+
+        var draggedFile = reorderedFiles[fromIndex];
+        reorderedFiles.RemoveAt(fromIndex);
+
+        var insertIndex = toIndex;
+
+        if (toIndex >= reorderedFiles.Count)
+        {
+            insertIndex = reorderedFiles.Count;
+        }
+        else if (toIndex > fromIndex)
+        {
+            insertIndex = toIndex - 1;
+        }
+
+        insertIndex = Math.Max(0, Math.Min(insertIndex, reorderedFiles.Count));
+
+        reorderedFiles.Insert(insertIndex, draggedFile);
+
+        for (int i = 0; i < reorderedFiles.Count; i++)
+        {
+            await UpdatePlayOrder(reorderedFiles[i], (i + 1).ToString());
+        }
+    }
+
+    // Button-based reordering for touch devices. Moving an item down one slot is
+    // expressed as moving its visible successor up, which matches ReorderMediaFiles'
+    // insert-before semantics. Indexes arrive relative to the filtered visible list,
+    // so both endpoints are mapped back to MediaFiles before reordering.
+    private async Task MoveMediaFile(int index, int direction)
+    {
+        var visibleFiles = GetFilteredMediaFiles();
+        var visibleFrom = direction > 0 ? index + 1 : index;
+        var visibleTo = visibleFrom - 1;
+        if (visibleTo < 0 || visibleFrom >= visibleFiles.Count) return;
+
+        try
+        {
+            var fromIndex = MediaFiles.IndexOf(visibleFiles[visibleFrom]);
+            var toIndex = MediaFiles.IndexOf(visibleFiles[visibleTo]);
+            if (fromIndex >= 0 && toIndex >= 0)
+            {
+                await ReorderMediaFiles(fromIndex, toIndex);
+                await UpdateMediaFiles();
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Playlist - move failed");
+        }
+
+        StateHasChanged();
+    }
+
+    // --- Play order management ---
+
+    private async Task AssignMissingPlayOrders()
+    {
+        try
+        {
+            int nextOrder = 1;
+
+            foreach (var mediaFile in MediaFiles)
+            {
+                var playOrderMetadata = mediaFile.Metadata.FirstOrDefault(m => m.Name == "PlayOrder");
+                if (playOrderMetadata != null && int.TryParse(playOrderMetadata.Value, out int order))
+                {
+                    if (order >= nextOrder)
+                    {
+                        nextOrder = order + 1;
+                    }
+                }
+            }
+
+            foreach (var mediaFile in MediaFiles)
+            {
+                var playOrderMetadata = mediaFile.Metadata.FirstOrDefault(m => m.Name == "PlayOrder");
+                if (playOrderMetadata == null)
+                {
+                    await UpdatePlayOrder(mediaFile, nextOrder.ToString());
+                    nextOrder++;
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error assigning missing play orders");
+        }
+    }
+
+    private async Task UpdatePlayOrder(MediaFile mediaFile, string newOrder)
+    {
+        try
+        {
+            await UpdateMetadataFile(mediaFile.DiskPath, "PlayOrder", newOrder, "ovx_String");
+
+            var playOrderMetadata = mediaFile.Metadata.FirstOrDefault(m => m.Name == "PlayOrder");
+            if (playOrderMetadata != null)
+            {
+                playOrderMetadata.Value = newOrder;
+            }
+            else
+            {
+                mediaFile.Metadata.Add(new MetadataField
+                    {
+                        Name = "PlayOrder",
+                        DataType = "ovx_String",
+                        Value = newOrder
+                    });
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating play order for {DiskPath}", mediaFile.DiskPath);
+        }
+    }
+
+    private static readonly HashSet<string> VideoLoopExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".mp4", ".webm", ".mov", ".avi", ".mkv", ".m4v", ".wmv"
+    };
+
+    private static int GetWeight(MediaFile mediaFile)
+    {
+        var value = mediaFile.Metadata.FirstOrDefault(m => m.Name == "Weight")?.Value;
+        return int.TryParse(value, out var w) ? Math.Clamp(w, 1, 10) : 1;
+    }
+
+    private async Task ChangeWeightAsync(MediaFile mediaFile, int delta)
+    {
+        var current = GetWeight(mediaFile);
+        var next = Math.Clamp(current + delta, 1, 10);
+        if (next == current) return;
+
+        await UpdateMetadataFile(mediaFile.DiskPath, "Weight", next.ToString(), "ovx_String");
+
+        var field = mediaFile.Metadata.FirstOrDefault(m => m.Name == "Weight");
+        if (field != null)
+        {
+            field.Value = next.ToString();
+        }
+        else
+        {
+            mediaFile.Metadata.Add(new MetadataField { Name = "Weight", DataType = "ovx_String", Value = next.ToString() });
+        }
+        StateHasChanged();
+    }
+
+    // Mirrors the durations the player actually uses: probed length for videos, the
+    // location's image duration for images, the 7-second player default otherwise
+    private int GetItemDurationSeconds(MediaFile mediaFile)
+    {
+        var sidecarValue = mediaFile.Metadata.FirstOrDefault(m => m.Name == "Duration")?.Value;
+        var hasSidecarDuration = int.TryParse(sidecarValue, out var sidecarSeconds) && sidecarSeconds > 0;
+        var extension = Path.GetExtension(mediaFile.WebPath ?? "");
+
+        if (VideoLoopExtensions.Contains(extension))
+            return hasSidecarDuration ? sidecarSeconds : 7;
+        if (imageDurationSeconds is > 0 && !extension.Equals(".json", StringComparison.OrdinalIgnoreCase))
+            return imageDurationSeconds.Value;
+        return hasSidecarDuration ? sidecarSeconds : 7;
+    }
+
+    private (int Seconds, int Plays) ComputeLoopStats()
+    {
+        var seconds = 0;
+        var plays = 0;
+        foreach (var mediaFile in GetFilteredMediaFiles())
+        {
+            if (mediaFile.IsExpired) continue;
+            var weight = isShuffleEnabled ? GetWeight(mediaFile) : 1;
+            seconds += weight * GetItemDurationSeconds(mediaFile);
+            plays += weight;
+        }
+        return (seconds, plays);
+    }
+
+    private static string FormatLoopSeconds(int totalSeconds)
+    {
+        var span = TimeSpan.FromSeconds(totalSeconds);
+        if (span.TotalHours >= 1)
+            return $"{(int)span.TotalHours}h {span.Minutes}m";
+        if (span.TotalMinutes >= 1)
+            return $"{span.Minutes}m {span.Seconds}s";
+        return $"{span.Seconds}s";
+    }
+
+    private async Task UpdateMetadataFile(string diskPath, string metadataName, string metadataValue, string metadataType, bool deleteValue = false)
+    {
+        try
+        {
+            string metadataFilePath = diskPath + ".metadata";
+            bool updateProcessed = false;
+
+            if (File.Exists(metadataFilePath))
+            {
+                var doc = new XmlDocument();
+                doc.Load(metadataFilePath);
+                var nodes = doc.SelectNodes("usermetadata");
+
+                foreach (XmlNode node in nodes)
+                {
+                    foreach (XmlNode line in node.ChildNodes)
+                    {
+                        if (line.Attributes?["name"]?.Value == metadataName)
+                        {
+                            if (deleteValue)
+                            {
+                                node.RemoveChild(line);
+                            }
+                            else
+                            {
+                                line.Attributes["value"].Value = metadataValue;
+                            }
+                            updateProcessed = true;
+                            break;
+                        }
+                    }
+
+                    if (!updateProcessed && !deleteValue)
+                    {
+                        var newElement = doc.CreateElement("field");
+                        newElement.SetAttribute("name", metadataName);
+                        newElement.SetAttribute("datatype", metadataType);
+                        newElement.SetAttribute("value", metadataValue);
+                        node.AppendChild(newElement);
+                    }
+                }
+
+                doc.Save(metadataFilePath);
+            }
+            else if (!deleteValue)
+            {
+                using (var writer = new StreamWriter(metadataFilePath))
+                {
+                    await writer.WriteLineAsync("<usermetadata>");
+                    await writer.WriteLineAsync($"  <field name=\"{metadataName}\" datatype=\"{metadataType}\" value=\"{metadataValue}\" />");
+                    await writer.WriteLineAsync("</usermetadata>");
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error updating metadata file {DiskPath}", diskPath);
+        }
+    }
+
+    private void OpenMediaCreator()
+    {
+        var url = $"/mediacreator?LocationId={Location!.LocationId}&ConstraintId=0&Width={Location.BackgroundImageWidth}&Height={Location.BackgroundImageHeight}";
+        navMan.NavigateTo(url);
+    }
+
+    // --- Content approval ---
+
+    private async Task LoadApprovalData()
+    {
+        if (Location?.EnableContentApproval != true) return;
+
+        try
+        {
+            var allApprovals = await dbContext.TblAssetApprovals
+                .Include(a => a.Asset)
+                .Where(a => a.Asset != null && a.Asset.LocationId == Location.LocationId)
+                .ToListAsync();
+
+            assetApprovals = allApprovals
+                .Where(a => !string.IsNullOrEmpty(a.Asset?.AssetPath))
+                .ToDictionary(
+                    a => Path.GetFileName(a.Asset!.AssetPath),
+                    a => a,
+                    StringComparer.OrdinalIgnoreCase
+                );
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading approval data");
+        }
+    }
+
+    private TblAssetApproval? GetApprovalForMediaFile(MediaFile mediaFile)
+    {
+        if (Location?.EnableContentApproval != true) return null;
+
+        var fileName = Path.GetFileName(mediaFile.DiskPath);
+        assetApprovals.TryGetValue(fileName, out var approval);
+        return approval;
+    }
+
+    private string GetApprovalStatusText(TblAssetApproval? approval)
+    {
+        if (approval == null) return "";
+
+        return approval.ApprovalStatus switch
+        {
+            (int)ApprovalStatus.Pending => "Awaiting Approval",
+            (int)ApprovalStatus.Declined => "Declined",
+            _ => ""
+        };
+    }
+
+    private bool ShouldShowApprovalOverlay(TblAssetApproval? approval)
+    {
+        if (approval == null) return false;
+        return approval.ApprovalStatus == (int)ApprovalStatus.Pending ||
+               approval.ApprovalStatus == (int)ApprovalStatus.Declined;
+    }
+
+    // --- Metadata-based content filtering ---
+
+    private async Task LoadContentScopeAsync()
+    {
+        if (Location == null) return;
+
+        try
+        {
+            contentScope = await contentScopeService.GetAsync(sessionState.User?.UserId ?? 0, Location.LocationId,
+                sessionState.RoleEnum == Roles.Role.Admin ? null : userAccess);
+            participatingKeys = contentScope.ParticipatingKeys;
+            foreach (var key in participatingKeys)
+            {
+                customFieldSelectedFilters[key] = null;
+                customFieldSelectedLabels[key] = "";
+                customFieldDropdownOpen[key] = false;
+                customFieldFilterValues[key] = new List<string>();
+            }
+
+            if (participatingKeys.Count > 0 || contentScope.IsEvaluated)
+                await LoadContentMetadataMapAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error loading content scope");
+        }
+    }
+
+    private async Task LoadContentMetadataMapAsync()
+    {
+        assetValuesLoaded = false;
+
+        var assets = await dbContext.TblAssets.AsNoTracking()
+            .Where(a => a.LocationId == Location!.LocationId && !a.IsDeleted)
+            .OrderBy(a => a.AssetId)
+            .Select(a => new { a.AssetId, a.AssetPath })
+            .ToListAsync();
+
+        var pathToId = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var asset in assets.Where(a => !string.IsNullOrEmpty(a.AssetPath)))
+            pathToId[asset.AssetPath] = asset.AssetId;
+
+        var values = (await contentScopeService.GetAssetValuesAsync(assets.Select(a => a.AssetId).ToList()))
+            .ToDictionary(kv => kv.Key, kv => kv.Value);
+
+        assetPathToIdMap = pathToId;
+        assetValuesMap = values;
+        assetValuesLoaded = true;
+
+        BuildCustomFieldFilterValues();
+    }
+
+    private void BuildCustomFieldFilterValues()
+    {
+        foreach (var key in participatingKeys)
+        {
+            customFieldFilterValues[key] = assetValuesMap.Values
+                .SelectMany(values => values.TryGetValue(key, out var set) ? set : Enumerable.Empty<string>())
+                .Distinct(MetadataEvaluator.ValueComparer)
+                .OrderBy(v => v, StringComparer.OrdinalIgnoreCase)
+                .ToList();
+        }
+    }
+
+    // Null for a file with no asset row, which scope treats as legacy content.
+    private IReadOnlyDictionary<string, IReadOnlySet<string>>? GetAssetValuesForMediaFile(MediaFile mediaFile)
+    {
+        var expectedPath = $"/MediaAssets/{Location?.LocationId}/{Path.GetFileName(mediaFile.DiskPath)}";
+        if (!assetPathToIdMap.TryGetValue(expectedPath, out var assetId))
+            return null;
+        return assetValuesMap.TryGetValue(assetId, out var values)
+            ? values
+            : new Dictionary<string, IReadOnlySet<string>>(MetadataEvaluator.KeyComparer);
+    }
+
+    /// <summary>
+    /// How many values of one key a card spells out before falling back to a count. A key may hold
+    /// any number of values, and the card is a fixed 300px, so the whole set would run to dozens of
+    /// wrapped lines and push everything below it down. The full set is in Edit metadata.
+    /// </summary>
+    private const int CardMetadataValuesShown = 2;
+
+    private (string Shown, int Hidden)? GetCardMetadataForMediaFile(MediaFile mediaFile, string fieldKey)
+    {
+        var values = GetAssetValuesForMediaFile(mediaFile);
+        if (values == null || !values.TryGetValue(fieldKey, out var set) || set.Count == 0)
+            return null;
+
+        var ordered = set.Order(StringComparer.OrdinalIgnoreCase).ToList();
+        return (string.Join(", ", ordered.Take(CardMetadataValuesShown)),
+                Math.Max(0, ordered.Count - CardMetadataValuesShown));
+    }
+
+    // --- Content visibility filtering ---
+
+    private bool IsMediaFileVisible(MediaFile mediaFile)
+    {
+        if (Location?.EnableContentApproval != true) return true;
+
+        var approval = GetApprovalForMediaFile(mediaFile);
+        return approval != null;
+    }
+
+    private List<MediaFile> GetFilteredMediaFiles()
+    {
+        IEnumerable<MediaFile> result = MediaFiles;
+
+        // Scope never ANDs approval: a scoped manager sees Pending content in her scope, and ownership decides
+        // what she may do with it. The approval-row check below hides files still mid-upload for everyone.
+        if ((contentScope == null || !assetValuesLoaded) && sessionState.RoleEnum != Roles.Role.Admin && ContentScope.IsEvaluated(userAccess))
+            result = [];
+        else if (contentScope?.IsEvaluated == true)
+            result = result.Where(mf => contentScope.IsVisible(GetAssetValuesForMediaFile(mf)));
+
+        if (Location?.EnableContentApproval == true)
+            result = result.Where(IsMediaFileVisible);
+
+        return ApplyCustomFieldFilters(result.ToList());
+    }
+
+    private void ToggleCustomFieldDropdown(string fieldName)
+    {
+        var current = customFieldDropdownOpen.GetValueOrDefault(fieldName);
+        // Close all other custom field dropdowns before toggling this one
+        foreach (var key in customFieldDropdownOpen.Keys.ToList())
+            customFieldDropdownOpen[key] = false;
+        customFieldDropdownOpen[fieldName] = !current;
+        StateHasChanged();
+    }
+
+    private void ApplyCustomFieldFilter(string fieldName, string? value)
+    {
+        customFieldSelectedFilters[fieldName] = value;
+        customFieldSelectedLabels[fieldName] = value ?? "";
+        customFieldDropdownOpen[fieldName] = false;
+        displayLimit = DefaultDisplayLimit;
+        StateHasChanged();
+    }
+
+    private void ShowAllItems()
+    {
+        displayLimit = int.MaxValue;
+        StateHasChanged();
+    }
+
+    private List<MediaFile> ApplyCustomFieldFilters(List<MediaFile> files)
+    {
+        foreach (var key in participatingKeys)
+        {
+            if (!customFieldSelectedFilters.TryGetValue(key, out var selectedValue) || string.IsNullOrEmpty(selectedValue))
+                continue;
+
+            files = files
+                .Where(mf => GetAssetValuesForMediaFile(mf) is { } values
+                             && values.TryGetValue(key, out var set) && set.Contains(selectedValue))
+                .ToList();
+        }
+        return files;
+    }
+}

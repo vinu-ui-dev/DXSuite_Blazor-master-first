@@ -1,0 +1,106 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <BlazorDisableThrowNavigationException>true</BlazorDisableThrowNavigationException>
+    <UserSecretsId>917825ee-1d47-491a-aa93-767863cc76d2</UserSecretsId>
+  </PropertyGroup>
+
+  <!--
+    Module inclusion flags. Set any of these to false at publish time to strip that
+    module's DLL from the output entirely (no code compiled, no assembly shipped).
+
+    Usage:
+      dotnet publish -p:IncludeAviation=false -p:IncludeSentinel=false -p:IncludePulse=false
+
+    Or set them in a .pubxml publish profile under <PropertyGroup>.
+
+    Note: the corresponding Modules:X:Enabled appsettings flag is a runtime gate that
+    hides a module without removing its code. These flags are the build-time gate.
+  -->
+	<PropertyGroup>
+		<IncludeAviation Condition="'$(IncludeAviation)'   == ''">true</IncludeAviation>
+		<IncludePulse Condition="'$(IncludePulse)'      == ''">true</IncludePulse>
+		<IncludeSentinel Condition="'$(IncludeSentinel)'   == ''">true</IncludeSentinel>
+		<IncludeDesign Condition="'$(IncludeDesign)'     == ''">true</IncludeDesign>
+		<IncludeStyleGuide Condition="'$(IncludeStyleGuide)' == ''">true</IncludeStyleGuide>
+		<IncludeNetJets Condition="'$(IncludeNetJets)'    == ''">true</IncludeNetJets>
+		<IncludeSLC Condition="'$(IncludeSLC)'        == ''">true</IncludeSLC>
+		<IncludeDeviceProxy Condition="'$(IncludeDeviceProxy)' == ''">true</IncludeDeviceProxy>
+	</PropertyGroup>
+
+  <!--
+    Propagate inclusion flags as C# preprocessor constants for #if guards in Program.cs.
+    This MUST be a Target rather than a PropertyGroup. Publish profile properties (from
+    .pubxml) are applied after static PropertyGroup evaluation, so a PropertyGroup here
+    always sees the default values. A Target with BeforeTargets="CoreCompile" runs after
+    all properties — including publish profile overrides — are fully resolved.
+  -->
+  <Target Name="SetModuleDefineConstants" BeforeTargets="CoreCompile">
+    <PropertyGroup>
+      <DefineConstants Condition="'$(IncludeAviation)'   == 'true'">$(DefineConstants);MODULE_AVIATION</DefineConstants>
+      <DefineConstants Condition="'$(IncludePulse)'      == 'true'">$(DefineConstants);MODULE_PULSE</DefineConstants>
+      <DefineConstants Condition="'$(IncludeSentinel)'   == 'true'">$(DefineConstants);MODULE_SENTINEL</DefineConstants>
+      <DefineConstants Condition="'$(IncludeDesign)'     == 'true'">$(DefineConstants);MODULE_DESIGN</DefineConstants>
+      <DefineConstants Condition="'$(IncludeStyleGuide)' == 'true'">$(DefineConstants);MODULE_STYLEGUIDE</DefineConstants>
+      <DefineConstants Condition="'$(IncludeNetJets)'    == 'true'">$(DefineConstants);MODULE_NETJETS</DefineConstants>
+      <DefineConstants Condition="'$(IncludeSLC)'        == 'true'">$(DefineConstants);MODULE_SLC</DefineConstants>
+      <DefineConstants Condition="'$(IncludeDeviceProxy)' == 'true'">$(DefineConstants);MODULE_DEVICEPROXY</DefineConstants>
+    </PropertyGroup>
+  </Target>
+
+	<ItemGroup>
+		<!-- Core — always included -->
+		<ProjectReference Include="..\DXSuite.Shared\DXSuite.Shared.csproj" />
+		<ProjectReference Include="..\DXSuite.Connectors\DXSuite.Connectors.csproj" />
+		<ProjectReference Include="..\DXSuite.Director\DXSuite.Director.csproj" />
+		<ProjectReference Include="..\DXSuite.CoreData\DXSuite.CoreData.csproj" />
+
+		<!-- Optional — strip with -p:IncludeX=false at publish time -->
+		<ProjectReference Include="..\DXSuite.Aviation\DXSuite.Aviation.csproj" Condition="'$(IncludeAviation)'   == 'true'" />
+		<ProjectReference Include="..\DXSuite.Pulse\DXSuite.Pulse.csproj" Condition="'$(IncludePulse)'      == 'true'" />
+		<ProjectReference Include="..\DXSuite.StyleGuide\DXSuite.StyleGuide.csproj" Condition="'$(IncludeStyleGuide)' == 'true'" />
+		<ProjectReference Include="..\DXSuite.Sentinel\DXSuite.Sentinel.csproj" Condition="'$(IncludeSentinel)'   == 'true'" />
+		<ProjectReference Include="..\DXSuite.Design\DXSuite.Design.csproj" Condition="'$(IncludeDesign)'     == 'true'" />
+		<ProjectReference Include="..\DXSuite.NetJets\DXSuite.NetJets.csproj" Condition="'$(IncludeNetJets)'    == 'true'" />
+		<ProjectReference Include="..\DXSuite.SLC\DXSuite.SLC.csproj" Condition="'$(IncludeSLC)'        == 'true'" />
+		<ProjectReference Include="..\DXSuite.DeviceProxy\DXSuite.DeviceProxy.csproj" Condition="'$(IncludeDeviceProxy)' == 'true'" />
+	</ItemGroup>
+
+  <ItemGroup>
+    <Content Remove="wwwroot\images\branding\**" />
+    <!-- Runtime-generated per environment (startup backfill recreates them); publishing
+         dev-machine captures onto a server masks whether capture works there. -->
+    <Content Remove="App_Data\WebThumbnails\**" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Maintenance page, published beside the app binaries under a name ANCM ignores.
+         deploy/app_offline/Take-SiteOffline.ps1 copies it to app_offline.htm to take the
+         site down cleanly; publishing it under the live name would take every fresh
+         deployment offline. -->
+    <None Include="..\..\deploy\app_offline\app_offline.template.htm"
+          Link="app_offline.template.htm"
+          CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Extensions.AspNetCore.Configuration.Secrets" Version="1.5.1" />
+    <PackageReference Include="Azure.Identity" Version="1.21.0" />
+    <PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="4.9.0" />
+    <PackageReference Include="Microsoft.Identity.Web.UI" Version="4.9.0" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="DXSuite.Director.Tests" />
+  </ItemGroup>
+
+</Project>
