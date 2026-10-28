@@ -42,4 +42,19 @@ public static class ApiKeyScopeExtensions
             StatusCode = 403
         };
     }
+
+    /// <summary>
+    /// Always sets the response's ETag to <paramref name="etag"/> (so a 200 carries it too); returns a 304 when
+    /// the request's If-None-Match already names it, or null when the caller should answer normally (INK-05).
+    /// </summary>
+    public static StatusCodeResult? NotModified(this ControllerBase controller, string etag)
+    {
+        var quoted = etag.StartsWith('"') ? etag : $"\"{etag}\"";
+        controller.Response.Headers.ETag = quoted;
+
+        var ifNoneMatch = controller.Request.Headers.IfNoneMatch.ToString();
+        return !string.IsNullOrEmpty(ifNoneMatch) && ifNoneMatch == quoted
+            ? controller.StatusCode(StatusCodes.Status304NotModified)
+            : null;
+    }
 }

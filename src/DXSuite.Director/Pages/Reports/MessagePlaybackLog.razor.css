@@ -1,0 +1,252 @@
+.mpl-body {
+    padding: 18px 24px 40px;
+}
+
+.mpl-loading {
+    display: flex;
+    justify-content: center;
+    padding: 32px 0;
+}
+
+.mpl-refused {
+    padding: 24px;
+}
+
+.mpl-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
+.mpl-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.mpl-title h2 {
+    margin: 0;
+    font-size: 1.7rem;
+    font-weight: 600;
+}
+
+.mpl-info {
+    cursor: help;
+    color: #333;
+    font-size: 1.1rem;
+}
+
+.mpl-tools {
+    display: flex;
+    gap: 8px;
+}
+
+.mpl-tool {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    border: 1px solid #ccc;
+    background: #fff;
+    border-radius: 4px;
+    padding: 5px 10px;
+    cursor: pointer;
+    font: inherit;
+    font-size: .7rem;
+    color: #333;
+}
+
+.mpl-tool svg {
+    width: 22px;
+    height: 22px;
+}
+
+.mpl-tool:hover:not(:disabled) {
+    border-color: var(--dx-blue);
+}
+
+.mpl-tool:disabled {
+    opacity: .45;
+    cursor: default;
+}
+
+.mpl-filters {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+    align-items: end;
+}
+
+.mpl-f {
+    position: relative;
+}
+
+.mpl-f label {
+    position: absolute;
+    top: -7px;
+    left: 9px;
+    background: #fff;
+    padding: 0 4px;
+    font-size: .7rem;
+    color: #666;
+    z-index: 1;
+}
+
+.mpl-f .dx-form-control {
+    height: 40px;
+    font-size: .9rem;
+    width: 100%;
+}
+
+.mpl-show {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    align-items: center;
+    margin: 12px 0;
+}
+
+.mpl-find-box {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    margin-right: auto;
+}
+
+.mpl-find-input {
+    width: 220px;
+    height: 34px;
+}
+
+.mpl-error {
+    color: var(--dx-red, #c62828);
+    font-size: .85rem;
+}
+
+.mpl-note {
+    background: var(--dx-bg-alt);
+    border-left: 3px solid var(--dx-blue);
+    padding: 8px 12px;
+    font-size: .82rem;
+    margin-bottom: 12px;
+}
+
+.mpl-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: .82rem;
+    color: var(--dx-text-muted);
+    margin-bottom: 6px;
+}
+
+.mpl-grid {
+    grid-template-columns: 24px 90px 185px 120px minmax(0, 1fr) 80px 150px 70px 75px 110px;
+    align-items: start;
+}
+
+.mpl-grid > div {
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mpl-row {
+    cursor: pointer;
+}
+
+.mpl-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.mpl-tz,
+.mpl-key {
+    font-size: .72rem;
+    color: var(--dx-text-muted);
+}
+
+.mpl-key {
+    font-family: ui-monospace, Consolas, monospace;
+}
+
+.mpl-sm {
+    font-size: .8rem;
+}
+
+.mpl-mono {
+    font-family: ui-monospace, Consolas, monospace;
+    font-size: .8rem;
+}
+
+.mpl-nowrap {
+    white-space: nowrap;
+}
+
+.mpl-lang {
+    display: inline-block;
+    min-width: 52px;
+    font-size: .7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--dx-text-muted);
+}
+
+.mpl-detail {
+    background: #fafbfc;
+    border-bottom: 1px solid #e6e6e6;
+    padding: 10px 14px 14px 42px;
+}
+
+.mpl-detail h5 {
+    font-size: .8rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    color: var(--dx-text-muted);
+    letter-spacing: .04em;
+    margin: 12px 0 6px;
+}
+
+.mpl-kv {
+    display: grid;
+    grid-template-columns: 150px 1fr;
+    gap: 3px 12px;
+    font-size: .86rem;
+}
+
+.mpl-kv > div:nth-child(odd) {
+    color: var(--dx-text-muted);
+}
+
+.mpl-mini {
+    border-collapse: collapse;
+    width: 100%;
+    font-size: .82rem;
+    background: #fff;
+    margin-top: 4px;
+}
+
+.mpl-mini th,
+.mpl-mini td {
+    border: 1px solid #e3e3e3;
+    padding: 4px 6px;
+    text-align: left;
+    vertical-align: top;
+}
+
+.mpl-mini th {
+    background: var(--dx-bg-alt);
+    color: #555;
+    font-weight: 600;
+    font-size: .74rem;
+    text-transform: uppercase;
+}
+
+.mpl-links {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}

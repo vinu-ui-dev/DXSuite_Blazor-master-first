@@ -1,0 +1,567 @@
+@page "/reports/message-playback-log"
+@attribute [RequiresTenantFeature(nameof(TenantFeatureFlags.Messaging))]
+@using System.Globalization
+@using Microsoft.AspNetCore.WebUtilities
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+@using DXSuite.Shared.Authorization
+@inject ISessionState sessionState
+@inject IMessagePlaybackLogReport report
+@inject IJSRuntime JS
+@inject NavigationManager Navigation
+@inject ILogger<MessagePlaybackLog> Logger
+@inject TimeProvider clock
+@rendermode InteractiveServer
+
+@* The Message Playback Log (FSD 1.1 AUD-13, AUD-17, AUD-18): every Activation, the shown versions it put on screen
+   and the screens it was sent to. It reports what Director sent, never what played. Showing it is not recorded
+   (AUD-07); Excel and print are, by the report service. *@
+
+<PageTitle>Message Playback Log</PageTitle>
+
+@if (!accessResolved)
+{
+    <div class="mpl-loading"><div class="dx-spinner"></div></div>
+}
+else if (!hasAccess)
+{
+    <section>
+        <div class="dx-section">
+            <p class="mpl-refused">You do not have permission to access this page.</p>
+        </div>
+    </section>
+}
+else if (print is not null)
+{
+    <ReportPrintView Title="Message Playback Log" Header="print.Header" TimeZone="timeZone" RowsLine="@RowsLine(print.Result)"
+                     OnBack="ClosePrint" OnPrint="OpenPrintDialogAsync">
+        <table class="rp-print-table">
+            <tr><th>Activation</th><th>VersionId</th><th>Sent</th><th>Delivered to signage</th><th>Type</th><th>Sent by</th><th>Screens</th><th>Text</th></tr>
+            @foreach (var a in print.Result.Rows)
+            {
+                @if (a.Versions.Count == 0)
+                {
+                    <tr>
+                        <td>@a.ActivationId</td><td>none</td><td class="rp-nowrap">@Stamp(a.SentUtc)</td><td></td>
+                        <td>@a.MessageTypeName</td><td>@SentBy(a)</td><td>@a.ScreenCount</td><td>@a.MessageName</td>
+                    </tr>
+                }
+                @foreach (var v in a.Versions)
+                {
+                    <tr>
+                        <td>@a.ActivationId</td>
+                        <td>@v.VersionId</td>
+                        <td class="rp-nowrap">@Stamp(v.SentUtc)</td>
+                        <td class="rp-nowrap">@(v.FirstServedUtc is { } served ? Stamp(served) : NotDelivered)</td>
+                        <td>@v.MessageTypeCode, rank @v.EffectiveRank</td>
+                        <td>@SentBy(a)</td>
+                        <td>@a.ScreenCount</td>
+                        <td>@(v.Texts.FirstOrDefault()?.Text)</td>
+                    </tr>
+                }
+            }
+        </table>
+    </ReportPrintView>
+}
+else
+{
+    <section class="mpl-body">
+        <div class="mpl-head">
+            <div class="mpl-title">
+                <h2>Message Playback Log</h2>
+                <span class="mpl-info" title="Every sending of a Message (an Activation), each version it showed and the screens it was sent to. Activations and shown versions are never deleted or purged.">&#9432;</span>
+            </div>
+            @if (canExport)
+            {
+                <div class="mpl-tools">
+                    <button class="mpl-tool mpl-excel" disabled="@(applied is null || busy)" title="Export the Activations shown to Excel" @onclick="ExportAsync">
+                        <svg viewBox="0 0 24 24"><rect x="3" y="2" width="18" height="20" rx="2" fill="#1d6f42" /><path d="M8 7l8 10M16 7L8 17" stroke="#fff" stroke-width="2.2" stroke-linecap="round" /></svg>EXCEL
+                    </button>
+                    <button class="mpl-tool mpl-print" disabled="@(applied is null || busy)" title="Open a print view of the Activations shown" @onclick="OpenPrintAsync">
+                        <svg viewBox="0 0 24 24"><path d="M6 9V3h12v6" fill="none" stroke="#333" stroke-width="1.8" /><rect x="3" y="9" width="18" height="8" rx="2" fill="#555" /><rect x="7" y="14" width="10" height="7" fill="#fff" stroke="#333" stroke-width="1.6" /></svg>PRINT
+                    </button>
+                </div>
+            }
+        </div>
+
+        <div class="mpl-filters">
+            <div class="mpl-f"><label>Start*</label><input type="datetime-local" class="dx-form-control" @bind="startLocal" @bind:format="yyyy-MM-ddTHH:mm" /></div>
+            <div class="mpl-f"><label>End*</label><input type="datetime-local" class="dx-form-control" @bind="endLocal" @bind:format="yyyy-MM-ddTHH:mm" /></div>
+            <div class="mpl-f">
+                <label>Message Type</label>
+                <select class="dx-form-control" @bind="messageTypeId">
+                    <option value="">All types</option>
+                    @foreach (var type in options.MessageTypes)
+                    {
+                        <option value="@type.Id">@(type.Gone ? $"{type.Name} (deleted)" : type.Name)</option>
+                    }
+                </select>
+            </div>
+            <div class="mpl-f">
+                <label>Source</label>
+                <select class="dx-form-control" @bind="source">
+                    <option value="">All sources</option>
+                    @foreach (var s in Enum.GetValues<MessageActivationSource>())
+                    {
+                        <option value="@s">@SourceLabel(s)</option>
+                    }
+                </select>
+            </div>
+            <div class="mpl-f">
+                <label>Display Zone</label>
+                <select class="dx-form-control" @bind="displayZoneId">
+                    <option value="">All Display Zones</option>
+                    @foreach (var z in options.DisplayZones)
+                    {
+                        <option value="@z.Id">@DisplayZoneLabel(z.Name, z.Gone)</option>
+                    }
+                </select>
+            </div>
+            <div class="mpl-f"><label>Sent by</label><input class="dx-form-control" placeholder="Account or person" @bind="sentBy" /></div>
+        </div>
+        <div class="mpl-show">
+            <div class="mpl-find-box">
+                <input class="dx-form-control mpl-find-input" placeholder="VersionId or Activation id" @bind="findText" @bind:event="oninput" />
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm mpl-find" disabled="@busy" @onclick="FindAsync">Find</button>
+            </div>
+            @if (error is not null)
+            {
+                <span class="mpl-error">@error</span>
+            }
+            <button class="dx-btn dx-btn-gray mpl-clear" disabled="@busy" @onclick="ClearAsync">Clear</button>
+            <button class="dx-btn dx-btn-blue mpl-show-button" disabled="@busy" @onclick="ShowAsync">SHOW</button>
+        </div>
+
+        <div class="mpl-note">
+            <b>Sent</b> is when Director committed a version: the send, or the approval of a revision. <b>Delivered to signage</b>
+            is when the signage delivery first collected it. Neither confirms that it played; Director cannot see a screen.
+        </div>
+
+        @if (result is null)
+        {
+            <div class="mpl-loading"><div class="dx-spinner"></div></div>
+        }
+        else
+        {
+            <div class="mpl-meta">
+                <span>@RowsLine(result)@Found</span>
+                <span>Times in @timeZone.Name</span>
+            </div>
+            <div class="dx-table">
+                <div class="dx-table-header mpl-grid">
+                    <div></div><div>Activation</div><div>Sent</div><div>Type</div><div>Message</div><div>Source</div><div>Sent by</div><div>Screens</div><div>Versions</div><div>Status</div>
+                </div>
+                @if (result.Rows.Count == 0)
+                {
+                    <div class="dx-panel-hint">No Activations match.</div>
+                }
+                @foreach (var a in result.Rows)
+                {
+                    var id = a.ActivationId;
+                    var open = expanded.Contains(id);
+                    <div id="mpl-row-@id" class="dx-table-row mpl-grid mpl-row" @onclick="() => ToggleAsync(id)">
+                        <div class="dx-text-muted">@(open ? "▾" : "▸")</div>
+                        <div class="mpl-mono">@id</div>
+                        <div><span class="mpl-nowrap">@timeZone.Local(a.SentUtc)</span> <span class="mpl-tz">@timeZone.Offset(a.SentUtc)</span></div>
+                        <div>@a.MessageTypeName</div>
+                        <div>
+                            @a.MessageName
+                            @if (a.IsOneOff)
+                            {
+                                <span class="dx-badge dx-badge-gray">One-off</span>
+                            }
+                            @if (a.Versions.Count > 0)
+                            {
+                                <div class="mpl-sm dx-text-muted">@a.Versions[^1].Texts.FirstOrDefault()?.Text</div>
+                            }
+                        </div>
+                        <div>@SourceLabel(a.Source)</div>
+                        <div>@SentBy(a)</div>
+                        <div>@a.ScreenCount</div>
+                        <div>@a.Versions.Count</div>
+                        <div class="mpl-status"><span class="dx-status-dot @Dot(a.Status)"></span>@a.Status</div>
+                    </div>
+                    @if (open)
+                    {
+                        <div id="mpl-detail-@id" class="mpl-detail">
+                            <div class="mpl-kv">
+                                <div>Message</div><div>@a.MessageName (Message @a.MessageId@(a.IsOneOff ? ", one-off" : ""))</div>
+                                <div>Source</div><div>@SourceLabel(a.Source)</div>
+                                <div>Sent by</div><div>@SentBy(a), @Stamp(a.SentUtc)</div>
+                                <div>Starts</div><div>@Starts(a)</div>
+                                <div>Ends</div><div>@Ends(a)</div>
+                                @if (a.Window is { } window)
+                                {
+                                    <div>Weekly window</div><div>@window, @ActivationWhen.ScreenTimeNote</div>
+                                }
+                            </div>
+
+                            <h5>Shown versions (@a.Versions.Count)</h5>
+                            @if (a.Versions.Count == 0)
+                            {
+                                <div class="mpl-sm dx-text-muted">No shown version is recorded for this Activation.</div>
+                            }
+                            else
+                            {
+                                <table class="mpl-mini">
+                                    <tr><th>VersionId</th><th>Reason</th><th>Sent</th><th>Delivered to signage</th><th>Type, rank</th><th>Text</th><th>Asset Slots</th></tr>
+                                    @foreach (var v in a.Versions)
+                                    {
+                                        <tr id="mpl-version-@v.VersionId">
+                                            <td class="mpl-mono">@v.VersionId</td>
+                                            <td>@v.ReasonText</td>
+                                            <td class="mpl-nowrap">@Stamp(v.SentUtc)</td>
+                                            <td class="mpl-nowrap">
+                                                @if (v.FirstServedUtc is { } served)
+                                                {
+                                                    @Stamp(served)
+                                                }
+                                                else
+                                                {
+                                                    <span class="dx-text-orange">@NotDelivered</span>
+                                                }
+                                            </td>
+                                            <td>@v.MessageTypeCode, rank @v.EffectiveRank</td>
+                                            <td>
+                                                @foreach (var t in v.Texts)
+                                                {
+                                                    <div><span class="mpl-lang">@LanguageLabel(t.LanguageCode)</span> @t.Text</div>
+                                                }
+                                            </td>
+                                            <td>
+                                                @if (v.Assets.Count == 0)
+                                                {
+                                                    <span class="dx-text-muted">none</span>
+                                                }
+                                                @foreach (var asset in v.Assets)
+                                                {
+                                                    <div>@asset.SlotKey: @asset.FileName<div class="mpl-key">asset @asset.AssetId, @asset.ContentHash</div></div>
+                                                }
+                                            </td>
+                                        </tr>
+                                    }
+                                </table>
+                            }
+
+                            <h5 id="mpl-screens-@id">Sent to @a.ScreenCount @(a.ScreenCount == 1 ? "screen" : "screens"), fixed when sent</h5>
+                            @if (a.Zones.Any(z => z.ZoneId is not null))
+                            {
+                                <div id="mpl-zones-@id" class="mpl-sm">@string.Join(" · ", a.Zones.Where(z => z.ZoneId is not null).Select(DisplayZoneCount))</div>
+                            }
+                            @if (screens.GetValueOrDefault(id) is not { } list)
+                            {
+                                <div class="mpl-loading"><div class="dx-spinner"></div></div>
+                            }
+                            else
+                            {
+                                <table class="mpl-mini">
+                                    <tr><th>Display</th><th>DisplayId</th><th>Location</th><th>Sent through</th></tr>
+                                    @foreach (var s in list.Take(ScreensShown))
+                                    {
+                                        <tr>
+                                            <td>@s.DisplayName</td>
+                                            <td class="mpl-mono">@s.DisplayId</td>
+                                            <td>@s.LocationName</td>
+                                            <td>@(s.ZoneName is null ? "this display only" : DisplayZoneLabel(s.ZoneName, s.ZoneRetired))</td>
+                                        </tr>
+                                    }
+                                </table>
+                                @if (list.Count > ScreensShown)
+                                {
+                                    <div class="mpl-sm dx-text-muted">and @(list.Count - ScreensShown) more. Excel lists every screen.</div>
+                                }
+                            }
+
+                            @if (canSeeUserEventLog)
+                            {
+                                <div class="mpl-links">
+                                    <a id="mpl-uel-@id" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                       href="@($"{UserEventLog.Route}?targetType={UserEventTargetTypes.Activation}&target={id}")">Show in the User Event Log</a>
+                                </div>
+                            }
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </section>
+}
+
+@code {
+    public const string Route = "/reports/message-playback-log";
+
+    /// <summary>The link that opens one Activation here, as the User Event Log's targets use it (AUD-18).</summary>
+    public static string ActivationHref(int activationId) => $"{Route}?activation={activationId}";
+
+    // One send can reach hundreds of screens; the row shows the first of them and Excel holds them all.
+    private const int ScreensShown = 200;
+
+    private const string NotDelivered = "Not delivered yet";
+
+    private bool accessResolved;
+    private bool hasAccess;
+    private bool canExport;
+    private bool canSeeUserEventLog;
+    private bool busy;
+    private string? error;
+    private ReportTimeZone timeZone = ReportTimeZone.Utc;
+    private MessagePlaybackLogFilterOptions options = new([], []);
+
+    private DateTime startLocal;
+    private DateTime endLocal;
+    private int? messageTypeId;
+    private MessageActivationSource? source;
+    private int? displayZoneId;
+    private string? sentBy;
+    private string? findText;
+
+    private MessagePlaybackLogQuery? applied;
+    private MessagePlaybackLogResult? result;
+    private MessagePlaybackLogPrint? print;
+    private readonly HashSet<int> expanded = new();
+    private readonly Dictionary<int, IReadOnlyList<PlaybackScreen>> screens = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageMessagePlaybackLog);
+        if (hasAccess)
+        {
+            canExport = await sessionState.HasPermissionAsync(PermissionKeys.ReportsExport);
+            canSeeUserEventLog = await sessionState.HasPermissionAsync(PermissionKeys.PageUserEventLog);
+        }
+        accessResolved = true;
+        if (hasAccess) ResetRange();
+    }
+
+    // The browser's time zone, and the first query, wait for the interactive render: a prerender has no browser to ask.
+    // Showing the report is not recorded, so it opens on today rather than waiting for SHOW.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender || !hasAccess) return;
+        timeZone = await ReportTimeZone.DetectAsync(JS);
+        ResetRange();
+        try
+        {
+            options = await report.FilterOptionsAsync();
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Message Playback Log filter options failed");
+        }
+        if (LinkedQuery() is { } linked)
+        {
+            findText = (linked.Find ?? linked.ActivationId)?.ToString(CultureInfo.InvariantCulture);
+            await RunAsync(linked);
+        }
+        else if (FormQuery() is { } query)
+        {
+            await RunAsync(query);
+        }
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// A record named in the URL (AUD-18): <c>?find=48201</c>, a VersionId or Activation id as support types it, or
+    /// <c>?activation=10471</c> from a User Event Log target.
+    /// </summary>
+    private MessagePlaybackLogQuery? LinkedQuery()
+    {
+        var q = QueryHelpers.ParseQuery(new Uri(Navigation.Uri).Query);
+        int? Get(string name) => q.TryGetValue(name, out var v) && int.TryParse(v.ToString(), NumberStyles.None, CultureInfo.InvariantCulture, out var n) ? n : null;
+        var range = Range();
+        return Get("activation") is { } activation ? range with { ActivationId = activation }
+            : Get("find") is { } find ? range with { Find = find }
+            : null;
+    }
+
+    private void ResetRange()
+    {
+        var today = timeZone.ToLocal(clock.GetUtcNow().UtcDateTime).Date;
+        startLocal = today;
+        endLocal = today.AddDays(1).AddMinutes(-1);
+    }
+
+    // The End field is minute-precise, so it covers the whole of its last minute.
+    private MessagePlaybackLogQuery Range() => new() { StartUtc = timeZone.ToUtc(startLocal), EndUtc = timeZone.ToUtc(endLocal).AddSeconds(59) };
+
+    private MessagePlaybackLogQuery? FormQuery()
+    {
+        if (endLocal < startLocal)
+        {
+            error = "End must be after Start.";
+            return null;
+        }
+        return Range() with { MessageTypeId = messageTypeId, Source = source, ZoneId = displayZoneId, SentBy = sentBy };
+    }
+
+    private async Task ShowAsync()
+    {
+        error = null;
+        if (FormQuery() is { } query) await RunAsync(query);
+    }
+
+    private async Task FindAsync()
+    {
+        error = null;
+        if (!int.TryParse(findText?.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var id))
+        {
+            error = "Enter a VersionId or an Activation id.";
+            return;
+        }
+        await RunAsync(Range() with { Find = id });
+    }
+
+    private async Task ClearAsync()
+    {
+        (messageTypeId, source, displayZoneId, sentBy, findText, error) = (null, null, null, null, null, null);
+        ResetRange();
+        if (FormQuery() is { } query) await RunAsync(query);
+    }
+
+    private async Task RunAsync(MessagePlaybackLogQuery query)
+    {
+        busy = true;
+        try
+        {
+            result = await report.QueryAsync(query);
+            applied = query;
+            expanded.Clear();
+            screens.Clear();
+            // A record found by its id opens at once.
+            if (query.IgnoresRange && result.Rows.Count == 1) await ToggleAsync(result.Rows[0].ActivationId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Message Playback Log query failed");
+            error = "The search failed. Try again or narrow the range.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task ToggleAsync(int activationId)
+    {
+        if (!expanded.Add(activationId))
+        {
+            expanded.Remove(activationId);
+            return;
+        }
+        if (screens.ContainsKey(activationId)) return;
+        try
+        {
+            screens[activationId] = await report.ScreensAsync(activationId);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Message Playback Log screens failed for Activation {ActivationId}", activationId);
+            screens[activationId] = [];
+            error = "The screens could not be read. Try again.";
+        }
+    }
+
+    private async Task ExportAsync()
+    {
+        if (applied is null) return;
+        busy = true;
+        try
+        {
+            var file = await report.ExportAsync(applied);
+            using var stream = new MemoryStream(file.Bytes);
+            using var streamRef = new DotNetStreamReference(stream);
+            await JS.InvokeVoidAsync("dxReports.download", file.FileName, streamRef);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Message Playback Log export failed");
+            error = "The export failed. Try again or narrow the range.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task OpenPrintAsync()
+    {
+        if (applied is null) return;
+        busy = true;
+        try
+        {
+            print = await report.PrintAsync(applied);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Message Playback Log print view failed");
+            error = "The print view failed. Try again or narrow the range.";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void ClosePrint() => print = null;
+
+    private async Task OpenPrintDialogAsync() => await JS.InvokeVoidAsync("dxReports.print");
+
+    private string Found => applied switch
+    {
+        { ActivationId: { } id } => $" Activation {id}, whatever the range.",
+        { Find: { } id } => $" found by {id}, whatever the range.",
+        _ => "",
+    };
+
+    private string Stamp(DateTime utc) => $"{timeZone.Local(utc)} {timeZone.Offset(utc)}";
+
+    // A scheduled send's range is wall-clock time on each screen's own clock, so it carries no offset.
+    private string Starts(PlaybackActivation a) =>
+        a.When.IsScheduled ? $"{a.When.StartText(timeZone)} {ActivationWhen.ScreenTimeNote}" : Stamp(a.StartUtc);
+
+    private string Ends(PlaybackActivation a) => a switch
+    {
+        { CancelledUtc: { } cancelled } => $"Cancelled {Stamp(cancelled)}{(a.CancelledBy is null ? "" : $" by {a.CancelledBy}")}",
+        { EndLocal: not null } => $"{a.When.EndText(timeZone)} {ActivationWhen.ScreenTimeNote}",
+        { EndUtc: { } end } => Stamp(end),
+        _ => "Until cancelled",
+    };
+
+    private static string RowsLine(MessagePlaybackLogResult r) =>
+        r.Truncated
+            ? $"The newest {r.Rows.Count} of {r.TotalCount} Activations. Narrow the filters to see the rest."
+            : $"{r.TotalCount} {(r.TotalCount == 1 ? "Activation" : "Activations")}, newest first.";
+
+    private static string SentBy(PlaybackActivation a) => a.SentBy ?? "account removed";
+
+    private static string SourceLabel(MessageActivationSource source) => source switch
+    {
+        MessageActivationSource.DirectorAdmin => "Director",
+        MessageActivationSource.Cupps => "CUPPS",
+        MessageActivationSource.Api => "API",
+        _ => source.ToString(),
+    };
+
+    private static string DisplayZoneLabel(string name, bool retired) => retired ? $"{name} (retired)" : name;
+
+    // A Display Zone picked at send whose displays all came through another Display Zone has no screens of its own (ZONE-06).
+    private static string DisplayZoneCount(PlaybackZone z) =>
+        $"{DisplayZoneLabel(z.Name ?? $"Display Zone {z.ZoneId}", z.Retired)}: {(z.ScreenCount == 0 ? "picked, its screens came through another" : z.ScreenCount)}";
+
+    // Shown versions key their texts by the Message's language codes.
+    private static string LanguageLabel(string code) => code.ToLowerInvariant() switch
+    {
+        "eng" or "en" => "English",
+        "fra" or "fr" => "French",
+        "" => "Text",
+        _ => code,
+    };
+
+    private static string Dot(ActivationStatus status) => status switch
+    {
+        ActivationStatus.Active => "dx-status-dot-green",
+        ActivationStatus.Scheduled => "dx-status-dot-yellow",
+        ActivationStatus.Cancelled => "dx-status-dot-red",
+        _ => "dx-status-dot-gray",
+    };
+}

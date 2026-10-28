@@ -1,0 +1,146 @@
+@using DXSuite.Director.Services.Messaging
+@inject MessageApprovals approvals
+
+@*
+    The Messages section of My Queue (MSG-11, MSG-13): one card per Message waiting on one of the approver's
+    groups, its languages side by side and its Asset Slots (the ASL video) beside them, a pending revision in the row
+    under the approved content. One Approve or Reject covers the whole Message.
+*@
+@if (items.Count > 0)
+{
+    <section class="dx-section mq-section" id="mq-messages">
+        <div class="dx-section-header">
+            <span class="dx-section-title">Messages</span>
+            <span class="dx-badge dx-badge-yellow">@items.Count</span>
+        </div>
+
+        @if (outcome is not null)
+        {
+            <div class="dx-alert @(outcomeIsError ? "dx-alert-warning" : "dx-alert-success")" id="mq-outcome" role="status">@outcome</div>
+        }
+
+        @foreach (var item in items)
+        {
+            var slotKeys = item.Proposed.Assets.Select(a => a.SlotKey)
+                .Concat(item.Approved?.Assets.Select(a => a.SlotKey) ?? [])
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+            <div class="dx-card mq-card" id="mq-item-@item.QueueEntryId">
+                <div class="dx-card-header mq-card-header">
+                    <strong>@item.Proposed.Name</strong>
+                    <span class="dx-badge dx-badge-blue">@item.TypeName</span>
+                    <span class="dx-badge @(item.IsRevision ? "dx-badge-orange" : "dx-badge-green")">@(item.IsRevision ? "Edit" : "New")</span>
+                    <span class="dx-text-muted mq-meta">
+                        @item.GroupName, stage @item.StageNumber of @item.StageCount.
+                        Submitted @item.SubmittedUtc.ToString("MMM d, yyyy HH:mm") UTC@(item.SubmittedBy is null ? "" : $" by {item.SubmittedBy}").
+                    </span>
+                </div>
+                <div class="dx-card-body">
+                    <div class="table-responsive">
+                        <table class="dx-table mq-versions">
+                            <thead>
+                                <tr>
+                                    <th></th>
+                                    @foreach (var language in item.Languages)
+                                    {
+                                        <th>@language.Name</th>
+                                    }
+                                    @foreach (var slot in slotKeys)
+                                    {
+                                        <th>@SlotLabel(slot)</th>
+                                    }
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (item.Approved is { } approved)
+                                {
+                                    <tr class="mq-approved" id="mq-approved-@item.QueueEntryId">
+                                        <th>Approved<div class="dx-text-muted">On screens now</div></th>
+                                        @foreach (var language in item.Languages)
+                                        {
+                                            <td>@approved.Texts.GetValueOrDefault(language.Code)</td>
+                                        }
+                                        @foreach (var slot in slotKeys)
+                                        {
+                                            <td><MessageApprovalAsset Asset="@approved.Assets.FirstOrDefault(a => string.Equals(a.SlotKey, slot, StringComparison.OrdinalIgnoreCase))" /></td>
+                                        }
+                                    </tr>
+                                }
+                                <tr class="mq-proposed" id="mq-proposed-@item.QueueEntryId">
+                                    <th>@(item.IsRevision ? "Pending revision" : "New Message")</th>
+                                    @foreach (var language in item.Languages)
+                                    {
+                                        var text = item.Proposed.Texts.GetValueOrDefault(language.Code);
+                                        var changed = item.Approved is not null && text != item.Approved.Texts.GetValueOrDefault(language.Code);
+                                        <td class="@(changed ? "mq-changed" : "")">@text</td>
+                                    }
+                                    @foreach (var slot in slotKeys)
+                                    {
+                                        <td><MessageApprovalAsset Asset="@item.Proposed.Assets.FirstOrDefault(a => string.Equals(a.SlotKey, slot, StringComparison.OrdinalIgnoreCase))" /></td>
+                                    }
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <label class="dx-form-label" for="mq-notes-@item.QueueEntryId">Notes (optional)</label>
+                    <textarea class="dx-form-control" id="mq-notes-@item.QueueEntryId" rows="2" maxlength="500"
+                              value="@notes.GetValueOrDefault(item.QueueEntryId)"
+                              @oninput="e => notes[item.QueueEntryId] = e.Value?.ToString()"></textarea>
+                </div>
+                <div class="dx-card-footer mq-actions">
+                    <button class="dx-btn dx-btn-red" id="mq-reject-@item.QueueEntryId" disabled="@busy"
+                            @onclick="() => DecideAsync(item, approve: false)">Reject</button>
+                    <button class="dx-btn dx-btn-green" id="mq-approve-@item.QueueEntryId" disabled="@busy"
+                            @onclick="() => DecideAsync(item, approve: true)">Approve</button>
+                </div>
+            </div>
+        }
+    </section>
+}
+else if (outcome is not null)
+{
+    <div class="dx-alert dx-alert-success" id="mq-outcome" role="status">@outcome</div>
+}
+
+@code {
+    private IReadOnlyList<MessageQueueItem> items = [];
+    private readonly Dictionary<int, string?> notes = new();
+    private string? outcome;
+    private bool outcomeIsError;
+    private bool busy;
+
+    /// <summary>Raised with the number of Messages waiting after each load, for the My Queue badge.</summary>
+    [Parameter] public EventCallback<int> OnCountChanged { get; set; }
+
+    protected override Task OnInitializedAsync() => ReloadAsync();
+
+    public async Task ReloadAsync()
+    {
+        items = await approvals.MyQueueAsync(default);
+        await OnCountChanged.InvokeAsync(items.Count);
+    }
+
+    private async Task DecideAsync(MessageQueueItem item, bool approve)
+    {
+        busy = true;
+        try
+        {
+            var note = notes.GetValueOrDefault(item.QueueEntryId);
+            var result = approve
+                ? await approvals.ApproveAsync(item.QueueEntryId, note, default)
+                : await approvals.RejectAsync(item.QueueEntryId, note, default);
+            outcome = $"{item.Proposed.Name}: {result.Message}";
+            outcomeIsError = result.Outcome is MessageDecisionOutcome.NotAllowed or MessageDecisionOutcome.Gone;
+            notes.Remove(item.QueueEntryId);
+            await ReloadAsync();
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    // GTAA's one slot is the ASL video; other slot keys show as they are configured.
+    private static string SlotLabel(string slotKey) =>
+        string.Equals(slotKey, "ASL", StringComparison.OrdinalIgnoreCase) ? "ASL video" : slotKey;
+}

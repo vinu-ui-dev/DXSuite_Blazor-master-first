@@ -92,7 +92,7 @@
     <PackageReference Include="Azure.Storage.Blobs" Version="12.29.0" />
     <PackageReference Include="Microsoft.Identity.Web" Version="4.9.0" />
     <PackageReference Include="Microsoft.Identity.Web.UI" Version="4.9.0" />
-    <PackageReference Include="System.Security.Cryptography.Xml" Version="10.0.10" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="11.0.0-rc.3.26522.148" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

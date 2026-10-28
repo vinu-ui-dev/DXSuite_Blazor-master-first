@@ -1,0 +1,42 @@
+.item {
+    padding: 10px;
+}
+
+.scroll-container
+{
+    display:flex;
+    flex-direction:row;
+    flex-wrap: nowrap;
+    overflow-x: hidden;
+    overflow-y: auto;
+    width: 100%;
+    height: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+.scroll-item
+{
+    flex: 0 0 auto;
+    width: 250px;
+    height: 10px;
+    border-radius: 8px;
+
+    
+}
+
+table, th, td {
+border-collapse: collapse;
+border: 1px solid black;
+border-radius: 5px;
+align-content: start;
+}
+
+p {
+margin:1px;
+}
+.sticky-header {
+position:sticky;
+top:0;
+background-color:lightgray;
+z-index: 1010
+}

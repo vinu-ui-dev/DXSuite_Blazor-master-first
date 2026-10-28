@@ -1,0 +1,494 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.Messaging
+@inject MessageTypeConfiguration configuration
+
+@if (draft is not null && options is not null)
+{
+    <div class="dx-modal-overlay mt-dialog">
+        <div class="dx-modal mt-modal" role="dialog" aria-label="Message Type">
+            <div class="dx-modal-header">
+                <span>@(draft.CodeLocked ? $"Edit Message Type: {draft.Code}" : "Add Message Type")</span>
+                <button class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (problem is not null)
+                {
+                    <div class="dx-alert dx-alert-danger mt-problem">@problem</div>
+                }
+                <div class="mt-cards">
+                    @* General *@
+                    <div class="dx-card mt-card mt-full">
+                        <div class="dx-card-header mt-card-h"><span>General</span></div>
+                        <div class="dx-card-body mt-fields mt-fields-3">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mt-code">Code</label>
+                                <input type="text" id="mt-code" class="dx-form-control @Invalid(nameof(MessageTypeDraft.Code))" placeholder="E.G. VISUAL_PAGE"
+                                       @bind="draft.Code" disabled="@draft.CodeLocked" />
+                                <small class="dx-form-hint">@(draft.CodeLocked ? "Fixed after the first save. The API and CUPPS use it." : "Capitals, digits and underscores. Fixed once saved.")</small>
+                                @Validation(Error(nameof(MessageTypeDraft.Code)))
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mt-name">Display Name</label>
+                                <input type="text" id="mt-name" class="dx-form-control @Invalid(nameof(MessageTypeDraft.DisplayName))" placeholder="E.G. Visual Page"
+                                       @bind="draft.DisplayName" />
+                                @Validation(Error(nameof(MessageTypeDraft.DisplayName)))
+                            </div>
+                            <div class="dx-form-group">
+                                <span class="dx-form-label">Rank</span>
+                                <div class="mt-static">@(draft.IsBuiltIn ? "Outside the ranking" : draft.CodeLocked ? $"{draft.Rank} of {draft.RankOf}" : "Last")</div>
+                                <small class="dx-form-hint">@(draft.IsBuiltIn ? "Built in, so it is not ranked against the other types." : draft.IsTopPriority ? "Pinned first while it is the Top priority type." : "Drag the type in the list to change it.")</small>
+                            </div>
+                            <div class="dx-form-group mt-span-3">
+                                <label class="mt-check">
+                                    <input type="checkbox" id="mt-top" class="dx-checkbox" checked="@(draft.IsTopPriority || topHolder is not null)" disabled="@draft.IsBuiltIn" @onchange="TopPriorityChanged" />
+                                    Top priority
+                                </label>
+                                <small class="dx-form-hint">Outranks every other type, even an Activation's priority override, and stays pinned first in the list. At most one type.</small>
+                                @if (topHolder is not null)
+                                {
+                                    <div class="dx-alert dx-alert-warning mt-confirm">
+                                        <span>@topHolder is the Top priority type. Move Top priority to this type?</span>
+                                        <span class="mt-confirm-actions">
+                                            <button type="button" id="mt-top-keep" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="KeepTopPriority">Keep it there</button>
+                                            <button type="button" id="mt-top-move" class="dx-btn dx-btn-blue dx-btn-sm" @onclick="MoveTopPriority">Move Top priority</button>
+                                        </span>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+
+                    @* Text *@
+                    <div class="dx-card mt-card">
+                        <div class="dx-card-header mt-card-h"><span>Text</span><small>What authors write</small></div>
+                        <div class="dx-card-body">
+                            <div class="dx-form-group">
+                                <span class="dx-form-label">Languages</span>
+                                <ol class="mt-langs">
+                                    @for (var i = 0; i < draft.Languages.Count; i++)
+                                    {
+                                        var at = i;
+                                        <li class="mt-lang">
+                                            <span class="mt-lang-name">@LanguageName(draft.Languages[at])</span>
+                                            @if (!options.LanguagesFixed)
+                                            {
+                                                <button type="button" id="mt-lang-up-@at" class="mt-move" aria-label="Move up" disabled="@(at == 0)" @onclick="() => Move(draft.Languages, at, at - 1)">▲</button>
+                                                <button type="button" id="mt-lang-down-@at" class="mt-move" aria-label="Move down" disabled="@(at == draft.Languages.Count - 1)" @onclick="() => Move(draft.Languages, at, at + 1)">▼</button>
+                                                <button type="button" class="mt-lang-remove" aria-label="Remove @LanguageName(draft.Languages[at])" @onclick="() => draft.Languages.RemoveAt(at)">&times;</button>
+                                            }
+                                        </li>
+                                    }
+                                </ol>
+                                @if (options.LanguagesFixed)
+                                {
+                                    <div class="mt-deviation">Fixed by the GTAA Customer Deviation: Ink shows English and French in turn.</div>
+                                }
+                                else
+                                {
+                                    <select @key="languagePicker" id="mt-lang-add" class="dx-form-control" @onchange="AddLanguage">
+                                        <option value="">Add a language...</option>
+                                        @foreach (var language in options.Languages.Where(l => !draft.Languages.Contains(l.Code, StringComparer.OrdinalIgnoreCase)))
+                                        {
+                                            <option value="@language.Code">@language.Name</option>
+                                        }
+                                    </select>
+                                    @if (options.Languages.Count == 0)
+                                    {
+                                        <small class="dx-form-hint">The product language catalogue is not available, so no language can be added now.</small>
+                                    }
+                                }
+                                <small class="dx-form-hint">Every Message of this type needs text in each language, in this order.</small>
+                                @Validation(Error(nameof(MessageTypeDraft.Languages)))
+                            </div>
+                            @* Character Limit, Display Seconds and Hide Seconds each have one field here (1.2's AM-10 makes them read-only). *@
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mt-limit">Character Limit</label>
+                                <input type="number" id="mt-limit" min="@TblMessageType.MaxCharactersLowerBound" max="@TblMessageType.MaxCharactersUpperBound"
+                                       class="dx-form-control mt-narrow @Invalid(nameof(MessageTypeDraft.MaxCharacters))" @bind="draft.MaxCharacters" />
+                                <small class="dx-form-hint">Per language, @TblMessageType.MaxCharactersLowerBound to @TblMessageType.MaxCharactersUpperBound.</small>
+                                @Validation(Error(nameof(MessageTypeDraft.MaxCharacters)))
+                            </div>
+                        </div>
+                    </div>
+
+                    @* Display *@
+                    <div class="dx-card mt-card">
+                        <div class="dx-card-header mt-card-h"><span>Display</span><small>Where and how long it shows</small></div>
+                        <div class="dx-card-body mt-fields mt-fields-2">
+                            <div class="dx-form-group mt-span-2">
+                                <label class="dx-form-label" for="mt-part">Screen Part</label>
+                                <select id="mt-part" class="dx-form-control @Invalid(nameof(MessageTypeDraft.ScreenPart))" @bind="draft.ScreenPart">
+                                    @if (draft.ScreenPart == 0)
+                                    {
+                                        <option value="">Select a Screen Part</option>
+                                    }
+                                    @foreach (var part in Enum.GetValues<MessageDisplayMode>())
+                                    {
+                                        <option value="@part">@MessageTypeDisplay.ScreenPartName(part)</option>
+                                    }
+                                </select>
+                                <small class="dx-form-hint">@MessageTypeDisplay.ScreenPartHelp(draft.ScreenPart)</small>
+                                @Validation(Error(nameof(MessageTypeDraft.ScreenPart)))
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mt-display">Display Seconds</label>
+                                <input type="number" id="mt-display" min="1" class="dx-form-control @Invalid(nameof(MessageTypeDraft.DisplaySeconds))" @bind="draft.DisplaySeconds" />
+                                <small class="dx-form-hint">How long each showing lasts, in one language.</small>
+                                @Validation(Error(nameof(MessageTypeDraft.DisplaySeconds)))
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mt-hide">Hide Seconds</label>
+                                <input type="number" id="mt-hide" min="0" class="dx-form-control @Invalid(nameof(MessageTypeDraft.HideSeconds))" @bind="draft.HideSeconds" />
+                                <small class="dx-form-hint">The gap between showings. 0 keeps it on screen.</small>
+                                @Validation(Error(nameof(MessageTypeDraft.HideSeconds)))
+                            </div>
+                        </div>
+                    </div>
+
+                    @* Colours *@
+                    <div class="dx-card mt-card mt-full">
+                        <div class="dx-card-header mt-card-h"><span>Colours</span><small>The preview shows the Screen Part</small></div>
+                        <div class="dx-card-body mt-fields mt-fields-2">
+                            <div>
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label" for="mt-text-colour">Text Colour</label>
+                                    <div class="mt-colour">
+                                        <input type="color" id="mt-text-colour" @bind="draft.TextColour" />
+                                        <span class="dx-col-id">@draft.TextColour.ToUpperInvariant()</span>
+                                    </div>
+                                    @Validation(Error(nameof(MessageTypeDraft.TextColour)))
+                                </div>
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label" for="mt-back-colour">Background Colour</label>
+                                    <div class="mt-colour">
+                                        <input type="color" id="mt-back-colour" @bind="draft.BackgroundColour" />
+                                        <span class="dx-col-id">@draft.BackgroundColour.ToUpperInvariant()</span>
+                                    </div>
+                                    @Validation(Error(nameof(MessageTypeDraft.BackgroundColour)))
+                                </div>
+                            </div>
+                            <div class="mt-screen" aria-label="Preview">
+                                <span class="mt-content">Normal content</span>
+                                <div class="mt-part mt-part-@PartClass" style="@MessageTypeDisplay.ColourStyle(draft.TextColour, draft.BackgroundColour)">
+                                    @(string.IsNullOrWhiteSpace(draft.DisplayName) ? "Sample Message" : draft.DisplayName)
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    @* Asset Slots *@
+                    <div class="dx-card mt-card mt-full">
+                        <div class="dx-card-header mt-card-h"><span>Asset Slots</span><small>One asset per slot on each Message, from the constraint's asset library</small></div>
+                        <div class="dx-card-body">
+                            <table class="mt-slots">
+                                <thead>
+                                    <tr><th class="mt-slot-order">Order</th><th>Slot</th><th>Constraint</th><th>Asset Library</th><th>Required</th><th></th></tr>
+                                </thead>
+                                <tbody>
+                                    @for (var i = 0; i < draft.Slots.Count; i++)
+                                    {
+                                        var at = i;
+                                        var slot = draft.Slots[at];
+                                        var constraint = options.Constraints.FirstOrDefault(c => c.ConstraintId == slot.ConstraintId);
+                                        <tr class="@(slotDragOver == at && slotDragging != at ? "mt-drag-over" : "")"
+                                            draggable="true"
+                                            @ondragstart="() => slotDragging = at"
+                                            @ondragover:preventDefault
+                                            @ondragover="() => slotDragOver = at"
+                                            @ondrop="() => DropSlot(at)">
+                                            <td>
+                                                <div class="mt-order">
+                                                    <span class="mt-drag-handle" title="Drag to reorder">⠿</span>
+                                                    <button type="button" id="mt-slot-up-@at" class="mt-move" aria-label="Move up" disabled="@(at == 0)" @onclick="() => Move(draft.Slots, at, at - 1)">▲</button>
+                                                    <button type="button" id="mt-slot-down-@at" class="mt-move" aria-label="Move down" disabled="@(at == draft.Slots.Count - 1)" @onclick="() => Move(draft.Slots, at, at + 1)">▼</button>
+                                                </div>
+                                            </td>
+                                            <td class="dx-col-id">@(options.OneAslSlotOnly ? MessageTypeConfiguration.AslSlotKey : slot.Key)</td>
+                                            <td>@(constraint?.Name ?? $"Constraint {slot.ConstraintId}")</td>
+                                            <td>@(constraint?.Library ?? "")</td>
+                                            <td><input type="checkbox" class="dx-checkbox" aria-label="Required" @bind="slot.IsRequired" /></td>
+                                            <td><button type="button" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => draft.Slots.RemoveAt(at)">Remove</button></td>
+                                        </tr>
+                                    }
+                                    @if (draft.Slots.Count == 0)
+                                    {
+                                        <tr><td colspan="6" class="dx-text-muted">No Asset Slots. Messages of this type are text only.</td></tr>
+                                    }
+                                    @if (!(options.OneAslSlotOnly && draft.Slots.Count > 0))
+                                    {
+                                        <tr>
+                                            <td></td>
+                                            <td>
+                                                @if (options.OneAslSlotOnly)
+                                                {
+                                                    <span class="mt-static">ASL video</span>
+                                                }
+                                                else
+                                                {
+                                                    <input type="text" id="mt-slot-key" class="dx-form-control dx-form-control-sm" placeholder="E.G. ASL" @bind="newSlotKey" />
+                                                }
+                                            </td>
+                                            <td colspan="2">
+                                                <select id="mt-slot-constraint" class="dx-form-control dx-form-control-sm" @bind="newSlotConstraintId">
+                                                    <option value="0">Select a constraint...</option>
+                                                    @foreach (var c in options.Constraints)
+                                                    {
+                                                        <option value="@c.ConstraintId">@c.Name, into @c.Library</option>
+                                                    }
+                                                </select>
+                                            </td>
+                                            <td><input type="checkbox" id="mt-slot-required" class="dx-checkbox" aria-label="Required" @bind="newSlotRequired" /></td>
+                                            <td><button type="button" id="mt-slot-add" class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddSlot">Add Slot</button></td>
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                            @if (options.Constraints.Count == 0)
+                            {
+                                <small class="dx-form-hint">No constraint has an asset library yet, so no slot can be added.</small>
+                            }
+                            @Validation(slotProblem ?? Error(nameof(MessageTypeDraft.Slots)))
+                            @if (options.OneAslSlotOnly)
+                            {
+                                <div class="mt-deviation">One ASL video slot at most, fixed by the GTAA Customer Deviation: it is the only asset the Ink delivery carries.</div>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <p class="dx-text-muted mt-note">Who may send this type, and its approval chain, are its Access.</p>
+            </div>
+            <div class="dx-modal-footer mt-footer">
+                <div class="mt-footer-left">
+                    @if (draft.IsBuiltIn)
+                    {
+                        <span id="mt-built-in" class="dx-text-muted mt-delete-ask">@draft.DisplayName is built in and cannot be deleted.</span>
+                    }
+                    else if (draft.CodeLocked)
+                    {
+                        @if (confirmDelete)
+                        {
+                            <span class="mt-delete-ask">Delete @draft.DisplayName?@(draft.MessageCount > 0 ? $" Its {draft.MessageCount} canned Messages are hidden too." : "")</span>
+                            <button type="button" id="mt-delete-keep" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmDelete = false">Keep</button>
+                            <button type="button" id="mt-delete-confirm" class="dx-btn dx-btn-red dx-btn-sm" @onclick="DeleteAsync">Delete</button>
+                        }
+                        else
+                        {
+                            <button type="button" id="mt-delete" class="dx-btn dx-btn-red" disabled="@draft.HasLiveActivations" @onclick="() => confirmDelete = true">Delete Message Type</button>
+                            @if (draft.HasLiveActivations)
+                            {
+                                <span class="dx-text-muted mt-delete-ask">A Message of this type is on screen or scheduled. Cancel it first.</span>
+                            }
+                        }
+                    }
+                </div>
+                <button type="button" id="mt-cancel" class="dx-btn dx-btn-gray" @onclick="Close">Cancel</button>
+                <button type="button" id="mt-save" class="dx-btn dx-btn-blue" disabled="@saving" @onclick="SaveAsync">Save</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>The list as the tab shows it, to name the current Top priority holder before saving.</summary>
+    [Parameter] public IReadOnlyList<MessageTypeRow> Types { get; set; } = [];
+
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private MessageTypeDraft? draft;
+    private MessageTypeDialogOptions? options;
+    private IReadOnlyDictionary<string, string> errors = new Dictionary<string, string>();
+    private string? problem;
+    private string? topHolder;
+    private bool moveTopPriority;
+    private bool confirmDelete;
+    private bool saving;
+    private int languagePicker;
+    private string newSlotKey = "";
+    private int newSlotConstraintId;
+    private bool newSlotRequired;
+    private string? slotProblem;
+    private int? slotDragging;
+    private int? slotDragOver;
+
+    private string PartClass => draft?.ScreenPart switch
+    {
+        MessageDisplayMode.FullScreen => "full",
+        MessageDisplayMode.Ticker => "ticker",
+        _ => "overlay"
+    };
+
+    /// <summary>Opens the dialog on a copy of the type, or on a blank type when <paramref name="messageTypeId"/> is null.</summary>
+    public async Task OpenAsync(int? messageTypeId)
+    {
+        Reset();
+        options = await configuration.DialogOptionsAsync(default);
+        draft = messageTypeId is int id ? await configuration.OpenAsync(id, default) : configuration.NewDraft();
+        if (draft is null)
+        {
+            options = null;
+            await OnSaved.InvokeAsync();
+        }
+        StateHasChanged();
+    }
+
+    private void Close()
+    {
+        Reset();
+        draft = null;
+        options = null;
+    }
+
+    private void Reset()
+    {
+        errors = new Dictionary<string, string>();
+        problem = null;
+        topHolder = null;
+        moveTopPriority = false;
+        confirmDelete = false;
+        saving = false;
+        newSlotKey = "";
+        newSlotConstraintId = 0;
+        newSlotRequired = false;
+        slotProblem = null;
+        slotDragging = null;
+        slotDragOver = null;
+    }
+
+    private string? Error(string field) => errors.TryGetValue(field, out var message) ? message : null;
+
+    private string Invalid(string field) => errors.ContainsKey(field) ? "invalid" : "";
+
+    private static RenderFragment Validation(string? message) => builder =>
+    {
+        if (message is null) return;
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "dx-form-validation");
+        builder.AddContent(2, message);
+        builder.CloseElement();
+    };
+
+    private string LanguageName(string code) =>
+        options?.Languages.FirstOrDefault(l => string.Equals(l.Code, code, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? MessageLanguageCatalogue.GtaaLanguages.FirstOrDefault(l => string.Equals(l.Code, code, StringComparison.OrdinalIgnoreCase))?.Name
+        ?? code;
+
+    // Ticking the box on a second type asks before the flag moves (MSG-08); the box shows ticked while it asks.
+    private void TopPriorityChanged(ChangeEventArgs e)
+    {
+        if (draft is null) return;
+        var ticked = e.Value is bool b ? b : bool.TryParse(e.Value?.ToString(), out var parsed) && parsed;
+        topHolder = null;
+        if (!ticked)
+        {
+            draft.IsTopPriority = false;
+            moveTopPriority = false;
+            return;
+        }
+        var holder = Types.FirstOrDefault(t => t.IsTopPriority && t.MessageTypeId != draft.MessageTypeId);
+        if (holder is null) draft.IsTopPriority = true;
+        else topHolder = holder.DisplayName;
+    }
+
+    private void MoveTopPriority()
+    {
+        if (draft is null) return;
+        draft.IsTopPriority = true;
+        moveTopPriority = true;
+        topHolder = null;
+    }
+
+    private void KeepTopPriority() => topHolder = null;
+
+    private void AddLanguage(ChangeEventArgs e)
+    {
+        var code = e.Value?.ToString();
+        if (draft is not null && !string.IsNullOrWhiteSpace(code) && !draft.Languages.Contains(code, StringComparer.OrdinalIgnoreCase))
+            draft.Languages.Add(code);
+        // A new picker element resets the select to its prompt.
+        languagePicker++;
+    }
+
+    private void AddSlot()
+    {
+        if (draft is null || options is null) return;
+        var key = options.OneAslSlotOnly ? MessageTypeConfiguration.AslSlotKey : newSlotKey.Trim();
+        slotProblem = key.Length == 0 ? "Give the slot a key."
+            : newSlotConstraintId == 0 ? "Pick a constraint."
+            : draft.Slots.Any(s => string.Equals(s.Key, key, StringComparison.OrdinalIgnoreCase)) ? "Each slot key once."
+            : null;
+        if (slotProblem is not null) return;
+
+        draft.Slots.Add(new AssetSlotDraft { Key = key, ConstraintId = newSlotConstraintId, IsRequired = newSlotRequired });
+        newSlotKey = "";
+        newSlotConstraintId = 0;
+        newSlotRequired = false;
+    }
+
+    private void DropSlot(int target)
+    {
+        if (draft is not null && slotDragging is int from && from != target) Move(draft.Slots, from, target);
+        slotDragging = null;
+        slotDragOver = null;
+    }
+
+    private static void Move<T>(List<T> list, int from, int to)
+    {
+        if (from < 0 || from >= list.Count || to < 0 || to >= list.Count || from == to) return;
+        var item = list[from];
+        list.RemoveAt(from);
+        list.Insert(to, item);
+    }
+
+    private async Task SaveAsync()
+    {
+        if (draft is null) return;
+        saving = true;
+        try
+        {
+            var result = await configuration.SaveAsync(draft, moveTopPriority, default);
+            switch (result.Outcome)
+            {
+                case MessageTypeSaveOutcome.Saved:
+                    Close();
+                    await OnSaved.InvokeAsync();
+                    return;
+                case MessageTypeSaveOutcome.ConfirmTopPriorityMove:
+                    // Another admin gave a different type Top priority while this dialog was open.
+                    draft.IsTopPriority = false;
+                    topHolder = result.TopPriorityHolder;
+                    break;
+                case MessageTypeSaveOutcome.Gone:
+                    problem = "This Message Type was deleted while you edited it.";
+                    break;
+                default:
+                    errors = result.Errors;
+                    problem = "Check the highlighted fields.";
+                    break;
+            }
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private async Task DeleteAsync()
+    {
+        if (draft?.MessageTypeId is not int id) return;
+        var outcome = await configuration.DeleteAsync(id, default);
+        if (outcome == MessageTypeDeleteOutcome.Busy)
+        {
+            confirmDelete = false;
+            problem = "A Message of this type is on screen or scheduled. Cancel it first.";
+            return;
+        }
+        if (outcome == MessageTypeDeleteOutcome.BuiltIn)
+        {
+            confirmDelete = false;
+            problem = $"{draft.DisplayName} is built in and cannot be deleted.";
+            return;
+        }
+        Close();
+        await OnSaved.InvokeAsync();
+    }
+}

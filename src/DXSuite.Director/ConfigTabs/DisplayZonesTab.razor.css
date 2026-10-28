@@ -1,0 +1,32 @@
+.dz-columns {
+    grid-template-columns: 32px 1.2fr 1.5fr 90px 280px;
+}
+
+.dz-grip {
+    cursor: grab;
+    color: var(--dx-text-muted);
+    user-select: none;
+}
+
+.dz-drag-over {
+    border-top: 2px solid var(--dx-blue);
+}
+
+.dz-note {
+    grid-template-columns: 1fr;
+}
+
+.dz-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: normal;
+}
+
+.dz-loading {
+    position: relative;
+    min-height: 120px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}

@@ -23,6 +23,12 @@ public partial class TblZone
 
     public DateTime CreatedUtc { get; set; }
 
+    /// <summary>
+    /// Set when a Display Zone that Activations have targeted is retired instead of deleted (ZONE-12): it leaves the
+    /// pickers and its Message access rules stop working, while past Activations still name it.
+    /// </summary>
+    public DateTime? RetiredUtc { get; set; }
+
     [InverseProperty("Zone")]
     public virtual ICollection<TblZoneDisplay> ZoneDisplays { get; set; } = new List<TblZoneDisplay>();
 }

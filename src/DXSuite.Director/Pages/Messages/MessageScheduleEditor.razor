@@ -1,0 +1,515 @@
+@using System.Globalization
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+@inject MessageSending sending
+@inject TimeProvider clock
+@inject IJSRuntime JS
+
+@if (setup is not null)
+{
+    <div class="dx-modal-overlay mse-dialog">
+        <div class="dx-modal mse-modal" role="dialog" aria-label="Schedule Message Activation">
+            <div class="dx-modal-header">
+                <span>Schedule Message Activation</span>
+                <button id="mse-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="CloseAsync">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (problem is not null)
+                {
+                    <div class="dx-alert dx-alert-danger mse-problem">@problem</div>
+                }
+
+                @switch (step)
+                {
+                    case Step.Compose:
+                        @Compose
+                        break;
+                    case Step.Confirm:
+                        @ConfirmScreens
+                        break;
+                    case Step.Sent:
+                        <div id="mse-sent" class="dx-alert dx-alert-success">Sent to @Screens(sentCount).</div>
+                        break;
+                }
+            </div>
+            <div class="dx-modal-footer">
+                @switch (step)
+                {
+                    case Step.Compose:
+                        <button id="mse-cancel" type="button" class="dx-btn dx-btn-gray" @onclick="CloseAsync">Cancel</button>
+                        <button id="mse-next" type="button" class="dx-btn dx-btn-blue" disabled="@(busy || setup.NothingToPick)" @onclick="ConfirmAsync">Next: confirm screens</button>
+                        break;
+                    case Step.Confirm:
+                        <button id="mse-back" type="button" class="dx-btn dx-btn-gray" @onclick="Back">Back</button>
+                        <button id="mse-send" type="button" class="dx-btn dx-btn-blue" disabled="@busy" @onclick="SendAsync">Send to @Screens(screens.Count)</button>
+                        break;
+                    case Step.Sent:
+                        <button id="mse-done" type="button" class="dx-btn dx-btn-blue" @onclick="CloseAsync">Close</button>
+                        break;
+                }
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    /// <summary>Raised when the dialog closes, after a send or not, so the list can show what was sent.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private enum Step { Compose, Confirm, Sent }
+
+    private MessageSendSetup? setup;
+    private Step step;
+    private string? problem;
+    private bool busy;
+    private IReadOnlyDictionary<string, string> errors = new Dictionary<string, string>();
+
+    private MessageTargetMode mode;
+    private readonly HashSet<int> pickedDisplayZones = new();
+    private int? pickedDisplay;
+    private string search = "";
+    private int reach;
+
+    private enum When { UntilCancelled, ForMinutes, Scheduled }
+
+    // The week as the dialog lists it, Monday first.
+    private static readonly DayOfWeek[] WeekOrder =
+        [DayOfWeek.Monday, DayOfWeek.Tuesday, DayOfWeek.Wednesday, DayOfWeek.Thursday, DayOfWeek.Friday, DayOfWeek.Saturday, DayOfWeek.Sunday];
+
+    private Dictionary<string, string> oneOffTexts = new();
+    private When when = When.UntilCancelled;
+    private int? minutes = 30;
+    private DateTime? scheduleStart;
+    private DateTime? scheduleEnd;
+    private bool weekly;
+    private readonly HashSet<DayOfWeek> days = new();
+    private TimeOnly? dailyStart;
+    private TimeOnly? dailyEnd;
+    private int? displaySeconds;
+    private int? hideSeconds;
+    private int? priorityOverride;
+
+    private IReadOnlyList<FrozenScreen> screens = [];
+    private IReadOnlyDictionary<int, string> screenTimeZones = new Dictionary<int, string>();
+    private int sentCount;
+
+    /// <summary>Opens the dialog on an Approved canned Message; does nothing when it can no longer be sent.</summary>
+    public async Task OpenAsync(int messageId) => Show(await sending.OpenAsync(messageId, default), await ReportTimeZone.DetectAsync(JS));
+
+    /// <summary>Opens the dialog to type one-off text of a type, sent only where a rule allows one-off text (MSG-05).</summary>
+    public async Task OpenOneOffAsync(int messageTypeId) => Show(await sending.OpenOneOffAsync(messageTypeId, default), await ReportTimeZone.DetectAsync(JS));
+
+    private RenderFragment Compose => @<text>
+        <div class="dx-card mse-card">
+            <div class="dx-card-header mse-card-h"><span>@setup!.MessageTypeName</span><small>@(setup.IsOneOff ? "One-off text, sent without approval" : setup.MessageName)</small></div>
+            <div class="dx-card-body">
+                @foreach (var text in setup.Texts)
+                {
+                    var textField = MessageSending.TextField(text.LanguageCode);
+                    <div class="dx-form-group">
+                        @if (setup.IsOneOff)
+                        {
+                            var typed = oneOffTexts.GetValueOrDefault(text.LanguageCode) ?? "";
+                            <div class="mse-text-label">
+                                <label class="dx-form-label" for="mse-text-@text.LanguageCode">@text.LanguageName</label>
+                                <span class="mse-count @(typed.Length > setup.MaxCharacters ? "mse-over" : "")">@typed.Length / @setup.MaxCharacters</span>
+                            </div>
+                            <textarea id="mse-text-@text.LanguageCode" rows="2" class="dx-form-control mse-text @Invalid(textField)"
+                                      value="@typed" @oninput="e => oneOffTexts[text.LanguageCode] = e.Value?.ToString() ?? string.Empty"></textarea>
+                            @Validation(Error(textField))
+                        }
+                        else
+                        {
+                            <span class="dx-form-label">@text.LanguageName</span>
+                            <div class="mse-canned-text">@text.Body</div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="dx-card mse-card">
+            <div class="dx-card-header mse-card-h"><span>Select Where to Show Your Message</span></div>
+            <div class="dx-card-body">
+                @if (setup.NothingToPick)
+                {
+                    <p class="dx-text-muted">No Message access rule lets you send this type@(setup.IsOneOff ? " with one-off text" : "").</p>
+                }
+                else
+                {
+                    <div class="mse-modes" role="group" aria-label="Target">
+                        <button id="mse-mode-zones" type="button" class="dx-btn dx-btn-sm @(mode == MessageTargetMode.DisplayZones ? "dx-btn-blue" : "dx-btn-gray")"
+                                aria-pressed="@(mode == MessageTargetMode.DisplayZones)" @onclick="() => SwitchModeAsync(MessageTargetMode.DisplayZones)">Display Zones</button>
+                        <button id="mse-mode-display" type="button" class="dx-btn dx-btn-sm @(mode == MessageTargetMode.OneDisplay ? "dx-btn-blue" : "dx-btn-gray")"
+                                aria-pressed="@(mode == MessageTargetMode.OneDisplay)" @onclick="() => SwitchModeAsync(MessageTargetMode.OneDisplay)">One display</button>
+                    </div>
+                    <input class="dx-search-input mse-search" placeholder="@(mode == MessageTargetMode.DisplayZones ? "Search Display Zones..." : "Search displays...")"
+                           @bind="search" @bind:event="oninput" />
+                    <div class="dx-scrollable mse-picker">
+                        @if (mode == MessageTargetMode.DisplayZones)
+                        {
+                            @if (setup.Zones.Count == 0)
+                            {
+                                <p class="dx-text-muted">No Display Zone is open to you for this type. Try One display.</p>
+                            }
+                            @foreach (var displayZone in setup.Zones.Where(z => Matches(z.Name)))
+                            {
+                                <label class="mse-option">
+                                    <input type="checkbox" id="mse-zone-@displayZone.ZoneId" class="dx-checkbox" checked="@pickedDisplayZones.Contains(displayZone.ZoneId)"
+                                           @onchange="() => ToggleDisplayZoneAsync(displayZone.ZoneId)" />
+                                    <span>@displayZone.Name</span>
+                                </label>
+                            }
+                        }
+                        else
+                        {
+                            @foreach (var location in setup.Locations)
+                            {
+                                var shown = location.Displays.Where(d => Matches(d.Name) || Matches(location.Name)).ToList();
+                                if (shown.Count == 0) continue;
+                                <div class="mse-location">@location.Name</div>
+                                @foreach (var display in shown)
+                                {
+                                    <label class="mse-option mse-option-nested">
+                                        <input type="radio" id="mse-display-@display.DisplayId" name="mse-display" checked="@(pickedDisplay == display.DisplayId)"
+                                               @onchange="() => PickDisplayAsync(display.DisplayId)" />
+                                        <span>@display.Name</span>
+                                    </label>
+                                }
+                            }
+                        }
+                    </div>
+                    <div id="mse-reach" class="mse-reach">Reaches @Screens(reach). Fixed when sent.</div>
+                    @Validation(Error(MessageSending.TargetField))
+                }
+            </div>
+        </div>
+
+        <div class="dx-card mse-card">
+            <div class="dx-card-header mse-card-h"><span>When</span></div>
+            <div class="dx-card-body">
+                <span class="dx-form-label">Send now</span>
+                <label class="mse-option">
+                    <input type="radio" id="mse-until-cancelled" name="mse-duration" checked="@(when == When.UntilCancelled)" @onchange="() => when = When.UntilCancelled" />
+                    <span>Until cancelled</span>
+                </label>
+                <label class="mse-option">
+                    <input type="radio" id="mse-for-minutes" name="mse-duration" checked="@(when == When.ForMinutes)" @onchange="() => when = When.ForMinutes" />
+                    <span>For</span>
+                    <input type="number" id="mse-minutes" min="1" class="dx-form-control dx-form-control-sm mse-number @(when == When.ForMinutes ? Invalid(MessageSending.WhenField) : "")"
+                           disabled="@(when != When.ForMinutes)" @bind="minutes" />
+                    <span>minutes</span>
+                </label>
+                <label class="mse-option">
+                    <input type="radio" id="mse-scheduled" name="mse-duration" checked="@(when == When.Scheduled)" @onchange="() => when = When.Scheduled" />
+                    <span>Scheduled</span>
+                </label>
+                @if (when == When.Scheduled)
+                {
+                    <div class="mse-schedule">
+                        <div class="dx-form-row">
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mse-start">Start</label>
+                                <input type="datetime-local" id="mse-start" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.WhenField)"
+                                       @bind="scheduleStart" @bind:format="yyyy-MM-ddTHH:mm" />
+                            </div>
+                            <div class="dx-form-group">
+                                <label class="dx-form-label" for="mse-end">End</label>
+                                <input type="datetime-local" id="mse-end" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.WhenField)"
+                                       @bind="scheduleEnd" @bind:format="yyyy-MM-ddTHH:mm" />
+                            </div>
+                        </div>
+                        <label class="mse-option">
+                            <input type="checkbox" id="mse-weekly" class="dx-checkbox" checked="@weekly" @onchange="e => weekly = e.Value is true" />
+                            <span>Only on some days or times</span>
+                        </label>
+                        @if (weekly)
+                        {
+                            <div class="mse-days" role="group" aria-label="Days">
+                                @foreach (var day in WeekOrder)
+                                {
+                                    <label class="mse-option">
+                                        <input type="checkbox" id="mse-day-@((int)day)" class="dx-checkbox" checked="@days.Contains(day)"
+                                               @onchange="e => SetDay(day, e.Value is true)" />
+                                        <span>@DayName(day)</span>
+                                    </label>
+                                }
+                            </div>
+                            @Validation(Error(MessageSending.DaysField))
+                            <div class="dx-form-row">
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label" for="mse-daily-start">Daily from</label>
+                                    <input type="time" id="mse-daily-start" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.DailyWindowField)"
+                                           @bind="dailyStart" @bind:format="HH:mm" />
+                                </div>
+                                <div class="dx-form-group">
+                                    <label class="dx-form-label" for="mse-daily-end">Daily until</label>
+                                    <input type="time" id="mse-daily-end" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.DailyWindowField)"
+                                           @bind="dailyEnd" @bind:format="HH:mm" />
+                                </div>
+                            </div>
+                            <small class="dx-form-hint">Leave both times blank to show all day. A window ending before it starts runs overnight.</small>
+                            @Validation(Error(MessageSending.DailyWindowField))
+                        }
+                        <small class="dx-form-hint">Times are local time on each screen. Displays with no device use @setup.DefaultTimeZone.</small>
+                    </div>
+                }
+                @Validation(Error(MessageSending.WhenField))
+                <div class="dx-form-row mse-seconds">
+                    <div class="dx-form-group">
+                        <label class="dx-form-label" for="mse-display-seconds">Display seconds</label>
+                        <input type="number" id="mse-display-seconds" min="1" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.DisplaySecondsField)"
+                               placeholder="@setup.DefaultDisplaySeconds" @bind="displaySeconds" />
+                        <small class="dx-form-hint">Blank keeps the type's @setup.DefaultDisplaySeconds s.</small>
+                        @Validation(Error(MessageSending.DisplaySecondsField))
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label" for="mse-hide-seconds">Hide seconds</label>
+                        <input type="number" id="mse-hide-seconds" min="0" class="dx-form-control dx-form-control-sm @Invalid(MessageSending.HideSecondsField)"
+                               placeholder="@setup.DefaultHideSeconds" @bind="hideSeconds" />
+                        <small class="dx-form-hint">Blank keeps the type's @setup.DefaultHideSeconds s.</small>
+                        @Validation(Error(MessageSending.HideSecondsField))
+                    </div>
+                    @if (setup.CanOverridePriority)
+                    {
+                        <div class="dx-form-group">
+                            <label class="dx-form-label" for="mse-priority-override">Priority override</label>
+                            <input type="number" id="mse-priority-override" class="dx-form-control dx-form-control-sm" @bind="priorityOverride" />
+                            <small class="dx-form-hint">Blank keeps the type's rank (@setup.TypePriority). Lower wins.</small>
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </text>;
+
+    private RenderFragment ConfirmScreens => @<text>
+        <div class="dx-card mse-card">
+            <div class="dx-card-header mse-card-h"><span>Confirm screens</span><small>These @Screens(screens.Count) are fixed when sent</small></div>
+            <div class="dx-card-body">
+                <div class="dx-table mse-screens">
+                    <div class="dx-table-header mse-screen-cols @(screenTimeZones.Count > 0 ? "mse-screen-cols-zoned" : "")">
+                        <div>Display</div><div>Location</div><div>Through</div>
+                        @if (screenTimeZones.Count > 0)
+                        {
+                            <div>Time zone</div>
+                        }
+                    </div>
+                    @foreach (var screen in screens)
+                    {
+                        <div id="mse-screen-@screen.DisplayId" class="dx-table-row mse-screen-cols @(screenTimeZones.Count > 0 ? "mse-screen-cols-zoned" : "")">
+                            <div>@screen.DisplayName</div>
+                            <div>@screen.LocationName</div>
+                            <div>@(screen.ZoneName ?? "One display")</div>
+                            @if (screenTimeZones.Count > 0)
+                            {
+                                <div>@screenTimeZones.GetValueOrDefault(screen.DisplayId)</div>
+                            }
+                        </div>
+                    }
+                </div>
+                <div class="dx-text-muted mse-when">@WhenText</div>
+                @if (priorityOverride is { } rank)
+                {
+                    <div class="dx-text-muted mse-when">Priority override @rank.</div>
+                }
+            </div>
+        </div>
+    </text>;
+
+    /// <param name="viewer">The sender's browser time zone, which the default schedule is read in.</param>
+    private void Show(MessageSendSetup? opened, ReportTimeZone viewer)
+    {
+        setup = opened;
+        step = Step.Compose;
+        problem = null;
+        busy = false;
+        errors = new Dictionary<string, string>();
+        mode = opened is { Zones.Count: 0, Locations.Count: > 0 } ? MessageTargetMode.OneDisplay : MessageTargetMode.DisplayZones;
+        pickedDisplayZones.Clear();
+        pickedDisplay = null;
+        search = "";
+        reach = 0;
+        oneOffTexts = new();
+        when = When.UntilCancelled;
+        minutes = 30;
+        // A schedule starts as the next whole hour on the sender's own clock, for a day; the sender edits both.
+        var local = viewer.ToLocal(clock.GetUtcNow().UtcDateTime);
+        var nextHour = local.Date.AddHours(local.Hour + 1);
+        scheduleStart = nextHour;
+        scheduleEnd = nextHour.AddDays(1);
+        weekly = false;
+        days.Clear();
+        days.UnionWith(WeekOrder);
+        dailyStart = null;
+        dailyEnd = null;
+        displaySeconds = null;
+        hideSeconds = null;
+        priorityOverride = null;
+        screens = [];
+        screenTimeZones = new Dictionary<int, string>();
+        sentCount = 0;
+        StateHasChanged();
+    }
+
+    private MessageSendTarget Target => mode == MessageTargetMode.DisplayZones
+        ? MessageSendTarget.DisplayZones(pickedDisplayZones.ToArray())
+        : new MessageSendTarget(MessageTargetMode.OneDisplay, [], pickedDisplay);
+
+    private MessageSendRequest Request => new()
+    {
+        MessageTypeId = setup!.MessageTypeId,
+        MessageId = setup.MessageId,
+        OneOffTexts = setup.IsOneOff ? new Dictionary<string, string>(oneOffTexts) : null,
+        Target = Target,
+        When = Timing,
+        DisplaySeconds = displaySeconds,
+        HideSeconds = hideSeconds,
+        PriorityOverride = setup.CanOverridePriority ? priorityOverride : null,
+    };
+
+    private MessageSendTiming Timing => when switch
+    {
+        When.ForMinutes => new MessageSendTiming.SendNow(minutes ?? 0),
+        // A blank start or end is sent as an empty range, which the send refuses with "The end must be after the start."
+        When.Scheduled => new MessageSendTiming.Scheduled(scheduleStart ?? default, scheduleEnd ?? default,
+            weekly ? new MessageWeeklyWindow(days.ToHashSet(), dailyStart, dailyEnd) : null),
+        _ => new MessageSendTiming.SendNow(null),
+    };
+
+    private string WhenText
+    {
+        get
+        {
+            if (Timing is not MessageSendTiming.Scheduled scheduled)
+                return when == When.ForMinutes ? $"Shows now for {minutes} minutes." : "Shows now until cancelled.";
+
+            var text = $"Shows from {Stamp(scheduled.Start)} to {Stamp(scheduled.End)}";
+            if (scheduled.Weekly is { } window)
+            {
+                text += ", " + string.Join(" ", WeekOrder.Where(window.Days.Contains).Select(DayName));
+                if (window is { DailyStart: { } from, DailyEnd: { } until })
+                    text += $", {from.ToString("HH:mm", CultureInfo.InvariantCulture)} to {until.ToString("HH:mm", CultureInfo.InvariantCulture)}";
+            }
+
+            return text + ", local time on each screen.";
+        }
+    }
+
+    private static string Stamp(DateTime value) => value.ToString("ddd d MMM yyyy HH:mm", CultureInfo.InvariantCulture);
+
+    private static string DayName(DayOfWeek day) => CultureInfo.InvariantCulture.DateTimeFormat.GetAbbreviatedDayName(day);
+
+    private void SetDay(DayOfWeek day, bool on)
+    {
+        if (on) days.Add(day);
+        else days.Remove(day);
+    }
+
+    private async Task SwitchModeAsync(MessageTargetMode to)
+    {
+        if (mode == to) return;
+        mode = to;
+        search = "";
+        await RefreshReachAsync();
+    }
+
+    private async Task ToggleDisplayZoneAsync(int zoneId)
+    {
+        if (!pickedDisplayZones.Remove(zoneId)) pickedDisplayZones.Add(zoneId);
+        await RefreshReachAsync();
+    }
+
+    private async Task PickDisplayAsync(int displayId)
+    {
+        pickedDisplay = displayId;
+        await RefreshReachAsync();
+    }
+
+    private async Task RefreshReachAsync() => reach = (await sending.ScreensAsync(Target, default)).Count;
+
+    private async Task ConfirmAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await sending.CheckAsync(Request, default);
+            if (result.Outcome == MessageSendOutcome.Ready)
+            {
+                screens = result.Screens;
+                screenTimeZones = result.ScreenTimeZones ?? new Dictionary<int, string>();
+                step = Step.Confirm;
+            }
+            Take(result);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private async Task SendAsync()
+    {
+        busy = true;
+        try
+        {
+            var result = await sending.SendAsync(Request, screens.Select(s => s.DisplayId).ToList(), default);
+            switch (result.Outcome)
+            {
+                case MessageSendOutcome.Sent:
+                    sentCount = result.ScreenCount;
+                    step = Step.Sent;
+                    break;
+                case MessageSendOutcome.ScreensChanged:
+                    // Stay on Confirm screens with the new list, so the sender confirms what will be frozen.
+                    screens = result.Screens;
+                    screenTimeZones = result.ScreenTimeZones ?? screenTimeZones;
+                    break;
+                default:
+                    step = Step.Compose;
+                    break;
+            }
+            Take(result);
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+
+    private void Take(MessageSendResult result)
+    {
+        errors = result.Errors;
+        problem = result.Problem;
+    }
+
+    private void Back()
+    {
+        step = Step.Compose;
+        problem = null;
+    }
+
+    private async Task CloseAsync()
+    {
+        setup = null;
+        await OnClose.InvokeAsync();
+    }
+
+    private bool Matches(string name) =>
+        string.IsNullOrWhiteSpace(search) || name.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static string Screens(int count) => count == 1 ? "1 screen" : $"{count} screens";
+
+    private string? Error(string field) => errors.TryGetValue(field, out var message) ? message : null;
+
+    private string Invalid(string field) => errors.ContainsKey(field) ? "invalid" : "";
+
+    private static RenderFragment Validation(string? message) => builder =>
+    {
+        if (message is null) return;
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "dx-form-validation");
+        builder.AddContent(2, message);
+        builder.CloseElement();
+    };
+}

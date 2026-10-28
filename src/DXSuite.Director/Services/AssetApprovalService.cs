@@ -173,6 +173,12 @@ namespace DXSuite.Director.Services
             var asset = approval.Asset;
             if (asset == null) return false;
 
+            // Database first, so a failed delete leaves the files in place for the next attempt
+            await _dbContext.RemoveAssetDependentsAsync(asset.AssetId);
+            _dbContext.TblAssetApprovals.Remove(approval);
+            _dbContext.TblAssets.Remove(asset);
+            await _dbContext.SaveChangesAsync();
+
             // Delete physical files (asset + metadata)
             var baseDirectory = _mediaPaths.GetRoot();
             if (!string.IsNullOrEmpty(baseDirectory) && !string.IsNullOrEmpty(asset.AssetPath))
@@ -199,11 +205,6 @@ namespace DXSuite.Director.Services
                     _logger.LogError(ex, "Failed to delete files for purged asset {AssetId}", asset.AssetId);
                 }
             }
-
-            // Delete database records
-            _dbContext.TblAssetApprovals.Remove(approval);
-            _dbContext.TblAssets.Remove(asset);
-            await _dbContext.SaveChangesAsync();
 
             InvalidateManifestForLocation(asset.LocationId);
 
@@ -432,7 +433,7 @@ namespace DXSuite.Director.Services
 
             // Withdraw all chain requests linked to these approvals
             var requests = await _dbContext.TblApprovalRequests
-                .Where(r => approvalIds.Contains(r.AssetApprovalId) && r.Status == "pending")
+                .Where(r => r.AssetApprovalId != null && approvalIds.Contains(r.AssetApprovalId.Value) && r.Status == "pending")
                 .ToListAsync();
 
             var requestIds = requests.Select(r => r.ApprovalRequestId).ToList();

@@ -1,0 +1,270 @@
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using DXSuite.Shared.Components
+@using System.Linq;
+@inject CoreApiClient coreApi
+@inject FlightEditAudit audit
+@rendermode InteractiveServer
+@if (showDialog) {
+    <div class="dx-modal-overlay">
+        @*Pop up Div*@
+        <div class="dx-modal" style="height:75vh">
+            <div class="dx-modal-header">
+                Current vs Feed review
+                <button @onclick="() => Close()" class="dx-modal-close">&times;</button>
+            </div>
+            <div class="dx-modal-body" style="padding-top:0px; padding-bottom: 0px; margin-top:20px">
+                <CoreApiUnreachableBanner Shown="ReadOnly" />
+                @if (actionError is { } error) {
+                    <div class="dx-alert dx-alert-danger fde-review-error">@error</div>
+                }
+                <div class="dx-card dx-card-fill" style="box-shadow:none; border:none">
+                    <div class="dx-panel-content">
+                        <div class="dx-table">
+                            <div class="dx-table-header" style="grid-template-columns: 1fr 1fr 2fr 2fr 1fr;">
+                                <div>TYPE</div>
+                                <div>Flight</div>
+                                <div>Current</div>
+                                <div>Feed</div>
+                                <div>Action</div>
+                            </div>
+                            @foreach (var flight in overriddenDepartureFlightList.Cast<Object>().Concat(overriddenArrivalFlightList.Cast<Object>()).ToList().Skip(paginator.PageSize * (paginator.CurrentPage - 1)).Take(paginator.PageSize)) {
+                                @if (flight != null && flight is FEDepartureFlight fEDeparture) {
+                                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr 2fr 2fr 1fr;">
+                                        <div style="align-self: start;">
+                                            Departure
+                                        </div>
+                                        <div style="align-self: start;">@fEDeparture!.FLT</div>
+                                        <div class="fde-review-current" style="align-self: start;">
+                                            @if (fEDeparture.overrideFlightData != null) {
+                                                if (fEDeparture.overrideFlightData.ETD != null) {
+                                                    <p>ETD: @fEDeparture.overrideFlightData.ETD</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.ATD != null) {
+                                                    <p>ATD: @fEDeparture.overrideFlightData.ATD</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.RCP != null) {
+                                                    <p>STATUS: @fEDeparture.overrideFlightData.RCP</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.GAT != null) {
+                                                    <p>GATE: @fEDeparture.overrideFlightData.GAT</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.CodeShares != null && fEDeparture.overrideFlightData.CodeShares.Count > 0) {
+
+                                                    @foreach (FECodeShare codeShare in fEDeparture.CodeShares) {
+                                                        <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                                    }
+                                                }
+                                                @foreach (var roll in RollReview(fEDeparture, fEDeparture.overrideFlightData)) {
+                                                    <p>@roll.Name: @ShownText(roll.Edit)</p>
+                                                }
+                                            }
+                                        </div>
+                                        <div class="fde-review-feed" style="align-self: start;">
+                                            @if (fEDeparture.overrideFlightData != null) {
+                                                if (fEDeparture.overrideFlightData.ETD != null) {
+                                                    <p>ETD: @fEDeparture.EstimatedTime</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.ATD != null) {
+                                                    <p>ATD: @fEDeparture.ActualTime</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.RCP != null) {
+                                                    <p>STATUS: @fEDeparture.RCP</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.GAT != null) {
+                                                    <p>GATE: @fEDeparture.GAT</p>
+                                                }
+                                                if (fEDeparture.overrideFlightData.CodeShares != null && fEDeparture.overrideFlightData.CodeShares.Count > 0) {
+
+                                                    @foreach (FECodeShare codeShare in fEDeparture.CodeShares) {
+                                                        @if (fEDeparture.overrideFlightData.CodeShares.FirstOrDefault(x => x.FLN == codeShare.FLN && x.FLC == codeShare.FLC) == null) {
+                                                            <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                                        }
+                                                    }
+                                                }
+                                                @foreach (var roll in RollReview(fEDeparture, fEDeparture.overrideFlightData)) {
+                                                    <p>@roll.Name: @ShownText(roll.Feed)</p>
+                                                }
+                                            }
+                                        </div>
+                                        <div style="align-self: start;">
+                                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm fde-preserve" disabled="@ReadOnly" @onclick="() => PreserveDeparture(fEDeparture!)">Preserve</button>
+                                        </div>
+                                    </div>
+                                } else if (flight != null && flight is FEArrivalFlight fEArrival) {
+                                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr 2fr 2fr 1fr;">
+                                        <div style="align-self: start;">
+                                            Arrival
+                                        </div>
+                                        <div style="align-self: start;">@fEArrival!.FLT</div>
+                                        <div class="fde-review-current" style="align-self: start;">
+                                            @if (fEArrival.overrideFlightData != null) {
+                                                if (fEArrival.overrideFlightData.ETA != null) {
+                                                    <p>ETA: @fEArrival.overrideFlightData.ETA</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.ATA != null) {
+                                                    <p>ATA: @fEArrival.overrideFlightData.ATA</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.RCP != null) {
+                                                    <p>STATUS: @fEArrival.overrideFlightData.RCP</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.CAR != null) {
+                                                    <p>CLAIM: @fEArrival.overrideFlightData.CAR</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.CodeShares != null && fEArrival.overrideFlightData.CodeShares.Count > 0) {
+
+                                                    @foreach (FECodeShare codeShare in fEArrival.CodeShares) {
+                                                        <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                                    }
+                                                }
+                                                @foreach (var roll in RollReview(fEArrival, fEArrival.overrideFlightData)) {
+                                                    <p>@roll.Name: @ShownText(roll.Edit)</p>
+                                                }
+                                            }
+                                        </div>
+                                        <div class="fde-review-feed" style="align-self: start;">
+                                            @if (fEArrival.overrideFlightData != null) {
+                                                if (fEArrival.overrideFlightData.ETA != null) {
+                                                    <p>ETA: @fEArrival.EstimatedTime</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.ATA != null) {
+                                                    <p>ATA: @fEArrival.ActualTime</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.RCP != null) {
+                                                    <p>STATUS: @fEArrival.RCP</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.CAR != null) {
+                                                    <p>CLAIM: @fEArrival.CAR</p>
+                                                }
+                                                if (fEArrival.overrideFlightData.CodeShares != null && fEArrival.overrideFlightData.CodeShares.Count > 0) {
+
+                                                    @foreach (FECodeShare codeShare in fEArrival.CodeShares) {
+                                                        @if (fEArrival.overrideFlightData.CodeShares.FirstOrDefault(x => x.FLN == codeShare.FLN && x.FLC == codeShare.FLC) == null) {
+                                                            <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                                        }
+                                                    }
+                                                }
+                                                @foreach (var roll in RollReview(fEArrival, fEArrival.overrideFlightData)) {
+                                                    <p>@roll.Name: @ShownText(roll.Feed)</p>
+                                                }
+                                            }
+                                        </div>
+                                        <div style="align-self: start;">
+                                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm fde-preserve" disabled="@ReadOnly" @onclick="() => PreserveArrival(fEArrival!)">Preserve</button>
+                                        </div>
+                                    </div>
+                                }
+                            }
+                        </div>
+                    </div>
+                    <div class="dx-panel-footer" style="padding: 0px">
+                        <Paginator @ref="paginator" CurrentPage="1" PageSize="10" TotalItems="@(overriddenDepartureFlightList.Cast<Object>().Concat(overriddenArrivalFlightList.Cast<Object>()).ToList().Count)" Scale="10" OnChanged="() => InvokeAsync(StateHasChanged)" />
+                    </div>
+                </div>
+            </div>
+            <div class="dx-modal-footer">
+                <small style="align-self:center">Use Feed clears the edits of every flight listed here so the feed's values show again, and removes the listed flights that were added during Outage mode. Preserve keeps a flight's edits until someone clears them.</small>
+                @if (homePage!.userSettings.PreserveAllOverridesOption == true) {
+                    <button class="dx-btn dx-btn-outline-blue fde-preserve-all" disabled="@ReadOnly" @onclick="() => PreserveAll()">Preserve All</button>
+                }
+                <button class="dx-btn dx-btn-blue fde-use-feed" disabled="@ReadOnly" @onclick="() => UseFeed()">Use Feed</button>
+            </div>
+        </div>
+    </div>
+
+
+}
+@code {
+    [CascadingParameter]
+    public FlightManagement? homePage { get; set; }
+
+    /// <summary>
+    /// The Display Categories the Flight Edit sets, each as the edit has it and as the feed has it (FDE-07), so a
+    /// roll-only edit shows what Use Feed would change.
+    /// </summary>
+    private static IEnumerable<(string Name, bool Edit, bool Feed)> RollReview(IRollFlags feed, IRollFlags edit) =>
+        RollCategories.All
+            .Where(c => !string.IsNullOrWhiteSpace(RollCategories.Flag(edit, c)))
+            .Select(c => (c.ToString().ToUpperInvariant(), RollCategories.IsOn(RollCategories.Flag(edit, c)), RollCategories.IsOn(RollCategories.Flag(feed, c))));
+
+    private static string ShownText(bool shown) => shown ? "Shown" : "Hidden";
+
+    /// <summary>CoreAPI is unreachable: the dialog shows the flights but takes no action (FDE-11).</summary>
+    [Parameter] public bool ReadOnly { get; set; }
+
+    public bool showDialog = false;
+    public List<FEDepartureFlight?> overriddenDepartureFlightList = new();
+    public List<FEArrivalFlight?> overriddenArrivalFlightList = new();
+
+    // The last action CoreAPI did not take; the review stays open on it so the user can try again (FDE-06).
+    private string? actionError;
+
+    public Paginator paginator { get; set; } = new();
+
+    public void ShowDialog() {
+        actionError = null;
+        showDialog = true;
+        InvokeAsync(StateHasChanged);
+    }
+    public async Task Close() {
+        showDialog = false;
+        await InvokeAsync(StateHasChanged);
+    }
+    public async Task PreserveAll() {
+        var flights = ReviewedFlights();
+        var result = await coreApi.PreserveAllAsync(homePage!.listWindow!.Start, homePage.listWindow.End);
+        homePage!.ObserveCoreApi(result);
+        await audit.ReviewPreserveAllAsync(homePage.listWindow, flights, result);
+        await CloseOrShowError(result, "Could not preserve the flights");
+    }
+    /// <summary>
+    /// Returns every Outage Edit in the window to the feed. CoreAPI also removes the flights added during Outage mode
+    /// that were not kept (C-06, assumed under A-25); the hub never reports a removed flight, so the page re-reads its
+    /// lists for them to go.
+    /// </summary>
+    public async Task UseFeed() {
+        var flights = ReviewedFlights();
+        var result = await coreApi.ClearAllAsync(homePage!.listWindow!.Start, homePage.listWindow.End);
+        homePage!.ObserveCoreApi(result);
+        await audit.ReviewUseFeedAsync(homePage.listWindow, flights, result);
+        await CloseOrShowError(result, "Could not return the flights to the feed");
+        if (result.Succeeded) {
+            await homePage.ReloadFlightListsAsync();
+        }
+    }
+    private async Task PreserveDeparture(FEDepartureFlight flight) {
+        var result = await coreApi.PreserveDepartureAsync(flight.RecordId);
+        homePage!.ObserveCoreApi(result);
+        await audit.PreservedAsync(FlightKey.Of(flight), result);
+        if (result.Succeeded) overriddenDepartureFlightList.Remove(flight);
+        await AfterPreserve(result, flight.FLT);
+    }
+    private async Task PreserveArrival(FEArrivalFlight flight) {
+        var result = await coreApi.PreserveArrivalAsync(flight.RecordId);
+        homePage!.ObserveCoreApi(result);
+        await audit.PreservedAsync(FlightKey.Of(flight), result);
+        if (result.Succeeded) overriddenArrivalFlightList.Remove(flight);
+        await AfterPreserve(result, flight.FLT);
+    }
+    // A preserved flight leaves the review, which closes once it lists none.
+    private async Task AfterPreserve(CoreApiResult<OverrideResponse> result, string? flight) {
+        actionError = result.Succeeded ? null : FlightSaveError.Describe(result, $"Could not preserve {flight}");
+        if (overriddenDepartureFlightList.Count == 0 && overriddenArrivalFlightList.Count == 0) {
+            await Close();
+        } else {
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    private async Task CloseOrShowError<T>(CoreApiResult<T> result, string couldNot) {
+        if (result.Succeeded) {
+            actionError = null;
+            await Close();
+        } else {
+            actionError = FlightSaveError.Describe(result, couldNot);
+            await InvokeAsync(StateHasChanged);
+        }
+    }
+    // The flights the review lists when the user acts, which a bulk action covers (AUD-05).
+    private List<FlightKey> ReviewedFlights() =>
+        overriddenDepartureFlightList.Select(f => FlightKey.Of(f!)).Concat(overriddenArrivalFlightList.Select(f => FlightKey.Of(f!))).ToList();
+}

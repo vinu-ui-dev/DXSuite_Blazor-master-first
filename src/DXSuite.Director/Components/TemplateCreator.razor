@@ -1045,8 +1045,8 @@
                             if (lastApproval != null)
                             {
                                 var passedModeration = approvalStatus == ApprovalStatus.Approved;
-                                var chainRequest = await ApprovalChainService.SubmitToChainAsync(lastApproval.AssetApprovalId, Display.LocationId, passedModeration,
-                                    uploadingUserId: null, pickedRuleId: preparedUpload?.PickedRuleId);
+                                var chainRequest = await ApprovalChainService.SubmitToChainAsync(lastApproval.AssetApprovalId, Display.LocationId,
+                                    SessionState.User?.UserId ?? 0, passedModeration, pickedRuleId: preparedUpload?.PickedRuleId);
                             }
                         }
                     }

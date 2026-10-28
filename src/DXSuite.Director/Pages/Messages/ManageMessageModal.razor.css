@@ -1,0 +1,74 @@
+/* Message authoring dialog: name, one text per language, then the type's Asset Slots, each in its own card. */
+.mm-modal {
+    width: 720px;
+    max-width: 96vw;
+}
+
+.mm-problem {
+    margin-bottom: 12px;
+}
+
+.mm-card {
+    box-shadow: none;
+    overflow: visible;
+    margin-bottom: 14px;
+}
+
+.mm-card-h {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    font-weight: 600;
+}
+
+.mm-card-h small {
+    font-weight: 400;
+    color: var(--dx-text-muted);
+    font-size: 0.78rem;
+}
+
+.mm-text-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.mm-count {
+    font-size: 0.78rem;
+    color: var(--dx-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.mm-count.mm-over {
+    color: var(--dx-red);
+    font-weight: 600;
+}
+
+.mm-text {
+    width: 100%;
+    resize: vertical;
+}
+
+.mm-slot {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.mm-slot-invalid .mm-slot-file {
+    color: var(--dx-red);
+}
+
+.mm-slot-key {
+    font-weight: 600;
+    min-width: 60px;
+}
+
+.mm-slot-file {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
+    color: var(--dx-text-muted);
+}

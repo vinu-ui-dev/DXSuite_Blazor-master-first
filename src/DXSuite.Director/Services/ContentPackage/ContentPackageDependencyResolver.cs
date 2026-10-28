@@ -206,7 +206,7 @@ public class ContentPackageDependencyResolver : IContentPackageDependencyResolve
         {
             var locIds = result.LocationIds.ToList();
             var chainIds = await db.TblApprovalChains.AsNoTracking()
-                .Where(c => locIds.Contains(c.LocationId))
+                .Where(c => c.LocationId != null && locIds.Contains(c.LocationId.Value))
                 .Select(c => c.ApprovalChainId)
                 .ToListAsync(ct);
             foreach (var id in chainIds) result.ApprovalChainIds.Add(id);

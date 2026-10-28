@@ -1,0 +1,206 @@
+@rendermode InteractiveServer
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@inject CoreApiClient coreApi
+@inject ISessionState sessionState
+@using DXSuite.Shared.Authorization
+@inject ICoreApiSettingsStore coreApiSettings
+@inject IServiceProvider services
+@inject Microsoft.Extensions.Logging.ILogger<FlightDataEditorUserSettings> logger
+
+@if (!accessResolved) {
+    <div style="display:flex; justify-content:center; padding:48px 0;">
+        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+    </div>
+} else if (!hasAccess) {
+    <section>
+        <div class="dx-section">
+            <p style="padding: 24px;">You do not have permission to access this page.</p>
+        </div>
+    </section>
+} else {
+<section class="dx-page-header" style="padding:15px 0px; background-color:white"><div class="dx-page-header-flex"><h2>Override Settings</h2></div></section>
+<section class="dx-page-body" style="padding-top: 0">
+    @if (!loading) {
+        <div class="sr-checkbox-grid" style="padding:10px; padding-top:0">
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-GATModify" @bind="gatModify" />
+                GAT Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ETModify" @bind="etModify" />
+                ET Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ATModify" @bind="atModify" />
+                AT Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-CARModify" @bind="carModify" />
+                CAR Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-RCPModify" @bind="rcpModify" />
+                RCP Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ROPModify" @bind="ropModify" />
+                ROP Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ROBModify" @bind="robModify" />
+                ROB Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ROSModify" @bind="rosModify" />
+                ROS Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-ROTModify" @bind="rotModify" />
+                ROT Modify
+            </label>
+            <label class="sr-checkbox-label">
+                <input type="checkbox" class="dx-checkbox fde-setting-PreserveAllOverridesOption" @bind="preserveAllOverridesOption" />
+                Preserve All Overrides
+            </label>
+        </div>
+        <div style="padding:10px; padding-top:0">
+            <button class="dx-btn dx-btn-blue fde-settings-save" @onclick="Save">Save</button>
+        </div>
+    }
+</section>
+
+@if (toastVisible) {
+    <div class="dx-toast">@toastMsg</div>
+}
+}
+
+@code {
+    [Parameter]
+    public string apiKeyID { get; set; } = "";
+
+    #region EventCallbacks
+    // EventCallback to navigate to the configuration page should CoreAPI not be configured
+    [Parameter] public EventCallback NavigateToManagement { get; set; }
+    #endregion
+
+    bool gatModify;
+    bool etModify;
+    bool atModify;
+    bool carModify;
+    bool rcpModify;
+    bool ropModify;
+    bool robModify;
+    bool rosModify;
+    bool rotModify;
+    bool preserveAllOverridesOption;
+
+    private bool toastVisible = false;
+    private string toastMsg = "";
+    private System.Threading.Timer? toastTimer;
+
+    UserSettings userSettings = new UserSettings();
+    // The settings as CoreAPI last held them, which a save's events record as the old values.
+    IReadOnlyDictionary<string, bool> saved = FieldSettingsAudit.Snapshot(new UserSettings());
+
+    bool loading = true;
+
+    private bool accessResolved;
+    private bool hasAccess;
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        if (await CheckConfig()) {
+            await GetUserSettings();
+            ProcessBools();
+            loading = false;
+        } else {
+            await NavigateToManagement.InvokeAsync();
+        }
+    }
+
+    public async Task<bool> CheckConfig() {
+        return (await coreApiSettings.ReadAsync(default))?.IsConfigured == true;
+    }
+
+    public async Task GetUserSettings() {
+        await GetApiKeyID();
+        UserSettings? response = (await coreApi.GetFieldSettingsAsync(apiKeyID)).Value;
+        if (response != null) {
+            userSettings = response;
+            saved = FieldSettingsAudit.Snapshot(userSettings);
+        } else {
+            userSettings = new();
+            toastMsg = "Error Retrieving Existing User Settings";
+            ShowToast();
+        }
+
+    }
+
+    public async Task UpdateUserSettings(string apiKeyID, UserSettings userSettings) {
+        await GetApiKeyID();
+        var result = await coreApi.UpdateFieldSettingsAsync(apiKeyID, userSettings);
+        // Optional so a host without the User Event Log still shows the settings.
+        await FieldSettingsAudit.WriteAsync(services.GetService(typeof(DXSuite.Shared.Audit.IUserEventLog)) as DXSuite.Shared.Audit.IUserEventLog,
+            logger, saved, userSettings, result);
+        if (result.Succeeded) {
+            saved = FieldSettingsAudit.Snapshot(userSettings);
+            toastMsg = String.Format("Saved: {0}", DateTime.Now);
+        } else {
+            toastMsg = "Error Updating User Settings";
+        }
+        ShowToast();
+    }
+
+    public async Task GetApiKeyID() {
+        string? response = (await coreApi.GetApiKeyIdAsync()).Value;
+        if (response != null) {
+            apiKeyID = response;
+        }
+    }
+
+    public void ProcessBools() {
+        gatModify = userSettings.GATModify ?? false;
+        etModify = userSettings.ETModify ?? false;
+        atModify = userSettings.ATModify ?? false;
+        carModify = userSettings.CARModify ?? false;
+        rcpModify = userSettings.RCPModify ?? false;
+        ropModify = userSettings.ROPModify ?? false;
+        robModify = userSettings.ROBModify ?? false;
+        rosModify = userSettings.ROSModify ?? false;
+        rotModify = userSettings.ROTModify ?? false;
+        preserveAllOverridesOption = userSettings.PreserveAllOverridesOption ?? false;
+    }
+    // Codeshares are never editable on an existing flight (FDE-05), so their setting is not offered; a save sends
+    // back the value CoreAPI gave.
+    public void SaveBools() {
+        userSettings.GATModify = gatModify;
+        userSettings.ETModify = etModify;
+        userSettings.ATModify = atModify;
+        userSettings.CARModify = carModify;
+        userSettings.RCPModify = rcpModify;
+        userSettings.ROPModify = ropModify;
+        userSettings.ROBModify = robModify;
+        userSettings.ROSModify = rosModify;
+        userSettings.ROTModify = rotModify;
+        userSettings.PreserveAllOverridesOption = preserveAllOverridesOption;
+    }
+
+    public async Task Save() {
+        SaveBools();
+        await UpdateUserSettings(apiKeyID, userSettings);
+        ShowToast();
+    }
+
+    private void ShowToast() {
+        toastVisible = true;
+        toastTimer?.Dispose();
+        toastTimer = new System.Threading.Timer(_ => {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 3000, System.Threading.Timeout.Infinite);
+    }
+}

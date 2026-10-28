@@ -1,0 +1,72 @@
+@* The list's two fixed icon slots for one flight (FDE-09): the Flight Edit's kind, then the hidden cue. Both slots
+   always render so the icons line up from row to row. *@
+<div class="fde-icons">
+    <span class="fde-slot">
+        @if (Cue.Edit == FlightEditKind.PreservedEdit) {
+            <i class="bi bi-lock-fill text-secondary fde-clickable" title="Preserved Edit" @onclick="OnPadlockClick"></i>
+        } else if (Cue.Edit == FlightEditKind.OutageEdit) {
+            <i class="bi bi-exclamation-triangle-fill text-danger" title="Outage Edit"></i>
+        }
+    </span>
+    <span class="fde-slot fde-cue-slot">
+        @if (Cue.HiddenCount > 0) {
+            @* Blue because it opens detail; it must never read as a third edit kind. *@
+            <button type="button" class="fde-cue-btn" title="@Summary" aria-label="@Summary" aria-expanded="@(open ? "true" : "false")"
+                    @onclick="Toggle">
+                <i class="bi bi-eye-slash-fill"></i><span class="fde-cue-count">@Cue.HiddenCount</span>
+            </button>
+            @if (open) {
+                @* A transparent backdrop closes the panel on any click outside it, so only one panel is ever open. *@
+                <div class="fde-cue-backdrop" @onclick="Close"></div>
+                <div class="fde-cue-panel" role="dialog" aria-label="@PanelTitle" @onkeydown="OnKeyDown">
+                    <div class="fde-cue-panel-title">@PanelTitle</div>
+                    <ul>
+                        @foreach (var category in FlightListCue.AllCategories) {
+                            var hidden = Cue.IsHiddenFrom(category);
+                            <li><span>@category</span><span class="@(hidden ? "fde-cue-hidden" : "fde-cue-shown")">@(hidden ? "Hidden" : "Shown")</span></li>
+                        }
+                    </ul>
+                    <div class="fde-cue-note">
+                        @if (Cue.HiddenEverywhere) {
+                            <div>Hidden from every Display Category.</div>
+                        }
+                        <div>Change this in Manage, under Roll On / Off.</div>
+                    </div>
+                </div>
+            }
+        }
+    </span>
+</div>
+
+@code {
+    /// <summary>
+    /// The flight list's columns, header and rows alike. The first is wide enough for both slots plus the table's
+    /// cell padding, so the icons never spill into the time column.
+    /// </summary>
+    public const string ListGrid = "84px 2fr 2fr 2fr 2fr 2fr 2fr 1fr 1fr";
+
+    [Parameter, EditorRequired] public FlightListCue Cue { get; set; } = default!;
+
+    /// <summary>The flight's number, used to title the panel.</summary>
+    [Parameter] public string? Flight { get; set; }
+
+    /// <summary>Clicking the padlock opens the flight's keep-or-clear review, as built.</summary>
+    [Parameter] public EventCallback OnPadlockClick { get; set; }
+
+    private bool open;
+
+    private string Summary => Cue.HiddenEverywhere
+        ? "Hidden from every Display Category"
+        : $"Hidden from {string.Join(", ", Cue.HiddenFrom)}";
+
+    private string PanelTitle => string.IsNullOrWhiteSpace(Flight) ? "On displays" : $"{Flight} on displays";
+
+    private void Toggle() => open = !open;
+
+    private void Close() => open = false;
+
+    private void OnKeyDown(KeyboardEventArgs e)
+    {
+        if (e.Key == "Escape") open = false;
+    }
+}

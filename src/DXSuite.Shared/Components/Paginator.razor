@@ -1,0 +1,38 @@
+@* A simple numbered pager: CurrentPage/PageSize are read directly by the parent (via @ref) to slice its own
+   list, so this component owns no data of its own — only which page is selected. *@
+
+<div class="dx-paginator">
+    <button class="dx-btn dx-btn-sm" disabled="@(CurrentPage <= 1)" @onclick="() => GoTo(CurrentPage - 1)">&laquo;</button>
+    @foreach (var page in VisiblePages())
+    {
+        <button class="dx-btn dx-btn-sm @(page == CurrentPage ? "dx-btn-blue" : "")" @onclick="() => GoTo(page)">@(page)</button>
+    }
+    <button class="dx-btn dx-btn-sm" disabled="@(CurrentPage >= TotalPages)" @onclick="() => GoTo(CurrentPage + 1)">&raquo;</button>
+</div>
+
+@code {
+    [Parameter] public int CurrentPage { get; set; } = 1;
+    [Parameter] public int PageSize { get; set; } = 20;
+    [Parameter] public int TotalItems { get; set; }
+    /// <summary>How many page-number buttons to show at once.</summary>
+    [Parameter] public int Scale { get; set; } = 10;
+    [Parameter] public EventCallback OnChanged { get; set; }
+
+    private int TotalPages => Math.Max(1, (int)Math.Ceiling(TotalItems / (double)Math.Max(1, PageSize)));
+
+    private IEnumerable<int> VisiblePages()
+    {
+        var start = Math.Max(1, CurrentPage - Scale / 2);
+        var end = Math.Min(TotalPages, start + Scale - 1);
+        start = Math.Max(1, end - Scale + 1);
+        for (var p = start; p <= end; p++) yield return p;
+    }
+
+    private async Task GoTo(int page)
+    {
+        page = Math.Clamp(page, 1, TotalPages);
+        if (page == CurrentPage) return;
+        CurrentPage = page;
+        await OnChanged.InvokeAsync();
+    }
+}

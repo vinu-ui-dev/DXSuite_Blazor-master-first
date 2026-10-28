@@ -1,0 +1,25 @@
+{
+  "_comment": "Copy to C:\\ProgramData\\Radiant\\GtaaMessageDelivery\\config.json on the Moxie server and fill in directorBaseUrl and apiKey. Keys starting with _ are notes and are ignored. See README.md.",
+
+  "directorBaseUrl": "https://director.example.com",
+  "apiKey": "",
+
+  "deliveryPath": "/api/messaging/delivery",
+  "ruleValuesPath": "/api/messaging/rule-values",
+
+  "dataPipeFolder": "Global",
+  "messagesSheetName": "GTAA Messages",
+  "ruleValuesSheetName": "GTAA Rule Values",
+
+  "englishLanguageCode": "eng",
+  "frenchLanguageCode": "fra",
+
+  "safetyNetIntervalSeconds": 12,
+  "httpTimeoutSeconds": 5,
+
+  "listenerEnabled": false,
+  "listenerPort": null,
+  "listenerPath": "gtaa-doorbell",
+
+  "debug": false
+}

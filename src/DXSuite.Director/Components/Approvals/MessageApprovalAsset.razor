@@ -1,0 +1,27 @@
+@using DXSuite.Director.Services.Messaging
+
+@* One Asset Slot's file in the My Queue Messages section: a playable preview for a video, a link otherwise. *@
+@if (Asset is null)
+{
+    <span class="dx-text-muted">None</span>
+}
+else if (IsVideo(Asset.AssetPath))
+{
+    <video class="mq-video" controls muted preload="metadata" title="@Asset.AssetName">
+        <source src="@Asset.AssetPath" type="video/mp4" />
+    </video>
+    <div class="dx-text-muted mq-asset-name">@Asset.AssetName</div>
+}
+else
+{
+    <a href="@Asset.AssetPath" target="_blank">@(Asset.AssetName ?? Asset.SlotKey)</a>
+}
+
+@code {
+    [Parameter] public MessageQueueAsset? Asset { get; set; }
+
+    private static bool IsVideo(string? path) =>
+        path is not null && (path.EndsWith(".mp4", StringComparison.OrdinalIgnoreCase)
+                             || path.EndsWith(".webm", StringComparison.OrdinalIgnoreCase)
+                             || path.EndsWith(".mov", StringComparison.OrdinalIgnoreCase));
+}

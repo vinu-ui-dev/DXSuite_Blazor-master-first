@@ -34,12 +34,29 @@ public static class PermissionKeys
     public const string PageTicketCounterScheduler = "page:ticket-counter-scheduler";
     public const string PageDesign = "page:design";
     public const string PageContentLog = "page:content-log";
+    public const string PageUserEventLog = "page:user-event-log";
+    public const string ReportsExport = "feature:reports-export";
 
     // Publishing introduces new code to the fleet; deploying chooses who receives code that
     // already exists. One gate covered both, and a customer staging its own rollout should not
     // need the right to introduce a binary.
     public const string PlayerUpdatePublish = "feature:player-update-publish";
     public const string PlayerUpdateDeploy = "feature:player-update-deploy";
+
+    // GTAA FSD 1.1 — Flight Data Editor (Aviation) and Messaging (Director).
+    public const string PageFlightDataEditor = "page:flight-data-editor";
+    public const string PageMessages = "page:messages";
+    public const string PageMessagePlaybackLog = "page:message-playback-log";
+    public const string MessagesAuthor = "feature:messages-author";
+    public const string MessagesPriorityOverride = "feature:messages-priority-override";
+    // These three are tab keys, not fixed constants — their permission is the module registry's own
+    // ForConfigTab/ForSettingsTab derivation (EnumerateDefinedPermissions), already granted to the tab's
+    // registered default. Named here only so a typo in the tab key used to check access fails at compile time;
+    // never add them to FeaturePermissions below, or the sync finds the same key discovered twice.
+    public const string ConfigTabMessageTypes = ConfigTabPrefix + "message-types";
+    public const string ConfigTabZoneBuilder = ConfigTabPrefix + "zone-builder";
+    public const string CoreApiConnectionConfigTabKey = "coreapi-connection";
+    public const string ConfigTabCoreApiConnection = SettingsTabPrefix + CoreApiConnectionConfigTabKey;
 
     // Content defaults include NewUser because location access rules — not role — were
     // the only non-admin gate on playlist content before the permission system existed.
@@ -81,5 +98,26 @@ public static class PermissionKeys
         new FeaturePermissionDef(PlayerUpdateDeploy, "Player Update Deploy",
             "Create and run player update deployments from artifacts that already exist.",
             System.Array.Empty<Roles.Role>()),
+        new FeaturePermissionDef(PageUserEventLog, "User Event Log Page",
+            "Access the User Event Log audit trail.",
+            new[] { Roles.Role.Architect }),
+        new FeaturePermissionDef(ReportsExport, "Report Export",
+            "Export a report (Excel or print) rather than only viewing it on screen.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        new FeaturePermissionDef(PageFlightDataEditor, "Flight Data Editor Page",
+            "Correct, add or hide flights when the RMS feed is wrong or down.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        new FeaturePermissionDef(PageMessages, "Messages Page",
+            "Send Emergency, IRROPS and Visual Paging messages to screens.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        new FeaturePermissionDef(PageMessagePlaybackLog, "Message Playback Log Page",
+            "View the history of messages sent to screens.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        new FeaturePermissionDef(MessagesAuthor, "Author Canned Messages",
+            "Write and submit canned Messages for approval.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        new FeaturePermissionDef(MessagesPriorityOverride, "Message Priority Override",
+            "Override a Message Type's normal priority rank on an individual send.",
+            new[] { Roles.Role.Architect }),
     };
 }

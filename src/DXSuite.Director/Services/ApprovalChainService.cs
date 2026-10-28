@@ -13,6 +13,7 @@ public class ApprovalChainService : IApprovalChainService
     private readonly ILogger<ApprovalChainService> _logger;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IPublicationInvalidator _publicationInvalidator;
+    private readonly ApprovalEmails? _emails;
 
     public ApprovalChainService(
         IDirectorDBContext db,
@@ -20,8 +21,10 @@ public class ApprovalChainService : IApprovalChainService
         INotificationService notificationService,
         ILogger<ApprovalChainService> logger,
         IServiceScopeFactory scopeFactory,
-        IPublicationInvalidator publicationInvalidator)
+        IPublicationInvalidator publicationInvalidator,
+        ApprovalEmails? emails = null)
     {
+        _emails = emails;
         _publicationInvalidator = publicationInvalidator;
         _db = db;
         _assetApprovalService = assetApprovalService;
@@ -102,129 +105,101 @@ public class ApprovalChainService : IApprovalChainService
             .FirstOrDefaultAsync(c => c.LocationAccessRuleId == locationAccessRuleId);
     }
 
-    public async Task CreateOrUpdateChainAsync(int locationId, bool isEnabled, bool enableLlmAutoApproval, int llmAutoApprovalUpToStageOrder, bool autoApproveMembers, List<StageDefinition> stages, string editUser, int declinedContentRetentionDays = 3)
+    public async Task CreateOrUpdateChainAsync(int locationId, ApprovalChainDraft draft, bool autoApproveMembers, string editUser)
     {
+        var stages = draft.Stages;
         foreach (var s in stages)
             s.GroupIds = s.GroupIds.Where(id => id > 0).ToList();
 
-        if (isEnabled)
+        if (draft.IsEnabled)
         {
             var validation = ValidateChainDefinition(stages);
             if (!validation.IsValid)
                 throw new InvalidOperationException(string.Join("; ", validation.Errors));
         }
 
-        var existing = await _db.TblApprovalChains
+        var chain = await _db.TblApprovalChains
             .Include(c => c.Stages)
                 .ThenInclude(s => s.StageGroups)
             .FirstOrDefaultAsync(c => c.LocationId == locationId && c.IsDefault);
 
-        if (existing != null)
+        if (chain == null)
         {
-            existing.IsEnabled = isEnabled;
-            existing.EnableLlmAutoApproval = enableLlmAutoApproval;
-            existing.LlmAutoApprovalUpToStageOrder = llmAutoApprovalUpToStageOrder;
-            existing.AutoApproveMembers = autoApproveMembers;
-            existing.DeclinedContentRetentionDays = Math.Clamp(declinedContentRetentionDays, 1, 90);
-            existing.LastEditDate = DateTime.UtcNow;
-            existing.LastEditUser = editUser;
-
-            var stageIds = existing.Stages.Select(s => s.ApprovalStageId).ToList();
-
-            var referencingRequests = await _db.TblApprovalRequests
-                .Where(r => r.CurrentStageId != null && stageIds.Contains(r.CurrentStageId.Value))
-                .ToListAsync();
-            foreach (var req in referencingRequests)
-                req.CurrentStageId = null;
-
-            var referencingActions = await _db.TblApprovalActions
-                .Where(a => stageIds.Contains(a.ApprovalStageId))
-                .ToListAsync();
-            _db.TblApprovalActions.RemoveRange(referencingActions);
-
-            var referencingQueueEntries = await _db.TblApprovalQueueEntries
-                .Where(q => stageIds.Contains(q.ApprovalStageId))
-                .ToListAsync();
-            _db.TblApprovalQueueEntries.RemoveRange(referencingQueueEntries);
-
-            _db.TblApprovalStages.RemoveRange(existing.Stages);
-            await _db.SaveChangesAsync();
-
-            foreach (var stageDef in stages.Where(s => s.GroupIds.Count > 0))
-            {
-                var stage = new TblApprovalStage
-                {
-                    ApprovalChainId = existing.ApprovalChainId,
-                    StageOrder = stageDef.StageOrder,
-                    StageName = stageDef.StageName,
-                    IntraStageOperator = stageDef.IntraStageOperator
-                };
-                _db.TblApprovalStages.Add(stage);
-                await _db.SaveChangesAsync();
-
-                int sortOrder = 0;
-                foreach (var groupId in stageDef.GroupIds)
-                {
-                    _db.TblApprovalStageGroups.Add(new TblApprovalStageGroup
-                    {
-                        ApprovalStageId = stage.ApprovalStageId,
-                        UserGroupId = groupId,
-                        SortOrder = sortOrder++
-                    });
-                }
-            }
-        }
-        else
-        {
-            var chain = new TblApprovalChain
-            {
-                LocationId = locationId,
-                IsEnabled = isEnabled,
-                EnableLlmAutoApproval = enableLlmAutoApproval,
-                LlmAutoApprovalUpToStageOrder = llmAutoApprovalUpToStageOrder,
-                AutoApproveMembers = autoApproveMembers,
-                DeclinedContentRetentionDays = Math.Clamp(declinedContentRetentionDays, 1, 90),
-                CreateDate = DateTime.UtcNow,
-                LastEditUser = editUser
-            };
+            chain = new TblApprovalChain { LocationId = locationId };
             _db.TblApprovalChains.Add(chain);
-            await _db.SaveChangesAsync();
-
-            foreach (var stageDef in stages.Where(s => s.GroupIds.Count > 0))
-            {
-                var stage = new TblApprovalStage
-                {
-                    ApprovalChainId = chain.ApprovalChainId,
-                    StageOrder = stageDef.StageOrder,
-                    StageName = stageDef.StageName,
-                    IntraStageOperator = stageDef.IntraStageOperator
-                };
-                _db.TblApprovalStages.Add(stage);
-                await _db.SaveChangesAsync();
-
-                int sortOrder = 0;
-                foreach (var groupId in stageDef.GroupIds)
-                {
-                    _db.TblApprovalStageGroups.Add(new TblApprovalStageGroup
-                    {
-                        ApprovalStageId = stage.ApprovalStageId,
-                        UserGroupId = groupId,
-                        SortOrder = sortOrder++
-                    });
-                }
-            }
         }
 
+        draft.ApplyTo(chain, editUser, DateTime.UtcNow);
+        chain.AutoApproveMembers = autoApproveMembers;
         await _db.SaveChangesAsync();
+
+        await ReplaceStagesAsync(_db, chain, stages);
 
         // Sync TblLocation.EnableContentApproval so downstream components pick up the setting
         var location = await _db.TblLocations.FirstOrDefaultAsync(l => l.LocationId == locationId);
         if (location != null)
         {
-            location.EnableContentApproval = isEnabled;
+            location.EnableContentApproval = draft.IsEnabled;
             await _db.SaveChangesAsync();
             _publicationInvalidator.LocationChanged(locationId);
         }
+    }
+
+    /// <summary>
+    /// Replaces a saved chain's stages with <paramref name="stages"/> (stages with no group are left out). Requests
+    /// parked on an old stage lose their current stage, and the old stages' actions and queue entries are deleted
+    /// with them, since both reference the stage rows. <paramref name="chain"/> must be tracked with its stages.
+    /// </summary>
+    internal static async Task ReplaceStagesAsync(IDirectorDBContext db, TblApprovalChain chain, IEnumerable<StageDefinition> stages, CancellationToken ct = default)
+    {
+        var stageIds = chain.Stages.Select(s => s.ApprovalStageId).ToList();
+        if (stageIds.Count > 0)
+        {
+            var referencingRequests = await db.TblApprovalRequests
+                .Where(r => r.CurrentStageId != null && stageIds.Contains(r.CurrentStageId.Value))
+                .ToListAsync(ct);
+            foreach (var req in referencingRequests)
+                req.CurrentStageId = null;
+
+            var referencingActions = await db.TblApprovalActions
+                .Where(a => stageIds.Contains(a.ApprovalStageId))
+                .ToListAsync(ct);
+            db.TblApprovalActions.RemoveRange(referencingActions);
+
+            var referencingQueueEntries = await db.TblApprovalQueueEntries
+                .Where(q => stageIds.Contains(q.ApprovalStageId))
+                .ToListAsync(ct);
+            db.TblApprovalQueueEntries.RemoveRange(referencingQueueEntries);
+
+            db.TblApprovalStages.RemoveRange(chain.Stages);
+            await db.SaveChangesAsync(ct);
+        }
+
+        foreach (var stageDef in stages.Where(s => s.GroupIds.Count > 0))
+        {
+            var stage = new TblApprovalStage
+            {
+                ApprovalChainId = chain.ApprovalChainId,
+                StageOrder = stageDef.StageOrder,
+                StageName = stageDef.StageName,
+                IntraStageOperator = stageDef.IntraStageOperator
+            };
+            db.TblApprovalStages.Add(stage);
+            await db.SaveChangesAsync(ct);
+
+            int sortOrder = 0;
+            foreach (var groupId in stageDef.GroupIds)
+            {
+                db.TblApprovalStageGroups.Add(new TblApprovalStageGroup
+                {
+                    ApprovalStageId = stage.ApprovalStageId,
+                    UserGroupId = groupId,
+                    SortOrder = sortOrder++
+                });
+            }
+        }
+
+        await db.SaveChangesAsync(ct);
     }
 
     public async Task DeleteChainAsync(int locationId)
@@ -237,7 +212,10 @@ public class ApprovalChainService : IApprovalChainService
         }
     }
 
-    public ChainValidationResult ValidateChainDefinition(List<StageDefinition> stages)
+    public ChainValidationResult ValidateChainDefinition(List<StageDefinition> stages) => Validate(stages);
+
+    /// <summary>The rules every enabled chain meets, whoever owns it: stages, each with a group, no group twice.</summary>
+    public static ChainValidationResult Validate(IReadOnlyList<StageDefinition> stages)
     {
         var result = new ChainValidationResult { IsValid = true };
 
@@ -281,7 +259,7 @@ public class ApprovalChainService : IApprovalChainService
 
     #region Chain Execution
 
-    public async Task<TblApprovalRequest?> SubmitToChainAsync(int assetApprovalId, int locationId, bool passedLlmModeration = false, int? uploadingUserId = null, int? pickedRuleId = null)
+    public async Task<TblApprovalRequest?> SubmitToChainAsync(int assetApprovalId, int locationId, int uploadingUserId, bool passedLlmModeration = false, int? pickedRuleId = null)
     {
         var chain = await ResolveChainAsync(assetApprovalId, locationId, pickedRuleId);
 
@@ -290,7 +268,7 @@ public class ApprovalChainService : IApprovalChainService
 
         var orderedStages = chain.Stages.OrderBy(s => s.StageOrder).ToList();
 
-        if (chain.AutoApproveMembers && uploadingUserId.HasValue && uploadingUserId.Value > 0)
+        if (chain.AutoApproveMembers && uploadingUserId > 0)
         {
             var approverGroupIds = orderedStages
                 .SelectMany(s => s.StageGroups.Select(sg => sg.UserGroupId))
@@ -298,13 +276,13 @@ public class ApprovalChainService : IApprovalChainService
                 .ToList();
 
             var isApproverMember = await _db.TblUserGroupMemberships
-                .AnyAsync(m => m.UserId == uploadingUserId.Value && approverGroupIds.Contains(m.UserGroupId));
+                .AnyAsync(m => m.UserId == uploadingUserId && approverGroupIds.Contains(m.UserGroupId));
 
             if (isApproverMember)
             {
                 await _assetApprovalService.ApproveAssetAsync(assetApprovalId, 0, "Auto-approved (uploader is an approver group member)");
                 _logger.LogInformation("Asset approval {Id} auto-approved — uploader {UserId} is in approver group for location {LocationId}",
-                    assetApprovalId, uploadingUserId.Value, locationId);
+                    assetApprovalId, uploadingUserId, locationId);
                 return null;
             }
         }
@@ -365,6 +343,7 @@ public class ApprovalChainService : IApprovalChainService
             var manualGroupIds = firstManualStage.StageGroups.Select(sg => sg.UserGroupId);
             await NotifyGroupMembersAsync(manualGroupIds, "New content pending approval",
                 "New content has been submitted for your review (auto-approved through earlier stages).", assetApprovalId, "/Approvals");
+            await EmailStageAsync(request.ApprovalRequestId);
 
             return request;
         }
@@ -397,6 +376,7 @@ public class ApprovalChainService : IApprovalChainService
         var groupIds = firstStage.StageGroups.Select(sg => sg.UserGroupId);
         await NotifyGroupMembersAsync(groupIds, "New content pending approval",
             "New content has been submitted for your review.", assetApprovalId, "/Approvals");
+        await EmailStageAsync(normalRequest.ApprovalRequestId);
 
         return normalRequest;
     }
@@ -434,6 +414,10 @@ public class ApprovalChainService : IApprovalChainService
 
         if (entry.Status != "pending")
             return new ApprovalActionResult { Success = true, Outcome = "already-resolved", Message = "This item has already been resolved." };
+
+        // A Message's decision also changes the Message, in one transaction (MessageApprovals).
+        if (entry.ApprovalRequest.AssetApprovalId is null)
+            return new ApprovalActionResult { Success = false, Outcome = "error", Message = "Decide Messages from the Messages section of My Queue." };
 
         if (entry.UserGroupId != actingGroupId)
             return new ApprovalActionResult { Success = false, Outcome = "error", Message = "Group mismatch." };
@@ -515,6 +499,10 @@ public class ApprovalChainService : IApprovalChainService
         if (entry.Status != "pending")
             return new ApprovalActionResult { Success = true, Outcome = "already-resolved", Message = "This item has already been resolved." };
 
+        // A Message's decision also changes the Message, in one transaction (MessageApprovals).
+        if (entry.ApprovalRequest.AssetApprovalId is null)
+            return new ApprovalActionResult { Success = false, Outcome = "error", Message = "Decide Messages from the Messages section of My Queue." };
+
         if (entry.UserGroupId != actingGroupId)
             return new ApprovalActionResult { Success = false, Outcome = "error", Message = "Group mismatch." };
 
@@ -564,7 +552,7 @@ public class ApprovalChainService : IApprovalChainService
             return new ApprovalActionResult { Success = true, Outcome = "already-resolved", Message = "Another user acted on this item first." };
         }
 
-        await _assetApprovalService.DeclineAssetAsync(request.AssetApprovalId, actingUserId, notes);
+        await _assetApprovalService.DeclineAssetAsync(request.AssetApprovalId!.Value, actingUserId, notes);
 
         _logger.LogInformation("Approval request {RequestId} declined by user {UserId} (group {GroupId})",
             request.ApprovalRequestId, actingUserId, actingGroupId);
@@ -614,6 +602,7 @@ public class ApprovalChainService : IApprovalChainService
             var nextGroupIds = nextStage.StageGroups.Select(sg => sg.UserGroupId);
             await NotifyGroupMembersAsync(nextGroupIds, "New content pending approval",
                 "Content has advanced to your review stage.", request.AssetApprovalId, "/Approvals");
+            await EmailStageAsync(request.ApprovalRequestId);
 
             return new ApprovalActionResult { Success = true, Outcome = "stage-complete", Message = $"Stage complete. Advanced to stage {nextStage.StageOrder + 1}." };
         }
@@ -624,7 +613,7 @@ public class ApprovalChainService : IApprovalChainService
             request.CompletedDate = DateTime.UtcNow;
             await _db.SaveChangesAsync();
 
-            await _assetApprovalService.ApproveAssetAsync(request.AssetApprovalId, 0, "Approved via approval chain");
+            await _assetApprovalService.ApproveAssetAsync(request.AssetApprovalId!.Value, 0, "Approved via approval chain");
 
             _logger.LogInformation("Approval request {RequestId} completed — asset approved", request.ApprovalRequestId);
 
@@ -675,8 +664,10 @@ public class ApprovalChainService : IApprovalChainService
     private IQueryable<ApprovalQueueItem> BuildQueueItemsQuery(
         System.Linq.Expressions.Expression<Func<TblApprovalQueueEntry, bool>>? filter = null)
     {
+        // Messages have their own section of My Queue, with every language and the pending revision beside them.
         IQueryable<TblApprovalQueueEntry> query = _db.TblApprovalQueueEntries
-            .AsNoTracking();
+            .AsNoTracking()
+            .Where(e => e.ApprovalRequest.AssetApprovalId != null);
 
         if (filter != null)
             query = query.Where(filter);
@@ -700,11 +691,12 @@ public class ApprovalChainService : IApprovalChainService
             {
                 QueueEntryId = e.QueueEntryId,
                 ApprovalRequestId = e.ApprovalRequestId,
-                AssetApprovalId = e.ApprovalRequest.AssetApprovalId,
+                AssetApprovalId = e.ApprovalRequest.AssetApprovalId!.Value,
                 AssetId = e.ApprovalRequest.AssetApproval.AssetId,
                 AssetName = e.ApprovalRequest.AssetApproval.Asset.AssetName,
                 AssetPath = e.ApprovalRequest.AssetApproval.Asset.AssetPath,
-                LocationName = e.ApprovalRequest.ApprovalChain.Location.LocationName,
+                // Asset approvals run on location chains; translated to SQL, so no null dereference can occur.
+                LocationName = e.ApprovalRequest.ApprovalChain.Location!.LocationName,
                 UploadedByName = e.ApprovalRequest.AssetApproval.UploadedByUser.FriendlyName,
                 SubmittedDate = e.ApprovalRequest.SubmittedDate,
                 GroupId = e.UserGroupId,
@@ -735,12 +727,12 @@ public class ApprovalChainService : IApprovalChainService
         return new ApprovalRequestDetail
         {
             ApprovalRequestId = request.ApprovalRequestId,
-            AssetApprovalId = request.AssetApprovalId,
+            AssetApprovalId = request.AssetApprovalId ?? 0,
             Status = request.Status,
             SubmittedDate = request.SubmittedDate,
             CompletedDate = request.CompletedDate,
-            UploadedByName = request.AssetApproval.UploadedByUser?.FriendlyName,
-            AssetName = request.AssetApproval.Asset?.AssetName,
+            UploadedByName = request.AssetApproval?.UploadedByUser?.FriendlyName,
+            AssetName = request.AssetApproval?.Asset?.AssetName,
             LocationName = request.ApprovalChain?.Location?.LocationName,
             Stages = request.ApprovalChain?.Stages.OrderBy(s => s.StageOrder).Select(stage => new StageDetail
             {
@@ -786,6 +778,10 @@ public class ApprovalChainService : IApprovalChainService
                 userIds, title, message, "approval-pending", referenceId, referenceUrl);
         }
     }
+
+    // Emails go only on chains with the switch on, after the stage's queue entries are saved.
+    private Task EmailStageAsync(int approvalRequestId) =>
+        _emails?.StageReachedAsync(approvalRequestId) ?? Task.CompletedTask;
 
     #endregion
 

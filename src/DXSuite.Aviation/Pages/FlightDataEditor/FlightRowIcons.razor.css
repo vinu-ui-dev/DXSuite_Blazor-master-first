@@ -1,0 +1,112 @@
+.fde-icons {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.fde-slot {
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    position: relative;
+}
+
+.fde-clickable {
+    cursor: pointer;
+}
+
+.fde-cue-btn {
+    border: 0;
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+    position: relative;
+    width: 24px;
+    height: 24px;
+    display: inline-grid;
+    place-items: center;
+    border-radius: var(--dx-border-radius);
+    color: var(--dx-blue);
+}
+
+    .fde-cue-btn:hover,
+    .fde-cue-btn[aria-expanded="true"] {
+        background: var(--dx-blue-shadow);
+    }
+
+.fde-cue-count {
+    position: absolute;
+    right: -3px;
+    bottom: -2px;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 1;
+    background: #fff;
+    color: var(--dx-blue);
+    border-radius: 6px;
+    padding: 1px 2px;
+}
+
+.fde-cue-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 8999;
+    background: transparent;
+}
+
+/* Drawn after .dx-dropdown-menu. */
+.fde-cue-panel {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 9000;
+    background: #fff;
+    border: 1px solid #ccc;
+    border-radius: var(--dx-border-radius);
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+    min-width: 250px;
+    font-size: 0.9rem;
+    color: var(--dx-text-primary);
+    text-align: left;
+}
+
+.fde-cue-panel-title {
+    padding: 8px 12px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--dx-border-color);
+}
+
+.fde-cue-panel ul {
+    list-style: none;
+    margin: 0;
+    padding: 6px 12px;
+    display: grid;
+    gap: 2px;
+}
+
+.fde-cue-panel li {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.fde-cue-shown,
+.fde-cue-hidden {
+    font-weight: 600;
+}
+
+.fde-cue-shown {
+    color: var(--dx-blue);
+}
+
+.fde-cue-hidden {
+    color: var(--dx-orange);
+}
+
+.fde-cue-note {
+    padding: 6px 12px 10px;
+    font-size: 0.8rem;
+    color: var(--dx-text-muted);
+    max-width: 34ch;
+}

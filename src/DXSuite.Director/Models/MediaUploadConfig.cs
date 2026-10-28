@@ -14,6 +14,12 @@ namespace DXSuite.Director.Models
         public string ResolutionMode { get; set; } = "aspect-ratio";
         public MediaFile? EditMediaFile { get; set; }
         public bool AddToSql { get; set; } = false;
+
+        /// <summary>
+        /// When true, the upload is written to the media store and staged only — no TblAsset row, no approval
+        /// record. The caller (e.g. a Message's ASL video slot) owns deciding when, or whether, to promote it.
+        /// </summary>
+        public bool StageOnly { get; set; } = false;
         public bool IsSchedulable { get; set; } = false;
         public bool LanguageMetadata { get; set; } = false;
         public bool VideoMask { get; set; } = false;

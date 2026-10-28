@@ -1,0 +1,461 @@
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using System.Linq;
+@inject CoreApiClient coreApi
+@inject FlightEditAudit audit
+@rendermode InteractiveServer
+
+@if (showDialog) {
+    @if (arrivalFlight != null) {
+        <div class="dx-modal-overlay">
+            @*Pop up Div*@
+            <div class="dx-modal" style="width:40vw">
+                @* Row Layout Div *@
+                <div class="dx-modal-header">
+                    @* row div Flight# and Close button *@
+                    <span>Manage Flight (Scheduling Window: @(((DateTime)homePage!.feedWindow.WindowStart!).ToString("HH:mm MMM dd")) to @(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("HH:mm MMM dd")))</span>
+                    <button class="dx-modal-close" type="button" @onclick="() => showDialog = false">&times;</button>
+                </div>
+                <div class="dx-modal-body" style="padding-top:0; margin-top:20px">
+                    <CoreApiUnreachableBanner Shown="ReadOnly" />
+                    @if (changedWhileOpen) {
+                        <div class="dx-alert dx-alert-warning fde-changed-warning">@FlightManageForm.ChangedWhileOpenWarning</div>
+                    }
+                    @if (saveError is { } error) {
+                        <div class="dx-alert dx-alert-danger fde-save-error">@error</div>
+                    }
+                    @* row div Text Input field for Flight Code, Number, and STA*@
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <h1 class="dx-section-header" style="color: var(--dx-blue)">@arrivalFlight.FLT</h1>
+                            </div>
+                        </div>
+                        <div class="dx-form-group">
+                            <div class="item" style="display: flex;
+                                flex-direction: column;
+                                justify-content: center;">
+                                <div class="dx-form-label">Scheduled Time (STA) </div><div>@arrivalFlight.ScheduledTime</div>
+                            </div>
+                        </div>
+                    </div>
+                    @* row div Estimated Arriving Time (ETA) and Status with text inputs below*@
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <div class="dx-form-label">Arriving Time (ETA)</div>
+                                @if (open.EstimatedTime) {
+                                    <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" class="dx-form-control fde-et @(etaErr ? "invalid" : "")" style="width:100%" @bind="estimated" onblur="@(() => { etaErr = false; etaErrMsg = ""; })" />
+                                    @if (etaErr) {
+                                        <span class="dx-form-validation">@etaErrMsg</span>
+                                    }
+                                } else {
+                                    <div>@estimated </div>
+                                }
+                            </div>
+                        </div>
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <div class="dx-form-label">Status</div>
+                                @if (open.Status) {
+                                    <select class="dx-form-control fde-status @(statusErr ? "invalid" : "")" style="width:100%" @bind="status" onblur="@(() => { statusErr = false; statusErrMsg = ""; })">
+                                        <option selected value="">Select Status </option>
+                                        @foreach (TblFlightStatus flightStatus in statuses) {
+                                            <option value="@flightStatus.StatusId">@flightStatus.StatusName</option>
+                                        }
+                                    </select>
+                                    @if (statusErr) {
+                                        <span class="dx-form-validation">@statusErrMsg</span>
+                                    }
+                                } else {
+                                    <div>@status </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    @* row div Actual Time (ATA) and belt with Text Inputs below*@
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <div class="dx-form-label">Actual Time (ATA)</div>
+                                @if (open.ActualTime) {
+                                    <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" class="dx-form-control fde-at @(ataErr ? "invalid" : "")" @bind="actual" style="width: 100%;" onblur="@(() => { ataErr = false; ataErrMsg = ""; })" />
+                                    @if (ataErr) {
+                                        <span class="dx-form-validation">@ataErrMsg</span>
+                                    }
+                                } else {
+                                    <div>@actual </div>
+                                }
+                            </div>
+                        </div>
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <div class="dx-form-label">Carousel</div>
+                                @if (open.Belt) {
+                                    <div style="position:relative">
+                                        <input type="text" id="carouselInput" style="text-transform:uppercase; width:100%" class="dx-form-control fde-belt @(carErr ? "invalid" : "")" @bind="place" placeholder="e.g. 1" onblur="@(() => { FilteredCarSuggestions.Clear(); carErr = false; carErrMsg = ""; })" oninput="@((ChangeEventArgs e) => FilterCARSuggestions(e))" />
+                                        @if (FilteredCarSuggestions.Any()) {
+                                            <ul class="list-group" style="position:absolute; z-index: 1005; top:100%">
+                                                @foreach (var suggestion in FilteredCarSuggestions) {
+                                                    <li class="list-group-item list-group-item-action" style="cursor:pointer;" @onmousedown="@(() => SelectCarSuggestion(suggestion))">
+                                                        @suggestion
+                                                    </li>
+                                                }
+                                            </ul>
+                                        }
+                                    </div>
+                                    @if (!FilteredCarSuggestions.Any() && carErr) {
+                                        <span class="dx-form-validation">@carErrMsg</span>
+                                    }
+                                } else {
+                                    <div>@place</div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    @* Origin is never edited on an existing flight (D-03). *@
+                    <div class="dx-form-row">
+                        <div class="dx-form-group">
+                            <div class="item">
+                                <div>Origin</div>
+                                @if (arrivalFlight.ORG != null) {
+                                    <h4>@UpdateLocation(arrivalFlight.ORG)</h4>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    @* row div Roll On / Off*@
+                    <div style="margin: 10px 10px 0px 10px">
+                        Roll On / Off
+                    </div>
+                    @* row div Public checkbox, baggage checkbox, staff checkbox, throw checkbox*@
+                    <div class="dx-form-row">
+                        <div class="item">
+                            Public
+                            @if (open.Public) {
+                                <InputCheckbox class="dx-checkbox fde-public" @bind-Value="publicCheckbox" />
+                            } else {
+                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Public" disabled />
+                            }
+                        </div>
+                        <div class="item">
+                            Baggage
+                            @if (open.Baggage) {
+                                <InputCheckbox class="dx-checkbox fde-baggage" @bind-Value="baggageCheckbox" />
+                            } else {
+                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Baggage" disabled />
+                            }
+                        </div>
+                        <div class="item">
+                            Staff
+                            @if (open.Staff) {
+                                <InputCheckbox class="dx-checkbox fde-staff" @bind-Value="staffCheckbox" />
+                            } else {
+                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Staff" disabled />
+                            }
+                        </div>
+                        <div class="item">
+                            Throw
+                            @if (open.Throw) {
+                                <InputCheckbox class="dx-checkbox fde-throw" @bind-Value="throwCheckbox" />
+                            } else {
+                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Throw" disabled />
+                            }
+                        </div>
+                    </div>
+                    @* Codeshares are shown, never edited, on an existing flight (FDE-05, Diagram 8). *@
+                    <div class="item">
+                        <div class="dx-table fde-codeshares">
+                            <div class="dx-table-header" style="grid-template-columns: 1fr 1fr;">
+                                <div>Code Share</div>
+                                <div>Flight#</div>
+                            </div>
+                            <div class="dx-scrollable" style="min-block-size: 200px; overflow-y: auto">
+                                @foreach (FECodeShare codeshare in codeShares) {
+                                    <div class="dx-table-row" style="grid-template-columns: 1fr 1fr;">
+                                        <div>@UpdateAirline(codeshare.FLC!)</div>
+                                        <div>@codeshare.FLN</div>
+                                    </div>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    @if (!ReadOnly) {
+                        <KeepAfterFeedReturnsBox @bind-Box="keep" />
+                    }
+                </div>
+                <div class="dx-modal-footer">
+                    @if (arrivalFlight.overrideFlightData != null && arrivalFlight.preserveOverride == true) {
+                        <button type="button" class="dx-btn dx-btn-red fde-clear-edit" disabled="@ReadOnly" @onclick="() => OpenClearOverrideModal()">Clear edit</button>
+                    }
+                    <button type="button" class="dx-btn dx-btn-gray" @onclick="() => Close()">Cancel</button>
+                    <button class="dx-btn dx-btn-blue fde-save" disabled="@(saving || ReadOnly)" @onclick="() => SaveAndClose()">Save & Close</button>
+                </div>
+            </div>
+        </div>
+    }
+}
+
+@code {
+    [CascadingParameter]
+    public FlightManagement? homePage { get; set; }
+
+    /// <summary>CoreAPI is unreachable: the form shows its values but takes no change (FDE-11).</summary>
+    [Parameter] public bool ReadOnly { get; set; }
+    public int recordId { get; set; }
+
+    public bool showDialog = false;
+
+    public List<TblLocation> locations { get; set; } = new();
+    public List<TblAirline> airlines { get; set; } = new();
+    public List<TblCarousel> carousels { get; set; } = new();
+    public List<TblFlightStatus> statuses { get; set; } = new();
+    private FEArrivalFlight arrivalFlight = new();
+    private IReadOnlyList<FECodeShare> codeShares = [];
+
+    // Taken as the form opens, so the fields and the kind follow the mode the user saw (FDE-04, FDE-05).
+    public bool outageMode;
+    private FlightFieldGates fieldGates;
+    private FlightFieldGates open => ReadOnly ? FlightFieldGates.AllClosed : fieldGates;
+    private bool wasReadOnly;
+    private KeepAfterFeedReturns keep;
+
+    // The flight as the form (re)loaded it: the old values a save compares against and the audit records (FDE-06).
+    private FlightFieldValues fieldsOpened = new(null, null, null, null);
+    private RollCategories rollOpened = RollCategories.AllShown;
+    private FlightEditKind kindOpened;
+
+    // The user's choices.
+    private DateTime? estimated;
+    private DateTime? actual;
+    private string? status;
+    private string? place;
+    private bool publicCheckbox = true;
+    private bool baggageCheckbox = true;
+    private bool staffCheckbox = true;
+    private bool throwCheckbox = true;
+
+    // What the save sent: only the changed fields and the kind.
+    private OverrideArrivalFlight overrideArrivalFlight = new();
+
+    private bool changedWhileOpen;
+    private string? saveError;
+    private bool saving;
+
+    private List<string> FilteredCarSuggestions { get; set; } = new();
+
+    #region Data Validation Vars
+    private bool etaErr = false;
+    private string etaErrMsg = "";
+    private bool statusErr = false;
+    private string statusErrMsg = "";
+    private bool ataErr = false;
+    private string ataErrMsg = "";
+    private bool carErr = false;
+    private string carErrMsg = "";
+    #endregion
+
+    #region API Calls and Helpers
+    private string UpdateLocation(string ORG) {
+        TblLocation? tblLocation = locations.FirstOrDefault(x => x.IataCode == ORG);
+        if (tblLocation != null) {
+            string? location = String.Format("{0}, {1}", tblLocation.Name, tblLocation.Country);
+
+            if (location != null) return location;
+        }
+        return "";
+    }
+    private string UpdateAirline(string FLC) {
+        TblAirline? tblAirline = airlines.FirstOrDefault(x => x.AirlineCode == FLC);
+        if (tblAirline != null) {
+            string? airline = tblAirline.CarrierName;
+
+            if (airline != null) return airline;
+        }
+
+        return "No Airline Found";
+    }
+    #endregion
+    #region Save, Reset, Initialize
+    public async Task ShowDialog() {
+        await ResetDialog();
+        showDialog = true;
+    }
+    public Task Close() {
+        showDialog = false;
+        return Task.CompletedTask;
+    }
+    public Task ResetDialog() {
+        changedWhileOpen = false;
+        saveError = null;
+        Load(homePage!.fEArrivalFlights.FirstOrDefault(x => x!.RecordId == recordId)!);
+        return Task.CompletedTask;
+    }
+
+    /// <summary>
+    /// The hub reported a change to a flight. When it is the open flight and what the form shows changed, the form
+    /// reloads and warns, so the user checks the latest values before saving over them (FDE-06).
+    /// </summary>
+    public Task FlightUpdatedAsync(FEArrivalFlight update) {
+        if (!showDialog || update.RecordId != recordId) return Task.CompletedTask;
+        bool changed = FlightFieldValues.Current(update) != fieldsOpened
+            || RollCategories.Current(update) != rollOpened
+            || FlightListCue.For(update).Edit != kindOpened;
+        if (changed) {
+            Load(update);
+            changedWhileOpen = true;
+        } else {
+            arrivalFlight = update;
+        }
+        StateHasChanged();
+        return Task.CompletedTask;
+    }
+
+    private void Load(FEArrivalFlight flight) {
+        locations = homePage!.locations;
+        airlines = homePage!.airlines;
+        carousels = homePage!.carousels;
+        statuses = homePage!.statuses;
+
+        arrivalFlight = flight;
+        TakeMode();
+
+        fieldsOpened = FlightFieldValues.Current(arrivalFlight);
+        rollOpened = RollCategories.Current(arrivalFlight);
+        kindOpened = FlightListCue.For(arrivalFlight).Edit;
+        (estimated, actual, status, place) = fieldsOpened;
+        (publicCheckbox, baggageCheckbox, staffCheckbox, throwCheckbox) = rollOpened;
+        codeShares = FlightManageForm.CodeShares(arrivalFlight.CodeShares, arrivalFlight.overrideFlightData?.CodeShares);
+        FilteredCarSuggestions.Clear();
+
+        etaErr = false;
+        etaErrMsg = "";
+        statusErr = false;
+        statusErrMsg = "";
+        ataErr = false;
+        ataErrMsg = "";
+        carErr = false;
+        carErrMsg = "";
+
+        StateHasChanged();
+    }
+
+    private void TakeMode() {
+        outageMode = homePage!.FeedMode.OutageMode;
+        fieldGates = FlightFieldGates.For(homePage!.FeedMode, homePage!.userSettings);
+        keep = KeepAfterFeedReturns.ForManage(homePage!.FeedMode, arrivalFlight);
+    }
+
+    // A form opened while CoreAPI was unreachable took a mode nobody had read; when CoreAPI returns it takes the
+    // mode now known, so the fields never open on an unreachable CoreAPI's account (FDE-11).
+    protected override void OnParametersSet() {
+        if (wasReadOnly && !ReadOnly && showDialog) {
+            TakeMode();
+        }
+        wasReadOnly = ReadOnly;
+    }
+
+    /// <summary>
+    /// Sends only what the user changed from the values the form holds as current, and keeps the form open with an
+    /// error when CoreAPI does not take it.
+    /// </summary>
+    public async Task SaveAndClose() {
+        if (saving || !ValidateData()) return;
+        saving = true;
+        try {
+            saveError = null;
+            changedWhileOpen = false;
+            overrideArrivalFlight = new();
+            fieldsOpened.WriteChanges(FieldsChosen, overrideArrivalFlight);
+            rollOpened.WriteChanges(RollChosen, overrideArrivalFlight);
+            keep.WriteKind(overrideArrivalFlight);
+            var result = await coreApi.ModifyArrivalAsync(recordId, overrideArrivalFlight);
+            homePage!.ObserveCoreApi(result);
+            await audit.EditedAsync(FlightKey.Of(arrivalFlight), fieldsOpened, FieldsChosen, rollOpened, RollChosen, kindOpened, keep.Kind, result);
+            if (!result.Succeeded) {
+                saveError = FlightSaveError.Describe(result);
+                return;
+            }
+            await Close();
+        } finally {
+            saving = false;
+            StateHasChanged();
+        }
+    }
+    private bool ValidateData() {
+        ValidateCarouselGroup();
+        ValidateTimeGroup();
+        ValidateStatusGroup();
+        StateHasChanged();
+        return !etaErr && !statusErr && !ataErr && !carErr;
+    }
+    private FlightFieldValues FieldsChosen => new(estimated, actual, status, place);
+    private RollCategories RollChosen => new(publicCheckbox, baggageCheckbox, staffCheckbox, throwCheckbox);
+    private void OpenClearOverrideModal() {
+        homePage!.QuickOverrideSingleFlightModal(arrivalFlight.RecordId);
+    }
+    #endregion
+    #region Autofill
+    private void SelectCarSuggestion(string suggestion) {
+        place = suggestion;
+        FilteredCarSuggestions.Clear();
+        StateHasChanged();
+    }
+    private void FilterCARSuggestions(ChangeEventArgs e) {
+        var input = e.Value?.ToString() ?? string.Empty;
+        place = input.ToUpper();
+
+        FilteredCarSuggestions.Clear();
+        if (!string.IsNullOrWhiteSpace(input)) {
+            List<TblCarousel?> tempCarousels = carousels.Where(x => x.CarouselId.StartsWith(input, StringComparison.OrdinalIgnoreCase)).Take(10).ToList()!;
+            foreach (TblCarousel? tblCarousel in tempCarousels) {
+                if (tblCarousel != null) {
+                    FilteredCarSuggestions.Add(tblCarousel.CarouselId);
+                }
+            }
+        }
+    }
+    #endregion
+    #region Data Validation
+    // Only a field the user changed is checked: an unchanged one is not sent, whatever the feed holds.
+    private void ValidateStatusGroup() {
+        statusErr = false;
+        statusErrMsg = "";
+
+        string? changed = fieldsOpened.ChangesTo(FieldsChosen).Status;
+        if (changed != null && !statuses.Any(x => string.Equals(x.StatusId, changed))) {
+            statusErr = true;
+            statusErrMsg = "Required.";
+        }
+    }
+    private void ValidateCarouselGroup() {
+        carErr = false;
+        carErrMsg = "";
+
+        string? changed = fieldsOpened.ChangesTo(FieldsChosen).Place;
+        if (string.IsNullOrWhiteSpace(changed)) {
+            return;
+        }
+        if (!carousels.Any(x => string.Equals(x.CarouselId, changed, StringComparison.OrdinalIgnoreCase))) {
+            carErr = true;
+            carErrMsg = "Invalid Value.";
+        }
+        FilteredCarSuggestions.Clear();
+    }
+
+    private void ValidateTimeGroup() {
+        (etaErr, etaErrMsg) = TimeError(fieldsOpened.Estimated, estimated);
+        (ataErr, ataErrMsg) = TimeError(fieldsOpened.Actual, actual);
+    }
+
+    private (bool, string) TimeError(DateTime? opened, DateTime? chosen) =>
+        chosen == opened ? (false, "")
+        : chosen == null ? (true, "Required.")
+        : !InWindowRange(chosen) ? (true, "Outside of Scheduling Window.")
+        : (false, "");
+
+    private bool InWindowRange(DateTime? dateTime) {
+        return (dateTime != null && dateTime >= homePage!.feedWindow.WindowStart! && dateTime < homePage!.feedWindow.WindowEnd!);
+    }
+    #endregion
+}

@@ -1147,13 +1147,16 @@
 
             await approvalChainService.CreateOrUpdateChainAsync(
                 Location.LocationId,
-                chainEnabled,
-                chainEnableLlm,
-                llmAutoApprovalUpToStage,
+                new ApprovalChainDraft
+                {
+                    IsEnabled = chainEnabled,
+                    EnableLlmAutoApproval = chainEnableLlm,
+                    LlmAutoApprovalUpToStageOrder = llmAutoApprovalUpToStage,
+                    DeclinedContentRetentionDays = chainRetentionDays,
+                    Stages = stages,
+                },
                 chainAutoApproveMembers,
-                stages,
-                sessionState.User?.UserId.ToString() ?? "system",
-                chainRetentionDays);
+                sessionState.User?.UserId.ToString() ?? "system");
 
             await using (var extDb = await dbFactory.CreateDbContextAsync())
             {

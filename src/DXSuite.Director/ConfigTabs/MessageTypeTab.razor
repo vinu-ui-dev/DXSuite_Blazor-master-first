@@ -1,0 +1,158 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Pages.Messages
+@using DXSuite.Director.Services.Messaging
+@inject MessageTypeConfiguration configuration
+@rendermode InteractiveServer
+
+<div class="dx-card dx-card-fill mt-tab">
+    <div class="dx-panel-header">
+        <h4>Message Types</h4>
+        <div class="dx-panel-controls">
+            <input @bind="searchFilter" @bind:event="oninput" class="dx-search-input" placeholder="Search Message Types..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm mt-add" @onclick="AddAsync"><i class="bi bi-plus-lg"></i> Add Message Type</button>
+        </div>
+    </div>
+    <div class="dx-panel-hint">
+        Drag a type, or use Move up and Move down, to set its rank. The top of the list wins when Messages compete for
+        the same part of a screen. The Top priority type is pinned first.
+    </div>
+
+    @if (rows is null)
+    {
+        <div class="dx-panel-content mt-loading"><div class="dx-loading-overlay"><div class="dx-spinner"></div></div></div>
+    }
+    else if (rows.Count == 0)
+    {
+        <div class="dx-panel-content"><p class="dx-text-muted mt-empty">No Message Types yet.</p></div>
+    }
+    else
+    {
+        <div class="dx-panel-content">
+            <div class="dx-table">
+                <div class="dx-table-header mt-cols">
+                    <div>Order</div><div>Code</div><div>Display Name</div><div>Rank</div><div>Screen Part</div>
+                    <div>Languages</div><div>Character Limit</div><div>Asset Slots</div><div>Access</div><div>Actions</div>
+                </div>
+                @foreach (var row in Visible)
+                {
+                    var index = (row.Rank ?? 0) - 1;
+                    var movable = row.Rank is not null && !row.IsTopPriority;
+                    <div id="mt-row-@row.MessageTypeId" class="dx-table-row mt-cols @(dragOverId == row.MessageTypeId && draggingId != row.MessageTypeId ? "mt-drag-over" : "")"
+                         draggable="@(movable ? "true" : "false")"
+                         @ondragstart="() => draggingId = movable ? row.MessageTypeId : null"
+                         @ondragover:preventDefault
+                         @ondragover="() => dragOverId = row.MessageTypeId"
+                         @ondragleave="() => { if (dragOverId == row.MessageTypeId) dragOverId = null; }"
+                         @ondrop="() => DropOnAsync(row)">
+                        <div>
+                            @if (row.Rank is null)
+                            {
+                                <span class="dx-badge dx-badge-gray" title="Built in, and outside the ranking">Unranked</span>
+                            }
+                            else if (row.IsTopPriority)
+                            {
+                                <span class="dx-badge dx-badge-gray" title="The Top priority type always stays first">Pinned</span>
+                            }
+                            else
+                            {
+                                <div class="mt-order">
+                                    <span class="mt-drag-handle" title="Drag to reorder">⠿</span>
+                                    <button type="button" id="mt-up-@row.MessageTypeId" class="mt-move" aria-label="Move up"
+                                            disabled="@(index <= FirstMovable)" @onclick="() => MoveAsync(row.MessageTypeId, index - 1)">▲</button>
+                                    <button type="button" id="mt-down-@row.MessageTypeId" class="mt-move" aria-label="Move down"
+                                            disabled="@(index >= RankedCount - 1)" @onclick="() => MoveAsync(row.MessageTypeId, index + 1)">▼</button>
+                                </div>
+                            }
+                        </div>
+                        <div class="dx-col-id">@row.Code</div>
+                        <div>
+                            <span class="mt-swatch" style="@MessageTypeDisplay.ColourStyle(row.TextColour, row.BackgroundColour)">@row.DisplayName</span>
+                            @if (row.IsTopPriority)
+                            {
+                                <span class="dx-badge dx-badge-red">Top priority</span>
+                            }
+                        </div>
+                        <div>@(row.Rank?.ToString() ?? "Outside the ranking")</div>
+                        <div>@MessageTypeDisplay.ScreenPartName(row.ScreenPart)</div>
+                        <div>@string.Join(", ", row.Languages.Select(l => l.Name))</div>
+                        <div>@row.MaxCharacters</div>
+                        <div>
+                            @if (row.Slots.Count == 0)
+                            {
+                                <span class="dx-text-muted">None</span>
+                            }
+                            else
+                            {
+                                @string.Join(", ", row.Slots.Select(s => s.IsRequired ? s.Key : s.Key + " (optional)"))
+                            }
+                        </div>
+                        <div>
+                            <button type="button" id="mt-access-@row.MessageTypeId" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    @onclick="() => OpenAccessAsync(row.MessageTypeId)">Access</button>
+                        </div>
+                        <div>
+                            <button type="button" id="mt-edit-@row.MessageTypeId" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                    @onclick="() => EditAsync(row.MessageTypeId)">Edit</button>
+                        </div>
+                    </div>
+                }
+            </div>
+        </div>
+        <div class="dx-panel-footer dx-text-muted mt-footer">@rows.Count Message Types. New types join at the bottom.</div>
+    }
+</div>
+
+<ManageMessageTypeModal @ref="dialog" Types="rows ?? []" OnSaved="LoadAsync" />
+<MessageTypeAccessModal @ref="access" />
+
+@code {
+    private IReadOnlyList<MessageTypeRow>? rows;
+    private ManageMessageTypeModal? dialog;
+    private string searchFilter = "";
+    private int? draggingId;
+    private int? dragOverId;
+    private MessageTypeAccessModal? access;
+
+    // Nothing can move above the Top priority type (MSG-08).
+    private int FirstMovable => rows is { Count: > 0 } && rows[0].IsTopPriority ? 1 : 0;
+
+    // Under D-02 the built-in Counter type follows the ranked types and is not one of them (MSG-20).
+    private int RankedCount => rows?.Count(r => r.Rank is not null) ?? 0;
+
+    private IEnumerable<MessageTypeRow> Visible
+    {
+        get
+        {
+            if (rows is null) return [];
+            var term = searchFilter.Trim();
+            return term.Length == 0
+                ? rows
+                : rows.Where(r => r.Code.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || r.DisplayName.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync() => rows = await configuration.ListAsync(default);
+
+    // Rank changes only here, so 1.2 (AM-10) can make rank read-only in one place.
+    private async Task MoveAsync(int messageTypeId, int toIndex)
+    {
+        if (await configuration.MoveAsync(messageTypeId, toIndex, default)) await LoadAsync();
+    }
+
+    private async Task DropOnAsync(MessageTypeRow target)
+    {
+        var dragged = draggingId;
+        draggingId = null;
+        dragOverId = null;
+        if (dragged is int id && id != target.MessageTypeId && target.Rank is { } rank) await MoveAsync(id, rank - 1);
+    }
+
+    private Task AddAsync() => dialog?.OpenAsync(null) ?? Task.CompletedTask;
+
+    private Task OpenAccessAsync(int messageTypeId) => access?.OpenAsync(messageTypeId) ?? Task.CompletedTask;
+
+    private Task EditAsync(int messageTypeId) => dialog?.OpenAsync(messageTypeId) ?? Task.CompletedTask;
+}

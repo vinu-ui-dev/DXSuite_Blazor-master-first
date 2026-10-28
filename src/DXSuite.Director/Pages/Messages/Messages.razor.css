@@ -1,0 +1,23 @@
+.msg-loading {
+    display: flex;
+    justify-content: center;
+    padding: 48px 0;
+}
+
+.msg-denied {
+    padding: 24px;
+}
+
+.msg-shell {
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 5.5rem);
+}
+
+.msg-fixed {
+    flex-shrink: 0;
+}
+
+.msg-fill {
+    flex: 1;
+}

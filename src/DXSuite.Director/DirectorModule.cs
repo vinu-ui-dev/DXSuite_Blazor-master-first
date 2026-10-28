@@ -31,6 +31,9 @@ public class DirectorModule : IBlazorModule
         yield return new NavItem("Dashboard", "/director", "bi-speedometer2", 10, "Director");
         // Schedule and Media Creator are omitted — they require workflow context
         // (e.g. display selection) and are navigated to from within other pages
+        yield return new NavItem("Messages", "/messages", "bi-megaphone", 11, "Director",
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging),
+            Permission: DXSuite.Shared.Authorization.PermissionKeys.PageMessages);
         yield return new NavItem("Overrides", "/overrides", "bi-lightning", 12, "Director", Feature: "Overrides");
         yield return new NavItem("Approvals", "/approvals", "bi-check2-square", 13, "Director");
         yield return new NavItem("Counter Scheduler", "/ticket-counter-scheduler", "bi-grid-3x3", 14, "Director", Feature: "CounterScheduler");
@@ -50,6 +53,10 @@ public class DirectorModule : IBlazorModule
         yield return new ConfigTab("content-package", "Content Packages", typeof(ConfigTabs.ContentPackageTab), 35, Feature: "ContentPackage");
         yield return new ConfigTab("location-bundles", "Location Bundles", typeof(ConfigTabs.LocationBundlesTab), 36, Feature: "LocationBundles");
         yield return new ConfigTab("panels", "Panels", typeof(ConfigTabs.PanelsTab), 37, Feature: "Panels");
+        yield return new ConfigTab("message-types", "Message Types", typeof(ConfigTabs.MessageTypeTab), 40,
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
+        yield return new ConfigTab("zone-builder", "Display Zones", typeof(ConfigTabs.DisplayZonesTab), 41,
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
     }
 
     public IEnumerable<SettingsTab> GetSettingsTabs()
@@ -67,6 +74,9 @@ public class DirectorModule : IBlazorModule
         yield return new SettingsTab("playerprovisioning", "Player Provisioning", typeof(Components.Settings.PlayerProvisioning), 57, Feature: "Engage");
         yield return new SettingsTab("playerupdates", "Player Updates", typeof(Components.Settings.PlayerUpdates), 60, Feature: "Engage");
         yield return new SettingsTab("playersync", "Player Sync", typeof(Components.Settings.PlayerSync), 62, Feature: "Engage");
+        yield return new SettingsTab(PermissionKeys.CoreApiConnectionConfigTabKey, "CoreAPI Connection",
+            typeof(DXSuite.Connectors.Components.CoreApi.CoreApiConnectionTab), 58,
+            TenantFeature: nameof(TenantFeatureFlags.FlightDataEditor));
         yield return new SettingsTab("airlines", "Airlines", typeof(Components.Settings.Airlines), 70, Module: "Aviation");
         yield return new SettingsTab("cities", "Cities", typeof(Components.Settings.Cities), 80, Module: "Aviation");
         yield return new SettingsTab("wayfinding", "Wayfinding", typeof(Components.Settings.Wayfinding), 90, Feature: "Wayfinding");

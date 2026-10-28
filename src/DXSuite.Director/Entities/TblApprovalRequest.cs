@@ -7,8 +7,9 @@ using Microsoft.EntityFrameworkCore;
 namespace DXSuite.Director.Entities;
 
 /// <summary>
-/// Tracks the overall state of an asset approval moving through a chain.
-/// Multiple requests can exist per asset approval (re-submissions create new records).
+/// Tracks one item moving through a chain: an asset approval on a location's chain, or a canned Message on its
+/// Message Type's chain (MSG-11), never both (check constraint). A Message has at most one request, reset on each
+/// submission; whether it carries a new Message or a pending revision is read from the Message itself.
 /// </summary>
 [Table("tblApprovalRequest")]
 [Index(nameof(AssetApprovalId))]
@@ -17,7 +18,9 @@ public partial class TblApprovalRequest
     [Key]
     public int ApprovalRequestId { get; set; }
 
-    public int AssetApprovalId { get; set; }
+    public int? AssetApprovalId { get; set; }
+
+    public int? MessageId { get; set; }
 
     public int ApprovalChainId { get; set; }
 
@@ -27,7 +30,7 @@ public partial class TblApprovalRequest
     public int? CurrentStageId { get; set; }
 
     /// <summary>
-    /// "pending", "approved", "declined"
+    /// "pending", "approved", "declined", "withdrawn"
     /// </summary>
     [StringLength(20)]
     [Unicode(false)]
@@ -41,7 +44,10 @@ public partial class TblApprovalRequest
 
     [ForeignKey("AssetApprovalId")]
     [InverseProperty("ApprovalRequests")]
-    public virtual TblAssetApproval AssetApproval { get; set; } = null!;
+    public virtual TblAssetApproval? AssetApproval { get; set; }
+
+    [ForeignKey("MessageId")]
+    public virtual TblMessage? Message { get; set; }
 
     [ForeignKey("ApprovalChainId")]
     public virtual TblApprovalChain ApprovalChain { get; set; } = null!;

@@ -1,0 +1,45 @@
+.mq-section {
+    margin-bottom: 24px;
+}
+
+.mq-card {
+    margin-bottom: 16px;
+}
+
+.mq-card-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+}
+
+.mq-meta {
+    flex-basis: 100%;
+    font-size: 0.85rem;
+}
+
+.mq-versions th,
+.mq-versions td {
+    vertical-align: top;
+    white-space: pre-wrap;
+}
+
+/* The pending revision's changed texts stand out against the approved row above them. */
+.mq-changed {
+    font-weight: 600;
+}
+
+.mq-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+}
+
+::deep .mq-video {
+    width: 160px;
+    max-width: 100%;
+}
+
+::deep .mq-asset-name {
+    font-size: 0.8rem;
+}

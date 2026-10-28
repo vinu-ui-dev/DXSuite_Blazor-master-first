@@ -2,6 +2,7 @@ using System.Reflection;
 using DXSuite.SLC.Data;
 using DXSuite.Shared.Module;
 using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -36,7 +37,7 @@ public class SLCModule : IBlazorModule
                 ?? throw new InvalidOperationException(
                     "No 'Pulse' connection string configured. Add ConnectionStrings:Pulse to appsettings.json.");
 
-            options.UseSqlServer(connStr);
+            options.UseConfiguredProvider(config, "SlcPulse", connStr);
         }, ServiceLifetime.Scoped);
     }
 

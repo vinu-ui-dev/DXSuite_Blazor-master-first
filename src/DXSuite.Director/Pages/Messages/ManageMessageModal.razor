@@ -1,0 +1,263 @@
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.Messaging
+@inject MessageAuthoring authoring
+@inject ITenantMediaPathResolver MediaPaths
+@inject ISessionState sessionState
+@implements IDisposable
+
+@if (draft is not null)
+{
+    <div class="dx-modal-overlay mm-dialog">
+        <div class="dx-modal mm-modal" role="dialog" aria-label="Message">
+            <div class="dx-modal-header">
+                <span>@(draft.MessageId is null ? $"Add {draft.MessageTypeName} Message" : $"Edit Message: {openedName}")</span>
+                <button class="dx-modal-close" type="button" aria-label="Close" @onclick="Cancel">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (problem is not null)
+                {
+                    <div class="dx-alert dx-alert-danger mm-problem">@problem</div>
+                }
+
+                <div class="dx-card mm-card">
+                    <div class="dx-card-header mm-card-h"><span>Message</span><small>@StatusNote</small></div>
+                    <div class="dx-card-body">
+                        <div class="dx-form-group">
+                            <label class="dx-form-label" for="mm-name">Name</label>
+                            <input type="text" id="mm-name" maxlength="100" class="dx-form-control @Invalid(MessageAuthoring.NameField)"
+                                   placeholder="E.G. Gate change" @bind="draft.Name" @bind:event="oninput" />
+                            <small class="dx-form-hint">Senders pick the Message by this name.</small>
+                            @Validation(Error(MessageAuthoring.NameField))
+                        </div>
+                    </div>
+                </div>
+
+                <div class="dx-card mm-card">
+                    <div class="dx-card-header mm-card-h"><span>Text</span><small>One text per language, up to @draft.MaxCharacters characters each</small></div>
+                    <div class="dx-card-body">
+                        @foreach (var text in draft.Texts)
+                        {
+                            var field = MessageAuthoring.TextField(text.LanguageCode);
+                            <div class="dx-form-group">
+                                <div class="mm-text-label">
+                                    <label class="dx-form-label" for="mm-text-@text.LanguageCode">@text.LanguageName</label>
+                                    <span class="mm-count @(text.Count > draft.MaxCharacters ? "mm-over" : "")">@text.Count / @draft.MaxCharacters</span>
+                                </div>
+                                <textarea id="mm-text-@text.LanguageCode" rows="3" class="dx-form-control mm-text @Invalid(field)"
+                                          @bind="text.Body" @bind:event="oninput"></textarea>
+                                @Validation(Error(field))
+                            </div>
+                        }
+                    </div>
+                </div>
+
+                @if (draft.Slots.Count > 0)
+                {
+                    <div class="dx-card mm-card">
+                        <div class="dx-card-header mm-card-h"><span>Asset Slots</span><small>Uploads are kept only when the Message saves</small></div>
+                        <div class="dx-card-body">
+                            @foreach (var slot in draft.Slots)
+                            {
+                                var field = MessageAuthoring.SlotField(slot.SlotKey);
+                                <div class="dx-form-group">
+                                    <div class="mm-slot @(Error(field) is null ? "" : "mm-slot-invalid")">
+                                        <span class="mm-slot-key">@slot.SlotKey</span>
+                                        <span class="dx-badge @(slot.IsRequired ? "dx-badge-blue" : "dx-badge-gray")">@(slot.IsRequired ? "Required" : "Optional")</span>
+                                        <span class="mm-slot-file">@SlotFile(slot)</span>
+                                        <button type="button" id="mm-upload-@slot.SlotKey" class="dx-btn dx-btn-outline-blue dx-btn-sm"
+                                                disabled="@(slot.LibraryLocationId is null)" @onclick="() => Upload(slot)">
+                                            <i class="bi bi-upload"></i> @(slot.IsFilled ? "Replace" : "Upload")
+                                        </button>
+                                        @if (slot.IsFilled)
+                                        {
+                                            <button type="button" id="mm-clear-@slot.SlotKey" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => authoring.ClearSlot(draft, slot.SlotKey)">Remove</button>
+                                        }
+                                    </div>
+                                    @if (slot.LibraryLocationId is null)
+                                    {
+                                        <small class="dx-form-hint">This slot's constraint has no asset library. Fix the slot on Configuration > Message Types.</small>
+                                    }
+                                    @Validation(Error(field))
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button type="button" id="mm-cancel" class="dx-btn dx-btn-gray" @onclick="Cancel">Cancel</button>
+                <button type="button" id="mm-save" class="dx-btn dx-btn-blue" disabled="@saving" @onclick="SaveAsync">Save</button>
+            </div>
+        </div>
+    </div>
+
+    @if (uploaderWanted)
+    {
+        <MediaAssetUploader @ref="uploader" OnStaged="OnStagedAsync" />
+    }
+}
+
+@code {
+    /// <summary>Raised after a save, so the list can show the Message as saved.</summary>
+    [Parameter] public EventCallback OnSaved { get; set; }
+
+    private MessageDraft? draft;
+    private string openedName = "";
+    private IReadOnlyDictionary<string, string> errors = new Dictionary<string, string>();
+    private string? problem;
+    private bool saving;
+
+    // The uploader is rendered only once an upload starts, and opened after that render.
+    private MediaAssetUploader? uploader;
+    private bool uploaderWanted;
+    private MessageSlotDraft? uploadingSlot;
+    private bool openUploader;
+
+    // The status reads as every list shows it (MessageStatusText), then what a save does from it.
+    private string StatusNote => draft switch
+    {
+        { MessageId: null, NeedsApproval: true } => "Saves as Pending until its approval chain approves it",
+        { MessageId: null } => "Saves as Approved: this type has no approval chain",
+        { Status: MessageStatus.Approved, NeedsApproval: true, HasPendingRevision: true } =>
+            $"{StatusLabel}, with an edit waiting for approval. Saving replaces that edit; screens keep the approved text until it is approved",
+        { Status: MessageStatus.Approved, NeedsApproval: true } =>
+            $"{StatusLabel}. Your edit waits for approval; screens keep the approved text until it is approved",
+        { Status: MessageStatus.Draft, NeedsApproval: true } => $"{StatusLabel}. Saving submits it for approval again",
+        { Status: MessageStatus.Draft } => $"{StatusLabel}. Saves as Approved: this type no longer has an approval chain",
+        _ => StatusLabel,
+    };
+
+    // Only a Message not saved yet has no status, and the arms above answer for it.
+    private string StatusLabel => draft?.Status is { } status ? MessageStatusText.Label(status) : "";
+
+    /// <summary>Opens the dialog on a blank canned Message of the type.</summary>
+    public async Task OpenNewAsync(int messageTypeId) => Show(await authoring.NewDraftAsync(messageTypeId, default));
+
+    /// <summary>Opens the dialog on a copy of a canned Message.</summary>
+    public async Task OpenAsync(int messageId) => Show(await authoring.OpenAsync(messageId, default));
+
+    /// <summary>
+    /// Holds an upload the uploader staged for <paramref name="slotKey"/> until the Message saves. The uploader calls
+    /// this when the author submits a file.
+    /// </summary>
+    public async Task StageAsync(string slotKey, StagedUpload upload)
+    {
+        if (draft is null)
+        {
+            // The dialog closed while the file was uploading, so nothing will save it.
+            File.Delete(upload.DiskPath);
+            return;
+        }
+        await authoring.StageAsync(draft, slotKey, upload);
+        errors = errors.Where(e => e.Key != MessageAuthoring.SlotField(slotKey)).ToDictionary();
+        StateHasChanged();
+    }
+
+    public void Dispose()
+    {
+        // Leaving the page with the dialog open is a Cancel.
+        if (draft is not null) authoring.Discard(draft);
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!openUploader || uploader is null || uploadingSlot is null) return;
+        openUploader = false;
+        sessionState.LocationAccessMap.TryGetValue(uploadingSlot.LibraryLocationId!.Value, out var access);
+        await uploader.Open(new MediaUploadConfig
+        {
+            UploadFolder = MediaPaths.GetRoot(),
+            LocationId = uploadingSlot.LibraryLocationId.Value,
+            ConstraintId = uploadingSlot.ConstraintId,
+            AddToSql = true,
+            StageOnly = true,
+            UserAccess = access,
+            ExpectedWidth = uploadingSlot.ExpectedWidth,
+            ExpectedHeight = uploadingSlot.ExpectedHeight,
+            ResolutionMode = uploadingSlot.ResolutionMode
+        });
+    }
+
+    private void Show(MessageDraft? opened)
+    {
+        errors = new Dictionary<string, string>();
+        problem = null;
+        saving = false;
+        draft = opened;
+        openedName = opened?.Name ?? "";
+        StateHasChanged();
+    }
+
+    private void Upload(MessageSlotDraft slot)
+    {
+        uploadingSlot = slot;
+        uploaderWanted = true;
+        openUploader = true;
+    }
+
+    private Task OnStagedAsync(StagedUpload upload) =>
+        uploadingSlot is null ? Task.CompletedTask : StageAsync(uploadingSlot.SlotKey, upload);
+
+    private void Cancel()
+    {
+        if (draft is not null) authoring.Discard(draft);
+        Close();
+    }
+
+    private void Close()
+    {
+        draft = null;
+        uploaderWanted = false;
+        uploadingSlot = null;
+        errors = new Dictionary<string, string>();
+        problem = null;
+    }
+
+    private async Task SaveAsync()
+    {
+        if (draft is null) return;
+        saving = true;
+        try
+        {
+            var result = await authoring.SaveAsync(draft, default);
+            switch (result.Outcome)
+            {
+                case MessageSaveOutcome.Saved:
+                    Close();
+                    await OnSaved.InvokeAsync();
+                    return;
+                case MessageSaveOutcome.Forbidden:
+                    problem = "You do not have permission to author Messages.";
+                    break;
+                case MessageSaveOutcome.Gone:
+                    problem = "This Message or its type was deleted or retired while you edited it.";
+                    break;
+                default:
+                    errors = result.Errors ?? new Dictionary<string, string>();
+                    problem = "Check the highlighted fields.";
+                    break;
+            }
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+
+    private static string SlotFile(MessageSlotDraft slot) =>
+        slot.Staged is not null ? $"{slot.Staged.FileName} (uploaded, saved with the Message)"
+        : slot.AssetName ?? (slot.AssetId is null ? "No file" : "Library asset");
+
+    private string? Error(string field) => errors.TryGetValue(field, out var message) ? message : null;
+
+    private string Invalid(string field) => errors.ContainsKey(field) ? "invalid" : "";
+
+    private static RenderFragment Validation(string? message) => builder =>
+    {
+        if (message is null) return;
+        builder.OpenElement(0, "span");
+        builder.AddAttribute(1, "class", "dx-form-validation");
+        builder.AddContent(2, message);
+        builder.CloseElement();
+    };
+}

@@ -1,0 +1,102 @@
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@inject ICoreApiFeedStateReader feedStateReader
+@implements IAsyncDisposable
+
+@* The "RMS Feed" indicator of Diagrams 6 and 7 (FDE-02). *@
+@{ var reading = Describe(state, Details); }
+<div class="tooltip-container">
+    <i class="bi @reading.Icon" style="margin:5px; color:@reading.Colour; cursor:help" aria-hidden="true"></i>
+    <span class="visually-hidden">@reading.Summary</span>
+    <div class="tooltip-box">
+        @foreach (var (label, value) in reading.Rows) {
+            <div class="tooltip-row"><span>@label</span> <span>@value</span></div>
+        }
+    </div>
+</div>
+
+@code {
+    /// <summary>How often the indicator re-reads the watcher's state, so it follows it without a hub event.</summary>
+    public static readonly TimeSpan RefreshInterval = TimeSpan.FromSeconds(10);
+
+    /// <summary>
+    /// CoreAPI's last <c>FeedStatus</c> as the page received it. Its per-feed status and last sync times are shown as
+    /// information only (CAPI-04); whether the feed is up comes from the watcher's state.
+    /// </summary>
+    [Parameter] public FeedStatus? Details { get; set; }
+
+    /// <summary>Raised with each state read, so the page's edit rules follow the same state.</summary>
+    [Parameter] public EventCallback<CoreApiFeedState?> StateChanged { get; set; }
+
+    private CoreApiFeedState? state;
+    private readonly CancellationTokenSource stopping = new();
+
+    protected override async Task OnInitializedAsync() {
+        await ReadAsync();
+        _ = RefreshAsync();
+    }
+
+    private async Task ReadAsync() {
+        state = await feedStateReader.ReadAsync(stopping.Token);
+        if (StateChanged.HasDelegate) await StateChanged.InvokeAsync(state);
+    }
+
+    private async Task RefreshAsync() {
+        using var timer = new PeriodicTimer(RefreshInterval);
+        try {
+            while (await timer.WaitForNextTickAsync(stopping.Token)) {
+                try {
+                    await InvokeAsync(async () => {
+                        await ReadAsync();
+                        StateHasChanged();
+                    });
+                } catch (Exception ex) when (ex is not OperationCanceledException) {
+                    // A failed read keeps the last state shown; the next tick tries again.
+                }
+            }
+        } catch (OperationCanceledException) {
+        }
+    }
+
+    // The source is cancelled but not disposed: the refresh loop may still be reading its token.
+    public ValueTask DisposeAsync() {
+        stopping.Cancel();
+        return ValueTask.CompletedTask;
+    }
+
+    public enum Light { Unknown, Up, Down, Unreachable }
+
+    public sealed record Reading(Light Light, string Summary, IReadOnlyList<(string Label, string Value)> Rows) {
+        public string Icon => Light switch { Light.Up => "bi-check-lg", Light.Unknown => "bi-question-lg", _ => "bi-x-lg" };
+        public string Colour => Light switch { Light.Up => "limegreen", Light.Unknown => "gray", _ => "red" };
+    }
+
+    /// <summary>
+    /// What the indicator shows. Null state means the watcher has not reported yet; a state without a status is not
+    /// known either, never down. Last sync times may be missing from CoreAPI's answer and are then left blank.
+    /// </summary>
+    public static Reading Describe(CoreApiFeedState? state, FeedStatus? details) {
+        var (light, overall) = state switch {
+            null => (Light.Unknown, "Not known yet"),
+            { Reachable: false } => (Light.Unreachable, "CoreAPI unreachable"),
+            _ when CoreApiFeedState.UpOrUnknown(state.Status) is null => (Light.Unknown, "No status"),
+            { FeedUp: true } => (Light.Up, state.Status!),
+            _ => (Light.Down, state.Status!),
+        };
+        var summary = light switch {
+            Light.Up => "RMS feed up",
+            Light.Down => "RMS feed down",
+            Light.Unreachable => "CoreAPI unreachable",
+            _ => state is null ? "RMS feed state not known yet" : "RMS feed state not known",
+        };
+        return new Reading(light, summary, [
+            ("Overall Feed Status:", overall),
+            ("Arrival Feed Status:", details?.ArrivalsStatus ?? ""),
+            ("Arrival Feed Last Sync:", LastSync(details?.ArrivalsLast)),
+            ("Departure Feed Status:", details?.DeparturesStatus ?? ""),
+            ("Departure Feed Last Sync:", LastSync(details?.DeparturesLast)),
+        ]);
+    }
+
+    private static string LastSync(DateTime? at) => at?.ToString("h:mm tt M/d/yyyy") ?? "";
+}

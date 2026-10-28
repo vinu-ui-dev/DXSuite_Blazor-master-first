@@ -1,0 +1,7 @@
+.mam-modal {
+    max-width: 760px;
+}
+
+.mam-columns {
+    grid-template-columns: 1.5fr 140px 140px 100px 120px;
+}

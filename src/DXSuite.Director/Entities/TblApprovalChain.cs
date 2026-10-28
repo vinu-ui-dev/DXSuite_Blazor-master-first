@@ -8,8 +8,8 @@ using DXSuite.Shared.Entities.Identity;
 namespace DXSuite.Director.Entities;
 
 /// <summary>
-/// Per-location approval chain configuration. Each location can have multiple chains:
-/// one default chain and optionally one per access rule.
+/// An approval chain, owned by exactly one location or one Message Type (check constraint, ZONE-09). A location can
+/// have multiple chains: one default chain and optionally one per access rule. A Message Type has at most one.
 /// Stages are connected by implicit THEN (sequential); within each stage, groups
 /// are connected by the stage's IntraStageOperator (AND or OR).
 /// </summary>
@@ -26,7 +26,9 @@ public partial class TblApprovalChain
     /// </summary>
     public Guid ContentPackageId { get; set; } = Guid.NewGuid();
 
-    public int LocationId { get; set; }
+    public int? LocationId { get; set; }
+
+    public int? MessageTypeId { get; set; }
 
     public bool IsEnabled { get; set; }
 
@@ -61,6 +63,18 @@ public partial class TblApprovalChain
     /// </summary>
     public int DeclinedContentRetentionDays { get; set; } = 3;
 
+    public const int ReminderIntervalHoursDefault = 24;
+    public const int ReminderIntervalHoursMinimum = 1;
+
+    /// <summary>
+    /// When true, the current stage's approvers are emailed on each submission and get a reminder digest every
+    /// <see cref="ReminderIntervalHours"/> until it is decided (FSD 1.1 section 12 point 7). Off on chains that predate it.
+    /// </summary>
+    public bool EmailApprovers { get; set; }
+
+    /// <summary>Hours between reminder digests to an approver; at least <see cref="ReminderIntervalHoursMinimum"/>.</summary>
+    public int ReminderIntervalHours { get; set; } = ReminderIntervalHoursDefault;
+
     [Column(TypeName = "datetime")]
     public DateTime CreateDate { get; set; }
 
@@ -73,7 +87,10 @@ public partial class TblApprovalChain
 
     [ForeignKey("LocationId")]
     [InverseProperty("ApprovalChains")]
-    public virtual TblLocation Location { get; set; } = null!;
+    public virtual TblLocation? Location { get; set; }
+
+    [ForeignKey("MessageTypeId")]
+    public virtual TblMessageType? MessageType { get; set; }
 
     [ForeignKey("LocationAccessRuleId")]
     [InverseProperty("ApprovalChains")]

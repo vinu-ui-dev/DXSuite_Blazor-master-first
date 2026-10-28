@@ -8,7 +8,6 @@ namespace DXSuite.Director.Entities;
 [Table("tblMessage")]
 [Index(nameof(MessageTypeId), Name = "IX_tblMessage_MessageTypeId")]
 [Index(nameof(OwningUserGroupId), Name = "IX_tblMessage_OwningUserGroupId")]
-[Index(nameof(SignVideoAssetId), Name = "IX_tblMessage_SignVideoAssetId")]
 public partial class TblMessage
 {
     [Key]
@@ -25,11 +24,25 @@ public partial class TblMessage
 
     public bool IsCanned { get; set; }
 
-    public int? SignVideoAssetId { get; set; }
+    /// <summary>Null falls back to the message type's default.</summary>
+    [StringLength(9)]
+    [Unicode(false)]
+    public string? TextColor { get; set; }
+
+    /// <summary>Null falls back to the message type's default.</summary>
+    [StringLength(9)]
+    [Unicode(false)]
+    public string? BackgroundColor { get; set; }
 
     public MessageStatus Status { get; set; }
 
     public bool IsDeleted { get; set; }
+
+    /// <summary>
+    /// The approved revision the Message's content is at: 0 as first approved, one more for each approved revision.
+    /// It is the n of a shown version's "revision n" (AUD-06).
+    /// </summary>
+    public int RevisionNumber { get; set; }
 
     public DateTime CreatedUtc { get; set; }
 
@@ -46,11 +59,15 @@ public partial class TblMessage
     [ForeignKey("OwningUserGroupId")]
     public virtual TblUserGroup? OwningUserGroup { get; set; }
 
-    [ForeignKey("SignVideoAssetId")]
-    public virtual TblAsset? SignVideoAsset { get; set; }
-
     [InverseProperty("Message")]
     public virtual ICollection<TblMessageText> Texts { get; set; } = new List<TblMessageText>();
+
+    [InverseProperty("Message")]
+    public virtual ICollection<TblMessageAsset> Assets { get; set; } = new List<TblMessageAsset>();
+
+    /// <summary>The edit waiting for approval, if any (MSG-13).</summary>
+    [InverseProperty("Message")]
+    public virtual TblMessageRevision? PendingRevision { get; set; }
 
     [InverseProperty("Message")]
     public virtual ICollection<TblMessageActivation> Activations { get; set; } = new List<TblMessageActivation>();

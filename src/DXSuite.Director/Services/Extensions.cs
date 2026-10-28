@@ -11,8 +11,12 @@ using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
 using DXSuite.Director.Models;
 using DXSuite.Director.Services.Atrius;
+using DXSuite.Director.Services.CoreApi;
 using DXSuite.Director.Services.DistributedLock;
+using DXSuite.Director.Services.Messaging;
 using DXSuite.Director.Services.PtzCameras;
+using DXSuite.Connectors.Services.CoreApi;
+using DXSuite.Shared.CustomerDeviations;
 using DXSuite.Shared.Authorization;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Multitenancy;
@@ -64,7 +68,14 @@ public static class Extensions
                 : config.GetConnectionString("Director")
                   ?? throw new InvalidOperationException(
                       "No Director connection string in app config (background service path).");
-            options.UseSqlServer(connStr);
+            options.UseConfiguredProvider(config, "Director", connStr);
+
+            // Every registered IDirectorSaveChangesInterceptor (e.g. Messaging's DeliveryVersionInterceptor)
+            // runs on every save through every DirectorDbContext instance.
+            var interceptors = sp.GetServices<IDirectorSaveChangesInterceptor>()
+                .Cast<Microsoft.EntityFrameworkCore.Diagnostics.IInterceptor>()
+                .ToArray();
+            if (interceptors.Length > 0) options.AddInterceptors(interceptors);
         }, ServiceLifetime.Scoped);
         services.AddScoped<DirectorDbContext>(sp =>
             sp.GetRequiredService<IDbContextFactory<DirectorDbContext>>().CreateDbContext());
@@ -371,6 +382,27 @@ public static class Extensions
         else
         {
             services.AddSingleton<DistributedLock.IDistributedLockService, DistributedLock.NoOpDistributedLockService>();
+        }
+
+        // ──────────────────────────────────────────────────────────────────
+        // Messaging and CoreAPI (Flight Data Editor) — GTAA FSD 1.1
+        // ──────────────────────────────────────────────────────────────────
+        services.AddScoped<DXSuite.Shared.Audit.IUserEventLog, DXSuite.Shared.Audit.LoggingUserEventLog>();
+        services.AddSingleton<DXSuite.Shared.Networking.InternalNetworks>();
+        services.AddSingleton<ContentSource.PendingFileDeletes>();
+        services.AddScoped<ApprovalEmails>();
+        services.AddHostedService<ApprovalReminderService>();
+        services.AddMessaging(config);
+        services.AddCustomerDeviation<D02GtaaMessagingOptions>(config);
+        services.AddScoped<IDisplayZoneService, DisplayZoneService>();
+        services.AddCoreApiStores();
+        services.AddOutageSwitchOff();
+        services.AddCoreApiClient();
+        services.AddCoreApiLiveFeed();
+        if (runBackgroundServices)
+        {
+            // Exactly one Director instance watches each tenant's CoreAPI feed (CAPI-05, HOST-04).
+            services.AddHostedService<CoreApiWatcherService>();
         }
 
         return services;

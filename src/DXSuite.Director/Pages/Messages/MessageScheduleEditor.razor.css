@@ -1,0 +1,133 @@
+/* Send dialog (Diagram 36): the Message, where to show it, Send now, then Confirm screens and "Sent to N screens". */
+.mse-modal {
+    width: 720px;
+    max-width: 96vw;
+}
+
+.mse-problem {
+    margin-bottom: 12px;
+}
+
+.mse-card {
+    box-shadow: none;
+    overflow: visible;
+    margin-bottom: 14px;
+}
+
+.mse-card-h {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 10px;
+    font-weight: 600;
+}
+
+.mse-card-h small {
+    font-weight: 400;
+    color: var(--dx-text-muted);
+    font-size: 0.78rem;
+}
+
+.mse-text-label {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+}
+
+.mse-count {
+    font-size: 0.78rem;
+    color: var(--dx-text-muted);
+    font-variant-numeric: tabular-nums;
+}
+
+.mse-count.mse-over {
+    color: var(--dx-red);
+    font-weight: 600;
+}
+
+.mse-text {
+    width: 100%;
+    resize: vertical;
+}
+
+.mse-canned-text {
+    background-color: var(--dx-bg-alt);
+    border: 1px solid var(--dx-border-color);
+    border-radius: 6px;
+    padding: 8px 10px;
+    overflow-wrap: anywhere;
+}
+
+.mse-modes {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 10px;
+}
+
+.mse-search {
+    width: 100%;
+}
+
+.mse-picker {
+    max-height: 240px;
+    margin-top: 10px;
+}
+
+.mse-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 3px 0;
+    cursor: pointer;
+    font-weight: normal;
+}
+
+.mse-option-nested {
+    padding-left: 18px;
+}
+
+.mse-location {
+    font-weight: 600;
+    margin-top: 8px;
+}
+
+.mse-reach {
+    margin-top: 10px;
+    font-weight: 600;
+}
+
+.mse-number {
+    width: 90px;
+}
+
+.mse-seconds {
+    margin-top: 10px;
+}
+
+.mse-screen-cols {
+    grid-template-columns: 2fr 2fr 1.5fr;
+}
+
+.mse-screen-cols.mse-screen-cols-zoned {
+    grid-template-columns: 2fr 2fr 1.5fr 1.5fr;
+}
+
+.mse-schedule {
+    margin: 6px 0 0 24px;
+}
+
+.mse-days {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 14px;
+    margin: 6px 0;
+}
+
+.mse-screens {
+    max-height: 300px;
+    overflow-y: auto;
+}
+
+.mse-when {
+    margin-top: 10px;
+}

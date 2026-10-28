@@ -1069,7 +1069,7 @@
             // Approval chains + stages + stage groups
             var chains = await db.TblApprovalChains
                 .Include(c => c.Stages).ThenInclude(s => s.StageGroups)
-                .Where(c => allLocIds.Contains(c.LocationId)).ToListAsync();
+                .Where(c => c.LocationId != null && allLocIds.Contains(c.LocationId.Value)).ToListAsync();
             foreach (var c in chains)
                 foreach (var s in c.Stages)
                     db.TblApprovalStageGroups.RemoveRange(s.StageGroups);

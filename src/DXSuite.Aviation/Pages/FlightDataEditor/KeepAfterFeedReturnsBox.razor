@@ -1,0 +1,22 @@
+@* The "Keep after the feed returns" box on Add and Manage (FDE-04). It shows only during flight Outage mode;
+   while the feed is trusted every save is a Preserved Edit with no choice. *@
+@if (Box.Shown) {
+    <div class="dx-form-row" style="margin: 10px 10px 0px 10px">
+        <div class="item">
+            <label>
+                <input type="checkbox" class="dx-checkbox fde-keep-box" checked="@Box.Ticked" disabled="@Box.Locked"
+                       @onchange="@(e => BoxChanged.InvokeAsync(Box.Tick(e.Value is true)))" />
+                @KeepAfterFeedReturns.Label
+            </label>
+            @if (Box.Locked) {
+                <div><small class="text-secondary">@KeepAfterFeedReturns.LockedNote</small></div>
+            }
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter, EditorRequired] public KeepAfterFeedReturns Box { get; set; }
+
+    [Parameter] public EventCallback<KeepAfterFeedReturns> BoxChanged { get; set; }
+}

@@ -1,0 +1,1020 @@
+@page "/Flight-Data-Editor/Flight-Management"
+@using DXSuite.Shared.Multitenancy
+@attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
+@rendermode InteractiveServer
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Hub
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using DXSuite.Shared.Components
+@inject CoreApiClient coreApi
+@inject DXSuite.Aviation.Services.FlightDataEditor.FlightEditAudit audit
+@inject ICoreApiSettingsStore coreApiSettings
+@inject ICoreApiLiveFeed liveFeed
+@using TblLocation = DXSuite.Connectors.Services.CoreApi.Models.TblLocation
+@inject NavigationManager Navigation
+@inject Microsoft.Extensions.Options.IOptions<DXSuite.Aviation.Services.FlightDataEditor.FlightDataEditorOptions> editorOptions
+@inject ICoreApiFeedStateReader feedStateReader
+@inject DXSuite.Aviation.Services.FlightDataEditor.IFlightListClock flightListClock
+@using DXSuite.Aviation.Services.FlightDataEditor
+@implements IAsyncDisposable
+@implements ICoreApiHubObserver
+@inject ISessionState sessionState
+@using DXSuite.Shared.Authorization
+
+@if (!accessResolved) {
+    <div style="display:flex; justify-content:center; padding:48px 0;">
+        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+    </div>
+} else if (!hasAccess) {
+    <section>
+        <div class="dx-section">
+            <p style="padding: 24px;">You do not have permission to access this page.</p>
+        </div>
+    </section>
+} else {
+@if (notConfigured) {
+    <div id="fde-not-configured" class="dx-alert dx-alert-warning">
+        The CoreAPI connection is not set up. Ask an administrator to configure it in Settings &gt; CoreAPI Connection.
+    </div>
+} else if (firstLoad) {
+    <div>
+        Connecting to CoreAPI...
+    </div>
+    <div style="position:relative; min-height:120px;">
+        <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+    </div>
+} else {
+    @if (CoreAPIConfigured) {
+        <CoreApiUnreachableBanner Shown="CoreApiUnreachable" />
+        @foreach (var failure in coreApiLoadFailures.Values) {
+            <div class="dx-alert dx-alert-danger" style="margin-bottom:16px;">@failure</div>
+        }
+        @if (outageSwitchError is { } switchError) {
+            <div class="dx-alert dx-alert-danger" style="margin-bottom:16px;">@switchError</div>
+        }
+        @if (flightListClock.ConfigurationProblem is { } windowProblem) {
+            <div class="dx-alert dx-alert-warning" style="margin-bottom:16px;">@windowProblem</div>
+        }
+        <div class="dx-card dx-card-fill" style="box-shadow:none; border:none">
+            <div class="row-layout">
+                <div class="item">
+                    RMS Feed
+                    <RmsFeedIndicator Details="statusInfo" StateChanged="FeedStateReadAsync" />
+                </div>
+                @* Once the feed is trusted again, the Outage Edits wait for a user's review; nothing returns them by itself (FDE-08).
+                   Use Feed clears edits, so the review waits until the feed is known to be up, not merely not known down. *@
+                <div class="item">
+                    @if (FeedMode.Trusted && FeedMode.FeedUp == true && HoldsOutageEdit && !CoreApiUnreachable) {
+                        <button class="dx-btn dx-btn-blue dx-btn-sm fde-review" @onclick="QuickToggleOverrideFlightModal"> UPDATE MODIFIED FLIGHTS TO LIVE RMS FEED </button>
+                    }
+                </div>
+                @* The flight Outage mode switch is CoreAPI's own flag, apart from the detected feed status (FDE-03, C-03). *@
+                @if (FeedMode.SwitchAllowed) {
+                    <label class="dx-toggle">
+                        <input type="checkbox" class="fde-outage-switch" checked="@outageSwitchOn" disabled="@CoreApiUnreachable"
+                               @onchange="@(e => SetOutageSwitchAsync(e.Value is true))" />
+                        <span class="dx-toggle-slider"></span>
+                    </label>
+                    <div style="margin:5px">
+                        Flight Outage mode @(outageSwitchOn ? "on" : "off")
+                    </div>
+                }
+            </div>
+            <div class="dx-panel-header" style="padding:0px">
+                <div class="left-group">
+                    @*Display Departure or Arrival flights based on user selection*@
+                    <div class="item">
+                        @if (displayDeparture) {
+                            <button class="dx-btn dx-btn-blue fde-departures" @onclick="DisplayDepartures">Departures </button>
+                            <button class="dx-btn dx-btn-gray" @onclick="DisplayArrivals">Arrivals </button>
+                        } else {
+                            <button class="dx-btn dx-btn-gray fde-departures" @onclick="DisplayDepartures">Departures </button>
+                            <button class="dx-btn dx-btn-blue" @onclick="DisplayArrivals">Arrivals </button>
+                        }
+                    </div>
+                </div>
+                <div class="spacer" />
+                <div class="right-group">
+                    <div class="item">
+                        <input class="dx-search-input" type="text" @bind-value="@searchText" @bind-value:event="oninput" @onkeyup="() => InvokeAsync(StateHasChanged)" placeholder="Search by flight number..." />
+                        <button class="dx-btn dx-btn-blue" style="margin: 0px 15px 0px 0px;" @onclick="() => ClearSearch()"> Clear Search</button>
+                        <button class="dx-btn dx-btn-green fde-add" @onclick="() => QuickAddNewFlight()" disabled="@(feedWindow.WindowStart == null || feedWindow.WindowEnd == null || CoreApiUnreachable)"> Add Flight <i class="bi bi-plus-lg" /></button>
+                    </div>
+                </div>
+            </div>
+            <div class="dx-panel-content">
+                @*Sorted Departures and Arrivals *@
+                <div class="dx-table">
+                    <div class="dx-table-header" style="grid-template-columns: @FlightRowIcons.ListGrid;">
+                        @*Sorted headers controlled by clicking the desired category.  Both ascending and descending sorts present.*@
+                        @if (displayDeparture) {
+                            <div></div>
+                            <div @onclick="() => DepartureSortByDepartTime()" style="cursor: pointer; color: @(DepartureDepartTimeSort ? "var(--dx-blue);" : "");"> DEPARTING TIME <span style="display: @(DepartureDepartTimeSort ? "inline" : "none");">@(DepartureDepartTimeSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByATD()" style="cursor: pointer; color: @(DepartureATDSort ? "var(--dx-blue)" : "");)"> ATD <span style="display: @(DepartureATDSort ? "inline" : "none");">@(DepartureATDSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByStatus()" style="cursor: pointer; color: @(DepartureStatusSort ? "var(--dx-blue)" : "");)"> STATUS <span style="display: @(DepartureStatusSort ? "inline" : "none");">@(DepartureStatusSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByDest()" style="cursor: pointer; color: @(DepartureDestSort ? "var(--dx-blue)" : "");)"> DESTINATION <span style="display: @(DepartureDestSort ? "inline" : "none");">@(DepartureDestSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByCarrier()" style="cursor: pointer; color: @(DepartureCarrierSort ? "var(--dx-blue)" : "");)"> AIRLINE/CODE SHARE <span style="display: @(DepartureCarrierSort ? "inline" : "none");">@(DepartureCarrierSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByFlightNum()" style="cursor: pointer; color: @(DepartureFlightNumSort ? "var(--dx-blue)" : "");)"> FLIGHT # <span style="display: @(DepartureFlightNumSort ? "inline" : "none");">@(DepartureFlightNumSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => DepartureSortByGate()" style="cursor: pointer; color: @(DepartureGateSort ? "var(--dx-blue)" : "");)"> GATE <span style="display: @(DepartureGateSort ? "inline" : "none");">@(DepartureGateSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div> ACTIONS</div>
+                        } else {
+                            <div></div>
+                            <div @onclick="() => ArrivalSortByArriveTime()" style="cursor: pointer; color: @(ArrivalArriveTimeSort ? "var(--dx-blue)" : "");)"> ARRIVING TIME <span style="display: @(ArrivalArriveTimeSort ? "inline" : "none");">@(ArrivalArriveTimeSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByATA()" style="cursor: pointer; color: @(ArrivalATASort ? "var(--dx-blue)" : "");)"> ATA <span style="display: @(ArrivalATASort ? "inline" : "none");">@(ArrivalATASortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByStatus()" style="cursor: pointer; color: @(ArrivalStatusSort ? "var(--dx-blue)" : "");)"> STATUS <span style="display: @(ArrivalStatusSort ? "inline" : "none");">@(ArrivalStatusSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByOrigin()" style="cursor: pointer; color: @(ArrivalOriginSort ? "var(--dx-blue)" : "");)"> ORIGIN <span style="display: @(ArrivalOriginSort ? "inline" : "none");">@(ArrivalOriginSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByCarrier()" style="cursor: pointer; color: @(ArrivalCarrierSort ? "var(--dx-blue)" : "");)"> AIRLINE/CODE SHARE <span style="display: @(ArrivalCarrierSort ? "inline" : "none");">@(ArrivalCarrierSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByFlightNum()" style="cursor: pointer; color: @(ArrivalFlightNumSort ? "var(--dx-blue)" : "");)"> FLIGHT # <span style="display: @(ArrivalFlightNumSort ? "inline" : "none");">@(ArrivalFlightNumSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div @onclick="() => ArrivalSortByClaim()" style="cursor: pointer; color: @(ArrivalClaimSort ? "var(--dx-blue)" : "");)"> CLAIM <span style="display: @(ArrivalClaimSort ? "inline" : "none");">@(ArrivalClaimSortByDesc ? "\u25BC" : "\u25B2")</span></div>
+                            <div> ACTIONS</div>
+                        }
+                    </div>
+                    @*Flight data display. FlightRowIcons draws each row's edit kind and hidden cue; the legend below explains them.*@
+                    @if (displayDeparture) {
+                        @foreach (FEDepartureFlight? fEDepartureFlight in FlightListSearch.Page(FlightListSearch.Filter(fEDepartureFlights, searchText), departuresPaginator.CurrentPage, departuresPaginator.PageSize)) {
+                            @if (fEDepartureFlight != null) {
+                                <div class="dx-table-row" style="grid-template-columns: @FlightRowIcons.ListGrid;">
+                                    <div><FlightRowIcons Cue="FlightListCue.For(fEDepartureFlight)" Flight="@fEDepartureFlight.FLT" OnPadlockClick="() => QuickOverrideSingleFlightModal(fEDepartureFlight.RecordId)" /></div>
+                                    <div> @((fEDepartureFlight.overrideFlightData != null && fEDepartureFlight.overrideFlightData.ETD != null) ? ConvertTime(fEDepartureFlight.overrideFlightData.ETD) : ConvertTime(fEDepartureFlight.EstimatedTime)) </div>
+                                    <div> @((fEDepartureFlight.overrideFlightData != null && fEDepartureFlight.overrideFlightData.ATD != null) ? ConvertTime(fEDepartureFlight.overrideFlightData.ATD) : ConvertTime(fEDepartureFlight.ActualTime)) </div>
+                                    <div> @((fEDepartureFlight.overrideFlightData != null && fEDepartureFlight.overrideFlightData.RCP != null) ? fEDepartureFlight.overrideFlightData.RCP : fEDepartureFlight.RCP) </div>
+                                    <div> @fEDepartureFlight.CTY </div>
+                                    <div>
+                                        @fEDepartureFlight.Carrier
+                                        @foreach (FECodeShare codeShare in fEDepartureFlight.CodeShares) {
+                                            <div>
+                                                @UpdateAirline(codeShare.FLC!)
+                                            </div>
+                                        }
+                                    </div>
+                                    <div>
+                                        @fEDepartureFlight.FLT
+                                        @foreach (FECodeShare codeShare in fEDepartureFlight.CodeShares) {
+                                            <div>
+                                                @String.Format("{0}{1}", codeShare.FLC, codeShare.FLN)
+                                            </div>
+                                        }
+                                    </div>
+                                    <div> @((fEDepartureFlight.overrideFlightData != null && fEDepartureFlight.overrideFlightData.GAT != null) ? fEDepartureFlight.overrideFlightData.GAT : fEDepartureFlight.GAT) </div>
+                                    <div> <button class="dx-btn dx-btn-outline-blue dx-btn-sm fde-manage" @onclick="() => QuickManageFlight(fEDepartureFlight.RecordId)">  Manage </button></div>
+                                </div>
+                            }
+                        }
+                    } else {
+                        @foreach (FEArrivalFlight? fEArrivalFlight in FlightListSearch.Page(FlightListSearch.Filter(fEArrivalFlights, searchText), arrivalsPaginator.CurrentPage, arrivalsPaginator.PageSize)) {
+                            if (fEArrivalFlight != null) {
+                                <div class="dx-table-row" style="grid-template-columns: @FlightRowIcons.ListGrid;">
+                                    <div><FlightRowIcons Cue="FlightListCue.For(fEArrivalFlight)" Flight="@fEArrivalFlight.FLT" OnPadlockClick="() => QuickOverrideSingleFlightModal(fEArrivalFlight.RecordId)" /></div>
+                                    <div> @((fEArrivalFlight.overrideFlightData != null && fEArrivalFlight.overrideFlightData.ETA != null) ? ConvertTime(fEArrivalFlight.overrideFlightData.ETA) : ConvertTime(fEArrivalFlight.EstimatedTime)) </div>
+                                    <div> @((fEArrivalFlight.overrideFlightData != null && fEArrivalFlight.overrideFlightData.ATA != null) ? ConvertTime(fEArrivalFlight.overrideFlightData.ATA) : ConvertTime(fEArrivalFlight.ActualTime)) </div>
+                                    <div> @((fEArrivalFlight.overrideFlightData != null && fEArrivalFlight.overrideFlightData.RCP != null) ? fEArrivalFlight.overrideFlightData.RCP : fEArrivalFlight.RCP) </div>
+                                    <div> @fEArrivalFlight.CTY </div>
+                                    <div>
+                                        @fEArrivalFlight.Carrier
+                                        @foreach (FECodeShare codeShare in fEArrivalFlight.CodeShares) {
+                                            <div>
+                                                @UpdateAirline(codeShare.FLC!)
+                                            </div>
+                                        }
+                                    </div>
+                                    <div>
+                                        @fEArrivalFlight.FLT
+                                        @foreach (FECodeShare codeShare in fEArrivalFlight.CodeShares) {
+                                            <div>
+                                                @String.Format("{0}{1}", codeShare.FLC, codeShare.FLN)
+                                            </div>
+                                        }
+                                    </div>
+                                    <div> @((fEArrivalFlight.overrideFlightData != null && fEArrivalFlight.overrideFlightData.CAR != null) ? fEArrivalFlight.overrideFlightData.CAR : fEArrivalFlight.CAR) </div>
+                                    <div> <button class="dx-btn dx-btn-outline-blue dx-btn-sm fde-manage" @onclick="() => QuickManageFlight(fEArrivalFlight.RecordId)">  Manage </button></div>
+                                </div>
+                            }
+                        }
+                    }
+                </div>
+            </div>
+            <FlightListLegend />
+            <div class="dx-panel-footer" style="padding: 0px">
+                @if (displayDeparture) {
+                    <Paginator @ref="departuresPaginator" CurrentPage="1" PageSize="20" TotalItems="@FlightListSearch.Filter(fEDepartureFlights, searchText).Count" Scale="10" OnChanged="() => InvokeAsync(StateHasChanged)" />
+                } else {
+                    <Paginator @ref="arrivalsPaginator" CurrentPage="1" PageSize="20" TotalItems="@FlightListSearch.Filter(fEArrivalFlights, searchText).Count" Scale="10" OnChanged="() => InvokeAsync(StateHasChanged)" />
+                }
+            </div>
+        </div>
+    }
+}
+
+<CascadingValue Value="this" IsFixed="true">
+    @* ReadOnly is a parameter so an open form follows CoreAPI going and coming back (FDE-11). *@
+    @{ var formsReadOnly = CoreApiUnreachable || loadingFromCoreApi; }
+    <AddDepartureFlightModal @ref="AddDepartureFlight" ReadOnly="formsReadOnly"></AddDepartureFlightModal>
+    <AddArrivalFlightModal @ref="AddArrivalFlight" ReadOnly="formsReadOnly"></AddArrivalFlightModal>
+    <ModifyDepartureFlightModal @ref="ModifyDepartureFlight" ReadOnly="formsReadOnly"></ModifyDepartureFlightModal>
+    <ModifyArrivalFlightModal @ref="ModifyArrivalFlight" ReadOnly="formsReadOnly"></ModifyArrivalFlightModal>
+    <OverrideDepartureFlightModal @ref="overrideDepartureFlightModal" ReadOnly="formsReadOnly"></OverrideDepartureFlightModal>
+    <OverrideArrivalFlightModal @ref="overrideArrivalFlightModal" ReadOnly="formsReadOnly"></OverrideArrivalFlightModal>
+    <OverrideFlightsModal @ref="overrideFlightsModal" ReadOnly="formsReadOnly"></OverrideFlightsModal>
+</CascadingValue>
+}
+
+@code
+{
+    public string apiKeyID = "";
+
+    private string searchText = "";
+
+    //flags for managing the display of the page and the state of the feed
+    // The list opens on Arrivals (FSD 1.1 UC 5 step 5.2).
+    public bool displayDeparture = false;
+    // Whether the flight feed is up; null while no status is known, which is not flight Outage mode (FDE-02).
+    public bool? feedStatus = null;
+    public FeedStatus? statusInfo = null;
+    public bool firstLoad = true;
+    // CoreAPI's flight Outage mode switch as last reported or set here; Director keeps no copy of its own (FDE-03).
+    private bool outageSwitchOn;
+    private string? outageSwitchError;
+
+    //Modals for Adding and Modifying Flights, reference to other razor components
+    public AddDepartureFlightModal AddDepartureFlight { get; set; } = new();
+    public AddArrivalFlightModal AddArrivalFlight { get; set; } = new();
+    public ModifyDepartureFlightModal ModifyDepartureFlight { get; set; } = new();
+    public ModifyArrivalFlightModal ModifyArrivalFlight { get; set; } = new();
+    public OverrideDepartureFlightModal overrideDepartureFlightModal { get; set; } = new();
+    public OverrideArrivalFlightModal overrideArrivalFlightModal { get; set; } = new();
+    public OverrideFlightsModal overrideFlightsModal { get; set; } = new();
+
+    //Lists for storing flight data and other related information
+    public List<FEDepartureFlight?> fEDepartureFlights = new();
+    public List<FEArrivalFlight?> fEArrivalFlights = new();
+    public List<TblLocation> locations = new();
+    public List<TblAirline> airlines = new();
+    public List<TblGate> gates = new();
+    public List<TblCarousel> carousels = new();
+    public List<TblFlightStatus> statuses = new();
+
+
+    public UserSettings userSettings { get; set; } = new();
+    private IAsyncDisposable? liveUpdates;
+
+    public Paginator departuresPaginator { get; set; } = new();
+    public Paginator arrivalsPaginator { get; set; } = new();
+
+    // The page's own window (FDE-10), moved forward with the clock every WindowRefresh; feedWindow is the same
+    // window as airport wall-clock times for the edit forms.
+    public FlightListWindow? listWindow;
+    public FeedWindow feedWindow = new();
+
+    /// <summary>
+    /// How often the window moves with the clock and the lists are read again for it. The window is relative to
+    /// now, so an open page would otherwise miss new flights and send an old window with Use Feed or Preserve All.
+    /// </summary>
+    public static readonly TimeSpan WindowRefresh = TimeSpan.FromMinutes(1);
+    private readonly CancellationTokenSource stopping = new();
+
+    public bool CoreAPIConfigured = false;
+
+    /// <summary>Trusted or flight Outage mode, which decides edit kinds and the edit forms' field gates.</summary>
+    public FlightFeedMode FeedMode => new(feedStatus, editorOptions.Value.AllowOutageModeSwitch, outageSwitchOn);
+
+    // Apart from FeedMode: while CoreAPI is unreachable the editor is read-only whatever the feed's mode (FDE-11).
+    // The forms stay read-only until a load has finished too, so they reopen on the feed status and field settings
+    // read after CoreAPI returned.
+    private CoreApiReach reach;
+    private bool loadingFromCoreApi;
+
+    /// <summary>Every server failed the last call, so the editor is read-only until one answers.</summary>
+    public bool CoreApiUnreachable => reach.Unreachable;
+
+    #region Sort Bools
+    public bool DepartureDepartTimeSortByDesc = true;
+    public bool DepartureATDSortByDesc = true;
+    public bool DepartureStatusSortByDesc = true;
+    public bool DepartureDestSortByDesc = true;
+    public bool DepartureFlightNumSortByDesc = true;
+    public bool DepartureGateSortByDesc = true;
+    public bool DepartureCarrierSortByDesc = true;
+    public bool DepartureDepartTimeSort = false;
+    public bool DepartureATDSort = false;
+    public bool DepartureStatusSort = false;
+    public bool DepartureDestSort = false;
+    public bool DepartureFlightNumSort = false;
+    public bool DepartureGateSort = false;
+    public bool DepartureCarrierSort = false;
+    public bool ArrivalArriveTimeSortByDesc = true;
+    public bool ArrivalATASortByDesc = true;
+    public bool ArrivalStatusSortByDesc = true;
+    public bool ArrivalOriginSortByDesc = true;
+    public bool ArrivalFlightNumSortByDesc = true;
+    public bool ArrivalClaimSortByDesc = true;
+    public bool ArrivalCarrierSortByDesc = true;
+    public bool ArrivalArriveTimeSort = false;
+    public bool ArrivalATASort = false;
+    public bool ArrivalStatusSort = false;
+    public bool ArrivalOriginSort = false;
+    public bool ArrivalFlightNumSort = false;
+    public bool ArrivalClaimSort = false;
+    public bool ArrivalCarrierSort = false;
+    #endregion
+    private bool accessResolved;
+    private bool hasAccess;
+    private bool notConfigured;
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        base.OnInitialized();
+
+        if (await CheckConfig()) {
+            CoreAPIConfigured = true;
+            await GetOutageSwitch();
+            TakeWindow();
+            liveUpdates = await liveFeed.SubscribeAsync(this);
+            await LoadFromCoreApiAsync();
+            firstLoad = false;
+            _ = FollowTheClockAsync();
+            await InvokeAsync(StateHasChanged);
+        } else if (await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection)) {
+            // The CoreAPI connection is a Settings tab (CAPI-10); the link opens that tab rather than Settings' first.
+            Navigation.NavigateTo("/settings/" + PermissionKeys.CoreApiConnectionConfigTabKey);
+        } else {
+            // Settings would not offer this user the tab, so sending them there would only bounce them.
+            notConfigured = true;
+        }
+    }
+
+    private void TakeWindow() {
+        listWindow = flightListClock.CurrentWindow();
+        feedWindow.WindowStart = listWindow.LocalStart;
+        feedWindow.WindowEnd = listWindow.LocalEnd;
+    }
+
+    /// <summary>
+    /// Moves the window with the clock and reads both lists again for it. While CoreAPI is unreachable the
+    /// recovery load reads them instead, so a moved window costs no extra round of failover.
+    /// </summary>
+    private async Task FollowTheClockAsync() {
+        using var timer = new PeriodicTimer(WindowRefresh, flightListClock.Time);
+        try {
+            while (await timer.WaitForNextTickAsync(stopping.Token)) {
+                try {
+                    await InvokeAsync(async () => {
+                        TakeWindow();
+                        if (!CoreApiUnreachable && !loadingFromCoreApi) {
+                            await ReloadFlightListsAsync();
+                        }
+                        StateHasChanged();
+                    });
+                } catch (Exception ex) when (ex is not OperationCanceledException) {
+                    // A failed read keeps the lists shown; the next tick tries again.
+                }
+            }
+        } catch (OperationCanceledException) {
+        }
+    }
+
+    public async Task<bool> CheckConfig() {
+        return (await coreApiSettings.ReadAsync(default))?.IsConfigured == true;
+    }
+
+    /// <summary>
+    /// Loads what the editor shows from CoreAPI. It stops at the first call no server answers, so an unreachable
+    /// CoreAPI costs one round of failover rather than one per list; the next load picks up the rest (FDE-11).
+    /// </summary>
+    private async Task LoadFromCoreApiAsync() {
+        if (loadingFromCoreApi) return;
+        loadingFromCoreApi = true;
+        try {
+            Func<Task>[] loads = [
+                GetFeedStatus, GetAirlines, GetLocations, GetGates, GetStatuses, GetCarousel, GetApiKeyID,
+                () => GetUserSettings(apiKeyID), () => GetDepartureFlights(listWindow!), () => GetArrivalFlights(listWindow!),
+            ];
+            foreach (var load in loads) {
+                await load();
+                if (CoreApiUnreachable) return;
+            }
+            feedStatus = CoreApiFeedState.UpOrUnknown(statusInfo?.Status);
+            if (displayDeparture) {
+                await DisplayDepartures();
+            } else {
+                await DisplayArrivals();
+            }
+        } finally {
+            loadingFromCoreApi = false;
+        }
+    }
+
+    /// <summary>
+    /// Records whether a CoreAPI call reached a server. The forms report their saves here too, so a save that finds
+    /// no server turns the whole editor read-only.
+    /// </summary>
+    public void ObserveCoreApi<T>(CoreApiResult<T> result) {
+        reach = reach.After(result);
+        StateHasChanged();
+    }
+
+    public async Task GetApiKeyID() {
+        var result = await coreApi.GetApiKeyIdAsync();
+        ObserveCoreApi(result);
+        string? response = result.Value;
+        if (response != null) {
+            apiKeyID = response;
+        }
+    }
+
+    public async Task DisplayDepartures() {
+        displayDeparture = true;
+        ClearSort();
+        await DepartureSortByDepartTime();
+        StateHasChanged();
+    }
+    public async Task DisplayArrivals() {
+        displayDeparture = false;
+        ClearSort();
+        await ArrivalSortByArriveTime();
+        StateHasChanged();
+    }
+
+    // Live updates come from this instance's one read-only CoreAPI hub listener for the tenant, never a hub
+    // connection of the page's own (CAPI-05). The window is the page's own, so CoreAPI's window changes are not
+    // received (FDE-10).
+    #region Live updates
+    /// <summary>
+    /// Each read of the watcher's state by the RMS Feed indicator, every few seconds. The edit forms' feed rule follows
+    /// the state once the watcher has reported. While CoreAPI is unreachable each read also retries the load, so the
+    /// editor recovers on the first call a server answers, even before the watcher's next poll (FDE-11).
+    /// </summary>
+    public Task FeedStateReadAsync(CoreApiFeedState? state) => InvokeAsync(async () => {
+        if (state != null) {
+            feedStatus = CoreApiFeedState.UpOrUnknown(state.Status);
+        }
+        reach = reach.After(state);
+        if (CoreApiUnreachable) {
+            await LoadFromCoreApiAsync();
+        }
+        StateHasChanged();
+    });
+
+    public async Task OnFeedStatusAsync(FeedStatus status) {
+        statusInfo = status;
+        feedStatus = CoreApiFeedState.UpOrUnknown(status.Status);
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async Task OnFieldSettingsAsync(string userSettingsApiKeyID, UserSettings updatedUserSettings) {
+        if (apiKeyID == userSettingsApiKeyID) {
+            userSettings = updatedUserSettings;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public Task OnDeparturesAsync(IReadOnlyList<FEDepartureFlight> updatedFlights) => InvokeAsync(async () => {
+        foreach (FEDepartureFlight flightUpdate in updatedFlights) {
+            FEDepartureFlight? existing = fEDepartureFlights.FirstOrDefault(f => f!.RecordId == flightUpdate.RecordId);
+            if (listWindow != null && !listWindow.Contains(flightUpdate)) {
+                // The flight's best-known time has left the window.
+                if (existing != null) fEDepartureFlights.Remove(existing);
+            } else if (existing != null) {
+                MergeFlight(existing, flightUpdate);
+            } else {
+                fEDepartureFlights.Add(flightUpdate);
+            }
+            await ModifyDepartureFlight.FlightUpdatedAsync(flightUpdate);
+        }
+        ClearSort();
+        await DepartureSortByDepartTime();
+        StateHasChanged();
+    });
+
+    public Task OnArrivalsAsync(IReadOnlyList<FEArrivalFlight> updatedFlights) => InvokeAsync(async () => {
+        foreach (FEArrivalFlight flightUpdate in updatedFlights) {
+            FEArrivalFlight? existing = fEArrivalFlights.FirstOrDefault(f => f!.RecordId == flightUpdate.RecordId);
+            if (listWindow != null && !listWindow.Contains(flightUpdate)) {
+                // The flight's best-known time has left the window.
+                if (existing != null) fEArrivalFlights.Remove(existing);
+            } else if (existing != null) {
+                MergeFlight(existing, flightUpdate);
+            } else {
+                fEArrivalFlights.Add(flightUpdate);
+            }
+            await ModifyArrivalFlight.FlightUpdatedAsync(flightUpdate);
+        }
+        ClearSort();
+        await ArrivalSortByArriveTime();
+        StateHasChanged();
+    });
+
+    public async Task OnOutageSwitchAsync(bool state) {
+        outageSwitchOn = state;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    /// <summary>
+    /// Merges the properties of an existing flight with those of an updated flight.
+    /// </summary>
+    /// <param name="existing"></param>
+    /// <param name="flightUpdate"></param>
+    public void MergeFlight(FEDepartureFlight existing, FEDepartureFlight flightUpdate) {
+        fEDepartureFlights[fEDepartureFlights.IndexOf(existing)] = flightUpdate;
+    }
+    /// <summary>
+    /// Merges the properties of an existing flight with those of an updated flight.
+    /// </summary>
+    /// <param name="existing"></param>
+    /// <param name="flightUpdate"></param>
+    public void MergeFlight(FEArrivalFlight existing, FEArrivalFlight flightUpdate) {
+        fEArrivalFlights[fEArrivalFlights.IndexOf(existing)] = flightUpdate;
+    }
+    #endregion
+    //API Calls and Helpers for fetching flight data, feed status, airlines, locations, gates, carousels, statuses, and user settings
+    #region API Calls and Helpers
+    // A failed load keeps what the page already shows, so each failure is reported here rather than leaving
+    // a list silently empty or stale. Keyed by what was loaded, so a later successful load clears its entry.
+    // Concurrent because hub handlers reload off the render thread while rendering lists the failures.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> coreApiLoadFailures = new();
+
+    /// <summary>
+    /// The value of a successful CoreAPI call; null on failure, with the failure shown on the page until the same
+    /// load next succeeds.
+    /// </summary>
+    private T? Loaded<T>(CoreApiResult<T> result, string what) where T : class {
+        ObserveCoreApi(result);
+        if (result.Outcome == CoreApiOutcome.Unreachable) {
+            // The unreachable banner stands for every load that found no server.
+            return null;
+        }
+        if (result.Succeeded) {
+            coreApiLoadFailures.TryRemove(what, out _);
+            return result.Value;
+        }
+        coreApiLoadFailures[what] = FlightSaveError.Describe(result, $"Could not load {what}");
+        return null;
+    }
+    /// <summary>
+    /// Loads the departures in the window. CoreAPI chooses what it serves for the window, so each flight is kept
+    /// only if its best-known time is in it.
+    /// </summary>
+    private async Task GetDepartureFlights(FlightListWindow window) {
+        List<FEDepartureFlight?>? temp = Loaded(await coreApi.GetDeparturesAsync(window.Start, window.End), "departures");
+        if (temp != null) {
+            fEDepartureFlights = temp.Where(f => f != null && window.Contains(f!)).ToList();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Loads the arrivals in the window, keeping each flight only if its best-known time is in it.
+    /// </summary>
+    private async Task GetArrivalFlights(FlightListWindow window) {
+        List<FEArrivalFlight?>? temp = Loaded(await coreApi.GetArrivalsAsync(window.Start, window.End), "arrivals");
+        if (temp != null) {
+            fEArrivalFlights = temp.Where(f => f != null && window.Contains(f!)).ToList();
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// The switch as the CoreAPI watcher last recorded it from the hub; afterwards the hub and this page's own
+    /// switching keep it current. Unknown counts as off.
+    /// </summary>
+    private async Task GetOutageSwitch() {
+        outageSwitchOn = (await feedStateReader.ReadAsync(default))?.SwitchOn == true;
+    }
+    /// <summary>
+    /// Gets the feed status from CoreAPI and updates the local feed status information.
+    /// </summary>
+    /// <returns></returns>
+    private async Task GetFeedStatus() {
+        FeedStatus? response = Loaded(await coreApi.GetFeedStatusAsync(), "the feed status");
+        if (response != null) {
+            statusInfo = response!;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    ///  Gets Airlines from the CoreAPI and updates the local list of airlines.
+    /// </summary>
+    private async Task GetAirlines() {
+        List<TblAirline?>? response = Loaded(await coreApi.GetAirlinesAsync(), "airlines");
+        if (response != null) {
+            airlines = response!;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Gets Locations from the CoreAPI and updates the local list of locations.
+    /// </summary>
+    private async Task GetLocations() {
+        List<TblLocation?>? response = Loaded(await coreApi.GetLocationsAsync(), "locations");
+        await InvokeAsync(StateHasChanged);
+        if (response != null) {
+            locations = response!;
+
+        }
+    }
+    /// <summary>
+    /// Gets Gates from the CoreAPI and updates the local list of gates.
+    /// </summary>
+    private async Task GetGates() {
+        List<TblGate?>? response = Loaded(await coreApi.GetGatesAsync(), "gates");
+        await InvokeAsync(StateHasChanged);
+        if (response != null) {
+            AddDepartureFlight.gates = gates = response!;
+
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Gets Carousels from the CoreAPI and updates the local list of carousels.
+    /// </summary>
+    private async Task GetCarousel() {
+        List<TblCarousel?>? response = Loaded(await coreApi.GetCarouselsAsync(), "carousels");
+        await InvokeAsync(StateHasChanged);
+        if (response != null) {
+            AddArrivalFlight.carousels = carousels = response!;
+
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Gets Flight Statuses from the CoreAPI and updates the local list of flight statuses.
+    /// </summary>
+    private async Task GetStatuses() {
+        List<TblFlightStatus?>? response = Loaded(await coreApi.GetStatusesAsync(), "flight statuses");
+        await InvokeAsync(StateHasChanged);
+        if (response != null) {
+            statuses = response!;
+
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Updates Airline name based on the provided airline code (FLC) by searching the local list of airlines.
+    /// </summary>
+    /// <param name="FLC"> Airline Code E.G. YYZ</param>
+    /// <returns></returns>
+    private string UpdateAirline(string FLC) {
+        TblAirline? tblAirline = airlines.FirstOrDefault(x => x.AirlineCode == FLC);
+        if (tblAirline != null) {
+            string? airline = tblAirline.CarrierName;
+
+            if (airline != null) return airline;
+        }
+
+        return "No Airline Found";
+    }
+    /// <summary>
+    /// Sets CoreAPI's flight Outage mode switch, offered only where the instance allows it (FDE-03). A refused or
+    /// unanswered call leaves the mode as it was and says so.
+    /// </summary>
+    private async Task SetOutageSwitchAsync(bool on) {
+        if (!FeedMode.SwitchAllowed || CoreApiUnreachable) return;
+        var result = await coreApi.SetOverrideToggleAsync(on);
+        ObserveCoreApi(result);
+        await audit.OutageSwitchedAsync(on, result);
+        if (result.Succeeded) {
+            outageSwitchOn = on;
+            outageSwitchError = null;
+        } else {
+            outageSwitchError = FlightSaveError.Describe(result, $"Could not switch flight Outage mode {(on ? "on" : "off")}");
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    /// <summary>
+    /// Helper method to convert a DateTime object to a string in "HH:mm" format for display purposes.
+    /// </summary>
+    /// <param name="dateTime"></param>
+    /// <returns></returns>
+    private string ConvertTime(DateTime? dateTime) {
+        if (dateTime != null) {
+            return dateTime.GetValueOrDefault().ToString("HH:mm MMM dd");
+        }
+        return "";
+    }
+    /// <summary>
+    /// Gets the instance-wide field settings, which decide the Manage form's open fields while the feed is trusted
+    /// (FDE-05). Until they load every gated field stays closed, and the failure is shown.
+    /// </summary>
+    private async Task GetUserSettings(string apiKeyID) {
+        UserSettings? response = Loaded(await coreApi.GetFieldSettingsAsync(apiKeyID), "the field settings");
+        if (response != null) {
+            userSettings = response!;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+    #endregion
+    //Modal Methods to handle adding, modifying, and overriding flights based on the current display state (departure or arrival)
+    #region Modal Management
+    /// <summary>
+    /// Displays the modal for adding a new flight based on the current display state (departure or arrival).
+    /// </summary>
+    protected void QuickAddNewFlight() {
+        if (displayDeparture) {
+            AddDepartureFlight.ShowDialog();
+        } else {
+            AddArrivalFlight.ShowDialog();
+        }
+
+    }
+    /// <summary>
+    /// Displays the modal for managing an existing flight based on the current display state (departure or arrival).
+    /// </summary>
+    /// <param name="recordId"></param>
+    /// <returns></returns>
+    protected async Task QuickManageFlight(int recordId) {
+        if (displayDeparture) {
+            ModifyDepartureFlight.recordId = recordId;
+            await ModifyDepartureFlight.ShowDialog();
+        } else {
+            ModifyArrivalFlight.recordId = recordId;
+            await ModifyArrivalFlight.ShowDialog();
+        }
+    }
+    /// <summary>
+    /// Displays the modal for overriding a single flight based on the provided record ID.
+    /// </summary>
+    /// <param name="recordId"></param>
+    public void QuickOverrideSingleFlightModal(int recordId) {
+        if (displayDeparture) {
+            overrideDepartureFlightModal.recordId = recordId;
+            overrideDepartureFlightModal.ShowDialog();
+        } else {
+            overrideArrivalFlightModal.recordId = recordId;
+            overrideArrivalFlightModal.ShowDialog();
+        }
+    }
+    /// <summary>
+    /// Opens the Current vs Feed review on every Outage Edit in the window, the flights the list marks with the triangle.
+    /// </summary>
+    protected void QuickToggleOverrideFlightModal() {
+        overrideFlightsModal.overriddenDepartureFlightList = fEDepartureFlights.Where(FlightListCue.IsOutageEdit).ToList();
+        overrideFlightsModal.overriddenArrivalFlightList = fEArrivalFlights.Where(FlightListCue.IsOutageEdit).ToList();
+        if (overrideFlightsModal.overriddenDepartureFlightList.Count > 0 || overrideFlightsModal.overriddenArrivalFlightList.Count > 0) {
+            overrideFlightsModal.ShowDialog();
+        }
+    }
+    #endregion
+    //Sorting Methods for departure and arrival flights based on various attributes like departure time, ATD, status, destination, carrier, flight number, gate, arrival time, ATA, origin, claim, etc.
+    #region Sort Methods
+    /// <summary>
+    /// Clears the sorting flags for all flight columns.
+    /// </summary>
+    private void ClearSort() {
+        DepartureDepartTimeSortByDesc = true;
+        DepartureATDSortByDesc = true;
+        DepartureStatusSortByDesc = true;
+        DepartureDestSortByDesc = true;
+        DepartureFlightNumSortByDesc = true;
+        DepartureGateSortByDesc = true;
+        DepartureCarrierSortByDesc = true;
+        DepartureDepartTimeSort = false;
+        DepartureATDSort = false;
+        DepartureStatusSort = false;
+        DepartureDestSort = false;
+        DepartureFlightNumSort = false;
+        DepartureGateSort = false;
+        DepartureCarrierSort = false;
+        ArrivalArriveTimeSortByDesc = true;
+        ArrivalATASortByDesc = true;
+        ArrivalStatusSortByDesc = true;
+        ArrivalOriginSortByDesc = true;
+        ArrivalFlightNumSortByDesc = true;
+        ArrivalClaimSortByDesc = true;
+        ArrivalCarrierSortByDesc = true;
+        ArrivalArriveTimeSort = false;
+        ArrivalATASort = false;
+        ArrivalStatusSort = false;
+        ArrivalOriginSort = false;
+        ArrivalFlightNumSort = false;
+        ArrivalClaimSort = false;
+        ArrivalCarrierSort = false;
+    }
+    // The time columns order the list by best-known time, the same time the window keeps each flight by (FDE-10).
+    private async Task DepartureSortByDepartTime() {
+        if (DepartureDepartTimeSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => listWindow!.BestKnownTime(x!)).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => listWindow!.BestKnownTime(x!)).ToList();
+        }
+
+        DepartureDepartTimeSort = true;
+        DepartureDepartTimeSortByDesc = !DepartureDepartTimeSortByDesc;
+        await InvokeAsync(StateHasChanged);
+    }
+    private void DepartureSortByATD() {
+        if (DepartureATDSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.ATD != null ? x.overrideFlightData.ATD : x.ActualTime).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.ATD != null ? x.overrideFlightData.ATD : x.ActualTime).ToList();
+        }
+
+        DepartureATDSort = true;
+        DepartureATDSortByDesc = !DepartureATDSortByDesc;
+        StateHasChanged();
+    }
+
+    private void DepartureSortByStatus() {
+        if (DepartureStatusSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.RCP != null ? x.overrideFlightData.RCP : x.RCP).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.RCP != null ? x.overrideFlightData.RCP : x.RCP).ToList();
+        }
+
+        DepartureStatusSort = true;
+        DepartureStatusSortByDesc = !DepartureStatusSortByDesc;
+        StateHasChanged();
+    }
+
+    private void DepartureSortByDest() {
+        if (DepartureDestSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.CTY).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.CTY).ToList();
+        }
+
+        DepartureDestSort = true;
+        DepartureDestSortByDesc = !DepartureDestSortByDesc;
+        StateHasChanged();
+    }
+
+    private void DepartureSortByCarrier() {
+        if (DepartureCarrierSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.Carrier).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.Carrier).ToList();
+        }
+
+        DepartureCarrierSort = true;
+        DepartureCarrierSortByDesc = !DepartureCarrierSortByDesc;
+        StateHasChanged();
+    }
+
+    private void DepartureSortByFlightNum() {
+        if (DepartureFlightNumSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.FLT).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.FLT).ToList();
+        }
+
+        DepartureFlightNumSort = true;
+        DepartureFlightNumSortByDesc = !DepartureFlightNumSortByDesc;
+        StateHasChanged();
+    }
+
+    private void DepartureSortByGate() {
+        if (DepartureGateSortByDesc) {
+            fEDepartureFlights = fEDepartureFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.GAT != null ? x.overrideFlightData.GAT : x.GAT).ToList();
+            ClearSort();
+        } else {
+            fEDepartureFlights = fEDepartureFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.GAT != null ? x.overrideFlightData.GAT : x.GAT).ToList();
+        }
+
+        DepartureGateSort = true;
+        DepartureGateSortByDesc = !DepartureGateSortByDesc;
+        StateHasChanged();
+    }
+
+    private async Task ArrivalSortByArriveTime() {
+        if (ArrivalArriveTimeSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => listWindow!.BestKnownTime(x!)).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => listWindow!.BestKnownTime(x!)).ToList();
+        }
+
+        ArrivalArriveTimeSort = true;
+        ArrivalArriveTimeSortByDesc = !ArrivalArriveTimeSortByDesc;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private void ArrivalSortByATA() {
+        if (ArrivalATASortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.ATA != null ? x.overrideFlightData.ATA : x.ActualTime).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.ATA != null ? x.overrideFlightData.ATA : x.ActualTime).ToList();
+        }
+
+        ArrivalATASort = true;
+        ArrivalATASortByDesc = !ArrivalATASortByDesc;
+        StateHasChanged();
+    }
+
+    private void ArrivalSortByStatus() {
+        if (ArrivalStatusSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.RCP != null ? x.overrideFlightData.RCP : x.RCP).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.RCP != null ? x.overrideFlightData.RCP : x.RCP).ToList();
+        }
+
+        ArrivalStatusSort = true;
+        ArrivalStatusSortByDesc = !ArrivalStatusSortByDesc;
+        StateHasChanged();
+    }
+
+    private void ArrivalSortByOrigin() {
+        if (ArrivalOriginSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.CTY).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.CTY).ToList();
+        }
+
+        ArrivalOriginSort = true;
+        ArrivalOriginSortByDesc = !ArrivalOriginSortByDesc;
+        StateHasChanged();
+    }
+
+    private void ArrivalSortByCarrier() {
+        if (ArrivalCarrierSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.Carrier).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.Carrier).ToList();
+        }
+
+        ArrivalCarrierSort = true;
+        ArrivalCarrierSortByDesc = !ArrivalCarrierSortByDesc;
+        StateHasChanged();
+    }
+
+    private void ArrivalSortByFlightNum() {
+        if (ArrivalFlightNumSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.FLT).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.FLT).ToList();
+        }
+
+        ArrivalFlightNumSort = true;
+        ArrivalFlightNumSortByDesc = !ArrivalFlightNumSortByDesc;
+        StateHasChanged();
+    }
+
+    private void ArrivalSortByClaim() {
+        if (ArrivalClaimSortByDesc) {
+            fEArrivalFlights = fEArrivalFlights.OrderBy(x => x!.overrideFlightData != null && x.overrideFlightData.CAR != null ? x.overrideFlightData.CAR : x.CAR).ToList();
+            ClearSort();
+        } else {
+            fEArrivalFlights = fEArrivalFlights.OrderByDescending(x => x!.overrideFlightData != null && x.overrideFlightData.CAR != null ? x.overrideFlightData.CAR : x.CAR).ToList();
+        }
+
+        ArrivalClaimSort = true;
+        ArrivalClaimSortByDesc = !ArrivalClaimSortByDesc;
+        StateHasChanged();
+    }
+    #endregion
+    //Search Methods for filtering departure and arrival flights based on the search text input by the user
+    #region Search
+    // Search by flight number runs over the whole window before paging (FlightListSearch, FDE-10).
+    /// <summary>
+    /// Clears the search text and triggers a UI update.
+    /// </summary>
+    public async Task ClearSearch() {
+        searchText = "";
+        await InvokeAsync(StateHasChanged);
+    }
+
+    #endregion
+    #region Review
+    /// <summary>Whether either list holds an Outage Edit, which the review button offers to settle (FDE-08).</summary>
+    public bool HoldsOutageEdit =>
+        fEDepartureFlights.Any(FlightListCue.IsOutageEdit) || fEArrivalFlights.Any(FlightListCue.IsOutageEdit);
+
+    /// <summary>
+    /// Re-reads both lists in the page's window, for changes the hub never reports, such as the flights Use Feed
+    /// removes.
+    /// </summary>
+    public async Task ReloadFlightListsAsync() {
+        await GetDepartureFlights(listWindow!);
+        if (CoreApiUnreachable) return;
+        await GetArrivalFlights(listWindow!);
+        if (displayDeparture) {
+            await DisplayDepartures();
+        } else {
+            await DisplayArrivals();
+        }
+    }
+
+    public async Task Rerender() {
+        await InvokeAsync(StateHasChanged);
+    }
+    #endregion
+    #region Dispose
+    // The source is cancelled but not disposed: the clock loop may still be reading its token.
+    public async ValueTask DisposeAsync() {
+        stopping.Cancel();
+        if (liveUpdates is not null) {
+            await liveUpdates.DisposeAsync();
+        }
+    }
+    #endregion
+}
+

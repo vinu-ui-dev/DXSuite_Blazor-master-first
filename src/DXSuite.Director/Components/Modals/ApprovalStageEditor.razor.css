@@ -1,0 +1,108 @@
+.ase-options {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.ase-option {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 0.85rem;
+    cursor: pointer;
+    margin: 0;
+}
+
+.ase-option-note,
+.ase-option-indent {
+    margin-left: 24px;
+}
+
+.ase-number {
+    width: 70px;
+}
+
+.ase-stages {
+    margin-top: 8px;
+}
+
+.ase-stage-card {
+    background-color: var(--dx-bg-alt);
+    border: 1px solid var(--dx-border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.ase-stage-auto {
+    background-color: #d4edda;
+}
+
+.ase-stage-auto input[type="radio"] {
+    accent-color: var(--dx-blue);
+}
+
+.ase-stage-connector {
+    text-align: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: var(--dx-blue);
+    padding: 4px 0;
+}
+
+.ase-stage-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.ase-stage-title,
+.ase-stage-actions,
+.ase-group-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+.ase-operator {
+    width: auto;
+}
+
+.ase-group-row {
+    margin-bottom: 4px;
+}
+
+.ase-group {
+    flex: 1;
+}
+
+.ase-remove {
+    font-size: 1rem;
+    line-height: 1;
+    padding: 2px 8px;
+}
+
+.ase-auto-radio {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    color: var(--dx-blue);
+    margin: 0;
+}
+
+.ase-auto-radio-disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.ase-add-group {
+    margin-top: 4px;
+}
+
+.ase-add-stage,
+.ase-error {
+    margin-top: 8px;
+}

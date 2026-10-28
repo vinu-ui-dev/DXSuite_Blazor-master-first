@@ -1168,8 +1168,8 @@
                 dbContext.TblAssetApprovals.Add(approval);
                 await dbContext.SaveChangesAsync();
                 publicationInvalidator.AssetsChanged([LocationId]);
-                await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, LocationId, true,
-                    uploadingUserId: null, pickedRuleId: preparedUpload?.PickedRuleId);
+                await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, LocationId,
+                    sessionState.User.UserId, true, pickedRuleId: preparedUpload?.PickedRuleId);
             }
         }
         catch (Exception ex) { Logger.LogError(ex, "Error creating SQL asset entry"); }

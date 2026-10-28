@@ -48,7 +48,7 @@ public static class Extensions
                 : config.GetConnectionString("Sentinel")
                   ?? throw new InvalidOperationException(
                       "No Sentinel connection string in app config (background service path).");
-            options.UseSqlServer(connStr);
+            options.UseConfiguredProvider(config, "Sentinel", connStr);
         }, ServiceLifetime.Scoped);
         services.AddScoped<SentinelDBContext>(sp =>
             sp.GetRequiredService<IDbContextFactory<SentinelDBContext>>().CreateDbContext());

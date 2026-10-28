@@ -1,0 +1,75 @@
+@* Picks exactly one user or group as a Message access rule's grantee (MessageAccessRuleDraft). *@
+@namespace DXSuite.Director.Components
+@using DXSuite.Director.Services.Messaging
+
+<div class="dx-form-group mar-grantee">
+    <div class="dx-radio-group">
+        <label>
+            <input type="radio" name="@($"{IdPrefix}-kind")" checked="@(Kind == AccessGranteeKind.User)"
+                   @onchange="() => SetKind(AccessGranteeKind.User)" />
+            User
+        </label>
+        <label>
+            <input type="radio" name="@($"{IdPrefix}-kind")" checked="@(Kind == AccessGranteeKind.Group)"
+                   @onchange="() => SetKind(AccessGranteeKind.Group)" />
+            Group
+        </label>
+    </div>
+
+    @if (Kind == AccessGranteeKind.User)
+    {
+        <select id="@($"{IdPrefix}-user")" class="dx-form-select" value="@UserId" @onchange="OnUserChanged">
+            <option value="0">Choose a user…</option>
+            @foreach (var (id, name) in Users)
+            {
+                <option value="@id">@name</option>
+            }
+        </select>
+    }
+    else
+    {
+        <select id="@($"{IdPrefix}-group")" class="dx-form-select" value="@GroupId" @onchange="OnGroupChanged">
+            <option value="0">Choose a group…</option>
+            @foreach (var (id, name) in Groups)
+            {
+                <option value="@id">@name</option>
+            }
+        </select>
+    }
+</div>
+
+@code {
+    [Parameter] public string IdPrefix { get; set; } = "agp";
+    [Parameter] public IEnumerable<(int Id, string Name)> Users { get; set; } = [];
+    [Parameter] public IEnumerable<(int Id, string Name)> Groups { get; set; } = [];
+
+    [Parameter] public AccessGranteeKind Kind { get; set; }
+    [Parameter] public EventCallback<AccessGranteeKind> KindChanged { get; set; }
+
+    [Parameter] public int UserId { get; set; }
+    [Parameter] public EventCallback<int> UserIdChanged { get; set; }
+
+    [Parameter] public int GroupId { get; set; }
+    [Parameter] public EventCallback<int> GroupIdChanged { get; set; }
+
+    private async Task SetKind(AccessGranteeKind kind)
+    {
+        if (Kind == kind) return;
+        Kind = kind;
+        await KindChanged.InvokeAsync(kind);
+    }
+
+    private async Task OnUserChanged(ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        UserId = id;
+        await UserIdChanged.InvokeAsync(id);
+    }
+
+    private async Task OnGroupChanged(ChangeEventArgs e)
+    {
+        var id = int.TryParse(e.Value?.ToString(), out var v) ? v : 0;
+        GroupId = id;
+        await GroupIdChanged.InvokeAsync(id);
+    }
+}

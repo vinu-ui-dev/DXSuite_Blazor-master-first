@@ -1,0 +1,755 @@
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using System.Linq;
+@using System.Text.RegularExpressions
+@inject CoreApiClient coreApi
+@inject FlightEditAudit audit
+@inject IConfiguration config;
+@rendermode InteractiveServer
+
+@if (showDialog) {
+    <div class="dx-modal-overlay">
+        @*Pop up Div*@
+        <div class="dx-modal" style="width:40vw">
+            @* Row Layout Div *@
+            <div class="dx-modal-header">
+                @* row div Flight# and Close button *@
+                <span>Add Flight (Scheduling Window: @(((DateTime)homePage!.feedWindow.WindowStart!).ToString("HH:mm MMM dd")) to @(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("HH:mm MMM dd")))</span>
+                <button class="dx-modal-close" type="button" @onclick="() => showDialog = false">&times;</button>
+            </div>
+            <div class="dx-modal-body" style="padding-top:0; margin-top:20px">
+                <CoreApiUnreachableBanner Shown="ReadOnly" />
+                @if (saveError is { } error) {
+                    <div class="dx-alert dx-alert-danger fde-save-error">@error</div>
+                }
+                @* A disabled fieldset keeps what the user typed while CoreAPI is unreachable, ready for when it returns. *@
+                <fieldset class="fde-add-fields" disabled="@ReadOnly" style="border:0; padding:0; margin:0; min-width:0">
+                @* row div Text Input field for Flight Code, Number, and STD*@
+                <div class="dx-form-row">
+                    <div class="dx-form-group">
+                        <div class="dx-form-row" style="padding:10px">
+                            <div class="dx-form-group" style="gap:0px; margin-bottom:0px;">
+                                <div class="dx-form-label">Flight</div>
+                                <div style="position:relative;">
+                                    <input type="text" id="flightCodeInput" style="text-transform:uppercase; width:100%" class="dx-form-control @(flcErr ? "invalid" : "")" value="@(arrivalFlight.FLC)" placeholder="e.g. DL" onblur="@(() => { FilteredFlightAirlineSuggestions.Clear(); flcErr = false; flcErrMsg = ""; flnErr = false; flnErrMsg = ""; })" oninput="@((ChangeEventArgs e) => FilterFlightAirlineSuggestions(e))" />
+                                    @if (FilteredFlightAirlineSuggestions.Any()) {
+                                        <ul class="list-group" style="position:absolute; z-index: 1005; top:100%">
+                                            @foreach (var suggestion in FilteredFlightAirlineSuggestions) {
+                                                <li class="list-group-item list-group-item-action" style="cursor:pointer;" @onmousedown="@(() => SelectFlightAirlineSuggestion(suggestion))">
+                                                    @suggestion
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                </div>
+                                @if (!FilteredFlightAirlineSuggestions.Any() && flcErr) {
+                                    <span class="dx-form-validation">@flcErrMsg</span>
+                                }
+                            </div>
+                            <div class="dx-form-group" style="gap:0px; margin-bottom:0px">
+                                <div class="dx-form-label">Flight #</div>
+                                <input type="text" id="flightNumberInput" @bind="arrivalFlight.FLN" placeholder="e.g. 123" style="text-transform:uppercase; width:100%" class="dx-form-control @(flnErr ? "invalid" : "")" onblur="@(() => { flcErr = false; flcErrMsg = ""; flnErr = false; flnErrMsg = ""; })" />
+                                @if (flnErr) {
+                                    <span class="dx-form-validation">@flnErrMsg</span>
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Scheduled Time (STA)</div>
+                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="scheduledInput" class="dx-form-control @(staErr ? "invalid" : "")" style="width:100%" @bind="arrivalFlight.ScheduledTime" onblur="@(() => { staErr = false; staErrMsg = ""; })" />
+                            @if (staErr) {
+                                <span class="dx-form-validation">@staErrMsg</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+                @* row div Estimated Departing/ArrivalTime (ETD/A) and Status with text inputs below*@
+                <div class="dx-form-row">
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Arriving Time (ETA)</div>
+                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="estimatedInput" class="dx-form-control @(etaErr ? "invalid" : "")" style="width:100%" @bind="arrivalFlight.EstimatedTime" onblur="@(() => { etaErr = false; etaErrMsg = ""; })" />
+                            @if (etaErr) {
+                                <span class="dx-form-validation">@etaErrMsg</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Status</div>
+                            <select id="statusInput" class="dx-form-control @(statusErr ? "invalid" : "")" style="width:100%" @bind="arrivalFlight.RCP" onblur="@(() => { statusErr = false; statusErrMsg = ""; })">
+                                <option selected value="">Select Status </option>
+                                @foreach (TblFlightStatus status in statuses) {
+                                    <option value="@status.StatusId">@status.StatusName</option>
+                                }
+                            </select>
+                            @if (statusErr) {
+                                <span class="dx-form-validation">@statusErrMsg</span>
+                            }
+                        </div>
+                    </div>
+                </div>
+                @* row div Actual Time (ATD/ATA) and Origin with Text Inputs below*@
+                <div class="dx-form-row">
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Actual Time (ATA)</div>
+                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="actualInput" class="dx-form-control @(ataErr ? "invalid" : "")" style="width:100%" @bind="arrivalFlight.ActualTime" onblur="@(() => { ataErr = false; ataErrMsg = ""; })" />
+                            @if (ataErr) {
+                                <span class="dx-form-validation">@ataErrMsg</span>
+                            }
+                        </div>
+                    </div>
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Carousel</div>
+                            <input type="text" id="carInput" style="text-transform:uppercase; width:100%" class="dx-form-control @(carErr ? "invalid" : "")" value="@(arrivalFlight.CAR)" placeholder="e.g. 1" onblur="@(() => { FilteredCarSuggestions.Clear(); carErr = false; carErrMsg = ""; })" oninput="@((ChangeEventArgs e) => FilterCARSuggestions(e))" />
+                            @if (!FilteredCarSuggestions.Any() && carErr) {
+                                <span class="dx-form-validation">@carErrMsg</span>
+                            }
+                            @if (FilteredCarSuggestions.Any()) {
+                                <ul class="list-group" style="position:absolute; z-index: 1005;">
+                                    @foreach (var suggestion in FilteredCarSuggestions) {
+                                        <li class="list-group-item list-group-item-action" style="cursor:pointer;" @onmousedown="@(() => SelectCarSuggestion(suggestion))">
+                                            @suggestion
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </div>
+                </div>
+                @* row div Destination / Origin and Text Input below*@
+                <div class="dx-form-row">
+                    <div class="dx-form-group">
+                        <div class="item">
+                            <div class="dx-form-label">Origin</div>
+                            <input type="text" id="originInput" style="text-transform:uppercase" class="dx-form-control @(orgErr ? "invalid" : "")" value="@(arrivalFlight.ORG)" placeholder="e.g. YYZ" onblur="@(() => { FilteredOriginSuggestions.Clear(); orgErr = false; orgErrMsg = ""; })" oninput="@((ChangeEventArgs e) => FilterORGSuggestions(e))" />
+                            @if (!FilteredOriginSuggestions.Any() && orgErr) {
+                                <span class="dx-form-validation">@orgErrMsg</span>
+                            }
+                            @if (FilteredOriginSuggestions.Any()) {
+                                <ul class="list-group" style="position:absolute; z-index: 1005;">
+                                    @foreach (var suggestion in FilteredOriginSuggestions) {
+                                        <li class="list-group-item list-group-item-action" style="cursor:pointer;" @onmousedown="@(() => SelectOriginSuggestion(suggestion))">
+                                            @suggestion
+                                        </li>
+                                    }
+                                </ul>
+                            }
+                        </div>
+                    </div>
+                    <div class="dx-form-group" style="justify-content:center;">
+                        <div class="item">
+                            @if (arrivalFlight.ORG != null) {
+                                @UpdateLocation(arrivalFlight.ORG)
+                            }
+                        </div>
+                    </div>
+                </div>
+                @* row div Roll On / Off*@
+                <div style="margin: 10px 10px 0px 10px">
+                    Roll On / Off
+                </div>
+                @* row div Public checkbox, baggage checkbox, staff checkbox, throw checkbox*@
+                <div class="dx-form-row">
+                    <div class="item">
+                        Public
+                        <InputCheckbox class="dx-checkbox" @bind-Value="publicCheckbox" />
+                    </div>
+                    <div class="item">
+                        Baggage
+                        <InputCheckbox class="dx-checkbox" @bind-Value="baggageCheckbox" />
+                    </div>
+                    <div class="item">
+                        Staff
+                        <InputCheckbox class="dx-checkbox" @bind-Value="staffCheckbox" />
+                    </div>
+                    <div class="item">
+                        Throw
+                        <InputCheckbox class="dx-checkbox" @bind-Value="throwCheckbox" />
+                    </div>
+                </div>
+                @* row div Code Share and Flight # label*@
+                <div class="item">
+                    <div class="dx-table">
+                        <div class="dx-table-header" style="grid-template-columns: 1fr 1fr .2fr;">
+                            <div>Code Share</div>
+                            <div>Flight#</div>
+                            <div />
+                        </div>
+                        <div class="dx-scrollable" style="min-block-size:200px;overflow-y:auto;">
+                            <div class="dx-table-row" style="grid-template-columns: 1fr 1fr .2fr;">
+                                <div class="dx-form-group" style="position: relative; padding-bottom:0px">
+                                    <input type="text" id="codeShareCodeInput" style="text-transform:uppercase; position:relative" class="dx-form-control @(codeShareErr ? "invalid" : "")" @bind="codeShareSearch.FLC" placeholder="e.g. DL" onblur="@(() => ValidateCodeShareGroup())" oninput="@((ChangeEventArgs e) => FilterCodeShareFlightAirlineSuggestions(e))" />
+                                    @if (!FilteredCodeShareAirlineSuggestions.Any() && codeShareErr) {
+                                        @if (codeShareFlightErrMsg == "" || codeShareFlightErrMsg.IsWhiteSpace()) {
+                                            <span class="dx-form-validation" style="color:transparent">.</span>
+                                        } else {
+                                            <span class="dx-form-validation">@codeShareFlightErrMsg</span>
+                                        }
+                                    }
+                                    @if (FilteredCodeShareAirlineSuggestions.Any()) {
+                                        <ul class="list-group" style="position:absolute; z-index: 1005; top:100%">
+                                            @foreach (var suggestion in FilteredCodeShareAirlineSuggestions) {
+                                                <li class="list-group-item list-group-item-action" style="cursor:pointer;" @onmousedown="@(() => selectingCodeShareFlightSuggestion = true)" @onclick="@(() => SelectCodeShareAirlineSuggestion(suggestion))">
+                                                    @suggestion
+                                                </li>
+                                            }
+                                        </ul>
+                                    }
+                                </div>
+                                <div class="dx-form-group" style="padding-bottom:0px">
+                                    <input type="text" @bind="codeShareSearch.FLN" placeholder="e.g. 123" onblur="@(() => ValidateCodeShareGroup())" style="text-transform:uppercase" class="dx-form-control @(codeShareErr ? "invalid" : "")" />
+                                    @if (!FilteredCodeShareAirlineSuggestions.Any() && codeShareErr) {
+                                        @if (codeShareNumErrMsg == "" || codeShareNumErrMsg.IsWhiteSpace()) {
+                                            <span class="dx-form-validation" style="color:transparent">.</span>
+                                        } else {
+                                            <span class="dx-form-validation">@codeShareNumErrMsg</span>
+                                        }
+                                    }
+                                </div>
+                                <div class="dx-form-group" style="padding:0">
+                                    <button type="button" @onclick="() => SaveCodeShare()" disabled="@disableAddCodeShare" class="dx-btn dx-btn-blue dx-btn-sm" style="margin: 10px; width:25px; margin-bottom:0px"><i class="bi bi-plus-lg"></i></button>
+                                    @if (!FilteredCodeShareAirlineSuggestions.Any() && codeShareErr) {
+                                        <span class="dx-form-validation" style="color:transparent">.</span>
+                                    }
+                                </div>
+                            </div>
+                            @foreach (FECodeShare codeshare in CodeShares) {
+                                <div class="dx-table-row" style="grid-template-columns: 1fr 1fr .2fr;">
+                                    <div>@UpdateAirline(codeshare.FLC!)</div>
+                                    <div>@codeshare.FLN</div>
+                                    <button type="button" @onclick="() => RemoveCodeShare(codeshare)" class="dx-modal-close" style="color:var(--dx-red); width:25px">&times;</button>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                </div>
+                <KeepAfterFeedReturnsBox @bind-Box="keep" />
+                </fieldset>
+            </div>
+            <div class="dx-modal-footer">
+                @* Save & close button and cancel button*@
+                <button type="button" class="dx-btn dx-btn-gray" @onclick="() => Close()">Cancel</button>
+                <button class="dx-btn dx-btn-blue fde-save" disabled="@(saving || ReadOnly)" @onclick="() => SaveAndClose()">Save & Close</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter]
+    public FlightManagement? homePage { get; set; }
+
+    /// <summary>CoreAPI is unreachable: the form shows its values but takes no change (FDE-11).</summary>
+    [Parameter] public bool ReadOnly { get; set; }
+
+    public bool showDialog = false;
+
+    private bool selectingCodeShareFlightSuggestion;
+
+    public List<TblLocation> locations { get; set; } = new();
+    public List<TblAirline> airlines { get; set; } = new();
+    public List<TblCarousel> carousels { get; set; } = new();
+    public List<TblFlightStatus> statuses { get; set; } = new();
+    private bool publicCheckbox = true;
+    private bool baggageCheckbox = true;
+    private bool staffCheckbox = true;
+    private bool throwCheckbox = true;
+    // Taken as the form opens, so the kind follows the mode the user saw (FDE-04).
+    private KeepAfterFeedReturns keep;
+    private List<FECodeShare> CodeShares = new();
+    private FEArrivalFlight arrivalFlight = new();
+    private FECodeShare codeShareSearch = new();
+
+    private List<string> FilteredOriginSuggestions { get; set; } = new();
+    private List<string> FilteredCarSuggestions { get; set; } = new();
+    private List<string> FilteredCodeShareAirlineSuggestions { get; set; } = new();
+    private List<string> FilteredFlightAirlineSuggestions { get; set; } = new();
+
+    private bool disableAddCodeShare = true;
+
+    private string? saveError;
+    private bool saving;
+
+    #region Data Validation Vars
+    private bool flcErr = false;
+    private string flcErrMsg = "";
+    private bool flnErr = false;
+    private string flnErrMsg = "";
+    private bool staErr = false;
+    private string staErrMsg = "";
+    private bool etaErr = false;
+    private string etaErrMsg = "";
+    private bool statusErr = false;
+    private string statusErrMsg = "";
+    private bool ataErr = false;
+    private string ataErrMsg = "";
+    private bool carErr = false;
+    private string carErrMsg = "";
+    private bool orgErr = false;
+    private string orgErrMsg = "";
+    private bool codeShareErr = false;
+    private string codeShareFlightErrMsg = "";
+    private string codeShareNumErrMsg = "";
+    #endregion
+
+    #region API Calls and Helpers
+    /// <summary>
+    /// Adds a new arrival flight.
+    /// </summary>
+    /// <param name="newFlight"></param>
+    private Task<CoreApiResult<int>> AddArrivalFlight(FEArrivalFlight newFlight) => coreApi.AddArrivalAsync(newFlight);
+    /// <summary>
+    /// Updates the location information based on the IATA code.
+    /// </summary>
+    /// <param name="ORG"></param>
+    /// <returns></returns>
+    private string UpdateLocation(string ORG) {
+        TblLocation? tblLocation = locations.FirstOrDefault(x => x.IataCode == ORG);
+        if (tblLocation != null) {
+            string? location = String.Format("{0}, {1}", tblLocation.Name, tblLocation.Country);
+
+            if (location != null) return location;
+        }
+        return "";
+    }
+    /// <summary>
+    /// Updates the airline information based on the airline code.
+    /// </summary>
+    /// <param name="FLC"></param>
+    /// <returns></returns>
+    private string UpdateAirline(string FLC) {
+        TblAirline? tblAirline = airlines.FirstOrDefault(x => x.AirlineCode == FLC);
+        if (tblAirline != null) {
+            string? airline = tblAirline.CarrierName;
+
+            if (airline != null) return airline;
+        }
+
+        return "No Airline Found";
+    }
+    #endregion
+    #region Save, Reset, Initialize
+    public void ShowDialog() {
+        ResetDialog();
+        showDialog = true;
+        StateHasChanged();
+    }
+    public void Close() {
+        ResetDialog();
+        showDialog = false;
+
+        StateHasChanged();
+    }
+    /// <summary>
+    /// Re-Initializes the dialog state, clearing all input fields, resetting checkboxes, and preparing for a new flight entry.
+    /// </summary>
+    private void ResetDialog() {
+        locations = homePage!.locations;
+        airlines = homePage!.airlines;
+        carousels = homePage!.carousels;
+        statuses = homePage!.statuses;
+
+        arrivalFlight = new();
+        saveError = null;
+        codeShareSearch = new();
+        CodeShares.Clear();
+        FilteredOriginSuggestions.Clear();
+        FilteredCarSuggestions.Clear();
+        FilteredCodeShareAirlineSuggestions.Clear();
+        FilteredFlightAirlineSuggestions.Clear();
+        (publicCheckbox, baggageCheckbox, staffCheckbox, throwCheckbox) = RollCategories.AllShown;
+        keep = KeepAfterFeedReturns.ForAdd(homePage!.FeedMode);
+
+        flcErr = false;
+        flcErrMsg = "";
+        flnErr = false;
+        flnErrMsg = "";
+        staErr = false;
+        staErrMsg = "";
+        etaErr = false;
+        etaErrMsg = "";
+        statusErr = false;
+        statusErrMsg = "";
+        ataErr = false;
+        ataErrMsg = "";
+        carErr = false;
+        carErrMsg = "";
+        orgErr = false;
+        orgErrMsg = "";
+        codeShareErr = false;
+        codeShareFlightErrMsg = "";
+        codeShareNumErrMsg = "";
+
+        StateHasChanged();
+    }
+    /// <summary>
+    /// Adds the flight with every field the user set (FDE-05). When CoreAPI does not take it the form stays open
+    /// with the error (FDE-06).
+    /// </summary>
+    public async Task SaveAndClose() {
+        if (saving || !await ValidateData()) return;
+        saving = true;
+        try {
+            saveError = null;
+            RollChosen.WriteAll(arrivalFlight);
+            keep.WriteKind(arrivalFlight);
+            arrivalFlight.CodeShares = CodeShares;
+            arrivalFlight.CAR = arrivalFlight.CAR?.ToUpper();
+            arrivalFlight.FLC = arrivalFlight.FLC?.ToUpper();
+            arrivalFlight.ORG = arrivalFlight.ORG?.ToUpper();
+            var result = await AddArrivalFlight(arrivalFlight);
+            homePage!.ObserveCoreApi(result);
+            await audit.AddedAsync(arrivalFlight, RollChosen, keep.Kind, result);
+            if (!result.Succeeded) {
+                saveError = FlightSaveError.Describe(result);
+                return;
+            }
+            Close();
+        } finally {
+            saving = false;
+            StateHasChanged();
+        }
+    }
+    public async Task<bool> ValidateData() {
+        ValidateFlightGroup();
+        ValidateOrgGroup();
+        ValidateCarouselGroup();
+        ValidateTimeGroup();
+        ValidateStatusGroup();
+        ValidateCodeShareGroup();
+        ValidateCodeShareList();
+        await InvokeAsync(StateHasChanged);
+        return !flcErr && !flnErr && !staErr && !etaErr && !statusErr && !ataErr && !carErr && !orgErr && !codeShareErr;
+    }
+    private RollCategories RollChosen => new(publicCheckbox, baggageCheckbox, staffCheckbox, throwCheckbox);
+    #endregion
+    #region Autofill Sans CodeShare
+    /// <summary>
+    /// Filters the origin suggestions based on the user's input.
+    /// </summary>
+    /// <param name="e"></param>
+    private void FilterORGSuggestions(ChangeEventArgs e) {
+        var input = e.Value?.ToString() ?? string.Empty;
+        arrivalFlight.ORG = input;
+        arrivalFlight.ORG = arrivalFlight.ORG?.ToUpper();
+
+        FilteredOriginSuggestions.Clear();
+        if (!string.IsNullOrWhiteSpace(input)) {
+            List<TblLocation?> tempLocations = locations.Where(x => x.IataCode.StartsWith(input, StringComparison.OrdinalIgnoreCase)).Take(10).ToList()!;
+            foreach (TblLocation? tblLocation in tempLocations) {
+                if (tblLocation != null) {
+                    FilteredOriginSuggestions.Add(tblLocation.IataCode);
+                }
+            }
+        }
+    }
+    private void SelectOriginSuggestion(string suggestion) {
+        arrivalFlight.ORG = suggestion;
+        FilteredOriginSuggestions.Clear();
+        StateHasChanged();
+    }
+    private void SelectCarSuggestion(string suggestion) {
+        arrivalFlight.CAR = suggestion;
+        FilteredCarSuggestions.Clear();
+        StateHasChanged();
+    }
+
+    private void FilterCARSuggestions(ChangeEventArgs e) {
+        var input = e.Value?.ToString() ?? string.Empty;
+        arrivalFlight.CAR = input;
+        arrivalFlight.CAR = arrivalFlight.CAR?.ToUpper();
+
+        FilteredCarSuggestions.Clear();
+        if (!string.IsNullOrWhiteSpace(input)) {
+            List<TblCarousel?> tempCarousels = carousels.Where(x => x.CarouselId.StartsWith(input, StringComparison.OrdinalIgnoreCase)).Take(10).ToList()!;
+            foreach (TblCarousel? tblCarousel in tempCarousels) {
+                if (tblCarousel != null) {
+                    FilteredCarSuggestions.Add(tblCarousel.CarouselId);
+                }
+            }
+        }
+    }
+
+    private void FilterFlightAirlineSuggestions(ChangeEventArgs e) {
+        var input = e.Value?.ToString() ?? string.Empty;
+        arrivalFlight.FLC = input;
+        arrivalFlight.FLC = arrivalFlight.FLC?.ToUpper();
+
+        FilteredFlightAirlineSuggestions.Clear();
+        if (!string.IsNullOrWhiteSpace(input)) {
+            List<TblAirline?> tempAirlines = airlines.Where(x => x.AirlineCode.StartsWith(input, StringComparison.OrdinalIgnoreCase)).Take(10).ToList()!;
+            foreach (TblAirline? tblAirline in tempAirlines) {
+                if (tblAirline != null) {
+                    FilteredFlightAirlineSuggestions.Add(tblAirline.AirlineCode);
+                }
+            }
+        }
+    }
+    private void SelectFlightAirlineSuggestion(string suggestion) {
+        arrivalFlight.FLC = suggestion;
+        FilteredFlightAirlineSuggestions.Clear();
+        StateHasChanged();
+    }
+    private void ValidateFlightGroup() {
+        flcErr = false;
+        flcErrMsg = "";
+        flnErr = false;
+        flnErrMsg = "";
+
+        if (string.IsNullOrWhiteSpace(arrivalFlight.FLC)) {
+            flcErr = true;
+            flcErrMsg = "Required.";
+        }
+        if (string.IsNullOrWhiteSpace(arrivalFlight.FLN)) {
+            flnErr = true;
+            flnErrMsg = "Required.";
+        }
+
+        bool validGroup = airlines.Any(x =>
+            string.Equals(
+                x.AirlineCode,
+                arrivalFlight.FLC,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        if (homePage!.fEArrivalFlights.Exists(x => x!.ScheduledTime! == arrivalFlight.ScheduledTime! && ((x!.FLC == arrivalFlight.FLC && x.FLN == arrivalFlight.FLN) || x!.CodeShares.Exists(cs => arrivalFlight.FLC == cs.FLC && arrivalFlight.FLN == cs.FLN)))) {
+            flcErr = true;
+            flnErr = true;
+            flcErrMsg = "Existing Flight.";
+        }
+        if (!validGroup && !String.IsNullOrWhiteSpace(arrivalFlight.FLC)) {
+            flcErr = true;
+            flcErrMsg = "Invalid Airline Code.";
+        }
+        bool existingCodeShare = ((CodeShares.FirstOrDefault(x => x.FLN == arrivalFlight.FLN && x.FLC == arrivalFlight.FLC) != null) || (CodeShares.FirstOrDefault(cs => cs.FLN == arrivalFlight.FLN && cs.FLC == arrivalFlight.FLC) != null));
+        if (existingCodeShare) {
+            flcErr = true;
+            flnErr = true;
+            flcErrMsg = "Existing Flight.";
+        }
+        bool validNum = false;
+        if (arrivalFlight.FLN != null && arrivalFlight.FLN != "" && !arrivalFlight.FLN.IsWhiteSpace()) {
+            validNum = Regex.IsMatch(arrivalFlight.FLN, @"^\d+$");
+            if (!validNum) {
+                flnErr = true;
+                flnErrMsg = "Invalid #.";
+            }
+        }
+        FilteredFlightAirlineSuggestions.Clear();
+        StateHasChanged();
+    }
+    #endregion
+    #region Data Validation
+    private void ValidateStatusGroup() {
+        statusErr = false;
+        statusErrMsg = "";
+
+        bool validGroup = statuses.Any(x =>
+            string.Equals(
+                x.StatusId,
+                arrivalFlight.RCP
+            )
+        );
+        if (!validGroup) {
+            statusErr = true;
+            statusErrMsg = "Required.";
+        }
+
+        StateHasChanged();
+    }
+
+    private void ValidateOrgGroup() {
+        orgErr = false;
+        orgErrMsg = "";
+
+        if (string.IsNullOrWhiteSpace(arrivalFlight.ORG)) {
+            orgErr = true;
+            orgErrMsg = "Required.";
+        }
+
+        bool validGroup = locations.Any(x =>
+            string.Equals(
+                x.IataCode,
+                arrivalFlight.ORG,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+
+        if (!validGroup && !string.IsNullOrWhiteSpace(arrivalFlight.ORG)) {
+            orgErr = true;
+            orgErrMsg = "Invalid Value.";
+        }
+        FilteredOriginSuggestions.Clear();
+        StateHasChanged();
+    }
+    private void ValidateCarouselGroup() {
+        carErr = false;
+        carErrMsg = "";
+
+        if (string.IsNullOrWhiteSpace(arrivalFlight.CAR)) {
+            return;
+        }
+        bool validGroup = carousels.Any(x =>
+            string.Equals(
+                x.CarouselId,
+                arrivalFlight.CAR,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+
+        if (!validGroup) {
+            carErr = true;
+            carErrMsg = "Invalid Value.";
+        }
+        FilteredCarSuggestions.Clear();
+        StateHasChanged();
+    }
+
+    private void ValidateTimeGroup() {
+        staErr = false;
+        staErrMsg = "";
+        etaErr = false;
+        etaErrMsg = "";
+        ataErr = false;
+        ataErrMsg = "";
+
+        if (arrivalFlight.ScheduledTime == null) {
+            staErr = true;
+            staErrMsg = "Required.";
+        } else if (!InWindowRange(arrivalFlight.ScheduledTime)) {
+            staErr = true;
+            staErrMsg = "Outside of Scheduling Window.";
+        }
+        if (arrivalFlight.EstimatedTime == null) {
+            etaErr = true;
+            etaErrMsg = "Required.";
+        } else if (!InWindowRange(arrivalFlight.EstimatedTime)) {
+            etaErr = true;
+            etaErrMsg = "Outside of Scheduling Window.";
+        }
+        if (arrivalFlight.ActualTime == null) {
+            ataErr = true;
+            ataErrMsg = "Required.";
+        } else if (!InWindowRange(arrivalFlight.ActualTime)) {
+            ataErr = true;
+            ataErrMsg = "Outside of Scheduling Window.";
+        }
+        StateHasChanged();
+    }
+
+    private bool InWindowRange(DateTime? dateTime) {
+        return (dateTime != null && dateTime >= homePage!.feedWindow.WindowStart! && dateTime < homePage!.feedWindow.WindowEnd!);
+    }
+
+    #endregion
+    #region CodeShares
+    private void FilterCodeShareFlightAirlineSuggestions(ChangeEventArgs e) {
+        var input = e.Value?.ToString() ?? string.Empty;
+
+        FilteredCodeShareAirlineSuggestions.Clear();
+        if (!string.IsNullOrWhiteSpace(input)) {
+            List<TblAirline?> tempAirlines = airlines.Where(x => x.AirlineCode.StartsWith(input, StringComparison.OrdinalIgnoreCase)).Take(10).ToList()!;
+            foreach (TblAirline? tblAirline in tempAirlines) {
+                if (tblAirline != null) {
+                    FilteredCodeShareAirlineSuggestions.Add(tblAirline.AirlineCode);
+                }
+            }
+        }
+    }
+    private void SelectCodeShareAirlineSuggestion(string suggestion) {
+        codeShareSearch.FLC = suggestion;
+        FilteredCodeShareAirlineSuggestions.Clear();
+        selectingCodeShareFlightSuggestion = false;
+        ValidateCodeShareGroup();
+    }
+    private void ValidateCodeShareGroup() {
+        codeShareErr = false;
+        codeShareFlightErrMsg = "";
+        codeShareNumErrMsg = "";
+        codeShareSearch.FLC = codeShareSearch.FLC?.ToUpper();
+        arrivalFlight.FLC = arrivalFlight.FLC?.ToUpper();
+        disableAddCodeShare = true;
+        if (selectingCodeShareFlightSuggestion) {
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(codeShareSearch.FLC) && string.IsNullOrWhiteSpace(codeShareSearch.FLN)) {
+            return;
+        }
+        bool validGroup = airlines.Any(x =>
+            string.Equals(
+                x.AirlineCode,
+                codeShareSearch.FLC,
+                StringComparison.OrdinalIgnoreCase
+            )
+        );
+        bool existingFlight = homePage!.fEArrivalFlights.Exists(x => x!.ScheduledTime! == arrivalFlight.ScheduledTime! && ((x!.FLC == codeShareSearch.FLC && x.FLN == codeShareSearch.FLN) || x!.CodeShares.Exists(cs => codeShareSearch.FLC == cs.FLC && codeShareSearch.FLN == cs.FLN)));
+        if (existingFlight) {
+            codeShareErr = true;
+            codeShareFlightErrMsg = "Existing Flight.";
+        }
+        bool maxCodeSharesMet = CodeShares.Count >= config.GetValue<int>("CoreAPI:MaxCodeShares");
+        if (maxCodeSharesMet) {
+            codeShareErr = true;
+            codeShareFlightErrMsg = "Maximum Code Shares Reached.";
+        }
+        if (!validGroup && !String.IsNullOrWhiteSpace(codeShareSearch.FLC)) {
+            codeShareErr = true;
+            codeShareFlightErrMsg = "Invalid Airline Code.";
+        }
+        bool existingCodeShare = ((CodeShares.FirstOrDefault(x => x.FLN == codeShareSearch.FLN && x.FLC == codeShareSearch.FLC) != null) || (arrivalFlight.CodeShares.FirstOrDefault(cs => cs.FLN == codeShareSearch.FLN && cs.FLC == codeShareSearch.FLC) != null));
+        if (existingCodeShare) {
+            codeShareErr = true;
+            codeShareFlightErrMsg = "Existing Flight.";
+        }
+        bool masterFlight = ((arrivalFlight.FLC == codeShareSearch.FLC && arrivalFlight.FLN == codeShareSearch.FLN));
+        if (masterFlight) {
+            codeShareErr = true;
+            codeShareFlightErrMsg = "Existing Flight.";
+        }
+        bool validNum = false;
+        if (codeShareSearch.FLN != null && codeShareSearch.FLN != "" && !codeShareSearch.FLN.IsWhiteSpace()) {
+            validNum = Regex.IsMatch(codeShareSearch.FLN, @"^\d+$");
+            if (!validNum) {
+                codeShareErr = true;
+                codeShareNumErrMsg = "Invalid #.";
+            }
+        }
+        if (validGroup && int.TryParse(codeShareSearch.FLN, out _) && !masterFlight && !existingCodeShare && !existingFlight && !maxCodeSharesMet && validNum) {
+            disableAddCodeShare = false;
+        }
+        FilteredCodeShareAirlineSuggestions.Clear();
+        StateHasChanged();
+    }
+    private void ValidateCodeShareList() {
+        codeShareErr = false;
+        codeShareFlightErrMsg = "";
+        codeShareNumErrMsg = "";
+        @foreach (FECodeShare codeshare in CodeShares) {
+            if (homePage!.fEArrivalFlights.Exists(x => x!.ScheduledTime! == arrivalFlight.ScheduledTime! && ((x!.FLC == codeshare.FLC && x.FLN == codeshare.FLN) || x!.CodeShares.Exists(cs => codeshare.FLC == cs.FLC && codeshare.FLN == cs.FLN)))) {
+                codeShareErr = true;
+                codeShareFlightErrMsg = "Code share(s) match existing flights";
+            }
+        }
+    }
+    private void SaveCodeShare() {
+
+        FECodeShare? tempCodeShare = CodeShares.FirstOrDefault(x => x.FLN == codeShareSearch.FLN && x.FLC == codeShareSearch.FLC);
+        if (tempCodeShare == null) {
+            CodeShares.Add(new FECodeShare() { FLN = codeShareSearch.FLN, FLC = codeShareSearch.FLC });
+        }
+        codeShareSearch.FLC = string.Empty;
+        codeShareSearch.FLN = string.Empty;
+        disableAddCodeShare = true;
+        StateHasChanged();
+    }
+    private void RemoveCodeShare(FECodeShare fECodeShare) {
+        CodeShares.Remove(fECodeShare);
+        StateHasChanged();
+    }
+    #endregion
+}

@@ -1,0 +1,149 @@
+@using DXSuite.Director.Services.Messaging
+@inject IDisplayZoneService displayZones
+
+@* Adds or edits one Display Zone (FSD 1.1 ZONE-11). A Display Zone holds displays only, never locations
+   (ZONE-01): ticking a location ticks the displays it holds now, so a display added there later joins no
+   Display Zone until someone ticks it. *@
+
+<div class="dx-modal-overlay">
+    <div class="dx-modal dz-editor">
+        <div class="dx-modal-header">
+            <span>@(DisplayZone is null ? "Add Display Zone" : "Edit Display Zone")</span>
+            <button class="dx-modal-close" type="button" @onclick="() => OnClose.InvokeAsync(false)">&times;</button>
+        </div>
+        <div class="dx-modal-body">
+            @if (tree is null)
+            {
+                <div class="dz-loading"><div class="dx-spinner"></div></div>
+            }
+            else
+            {
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Name</label>
+                    <input type="text" class="dx-form-control dz-name @(error is null ? "" : "invalid")" placeholder="e.g. T1 Level 3 post-security" @bind="name" />
+                    @if (error is not null)
+                    {
+                        <span class="dx-form-validation">@error</span>
+                    }
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Description</label>
+                    <textarea class="dx-form-control dz-description" rows="2" @bind="description"></textarea>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Displays (@ticked.Count)</label>
+                    <div class="dx-form-hint">Ticking a location adds the displays in it now. A display added to that location later joins no Display Zone until it is ticked here.</div>
+                    <input class="dx-search-input dz-search" placeholder="Search locations and displays..." @bind="search" @bind:event="oninput" />
+                </div>
+
+                <div class="dz-tree">
+                    @foreach (var location in VisibleLocations)
+                    {
+                        var inDisplayZone = location.Displays.Count(d => ticked.Contains(d.DisplayId));
+                        var all = location.Displays.Count;
+                        var open = expanded.Contains(location.LocationId) || !string.IsNullOrWhiteSpace(search);
+                        <div class="dz-location">
+                            <button id="dz-expand-@location.LocationId" type="button" class="dx-expand-btn" @onclick="() => ToggleExpand(location.LocationId)">@(open ? "▼" : "▶")</button>
+                            <input id="dz-location-@location.LocationId" type="checkbox" class="dx-checkbox" checked="@(inDisplayZone == all)"
+                                   @onchange="e => TickLocation(location, IsTicked(e))" />
+                            <span class="dz-location-name">@location.Name</span>
+                            <span class="dx-text-muted">@inDisplayZone of @all in this Display Zone</span>
+                            @if (inDisplayZone > 0)
+                            {
+                                <button id="dz-remove-@location.LocationId" type="button" class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => TickLocation(location, false)">Remove @inDisplayZone</button>
+                            }
+                        </div>
+                        @if (open)
+                        {
+                            @foreach (var display in VisibleDisplays(location))
+                            {
+                                <label class="dz-display">
+                                    <input id="dz-display-@display.DisplayId" type="checkbox" class="dx-checkbox" checked="@ticked.Contains(display.DisplayId)"
+                                           @onchange="e => TickDisplay(display.DisplayId, IsTicked(e))" />
+                                    @display.Name
+                                </label>
+                            }
+                        }
+                    }
+                </div>
+            }
+        </div>
+        <div class="dx-modal-footer">
+            <button class="dx-btn dx-btn-gray" @onclick="() => OnClose.InvokeAsync(false)">Cancel</button>
+            <button class="dx-btn dx-btn-blue dz-save" disabled="@(tree is null || saving)" @onclick="SaveAsync">Save</button>
+        </div>
+    </div>
+</div>
+
+@code {
+    /// <summary>The Display Zone to edit; null adds one.</summary>
+    [Parameter] public DisplayZoneSummary? DisplayZone { get; set; }
+
+    /// <summary>Called with true when the Display Zone was saved.</summary>
+    [Parameter] public EventCallback<bool> OnClose { get; set; }
+
+    private IReadOnlyList<DisplayZoneLocation>? tree;
+    private HashSet<int> ticked = new();
+    private readonly HashSet<int> expanded = new();
+    private string name = "";
+    private string? description;
+    private string search = "";
+    private string? error;
+    private bool saving;
+
+    protected override async Task OnInitializedAsync()
+    {
+        name = DisplayZone?.Name ?? "";
+        description = DisplayZone?.Description;
+        if (DisplayZone is not null) ticked = (await displayZones.DisplayIdsAsync(DisplayZone.ZoneId)).ToHashSet();
+        tree = await displayZones.LocationTreeAsync();
+    }
+
+    private IEnumerable<DisplayZoneLocation> VisibleLocations =>
+        string.IsNullOrWhiteSpace(search) ? tree! : tree!.Where(l => Matches(l.Name) || l.Displays.Any(d => Matches(d.Name)));
+
+    private IEnumerable<DisplayZoneDisplay> VisibleDisplays(DisplayZoneLocation location) =>
+        string.IsNullOrWhiteSpace(search) || Matches(location.Name) ? location.Displays : location.Displays.Where(d => Matches(d.Name));
+
+    private bool Matches(string text) => text.Contains(search.Trim(), StringComparison.OrdinalIgnoreCase);
+
+    private static bool IsTicked(ChangeEventArgs e) => e.Value is true || (e.Value is string s && bool.TryParse(s, out var on) && on);
+
+    private void ToggleExpand(int locationId)
+    {
+        if (!expanded.Remove(locationId)) expanded.Add(locationId);
+    }
+
+    private void TickLocation(DisplayZoneLocation location, bool on)
+    {
+        foreach (var display in location.Displays) TickDisplay(display.DisplayId, on);
+    }
+
+    private void TickDisplay(int displayId, bool on)
+    {
+        if (on) ticked.Add(displayId);
+        else ticked.Remove(displayId);
+    }
+
+    private async Task SaveAsync()
+    {
+        saving = true;
+        try
+        {
+            var result = await displayZones.SaveAsync(new DisplayZoneEdit(DisplayZone?.ZoneId, name, description, ticked.ToHashSet()));
+            error = result.Outcome switch
+            {
+                DisplayZoneSaveOutcome.NameRequired => "A name is required.",
+                DisplayZoneSaveOutcome.NameTaken => "A Display Zone with this name already exists (retired ones included).",
+                DisplayZoneSaveOutcome.NotFound => "This Display Zone no longer exists.",
+                _ => null,
+            };
+            if (error is null) await OnClose.InvokeAsync(true);
+        }
+        finally
+        {
+            saving = false;
+        }
+    }
+}

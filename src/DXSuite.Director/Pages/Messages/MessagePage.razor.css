@@ -1,0 +1,49 @@
+.mp-cols {
+    grid-template-columns: 50px 4fr 1fr 1fr 1fr 360px;
+}
+
+/* The text columns share one grid cell, so any number of languages fits without a style per count. */
+.mp-texts {
+    display: flex;
+    gap: 12px;
+    min-width: 0;
+}
+
+.mp-text {
+    flex: 1 1 0;
+    min-width: 0;
+    overflow-wrap: anywhere;
+}
+
+.mp-loading {
+    position: relative;
+    min-height: 120px;
+}
+
+.mp-asl {
+    color: var(--dx-green);
+}
+
+.mp-status {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.mp-pill {
+    cursor: pointer;
+}
+
+.mp-ask {
+    font-weight: 600;
+}
+
+/* Target column: an Activation already showing, as against one still scheduled. */
+.mp-target-active {
+    color: var(--dx-blue);
+}
+
+.mp-note {
+    font-size: 0.75rem;
+}

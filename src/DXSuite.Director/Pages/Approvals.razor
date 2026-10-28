@@ -1,12 +1,14 @@
 @page "/Approvals"
 @using DXSuite.Shared.Authorization
 @using DXSuite.Director.Components
+@using DXSuite.Director.Components.Approvals
 @inject NavigationManager navMan
 @inject ISessionState sessionState
 @inject IApprovalChainService approvalChainService
 @inject IAssetApprovalService assetApprovalService
 @inject IUserGroupService userGroupService
 @inject IJSRuntime JSRuntime
+@inject ITenantContext tenantContext
 @rendermode InteractiveServer
 
 @if(isLoading)
@@ -38,7 +40,7 @@ else
             {
                 <div class="alert @(statusMessageClass) alert-dismissible fade show" role="alert">
                     @statusMessage
-                    <button type="button" class="btn-close" @onclick="() => statusMessage = null"></button>
+                    <button type="button" class="dx-modal-close" @onclick="() => statusMessage = null">&times;</button>
                 </div>
             }
 
@@ -48,7 +50,7 @@ else
                 {
                     <button class="appr-tab @(activeTab == "my-queue" ? "active" : "")"
                             @onclick="@(() => SwitchTab("my-queue"))">
-                        My Queue @if (myQueueItems.Count > 0) { <span class="appr-badge">@myQueueItems.Count</span> }
+                        My Queue @if (MyQueueCount > 0) { <span class="appr-badge">@MyQueueCount</span> }
                     </button>
                 }
                 @if (isGlobalAdmin)
@@ -66,7 +68,7 @@ else
             <select class="dx-form-control dx-tab-select" @bind="activeTab" @bind:after="OnTabChanged">
                 @if (isApprovalGroupMember || isGlobalAdmin)
                 {
-                    <option value="my-queue">My Queue@(myQueueItems.Count > 0 ? $" ({myQueueItems.Count})" : "")</option>
+                    <option value="my-queue">My Queue@(MyQueueCount > 0 ? $" ({MyQueueCount})" : "")</option>
                 }
                 @if (isGlobalAdmin)
                 {
@@ -78,14 +80,19 @@ else
             <!-- My Queue Tab -->
             @if (activeTab == "my-queue")
             {
-                @if (myQueueItems.Count == 0)
+                @* Message approvals are part of Messaging, which a tenant may not have (DEV-06). *@
+                @if (RequiresTenantFeatureAttribute.IsOpen(nameof(TenantFeatureFlags.Messaging), tenantContext))
+                {
+                    <MessageApprovalQueue OnCountChanged="SetMessageQueueCount" />
+                }
+                @if (MyQueueCount == 0)
                 {
                     <div class="dx-alert dx-alert-info" role="alert">
                         <h4 class="alert-heading">No Pending Items</h4>
                         <p>There are no items in your approval queue at this time.</p>
                     </div>
                 }
-                else
+                else if (myQueueItems.Count > 0)
                 {
                     <div class="table-responsive">
                         <table class="table table-hover appr-table">
@@ -132,10 +139,6 @@ else
                                         <td class="appr-col-optional">@item.SubmittedDate.ToString("MMM d, yyyy h:mm tt")</td>
                                         <td>
                                             <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-                                                <button class="dx-btn dx-btn-green appr-action-btn"
-                                                        @onclick="() => ApproveChainItem(item)">
-                                                    Approve
-                                                </button>
                                                 <button class="dx-btn dx-btn-red appr-action-btn"
                                                         @onclick="() => DeclineChainItem(item)">
                                                     Decline
@@ -143,6 +146,10 @@ else
                                                 <button class="dx-btn dx-btn-gray appr-action-btn"
                                                         @onclick="() => ViewRequestDetail(item.ApprovalRequestId)">
                                                     Detail
+                                                </button>
+                                                <button class="dx-btn dx-btn-green appr-action-btn"
+                                                        @onclick="() => ApproveChainItem(item)">
+                                                    Approve
                                                 </button>
                                             </div>
                                         </td>
@@ -316,11 +323,11 @@ else
             {
                 <div class="dx-modal-overlay">
                     <div class="dx-modal" style="max-width: 800px; width: 100%;">
-                        <div class="modal-header">
-                            <h5 class="modal-title" style="font-family: var(--dx-font-family);">Re-submit Content</h5>
-                            <button type="button" class="btn-close" @onclick="CloseResubmitModal"></button>
+                        <div class="dx-modal-header">
+                            <span>Re-submit Content</span>
+                            <button type="button" class="dx-modal-close" @onclick="CloseResubmitModal">&times;</button>
                         </div>
-                        <div class="modal-body">
+                        <div class="dx-modal-body">
                             <div style="font-weight: 600; margin-bottom: 12px;">@(resubmitTarget.AssetName ?? $"Asset #{resubmitTarget.AssetId}")</div>
 
                             @if (resubmitComments.Count > 0)
@@ -345,7 +352,7 @@ else
                                       @bind="resubmitComment"></textarea>
                             <small class="form-text text-muted">@(resubmitComment?.Length ?? 0) / 2000</small>
                         </div>
-                        <div class="modal-footer">
+                        <div class="dx-modal-footer">
                             <button class="dx-btn dx-btn-gray" @onclick="CloseResubmitModal">Cancel</button>
                             <button class="dx-btn dx-btn-blue" @onclick="ConfirmResubmit"
                                     disabled="@(string.IsNullOrWhiteSpace(resubmitComment))">Re-submit</button>
@@ -360,7 +367,7 @@ else
                 <div class="appr-detail-panel">
                     <div class="appr-detail-header">
                         <h5>Approval Detail — @(selectedDetail.AssetName ?? $"Asset #{selectedDetail.AssetApprovalId}")</h5>
-                        <button class="btn-close" @onclick="CloseDetail"></button>
+                        <button class="dx-modal-close" @onclick="CloseDetail">&times;</button>
                     </div>
                     <div class="appr-detail-meta">
                         <span><strong>Location:</strong> @(selectedDetail.LocationName ?? "--")</span>
@@ -438,6 +445,12 @@ else
     private string statusMessageClass = "alert-info";
 
     private List<ApprovalQueueItem> myQueueItems = new();
+    private int messageQueueCount;
+
+    // Messages wait in their own section of My Queue; the tab counts them with the uploads.
+    private int MyQueueCount => myQueueItems.Count + messageQueueCount;
+
+    private void SetMessageQueueCount(int count) => messageQueueCount = count;
     private List<ApprovalQueueItem> allPendingItems = new();
 
     private ApprovalRequestDetail? selectedDetail;
@@ -650,7 +663,8 @@ else
         var approval = await assetApprovalService.GetApprovalByIdAsync(resubmitTarget.AssetApprovalId);
         if (approval?.Asset != null)
         {
-            await approvalChainService.SubmitToChainAsync(resubmitTarget.AssetApprovalId, approval.Asset.LocationId);
+            await approvalChainService.SubmitToChainAsync(resubmitTarget.AssetApprovalId, approval.Asset.LocationId,
+                uploadingUserId: approval.UploadedByUserId);
         }
 
         showResubmitModal = false;

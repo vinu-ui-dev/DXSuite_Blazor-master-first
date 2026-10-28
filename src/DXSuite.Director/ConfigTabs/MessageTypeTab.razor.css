@@ -1,0 +1,67 @@
+.mt-tab {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+}
+
+.mt-cols {
+    grid-template-columns: 96px 150px minmax(160px, 1.3fr) 64px 110px 1fr 110px 1fr 90px 90px;
+}
+
+.mt-loading {
+    position: relative;
+    min-height: 120px;
+}
+
+.mt-empty {
+    padding: 16px 20px;
+}
+
+.mt-footer {
+    font-size: 0.8rem;
+    padding: 8px 20px;
+}
+
+.mt-order {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+}
+
+.mt-drag-handle {
+    cursor: grab;
+    color: var(--dx-text-muted);
+    user-select: none;
+    margin-right: 4px;
+}
+
+.mt-move {
+    border: 1px solid var(--dx-border-color);
+    background: #fff;
+    border-radius: 3px;
+    font-size: 0.6rem;
+    line-height: 1;
+    padding: 3px 4px;
+    cursor: pointer;
+    color: var(--dx-text-muted);
+}
+
+.mt-move:disabled {
+    opacity: 0.35;
+    cursor: default;
+}
+
+.mt-drag-over {
+    outline: 2px dashed var(--dx-blue);
+    outline-offset: -2px;
+}
+
+/* The type's own colours arrive as custom properties, since they are data rather than style. */
+.mt-swatch {
+    display: inline-block;
+    padding: 1px 8px;
+    border-radius: 3px;
+    font-weight: 600;
+    color: var(--mt-text);
+    background-color: var(--mt-back);
+}

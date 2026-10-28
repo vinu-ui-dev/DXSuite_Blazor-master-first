@@ -2,32 +2,55 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using DXSuite.Director.Entities;
 using DXSuite.Director.Services;
+using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Networking;
 
 namespace DXSuite.Director.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [RequiresTenantFeature(nameof(TenantFeatureFlags.Overrides))]
     public class OverrideController : ControllerBase
     {
         private readonly IOverrideService _overrideService;
         private readonly ILogger<OverrideController> _logger;
+        private readonly InternalNetworks _internalNetworks;
 
-        public OverrideController(IOverrideService overrideService, ILogger<OverrideController> logger)
+        public OverrideController(IOverrideService overrideService, ILogger<OverrideController> logger,
+            InternalNetworks internalNetworks)
         {
             _overrideService = overrideService;
             _logger = logger;
+            _internalNetworks = internalNetworks;
         }
 
-        private bool ValidateApiKey()
+        /// <summary>
+        /// The trigger and status routes are anonymous, so the AdminApiKey scheme never sees their key;
+        /// they apply HOST-03's internal-networks refusal here. Null means the call may go on.
+        /// </summary>
+        private ActionResult? RefuseApiKeyCall()
         {
             var apiKey = Request.Headers["X-API-KEY"].ToString();
-            return !string.IsNullOrEmpty(apiKey);
+            if (string.IsNullOrEmpty(apiKey))
+                return Unauthorized(new { message = "Invalid or missing API key" });
+
+            if (!_internalNetworks.Allows(HttpContext.Connection.RemoteIpAddress))
+            {
+                InternalNetworks.LogApiKeyCallRefused(_logger, GetClientIp() ?? "unknown", Request.Path);
+                return StatusCode(StatusCodes.Status403Forbidden, new { message = InternalNetworks.ApiKeyRefusedMessage });
+            }
+
+            return null;
         }
 
         private string? GetClientIp()
         {
             return HttpContext.Connection.RemoteIpAddress?.ToString();
         }
+
+        // The trigger routes take a key, not a signed-in account, so the switch is logged as the API's own.
+        private UserEventActor ApiActor() =>
+            UserEventActor.System("Override API", UserEventActor.FormatIp(HttpContext.Connection.RemoteIpAddress));
 
         #region CRUD Endpoints
 
@@ -204,10 +227,10 @@ namespace DXSuite.Director.Controllers
         [AllowAnonymous]
         public async Task<ActionResult> ActivateOverride(int id)
         {
-            if (!ValidateApiKey())
-                return Unauthorized(new { message = "Invalid or missing API key" });
+            if (RefuseApiKeyCall() is { } refused)
+                return refused;
 
-            var success = await _overrideService.ActivateOverrideAsync(id, "API", User.Identity?.Name, GetClientIp());
+            var success = await _overrideService.ActivateOverrideAsync(id, "API", ApiActor().DisplayName, GetClientIp());
 
             if (!success)
                 return NotFound(new { message = $"Override {id} not found" });
@@ -224,10 +247,10 @@ namespace DXSuite.Director.Controllers
         [AllowAnonymous]
         public async Task<ActionResult> DeactivateOverride(int id)
         {
-            if (!ValidateApiKey())
-                return Unauthorized(new { message = "Invalid or missing API key" });
+            if (RefuseApiKeyCall() is { } refused)
+                return refused;
 
-            var success = await _overrideService.DeactivateOverrideAsync(id, "API", User.Identity?.Name, GetClientIp());
+            var success = await _overrideService.DeactivateOverrideAsync(id, "API", ApiActor().DisplayName, GetClientIp());
 
             if (!success)
                 return NotFound(new { message = $"Override {id} not found" });
@@ -248,8 +271,8 @@ namespace DXSuite.Director.Controllers
         [AllowAnonymous]
         public async Task<ActionResult<OverrideStatusInfo>> GetOverrideStatus(int id)
         {
-            if (!ValidateApiKey())
-                return Unauthorized(new { message = "Invalid or missing API key" });
+            if (RefuseApiKeyCall() is { } refused)
+                return refused;
 
             try
             {
@@ -269,8 +292,8 @@ namespace DXSuite.Director.Controllers
         [AllowAnonymous]
         public async Task<ActionResult<List<OverrideStatusInfo>>> GetOverrideStatuses()
         {
-            if (!ValidateApiKey())
-                return Unauthorized(new { message = "Invalid or missing API key" });
+            if (RefuseApiKeyCall() is { } refused)
+                return refused;
 
             var statuses = await _overrideService.GetAllOverrideStatusesAsync();
             return Ok(statuses);

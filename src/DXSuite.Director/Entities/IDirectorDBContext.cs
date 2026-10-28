@@ -163,6 +163,33 @@ namespace DXSuite.Director.Entities
         // Panels
         DbSet<TblPanel> TblPanels { get; set; }
 
+        // Messaging (GTAA FSD 1.1)
+        DbSet<TblMessageType> TblMessageTypes { get; set; }
+        DbSet<TblMessage> TblMessages { get; set; }
+        DbSet<TblMessageText> TblMessageTexts { get; set; }
+        DbSet<TblMessageActivation> TblMessageActivations { get; set; }
+        DbSet<TblMessageActivationTarget> TblMessageActivationTargets { get; set; }
+        DbSet<TblMessageActivationVersion> TblMessageActivationVersions { get; set; }
+        DbSet<TblMessageActivationZone> TblMessageActivationZones { get; set; }
+        DbSet<TblMessageAsset> TblMessageAssets { get; set; }
+        DbSet<TblMessageRevision> TblMessageRevisions { get; set; }
+        DbSet<TblMessageRevisionAsset> TblMessageRevisionAssets { get; set; }
+        DbSet<TblMessageRevisionText> TblMessageRevisionTexts { get; set; }
+        DbSet<TblMessageTypeAssetLibrary> TblMessageTypeAssetLibraries { get; set; }
+        DbSet<TblMessageTypeLanguage> TblMessageTypeLanguages { get; set; }
+        DbSet<TblMessagePermission> TblMessagePermissions { get; set; }
+        DbSet<TblMessagingDeliveryState> TblMessagingDeliveryStates { get; set; }
+        DbSet<TblZone> TblZones { get; set; }
+        DbSet<TblZoneDisplay> TblZoneDisplays { get; set; }
+
+        // CoreAPI and the Flight Data Editor (GTAA FSD 1.1)
+        DbSet<TblCoreApiConnection> TblCoreApiConnections { get; set; }
+        DbSet<TblCoreApiServer> TblCoreApiServers { get; set; }
+        DbSet<TblCoreApiFeedState> TblCoreApiFeedStates { get; set; }
+
+        // Approvals
+        DbSet<TblApprovalReminder> TblApprovalReminders { get; set; }
+
         Task<int> SaveChangesAsync(CancellationToken cancellationToken = default);
         Task<int> ExecuteSqlRawAsync(string sqlCommand, SqlParameter sqlParameter);
     }

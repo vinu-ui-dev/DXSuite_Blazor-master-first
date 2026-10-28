@@ -154,7 +154,7 @@ public class DesignDbContext : DbContext
 
         modelBuilder.Entity<TblDesignCatalogItem>(e =>
         {
-            e.Property(i => i.SnapshotJson).HasColumnType("nvarchar(max)");
+            if (Database.IsSqlServer()) e.Property(i => i.SnapshotJson).HasColumnType("nvarchar(max)");
             e.HasIndex(i => new { i.CustomerId, i.NetsuiteItemId });
         });
 
@@ -308,7 +308,7 @@ public class DesignDbContext : DbContext
         // ── Phase E — Designs & Worksheets ───────────────────────────────────
         modelBuilder.Entity<TblDesign>(e =>
         {
-            e.Property(d => d.NetsuiteOpportunityData).HasColumnType("nvarchar(max)");
+            if (Database.IsSqlServer()) e.Property(d => d.NetsuiteOpportunityData).HasColumnType("nvarchar(max)");
             e.HasIndex(d => new { d.CustomerId, d.NetsuiteOpportunityId });
         });
 

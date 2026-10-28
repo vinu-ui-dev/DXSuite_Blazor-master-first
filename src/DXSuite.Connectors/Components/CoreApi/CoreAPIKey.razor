@@ -1,0 +1,229 @@
+@rendermode InteractiveServer
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using DXSuite.Shared.Components
+@inject CoreApiClient coreApi
+@inject ICoreApiSettingsStore coreApiSettings
+@inject ISessionState sessionState
+@using DXSuite.Shared.Authorization
+
+@if (!accessResolved) {
+    <div style="display:flex; justify-content:center; padding:48px 0;">
+        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+    </div>
+} else if (!hasAccess) {
+    <section>
+        <div class="dx-section">
+            <p style="padding: 24px;">You do not have permission to access this page.</p>
+        </div>
+    </section>
+} else {
+@if (!directorKey && !loading) {
+    <section class="dx-page-header" style="position:sticky; top: 0; background-color:white; padding:15px 0px">
+        <div class="dx-page-header-flex">
+            <h2>
+                Director API Key Configuration
+            </h2>
+        </div>
+    </section>
+    <section class="dx-page-body" style="padding-top: 0">
+        <div class="dx-form-row">
+            <div class="dx-form-group">
+                <InputText class="dx-form-control" placeholder="Enter Director API Key..." @bind-Value="apiKey" />
+                <InputText class="dx-form-control" placeholder="Enter CoreAPI server URLs, in failover order, separated by commas..." @bind-Value="serverUrl" />
+                <InputText class="dx-form-control" placeholder="Enter the CoreAPI hub URL for live updates (optional)..." @bind-Value="hubUrl" />
+                <button class="dx-btn dx-btn-blue" @onclick="SubmitDirectorKey">SAVE</button>
+            </div>
+        </div>
+    </section>
+} else if (!loading) {
+    @* The hub address changes on its own, so a configured tenant never re-enters its key for it (C-08). *@
+    <section class="dx-page-body" style="padding: 15px 0px 0px 0px">
+        <div class="dx-form-row">
+            <div class="dx-form-group">
+                <label>CoreAPI hub URL for live updates (blank for none)</label>
+                <input class="dx-form-control coreapi-hub-url" placeholder="Enter the CoreAPI hub URL..." @bind="hubUrl" />
+                <button class="dx-btn dx-btn-blue coreapi-hub-save" @onclick="SaveHubUrl">SAVE HUB URL</button>
+            </div>
+        </div>
+    </section>
+    @if (apiKeyData != null) {
+        <div class="dx-card dx-card-fill" style="box-shadow: none; border: 0px">
+            <div class="dx-panel-header" style="background-color:white; padding:15px 0px;"> <div class="dx-page-header-flex"> <h2 style="margin-bottom: 0px">DIRECTOR API KEY NAME: @apiKeyData.Name</h2> </div> </div>
+            <div class="dx-panel-content">
+                <div class="dx-table">
+                    <div class="dx-table-header" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+                        <div>API Key Name</div>
+                        <div>Key Expiration Date</div>
+                        <div>Key Status</div>
+                        <div>Actions</div>
+                    </div>
+                    @foreach (ApiKeyData? apiKeyData in apiKeyDataList.Where(x => x!.ApiKeyID != apiKeyID).Skip(paginator.PageSize * (paginator.CurrentPage - 1)).Take(paginator.PageSize)) {
+                        @if (apiKeyData != null) {
+                            <div class="dx-table-row" style="grid-template-columns: 2fr 2fr 1fr 1fr;">
+                                <div>@apiKeyData.Name</div>
+                                <div>
+                                    @if (apiKeyData.ExpirationDate != null) {
+                                        @apiKeyData.ExpirationDate!.Value.ToString("h:mm tt M/d/yyyy")
+                                    } else {
+                                        <span>None</span>
+                                    }
+                                </div>
+                                <div>
+                                    @if (apiKeyData.ExpirationDate == null || DateTime.Now < apiKeyData.ExpirationDate) {
+                                        <span class="dx-badge dx-badge-green">Active</span>
+                                    } else {
+                                        <span class="dx-badge dx-badge-red">Expired</span>
+                                    }
+                                </div>
+                                <div>
+                                    <button class="dx-btn dx-btn-blue" @onclick='() => OpenLogModal(apiKeyData)'>VIEW LOG</button>
+                                </div>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+            <div class="dx-panel-footer" style="padding: 0px">
+                <Paginator @ref="paginator" CurrentPage="1" PageSize="20" TotalItems="@(apiKeyDataList.Count - 1)" Scale="10" OnChanged="() => InvokeAsync(StateHasChanged)" />
+            </div>
+        </div>
+    } else {
+        <section class="dx-page-header" style="position:sticky; top: 0; background-color:white; padding:15px 0px"> <div class="dx-page-header-flex"> <h2>CoreAPI Unreachable</h2> </div> </section>
+    }
+}
+<CascadingValue Value="this" IsFixed="true">
+    <HttpLogModal @ref="httpLogModal"></HttpLogModal>
+</CascadingValue>
+@if (toastVisible) {
+    <div class="dx-toast">@toastText</div>
+}
+}
+
+@code {
+    [Parameter]
+    public string apiKeyID { get; set; } = "";
+    public string apiKey { get; set; } = "";
+    // CoreAPI server addresses in the order they are tried, separated by commas or spaces.
+    public string serverUrl { get; set; } = "";
+    // CoreAPI's SignalR hub (C-08); without it pages are not updated live.
+    public string hubUrl { get; set; } = "";
+    public ApiKeyData? apiKeyData { get; set; }
+    public List<ApiKeyData?> apiKeyDataList { get; set; } = new();
+    bool directorKey = false;
+    bool loading = true;
+
+    private bool toastVisible = false;
+    private System.Threading.Timer? toastTimer;
+    public string toastText { get; set; } = "";
+
+    public HttpLogModal httpLogModal { get; set; } = new();
+
+    public Paginator paginator { get; set; } = new();
+
+    private bool accessResolved;
+    private bool hasAccess;
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        await GetDirectorKey();
+        loading = false;
+        await InvokeAsync(StateHasChanged);
+    }
+
+    public async Task GetDirectorKey() {
+        CoreApiSettings? settings = await coreApiSettings.ReadAsync(default);
+        if (settings?.IsConfigured == true) {
+            this.directorKey = true;
+            hubUrl = settings.HubUrl ?? "";
+            await GetApiKeyID();
+            await GetApiKeyData(apiKeyID);
+            await GetAllApiKeyData();
+            await InvokeAsync(StateHasChanged);
+        } else if (settings is { IsKeyReadable: false }) {
+            ShowToast(CoreApiKeyProtector.UnreadableMessage);
+        }
+    }
+
+    public async Task GetApiKeyID() {
+        string? response = (await coreApi.GetApiKeyIdAsync()).Value;
+        if (response != null) {
+            apiKeyID = response;
+        }
+    }
+
+    public async Task GetApiKeyData(string apiKeyRequest) {
+        ApiKeyData? response = (await coreApi.GetApiKeyDataAsync(apiKeyRequest)).Value;
+        if (response != null) {
+            apiKeyData = response;
+        }
+    }
+
+    public async Task GetAllApiKeyData() {
+        List<ApiKeyData?>? response = (await coreApi.GetAllApiKeyDataAsync()).Value;
+        if (response != null) {
+            apiKeyDataList = response;
+        }
+        await InvokeAsync(StateHasChanged);
+    }
+
+    // The key and servers are checked against CoreAPI before they are saved, so a mistyped key never replaces a working one.
+    public async Task SubmitDirectorKey() {
+        IReadOnlyList<string> servers;
+        string? hub;
+        try {
+            servers = CoreApiSettings.ParseServers(serverUrl);
+            hub = CoreApiSettings.NormaliseHubUrl(hubUrl);
+        } catch (ArgumentException) {
+            ShowToast("Invalid API Key, Server URL or Hub URL");
+            return;
+        }
+        if (string.IsNullOrWhiteSpace(apiKey) || servers.Count == 0) {
+            ShowToast("Invalid API Key or Server URL");
+            return;
+        }
+
+        CoreApiResult<string> check = await coreApi.CheckConnectionAsync(apiKey.Trim(), servers);
+        if (!check.Succeeded) {
+            ShowToast("Invalid API Key or Server URL");
+            return;
+        }
+
+        await coreApiSettings.SaveAsync(apiKey.Trim(), servers, hub, default);
+        apiKey = "";
+        apiKeyID = check.Value!;
+        await GetApiKeyData(apiKeyID);
+        directorKey = true;
+        await GetAllApiKeyData();
+        ShowToast("Director Key Successfully Configured");
+    }
+
+    public async Task SaveHubUrl() {
+        try {
+            await coreApiSettings.SaveHubUrlAsync(hubUrl, default);
+        } catch (ArgumentException) {
+            ShowToast("Invalid Hub URL");
+            return;
+        }
+        hubUrl = CoreApiSettings.NormaliseHubUrl(hubUrl) ?? "";
+        ShowToast("Hub URL Saved");
+    }
+
+    private void ShowToast(string msg) {
+        toastVisible = true;
+        toastText = msg;
+        toastTimer?.Dispose();
+        toastTimer = new System.Threading.Timer(_ => {
+            toastVisible = false;
+            _ = InvokeAsync(StateHasChanged);
+        }, null, 3000, System.Threading.Timeout.Infinite);
+    }
+
+    public async Task OpenLogModal(ApiKeyData apiKeyData) {
+        httpLogModal.apiKeyID = apiKeyData.ApiKeyID;
+        await httpLogModal.ShowDialog(apiKeyData.Name!);
+    }
+}

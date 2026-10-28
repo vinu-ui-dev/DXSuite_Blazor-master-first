@@ -1,0 +1,150 @@
+
+@using DXSuite.Connectors.Services.CoreApi
+@using DXSuite.Connectors.Services.CoreApi.Models
+@using System.Linq;
+@inject CoreApiClient coreApi
+@inject FlightEditAudit audit
+@rendermode InteractiveServer
+@if (showDialog)
+{
+    <div class="dx-modal-overlay">
+        @*Pop up Div*@
+        <div class="dx-modal">
+            <div class="dx-modal-header">
+                Clear edit
+                <button @onclick="() => Close()" class="dx-modal-close">&times;</button>
+            </div>
+            <div class="dx-modal-body" style="padding-top:0; margin-top:20px">
+                <CoreApiUnreachableBanner Shown="ReadOnly" />
+                @if (clearError is { } error) {
+                    <div class="dx-alert dx-alert-danger fde-clear-error">@error</div>
+                }
+                <div class="dx-table">
+                    <div class="dx-table-header" style="grid-template-columns: 1fr 2fr 2fr 3fr;">
+                        <div>TYPE</div>
+                        <div>Flight</div>
+                        <div>Current</div>
+                        <div>Feed</div>
+                    </div>
+                    <div class="dx-table-row" style="grid-template-columns: 1fr 2fr 2fr 3fr;">
+                        <div style="align-self: start;">
+                            Departure
+                        </div>
+                        <div style="align-self: start;">@fEDeparture!.FLT</div>
+                        <div style="align-self: start;">
+                            @if (fEDeparture.overrideFlightData != null) {
+                                if (fEDeparture.overrideFlightData.ETD != null) {
+                                    <p>ETD: @fEDeparture.overrideFlightData.ETD</p>
+                                }
+                                if (fEDeparture.overrideFlightData.ATD != null) {
+                                    <p>ATD: @fEDeparture.overrideFlightData.ATD</p>
+                                }
+                                if (fEDeparture.overrideFlightData.RCP != null) {
+                                    <p>STATUS: @fEDeparture.overrideFlightData.RCP</p>
+                                }
+                                if (fEDeparture.overrideFlightData.GAT != null) {
+                                    <p>GATE: @fEDeparture.overrideFlightData.GAT</p>
+                                }
+                                if (fEDeparture.overrideFlightData.CodeShares != null && fEDeparture.overrideFlightData.CodeShares.Count > 0) {
+
+                                    @foreach (FECodeShare codeShare in fEDeparture.CodeShares) {
+                                        <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                    }
+                                }
+                            }
+                        </div>
+                        <div style="align-self: start;">
+                            @if (fEDeparture.overrideFlightData != null) {
+                                if (fEDeparture.overrideFlightData.ETD != null) {
+                                    <p>ETD: @fEDeparture.EstimatedTime</p>
+                                }
+                                if (fEDeparture.overrideFlightData.ATD != null) {
+                                    <p>ATD: @fEDeparture.ActualTime</p>
+                                }
+                                if (fEDeparture.overrideFlightData.RCP != null) {
+                                    <p>STATUS: @fEDeparture.RCP</p>
+                                }
+                                if (fEDeparture.overrideFlightData.GAT != null) {
+                                    <p>GATE: @fEDeparture.GAT</p>
+                                }
+                                if (fEDeparture.overrideFlightData.CodeShares != null && fEDeparture.overrideFlightData.CodeShares.Count > 0) {
+
+                                    @foreach (FECodeShare codeShare in fEDeparture.CodeShares) {
+                                        @if (fEDeparture.overrideFlightData.CodeShares.FirstOrDefault(x => x.FLN == codeShare.FLN && x.FLC == codeShare.FLC) == null) {
+                                            <p>@String.Format("CodeShare: {0}{1}", codeShare.FLC, codeShare.FLN)</p>
+                                        }
+                                    }
+                                }
+                            }
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="() => Close()">Cancel</button>
+                <button class="dx-btn dx-btn-red fde-clear" type="submit" disabled="@ReadOnly" @onclick="() => Clear()">Clear</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [CascadingParameter]
+    public FlightManagement? homePage { get; set; }
+
+    /// <summary>CoreAPI is unreachable: the dialog shows the flights but takes no action (FDE-11).</summary>
+    [Parameter] public bool ReadOnly { get; set; }
+
+    public int recordId { get; set; }
+
+    public bool showDialog = false;
+    FEDepartureFlight fEDeparture = new();
+    OverrideDepartureFlight overrideDepartureFlight = new();
+    // A Clear CoreAPI did not take; the dialog stays open on it (FDE-06).
+    private string? clearError;
+    public void ShowDialog()
+    {
+        fEDeparture = homePage!.fEDepartureFlights.FirstOrDefault(x => x!.RecordId == recordId)!;
+        OverrideDepartureFlight overrideDepartureFlight = fEDeparture.overrideFlightData!;
+        clearError = null;
+        showDialog = true;
+        StateHasChanged();
+    }
+    public async Task Close()
+    {
+        await ResetDialog();
+
+        showDialog = false;
+        StateHasChanged();
+    }
+    private async Task ResetDialog()
+    {
+        if (homePage != null && homePage.displayDeparture)
+        {
+            if (homePage.ModifyDepartureFlight.showDialog == true)
+            {
+                await homePage.ModifyDepartureFlight.ResetDialog();
+            }
+        }
+        else if (homePage != null)
+        {
+            await homePage.ModifyArrivalFlight.ResetDialog();
+              if (homePage.ModifyArrivalFlight.showDialog == true)
+            {
+                await homePage.ModifyArrivalFlight.ResetDialog();
+            }
+        }
+    }
+    public async Task Clear()
+    {
+        var result = await coreApi.ClearDepartureAsync(fEDeparture.RecordId);
+        homePage!.ObserveCoreApi(result);
+        await audit.ClearedAsync(FlightKey.Of(fEDeparture), result);
+        if (!result.Succeeded) {
+            clearError = FlightSaveError.Describe(result, $"Could not clear the edit on {fEDeparture.FLT}");
+            await InvokeAsync(StateHasChanged);
+            return;
+        }
+        await Close();
+    }
+}

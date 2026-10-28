@@ -413,7 +413,7 @@ public class ContentPackageBundleBuilder : IContentPackageBundleBuilder
                 .Select(c => new ApprovalChainRecord
                 {
                     ContentPackageId = c.ContentPackageId,
-                    LocationContentPackageId = LookupOrEmpty(locationMap, c.LocationId),
+                    LocationContentPackageId = LookupOrEmpty(locationMap, c.LocationId ?? 0),
                     IsEnabled = c.IsEnabled,
                     IsDefault = c.IsDefault,
                     LocationAccessRuleContentPackageId = c.LocationAccessRuleId.HasValue && accessRuleMap.TryGetValue(c.LocationAccessRuleId.Value, out var arp) ? arp : (Guid?)null,

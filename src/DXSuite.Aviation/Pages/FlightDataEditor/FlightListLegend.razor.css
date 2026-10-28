@@ -1,0 +1,24 @@
+.fde-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 32px;
+    align-items: center;
+    padding: 10px 20px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--dx-text-primary);
+    border-top: 1px solid var(--dx-border-color);
+    flex-shrink: 0;
+}
+
+.fde-legend-entry {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fde-legend-cue {
+    color: var(--dx-blue);
+}

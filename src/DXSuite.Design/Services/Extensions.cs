@@ -1,6 +1,7 @@
 using DXSuite.Design.Entities;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -38,7 +39,7 @@ public static class Extensions
                   ?? throw new InvalidOperationException(
                       "No Design connection string in app config (background service path).");
 
-            options.UseSqlServer(connStr);
+            options.UseConfiguredProvider(config, "Design", connStr);
         }, ServiceLifetime.Scoped);
 
         services.AddScoped<DesignDbContext>(sp =>
@@ -69,7 +70,9 @@ public static class Extensions
                   ?? throw new InvalidOperationException(
                       "No Director connection string in app config.");
 
-            options.UseSqlServer(connStr);
+            // Same physical database as Director's own context (see comment above), so it must
+            // resolve to the same SQLite file under local SQLite mode.
+            options.UseConfiguredProvider(config, "Director", connStr);
         }, ServiceLifetime.Scoped);
 
         services.AddSingleton<NetsuiteCredentialProtector>();

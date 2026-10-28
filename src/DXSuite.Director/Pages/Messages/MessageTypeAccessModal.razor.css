@@ -1,0 +1,50 @@
+.mar-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.mar-title {
+    font-size: 0.85rem;
+}
+
+.mar-cols {
+    grid-template-columns: minmax(160px, 1fr) 80px minmax(160px, 1fr) 110px 90px;
+}
+
+.mar-table {
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+.mar-add-form {
+    background-color: var(--dx-bg-alt);
+    border: 1px solid var(--dx-border-color);
+    border-radius: 6px;
+    padding: 12px;
+}
+
+.mar-add-row {
+    flex-wrap: wrap;
+}
+
+.mar-zone {
+    flex: 1 1 200px;
+}
+
+.mar-free-text {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    cursor: pointer;
+}
+
+.mar-add-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.mac-section {
+    margin-top: 20px;
+}

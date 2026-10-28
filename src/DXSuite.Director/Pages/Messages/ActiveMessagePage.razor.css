@@ -1,0 +1,33 @@
+.am-columns {
+    grid-template-columns: 2fr 130px 1.4fr 140px 140px 120px 220px;
+}
+
+.am-filter {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-weight: normal;
+}
+
+.am-by {
+    font-size: 0.75rem;
+}
+
+.am-status {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    white-space: nowrap;
+}
+
+.am-ask {
+    font-weight: 600;
+}
+
+.am-loading {
+    position: relative;
+    min-height: 120px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+}

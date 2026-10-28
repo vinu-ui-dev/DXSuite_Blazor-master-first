@@ -1,0 +1,277 @@
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services
+@inject MessageAccessRules accessRules
+@inject MessageApprovalChain approvalChain
+@inject IServiceProvider services
+
+@* A Message Type's Access (FSD 1.1 ZONE-07), opened from the Access column on Configuration > Message Types. It is
+   the Locations Access dialog (the shared AccessDialog frame and grantee picker) with Message-specific sections:
+   Access Rules, then Approval Workflows (ZONE-09): the type's approval chain in the Locations stage editor. *@
+
+@if (messageTypeId is not null)
+{
+    <AccessDialog Name="@(view?.TypeName ?? "")" OnClose="CloseAsync">
+        <ChildContent>
+            @if (refusal is not null)
+            {
+                <div class="dx-alert dx-alert-danger mar-refusal">@refusal</div>
+            }
+            else if (view is not null)
+            {
+                <section class="mar-section">
+                    <div class="dx-section-header">
+                        <h6 class="dx-section-title mar-title">Access Rules</h6>
+                    </div>
+                    <p class="dx-form-hint">
+                        Who may send this type, to one Display Zone or every Display Zone, and whether they may type one-off
+                        text, which is never approved. Admin needs no Message access rule.
+                    </p>
+
+                    @if (view.Rules.Count == 0)
+                    {
+                        <p class="dx-text-muted">No Message access rules. Only Admin can send this type.</p>
+                    }
+                    else
+                    {
+                        <div class="dx-table mar-table">
+                            <div class="dx-table-header mar-cols">
+                                <div>Target</div><div>Type</div><div>Display Zone</div><div>One-off text</div><div></div>
+                            </div>
+                            @foreach (var rule in view.Rules)
+                            {
+                                <div class="dx-table-row mar-cols" id="mar-row-@rule.RuleId">
+                                    <div class="dx-truncate">@rule.GranteeName</div>
+                                    <div><span class="dx-badge @(rule.IsGroup ? "dx-badge-gray" : "dx-badge-blue")">@(rule.IsGroup ? "Group" : "User")</span></div>
+                                    <div>
+                                        @rule.ZoneName
+                                        @if (rule.ZoneRetired)
+                                        {
+                                            <span class="dx-badge dx-badge-orange" title="Rules on a retired Display Zone stop working">Retired, grants nothing</span>
+                                        }
+                                    </div>
+                                    <div>@(rule.CanFreeText ? "Allowed" : "Not allowed")</div>
+                                    <div>
+                                        <button type="button" id="mar-remove-@rule.RuleId" class="dx-btn dx-btn-red dx-btn-sm"
+                                                @onclick="() => RemoveAsync(rule.RuleId)">Remove</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+
+                    @if (!adding)
+                    {
+                        <button type="button" id="mar-add-open" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="StartAdding">
+                            <i class="bi bi-plus-lg"></i> Add Rule
+                        </button>
+                    }
+                    else
+                    {
+                        <div class="mar-add-form">
+                            <div class="dx-form-row mar-add-row">
+                                <AccessGranteePicker IdPrefix="mar" Users="@(view.Users.Select(u => (u.Id, u.Name)))"
+                                                     Groups="@(view.Groups.Select(g => (g.Id, g.Name)))"
+                                                     @bind-Kind="kind" @bind-UserId="userId" @bind-GroupId="groupId" />
+                                <div class="dx-form-group mar-zone">
+                                    <label class="dx-form-label" for="mar-zone">Display Zone</label>
+                                    <select id="mar-zone" class="dx-form-control" value="@(zoneId?.ToString() ?? EveryZone)" @onchange="ChangeZone">
+                                        <option value="@EveryZone">@MessageAccessRules.EveryDisplayZone</option>
+                                        @foreach (var zone in view.Zones)
+                                        {
+                                            <option value="@zone.Id">@zone.Name</option>
+                                        }
+                                    </select>
+                                </div>
+                            </div>
+                            <label class="mar-free-text">
+                                <input id="mar-free-text" type="checkbox" class="dx-checkbox" checked="@canFreeText"
+                                       @onchange="e => canFreeText = e.Value is true" />
+                                Allow one-off text
+                            </label>
+                            @if (addError is not null)
+                            {
+                                <div class="dx-form-validation mar-error">@addError</div>
+                            }
+                            <div class="mar-add-actions">
+                                <button type="button" id="mar-cancel" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="StopAdding">Cancel</button>
+                                <button type="button" id="mar-add" class="dx-btn dx-btn-blue dx-btn-sm" @onclick="AddAsync">Add</button>
+                            </div>
+                        </div>
+                    }
+                </section>
+            }
+            @if (refusal is null && chainView is not null)
+            {
+                <section class="mar-section mac-section">
+                    <div class="dx-section-header">
+                        <h6 class="dx-section-title mar-title">Approval Workflows</h6>
+                    </div>
+                    <p class="dx-form-hint">
+                        With an approval chain, a new Message of this type is Pending until its approvers, the members of
+                        each stage's groups, approve it. Edits to an Approved Message always need approval under the chain.
+                        With no chain, Messages are approved when saved.
+                    </p>
+                    <label class="mar-free-text">
+                        <input id="mac-enabled" type="checkbox" class="dx-checkbox" checked="@chainView.Chain.IsEnabled"
+                               @onchange="e => chainView.Chain.IsEnabled = e.Value is true" />
+                        Require approval for this type
+                    </label>
+                    @if (chainView.Chain.IsEnabled)
+                    {
+                        <ApprovalStageEditor Chain="chainView.Chain" IdPrefix="mac"
+                                             Groups="@(chainView.Groups.Select(g => (g.Id, g.Name)))"
+                                             GroupMembers="chainView.GroupMembers" SmtpConfigured="smtpConfigured" />
+                    }
+                    @if (chainErrors.Count > 0)
+                    {
+                        <div class="dx-form-validation mar-error" id="mac-error">@string.Join(" ", chainErrors)</div>
+                    }
+                    else if (chainSaved)
+                    {
+                        <div class="dx-alert dx-alert-success" id="mac-saved">Approval chain saved.</div>
+                    }
+                </section>
+            }
+        </ChildContent>
+        <Footer>
+            @if (refusal is null && chainView is not null)
+            {
+                <button type="button" id="mac-save" class="dx-btn dx-btn-blue" @onclick="SaveChainAsync">Save</button>
+            }
+        </Footer>
+    </AccessDialog>
+}
+
+@code {
+    private const string EveryZone = "every";
+
+    /// <summary>Called when the dialog closes.</summary>
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private int? messageTypeId;
+    private MessageAccessView? view;
+    private string? refusal;
+    private bool adding;
+    private AccessGranteeKind kind;
+    private int userId;
+    private int groupId;
+    private int? zoneId;
+    private bool canFreeText;
+    private string? addError;
+    private MessageChainView? chainView;
+    private IReadOnlyList<string> chainErrors = [];
+    private bool chainSaved;
+    private bool smtpConfigured = true;
+
+    /// <summary>Opens the dialog on a Message Type's Access.</summary>
+    public async Task OpenAsync(int id)
+    {
+        messageTypeId = id;
+        view = null;
+        chainView = null;
+        chainErrors = [];
+        chainSaved = false;
+        refusal = null;
+        adding = false;
+        await LoadAsync();
+        await LoadChainAsync();
+        StateHasChanged();
+    }
+
+    private async Task CloseAsync()
+    {
+        messageTypeId = null;
+        view = null;
+        chainView = null;
+        await OnClose.InvokeAsync();
+    }
+
+    private async Task LoadAsync()
+    {
+        try
+        {
+            view = await accessRules.OpenAsync(messageTypeId!.Value);
+            if (view is null) refusal = "This Message Type has been deleted.";
+        }
+        catch (UnauthorizedAccessException)
+        {
+            refusal = "Your role cannot change Message Type Access.";
+        }
+    }
+
+    private async Task LoadChainAsync()
+    {
+        if (refusal is not null) return;
+        try
+        {
+            chainView = await approvalChain.OpenAsync(messageTypeId!.Value);
+            smtpConfigured = await DXSuite.Director.Components.Modals.ApprovalStageEditor.SmtpConfiguredAsync(services);
+        }
+        catch (UnauthorizedAccessException)
+        {
+            refusal = "Your role cannot change Message Type Access.";
+        }
+    }
+
+    private async Task SaveChainAsync()
+    {
+        var result = await approvalChain.SaveAsync(messageTypeId!.Value, chainView!.Chain);
+        chainErrors = result.Outcome switch
+        {
+            MessageChainSaveOutcome.Invalid => result.Errors,
+            MessageChainSaveOutcome.TypeNotFound => ["This Message Type has been deleted."],
+            _ => [],
+        };
+        chainSaved = chainErrors.Count == 0;
+        if (chainSaved)
+            chainView = await approvalChain.OpenAsync(messageTypeId.Value);
+    }
+
+    private void StartAdding()
+    {
+        adding = true;
+        kind = AccessGranteeKind.User;
+        userId = groupId = 0;
+        zoneId = null;
+        canFreeText = false;
+        addError = null;
+    }
+
+    private void StopAdding() => adding = false;
+
+    private void ChangeZone(ChangeEventArgs e) => zoneId = int.TryParse(e.Value?.ToString(), out var id) ? id : null;
+
+    private async Task AddAsync()
+    {
+        var draft = kind == AccessGranteeKind.User
+            ? new MessageAccessRuleDraft(userId > 0 ? userId : null, null, zoneId, canFreeText)
+            : new MessageAccessRuleDraft(null, groupId > 0 ? groupId : null, zoneId, canFreeText);
+        if (draft.UserId is null && draft.UserGroupId is null)
+        {
+            addError = kind == AccessGranteeKind.User ? "Choose a user." : "Choose a group.";
+            return;
+        }
+
+        var result = await accessRules.AddAsync(messageTypeId!.Value, draft);
+        addError = result.Outcome switch
+        {
+            MessageAccessRuleOutcome.Added => null,
+            MessageAccessRuleOutcome.AlreadyExists =>
+                $"This {(kind == AccessGranteeKind.User ? "user" : "group")} already has a rule for that Display Zone. Remove it first to change one-off text.",
+            MessageAccessRuleOutcome.ZoneNotOffered => "That Display Zone has been retired. Choose another.",
+            MessageAccessRuleOutcome.GranteeNotFound => $"That {(kind == AccessGranteeKind.User ? "user" : "group")} no longer exists or is disabled.",
+            MessageAccessRuleOutcome.TypeNotFound => "This Message Type has been deleted.",
+            _ => kind == AccessGranteeKind.User ? "Choose a user." : "Choose a group.",
+        };
+        if (addError is not null) return;
+
+        adding = false;
+        await LoadAsync();
+    }
+
+    private async Task RemoveAsync(int ruleId)
+    {
+        await accessRules.RemoveAsync(messageTypeId!.Value, ruleId);
+        await LoadAsync();
+    }
+}

@@ -1,0 +1,313 @@
+@rendermode InteractiveServer
+@using DXSuite.Director.Models.Messages
+@using DXSuite.Director.Entities
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+@using DXSuite.Director.Models.CoreAPI
+@using DXSuite.Shared.Authorization
+@inject IDirectorDBContext directorDBContext
+@inject ISessionState sessionState
+@inject MessageSending sending
+@inject MessageAuthoring authoring
+@inject TimeProvider clock
+@inject DisplayTimeZones displayTimeZones
+@inject IJSRuntime JS
+
+@* One Message Type's tab of the Messages page: its canned Messages. One-off Messages are typed at send and are seen,
+   with every other Activation, on the Active Messages tab (MSG-18). *@
+
+@if (isLoading)
+{
+    <div class="mp-loading">
+        <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+    </div>
+}
+else if (MessageType != null)
+{
+    <div class="dx-card dx-card-fill">
+    <div class="dx-panel-header">
+        @MessageType.DisplayName Messages
+
+        <div class="dx-panel-controls">
+             <input @bind="searchFilter" @bind:event="oninput"
+                   class="dx-search-input"
+                   placeholder="Search Messages..." />
+                @if (canSendOneOff)
+                {
+                    <button id="mp-one-off" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => messageScheduleEditor.OpenOneOffAsync(MessageType.MessageTypeId)"><i class="bi bi-send"></i> Send one-off</button>
+                }
+                @if (canAuthor)
+                {
+                    <button id="mp-add" class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => manageMessageModal.OpenNewAsync(MessageType.MessageTypeId)"><i class="bi bi-plus-lg"></i> Add Message</button>
+                }
+        </div>
+    </div>
+
+    @if (problem is not null)
+    {
+        <div class="dx-panel-alert dx-alert dx-alert-warning">@problem</div>
+    }
+
+    <div class="dx-panel-content">
+     <div class="dx-table">
+
+            <div class="dx-table-header mp-cols">
+                <div>@(hasAslSlot ? "ASL" : "")</div>
+                @* One text column per language of the type, in its order (MSG-03). *@
+                <div class="mp-texts">
+                    @foreach (var language in availableLanguages)
+                    {
+                        <div class="mp-text">@language.LanguageName Message</div>
+                    }
+                    @if (availableLanguages.Count == 0)
+                    {
+                        <div class="mp-text">Message</div>
+                    }
+                </div>
+                <div>Target</div>
+                <div> Status </div>
+                <div> Activation Time</div>
+                <div>Actions</div>
+
+            </div>
+
+        @foreach (TblMessage message in FilteredMessages)
+        {
+            var activeOrScheduled = message.Activations.Where(a => ActivationState.IsActiveOrScheduled(a, now)).OrderBy(a => a.StartUtc).ToList();
+            var retired = message.Status == MessageStatus.Retired;
+            <div id="mp-row-@message.MessageId" class="dx-table-row mp-cols">
+                <div>
+                    @if (message.Assets.Any())
+                    {
+                        <i class="bi bi-check-lg mp-asl"></i>
+                    }
+                </div>
+                <div class="mp-texts">
+                    @foreach (var language in availableLanguages)
+                    {
+                        <div id="mp-text-@message.MessageId-@language.LanguageCode" class="mp-text">@TextOf(message, language.LanguageCode)</div>
+                    }
+                </div>
+                <div>
+                    @{ var targetLabels = TargetLabels(activeOrScheduled); }
+                    @for (var t = 0; t < targetLabels.Count; t++)
+                    {
+                        <span class="@(targetLabels[t].Active ? "mp-target-active" : "")">@targetLabels[t].Label@(t < targetLabels.Count - 1 ? ", " : "")</span>
+                    }
+                </div>
+                <div class="mp-status">
+                    @* An Approved Message shows no badge of its own; its Activations say whether it is on screen. *@
+                    @if (message.Status != MessageStatus.Approved)
+                    {
+                        <span class="dx-badge @MessageStatusText.Badge(message.Status)">@MessageStatusText.Label(message.Status)</span>
+                    }
+                    else if (message.PendingRevision is not null)
+                    {
+                        <span class="dx-badge dx-badge-yellow">Edit pending approval</span>
+                    }
+                    @if (activeOrScheduled.Any(a => statuses[a.MessageActivationId] == ActivationStatus.Active))
+                    {
+                        <span class="dx-badge dx-badge-blue">Active</span>
+                    }
+                    else if (activeOrScheduled.Count > 0)
+                    {
+                        <span>Scheduled</span>
+                    }
+                    @if (activeOrScheduled.Count > 1)
+                    {
+                        <span class="dx-badge-pill mp-pill" @onclick="() => OpenActivationsAsync(message)">@activeOrScheduled.Count</span>
+                    }
+                </div>
+                <div>
+                    @if (activeOrScheduled.Count > 0)
+                    {
+                        var when = ActivationWhen.Of(activeOrScheduled[0]);
+                        @when.StartText(viewer)
+                        @if (when.IsScheduled)
+                        {
+                            <div class="dx-text-muted mp-note">@ActivationWhen.ScreenTimeNote@(when.Window is { } window ? $", {window}" : "")</div>
+                        }
+                    }
+                </div>
+                <div class="dx-cell-actions">
+                    @if (canAuthor && !retired)
+                    {
+                        <button id="mp-edit-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => manageMessageModal.OpenAsync(message.MessageId)">Edit</button>
+                    }
+                    @if (activeOrScheduled.Count > 0)
+                    {
+                        <button id="mp-deactivate-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => OpenActivationsAsync(message)">Deactivate</button>
+                    }
+                    @* Only Approved canned Messages can be sent (MSG-12). *@
+                    @if (message.Status == MessageStatus.Approved)
+                    {
+                        <button id="mp-schedule-@message.MessageId" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => messageScheduleEditor.OpenAsync(message.MessageId)">Schedule</button>
+                    }
+                    @if (canAuthor)
+                    {
+                        @if (confirming == (message.MessageId, Removal.Retire))
+                        {
+                            <span class="mp-ask">Retire?</span>
+                            <button id="mp-confirm-retire-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(message.MessageId, Removal.Retire)">Retire</button>
+                            <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
+                        }
+                        else if (confirming == (message.MessageId, Removal.Delete))
+                        {
+                            <span class="mp-ask">Delete?</span>
+                            <button id="mp-confirm-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(message.MessageId, Removal.Delete)">Delete</button>
+                            <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
+                        }
+                        else
+                        {
+                            @if (!retired)
+                            {
+                                <button id="mp-retire-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = (message.MessageId, Removal.Retire)">Retire</button>
+                            }
+                            <button id="mp-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirming = (message.MessageId, Removal.Delete)">Delete</button>
+                        }
+                    }
+                </div>
+            </div>
+        }
+        </div>
+            </div>
+    </div>
+    <ManageMessageModal OnSaved="ReloadAsync" @ref="manageMessageModal"/>
+    <MessageScheduleEditor OnClose="ReloadAsync" @ref="messageScheduleEditor" />
+    <MessageActivationsModal OnClose="ReloadAsync" @ref="messageActivationsModal" />
+}
+
+@code{
+    private enum Removal { Retire, Delete }
+
+    public string searchFilter = "";
+
+    private ManageMessageModal manageMessageModal = default!;
+    private MessageScheduleEditor messageScheduleEditor = default!;
+    private MessageActivationsModal messageActivationsModal = default!;
+
+    [Parameter]
+    public TblMessageType? MessageType { get; set; }
+    public List<TblMessage> messages = new();
+    [Parameter]
+    public List<TblLanguage> languages { get; set; } = new();
+    public List<TblLanguage> availableLanguages = new();
+    public bool isLoading = true;
+    private bool canAuthor;
+    private bool canSendOneOff;
+    private bool hasAslSlot;
+    private bool typeLoaded;
+    private int? loadedTypeId;
+    private DateTime now;
+    private IReadOnlyDictionary<int, ActivationStatus> statuses = new Dictionary<int, ActivationStatus>();
+    private ReportTimeZone viewer = ReportTimeZone.Utc;
+    private (int MessageId, Removal Kind)? confirming;
+    private string? problem;
+
+    // Searches every language the list shows.
+    private IEnumerable<TblMessage> FilteredMessages
+    {
+        get
+        {
+            if (string.IsNullOrWhiteSpace(searchFilter)) return messages;
+            var term = searchFilter.Trim();
+            return messages.Where(m => m.Texts.Any(t => t.Body.Contains(term, StringComparison.OrdinalIgnoreCase)));
+        }
+    }
+
+    private static string? TextOf(TblMessage message, string languageCode) =>
+        message.Texts.FirstOrDefault(t => string.Equals(t.LanguageCode, languageCode, StringComparison.OrdinalIgnoreCase))?.Body;
+
+    protected override async Task OnInitializedAsync()
+    {
+        canAuthor = await sessionState.HasPermissionAsync(PermissionKeys.MessagesAuthor);
+    }
+
+    // The list, the one-off right and the ASL column belong to the type, so being handed another type reloads them; a
+    // parent re-render passing the same type does not.
+    protected override async Task OnParametersSetAsync()
+    {
+        if (typeLoaded && MessageType?.MessageTypeId == loadedTypeId) return;
+        typeLoaded = true;
+        loadedTypeId = MessageType?.MessageTypeId;
+        confirming = null;
+        problem = null;
+        canSendOneOff = MessageType is not null && await sending.CanSendOneOffAsync(MessageType.MessageTypeId, default);
+
+        await LoadDataAsync();
+    }
+
+    /// <summary>
+    /// The type's canned Messages with what the list shows. Read without tracking: the dialogs and the cancel save
+    /// through contexts of their own, so a tracked copy here would go stale.
+    /// </summary>
+    private async Task LoadDataAsync()
+    {
+        now = clock.GetUtcNow().UtcDateTime;
+        if (MessageType is not null)
+        {
+            var typeId = MessageType.MessageTypeId;
+            messages = await directorDBContext.TblMessages.AsNoTracking()
+                .Where(m => !m.IsDeleted && m.IsCanned && m.MessageTypeId == typeId)
+                .Include(m => m.Texts)
+                .Include(m => m.Assets)
+                .Include(m => m.PendingRevision)
+                .Include(m => m.Activations).ThenInclude(a => a.Targets).ThenInclude(t => t.Zone)
+                .AsSplitQuery()
+                .ToListAsync();
+            hasAslSlot = await directorDBContext.TblMessageTypeAssetLibraries.AnyAsync(l => l.MessageTypeId == typeId);
+            statuses = await displayTimeZones.StatusesAsync(directorDBContext.TblDevices,
+                messages.SelectMany(m => m.Activations).ToList(), now, default);
+        }
+        // The Messages page passes the type's own languages, in its order (MSG-03).
+        availableLanguages = languages;
+        isLoading = false;
+    }
+
+    private Task ReloadAsync() => LoadDataAsync();
+
+    // The browser's zone waits for the interactive render: a prerender has no browser to ask.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        viewer = await ReportTimeZone.DetectAsync(JS);
+        StateHasChanged();
+    }
+
+    /// <summary>
+    /// The Target column (ZONE-16): each Activation's Display Zones or one display, once each, marked while it is
+    /// showing on at least one screen (MSG-17).
+    /// </summary>
+    private List<(string Label, bool Active)> TargetLabels(IEnumerable<TblMessageActivation> activations)
+    {
+        var labels = new List<(string Label, bool Active)>();
+        foreach (var activation in activations)
+        {
+            var label = ActivationTargetText.Describe(activation.Targets);
+            if (label.Length == 0) continue;
+            var active = statuses[activation.MessageActivationId] == ActivationStatus.Active;
+            var seen = labels.FindIndex(l => l.Label == label);
+            if (seen < 0) labels.Add((label, active));
+            else if (active) labels[seen] = (label, true);
+        }
+        return labels;
+    }
+
+    private Task OpenActivationsAsync(TblMessage message) => messageActivationsModal.OpenAsync(message.MessageId, message.Name);
+
+    // MSG-14: refused while an Activation of the Message is active or scheduled; the user cancels those first.
+    private async Task RemoveAsync(int messageId, Removal kind)
+    {
+        confirming = null;
+        var outcome = kind == Removal.Retire
+            ? await authoring.RetireAsync(messageId, default)
+            : await authoring.DeleteAsync(messageId, default);
+        problem = outcome switch
+        {
+            MessageRemovalOutcome.Busy => MessageAuthoring.CancelFirst,
+            MessageRemovalOutcome.Forbidden => "You may not retire or delete Messages.",
+            _ => null,
+        };
+        await LoadDataAsync();
+    }
+}

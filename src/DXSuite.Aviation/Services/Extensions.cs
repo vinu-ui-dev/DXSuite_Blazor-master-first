@@ -1,9 +1,13 @@
 using DXSuite.Aviation.Entities;
+using DXSuite.Aviation.Services.CounterAllocation;
+using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Services;
 using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 
 namespace DXSuite.Aviation.Services;
 
@@ -27,8 +31,22 @@ public static class Extensions
                 : config.GetConnectionString("Aviation")
                   ?? throw new InvalidOperationException(
                       "No Aviation connection string in app config (background service path).");
-            options.UseSqlServer(connStr);
+            options.UseConfiguredProvider(config, "Aviation", connStr);
         }, ServiceLifetime.Scoped);
+
+        // ──────────────────────────────────────────────────────────────────
+        // Flight Data Editor — GTAA FSD 1.1
+        // ──────────────────────────────────────────────────────────────────
+        services.Configure<FlightDataEditorOptions>(config.GetSection(FlightDataEditorOptions.SectionName));
+        services.TryAddSingleton(TimeProvider.System);
+        services.AddScoped<IFlightListClock, FlightListClock>();
+        services.AddScoped<FlightEditAudit>();
+
+        // ──────────────────────────────────────────────────────────────────
+        // Counter Allocations — GTAA FSD 1.2 (simplified; no CoreAPI feed yet)
+        // ──────────────────────────────────────────────────────────────────
+        services.AddSingleton<CounterAllocationOutageState>();
+        services.AddScoped<CounterAllocationService>();
 
         return services;
     }

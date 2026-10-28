@@ -1,0 +1,78 @@
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+@inject ActiveMessages activeMessages
+@inject IJSRuntime JS
+
+@* A Message's Activations that are active or scheduled, from its row's Deactivate (FSD 1.1 MSG-18). Deactivate
+   cancels an Activation and keeps the Message and its history. *@
+
+@if (rows is not null)
+{
+    <div class="dx-modal-overlay mam-dialog">
+        <div class="dx-modal mam-modal" role="dialog" aria-label="Deactivate Message">
+            <div class="dx-modal-header">
+                <span>Deactivate @messageName</span>
+                <button id="mam-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="CloseAsync">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p class="dx-text-muted">Deactivating takes the Message off its screens. The Message and its history are kept.</p>
+                <div class="dx-table">
+                    <div class="dx-table-header mam-columns">
+                        <div>Target</div>
+                        <div>Start</div>
+                        <div>End</div>
+                        <div>Status</div>
+                        <div>Actions</div>
+                    </div>
+                    @foreach (var row in rows)
+                    {
+                        <div id="mam-row-@row.MessageActivationId" class="dx-table-row mam-columns">
+                            <div>@row.Target</div>
+                            <ActivationWhenCells When="row.When" Viewer="viewer" />
+                            <div>@row.Status</div>
+                            <div class="dx-cell-actions">
+                                <button id="mam-deactivate-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => CancelAsync([row.MessageActivationId])">Deactivate</button>
+                            </div>
+                        </div>
+                    }
+                </div>
+            </div>
+            <div class="dx-modal-footer">
+                <button id="mam-cancel" type="button" class="dx-btn dx-btn-gray" @onclick="CloseAsync">Close</button>
+                <button id="mam-deactivate-all" type="button" class="dx-btn dx-btn-red" @onclick="() => CancelAsync(rows.Select(r => r.MessageActivationId).ToList())">Deactivate all</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    [Parameter] public EventCallback OnClose { get; set; }
+
+    private IReadOnlyList<ActiveMessageRow>? rows;
+    private int messageId;
+    private string messageName = "";
+    private ReportTimeZone viewer = ReportTimeZone.Utc;
+
+    /// <summary>Opens the list for one Message; it closes by itself once none of its Activations is active or scheduled.</summary>
+    public async Task OpenAsync(int messageId, string messageName)
+    {
+        this.messageId = messageId;
+        this.messageName = messageName;
+        viewer = await ReportTimeZone.DetectAsync(JS);
+        rows = await activeMessages.ListForMessageAsync(messageId, default);
+        StateHasChanged();
+    }
+
+    private async Task CancelAsync(IReadOnlyCollection<int> activationIds)
+    {
+        await activeMessages.CancelAsync(activationIds, default);
+        rows = await activeMessages.ListForMessageAsync(messageId, default);
+        if (rows.Count == 0) await CloseAsync();
+    }
+
+    private async Task CloseAsync()
+    {
+        rows = null;
+        await OnClose.InvokeAsync();
+    }
+}

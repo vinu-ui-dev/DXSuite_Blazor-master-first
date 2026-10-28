@@ -1,0 +1,193 @@
+@using DXSuite.Director.Services
+
+@* The Locations stage editor, shared by a location's Access and a Message Type's Access (FSD 1.1 ZONE-09): stages of
+   groups run in order (THEN), each stage's groups joined by OR or AND, LLM auto-approval up to a stage, declined
+   content retention, and the approval email switch and reminder interval. It edits Chain in place; the owner
+   saves it. Settings only one owner has go in Options, above the shared ones. *@
+
+<div class="ase-options">
+    @Options
+    <label class="ase-option">
+        <input id="@Id("llm")" class="dx-checkbox" type="checkbox" checked="@Chain.EnableLlmAutoApproval"
+               @onchange="e => ToggleLlm(e.Value is true)" />
+        <span>Enable LLM Auto-Approval</span>
+    </label>
+    @if (Chain.EnableLlmAutoApproval)
+    {
+        <span class="dx-form-hint ase-option-note">Content that passes LLM moderation will be auto-approved up to the selected stage</span>
+    }
+    <div class="ase-option">
+        <label for="@Id("retention")">Auto-delete declined content after</label>
+        <input id="@Id("retention")" type="number" class="dx-form-control dx-form-control-sm ase-number" min="1" max="90"
+               value="@Chain.DeclinedContentRetentionDays" @onchange="e => Chain.DeclinedContentRetentionDays = Number(e, Chain.DeclinedContentRetentionDays)" />
+        <span>days</span>
+    </div>
+    <label class="ase-option">
+        <input id="@Id("email")" class="dx-checkbox" type="checkbox" checked="@Chain.EmailApprovers" disabled="@(!SmtpConfigured)"
+               @onchange="e => Chain.EmailApprovers = e.Value is true" />
+        <span>Email approvers</span>
+    </label>
+    @if (!SmtpConfigured)
+    {
+        <span id="@Id("email-note")" class="dx-form-hint ase-option-note">Approval emails need an SMTP server. Set one up in Settings, SMTP, to switch them on.</span>
+    }
+    @if (Chain.EmailApprovers)
+    {
+        <span class="dx-form-hint ase-option-note">Each stage's approvers are emailed when something reaches them, and reminded until it is decided.</span>
+        <div class="ase-option ase-option-indent">
+            <label for="@Id("reminder")">Remind every</label>
+            <input id="@Id("reminder")" type="number" class="dx-form-control dx-form-control-sm ase-number" min="@TblReminderMinimum" disabled="@(!SmtpConfigured)"
+                   value="@Chain.ReminderIntervalHours" @onchange="e => Chain.ReminderIntervalHours = Number(e, Chain.ReminderIntervalHours)" />
+            <span>hours</span>
+        </div>
+    }
+</div>
+
+<div class="ase-stages">
+    @for (int si = 0; si < Chain.Stages.Count; si++)
+    {
+        var stageIdx = si;
+        var stage = Chain.Stages[stageIdx];
+        @if (stageIdx > 0)
+        {
+            <div class="ase-stage-connector">THEN</div>
+        }
+        <div class="ase-stage-card @(Chain.EnableLlmAutoApproval && stageIdx <= Chain.LlmAutoApprovalUpToStageOrder ? "ase-stage-auto" : "")">
+            <div class="ase-stage-header">
+                <div class="ase-stage-title">
+                    <strong>Stage @(stageIdx + 1)</strong>
+                    @if (stage.GroupIds.Count > 1)
+                    {
+                        <select id="@Id($"stage-{stageIdx}-operator")" class="dx-form-control dx-form-control-sm ase-operator"
+                                value="@stage.IntraStageOperator" @onchange="e => SetOperator(stage, e)">
+                            <option value="OR">OR (any group)</option>
+                            <option value="AND">AND (all groups)</option>
+                        </select>
+                    }
+                </div>
+                <div class="ase-stage-actions">
+                    @if (Chain.Stages.Count > 1)
+                    {
+                        <button type="button" id="@Id($"stage-{stageIdx}-remove")" class="dx-btn dx-btn-red dx-btn-sm ase-remove"
+                                aria-label="Remove stage @(stageIdx + 1)" @onclick="() => RemoveStage(stageIdx)">&times;</button>
+                    }
+                    <label class="ase-auto-radio @(!Chain.EnableLlmAutoApproval ? "ase-auto-radio-disabled" : "")"
+                           title="LLM auto-approve up to this stage">
+                        <input type="radio" name="@Id("llm-stage")" id="@Id($"stage-{stageIdx}-llm")"
+                               checked="@(Chain.LlmAutoApprovalUpToStageOrder == stageIdx)"
+                               disabled="@(!Chain.EnableLlmAutoApproval)"
+                               @onchange="() => Chain.LlmAutoApprovalUpToStageOrder = stageIdx" />
+                        <span>LLM Auto</span>
+                    </label>
+                </div>
+            </div>
+            @for (int gi = 0; gi < stage.GroupIds.Count; gi++)
+            {
+                var groupIdx = gi;
+                <div class="ase-group-row">
+                    <select id="@Id($"stage-{stageIdx}-group-{groupIdx}")" class="dx-form-control dx-form-control-sm ase-group"
+                            value="@stage.GroupIds[groupIdx]"
+                            @onchange="e => stage.GroupIds[groupIdx] = int.TryParse(e.Value?.ToString(), out var v) ? v : 0">
+                        <option value="0">— Select group —</option>
+                        @foreach (var g in Groups)
+                        {
+                            <option value="@g.Id">@g.Name</option>
+                        }
+                    </select>
+                    @if (stage.GroupIds.Count > 1)
+                    {
+                        <button type="button" id="@Id($"stage-{stageIdx}-remove-group-{groupIdx}")" class="dx-btn dx-btn-red dx-btn-sm ase-remove"
+                                aria-label="Remove group" @onclick="() => stage.GroupIds.RemoveAt(groupIdx)">&times;</button>
+                    }
+                </div>
+            }
+            @if (GroupMembers is not null && stage.GroupIds.Any(id => id > 0))
+            {
+                var approvers = Approvers(stage);
+                <div id="@Id($"stage-{stageIdx}-approvers")" class="dx-form-hint">
+                    @(approvers.Count > 0 ? $"Approvers: {string.Join(", ", approvers)}" : "No approvers: these groups have no enabled members.")
+                </div>
+            }
+            <button type="button" id="@Id($"stage-{stageIdx}-add-group")" class="dx-btn dx-btn-outline-blue dx-btn-sm ase-add-group"
+                    @onclick="() => stage.GroupIds.Add(0)">
+                <i class="bi bi-plus-lg"></i> Add Group
+            </button>
+        </div>
+    }
+</div>
+
+<button type="button" id="@Id("add-stage")" class="dx-btn dx-btn-outline-blue dx-btn-sm ase-add-stage" @onclick="AddStage">
+    <i class="bi bi-plus-lg"></i> Add Stage
+</button>
+
+@if (!string.IsNullOrEmpty(Error))
+{
+    <div class="dx-form-validation ase-error">@Error</div>
+}
+
+@code {
+    private const int TblReminderMinimum = DXSuite.Director.Entities.TblApprovalChain.ReminderIntervalHoursMinimum;
+
+    [Parameter, EditorRequired] public ApprovalChainDraft Chain { get; set; } = null!;
+
+    [Parameter] public IEnumerable<(int Id, string Name)> Groups { get; set; } = [];
+
+    /// <summary>Each group's members by name. When given, every stage lists its approvers (FSD 1.1 MSG-11).</summary>
+    [Parameter] public IReadOnlyDictionary<int, IReadOnlyList<string>>? GroupMembers { get; set; }
+
+    /// <summary>Prefix of every element id, so two editors never share one.</summary>
+    [Parameter] public string IdPrefix { get; set; } = "ase";
+
+    /// <summary>The owner's own settings, listed first.</summary>
+    [Parameter] public RenderFragment? Options { get; set; }
+
+    [Parameter] public string? Error { get; set; }
+
+    /// <summary>False when the tenant has no SMTP server: the email switch is shown disabled with a note (A-27).</summary>
+    [Parameter] public bool SmtpConfigured { get; set; } = true;
+
+    /// <summary>
+    /// What an owner passes as <see cref="SmtpConfigured"/>. A host without the email service has no SMTP to set up,
+    /// so the switch stays usable there.
+    /// </summary>
+    public static async Task<bool> SmtpConfiguredAsync(IServiceProvider services) =>
+        services.GetService<DXSuite.Shared.Services.IEmailService>() is not { } email || await email.IsConfiguredAsync();
+
+    private string Id(string suffix) => $"{IdPrefix}-{suffix}";
+
+    private static int Number(ChangeEventArgs e, int current) => int.TryParse(e.Value?.ToString(), out var v) ? v : current;
+
+    private List<string> Approvers(StageDefinition stage) => stage.GroupIds
+        .Where(id => id > 0)
+        .SelectMany(id => GroupMembers!.GetValueOrDefault(id) ?? [])
+        .Distinct()
+        .OrderBy(n => n, StringComparer.OrdinalIgnoreCase)
+        .ToList();
+
+    private static void SetOperator(StageDefinition stage, ChangeEventArgs e) =>
+        stage.IntraStageOperator = e.Value?.ToString() == "AND" ? "AND" : "OR";
+
+    private void ToggleLlm(bool enabled)
+    {
+        Chain.EnableLlmAutoApproval = enabled;
+        if (enabled)
+            Chain.LlmAutoApprovalUpToStageOrder = Math.Max(0, Chain.Stages.Count - 1);
+    }
+
+    private void AddStage() => Chain.Stages.Add(new StageDefinition
+    {
+        StageOrder = Chain.Stages.Count,
+        IntraStageOperator = "OR",
+        GroupIds = new List<int> { 0 }
+    });
+
+    private void RemoveStage(int index)
+    {
+        if (Chain.Stages.Count <= 1) return;
+        Chain.Stages.RemoveAt(index);
+        for (int i = 0; i < Chain.Stages.Count; i++)
+            Chain.Stages[i].StageOrder = i;
+        if (Chain.LlmAutoApprovalUpToStageOrder >= Chain.Stages.Count)
+            Chain.LlmAutoApprovalUpToStageOrder = Chain.Stages.Count - 1;
+    }
+}

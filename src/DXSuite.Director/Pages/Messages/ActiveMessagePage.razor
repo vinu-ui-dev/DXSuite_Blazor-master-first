@@ -1,0 +1,151 @@
+@rendermode InteractiveServer
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+@inject ActiveMessages activeMessages
+@inject IJSRuntime JS
+
+@* The fixed Active Messages tab (FSD 1.1 MSG-18): every Activation that is active or scheduled, and on request the
+   most recent ones that are over. The Messages page has already checked page:messages; the service checks it again. *@
+
+<div class="dx-card dx-card-fill">
+    <div class="dx-panel-header">
+        Active Messages
+        <div class="dx-panel-controls">
+            <label class="am-filter">
+                <input id="am-show-over" type="checkbox" class="dx-checkbox" checked="@showOver" @onchange="ToggleOverAsync" />
+                Show ended and cancelled
+            </label>
+            <input @bind="searchFilter" @bind:event="oninput" class="dx-search-input" placeholder="Search Messages..." />
+        </div>
+    </div>
+
+    @if (problem is not null)
+    {
+        <div class="dx-panel-alert dx-alert dx-alert-warning">@problem</div>
+    }
+
+    <div class="dx-panel-content">
+        @if (rows is null)
+        {
+            <div class="am-loading"><div class="dx-spinner"></div></div>
+        }
+        else
+        {
+            <div class="dx-table">
+                <div class="dx-table-header am-columns">
+                    <div>Message</div>
+                    <div>Type</div>
+                    <div>Target</div>
+                    <div>Start</div>
+                    <div>End</div>
+                    <div>Status</div>
+                    <div>Actions</div>
+                </div>
+                @if (!rows.Any(r => r.CanCancel))
+                {
+                    <div class="dx-panel-hint">No Messages are on screen or scheduled.</div>
+                }
+                @foreach (var row in Filtered)
+                {
+                    <div id="am-row-@row.MessageActivationId" class="dx-table-row am-columns">
+                        <div>
+                            @row.MessageName
+                            @if (row.IsOneOff)
+                            {
+                                <span class="dx-badge dx-badge-gray">One-off</span>
+                            }
+                            @if (row.SentBy is not null)
+                            {
+                                <div class="dx-text-muted am-by">by @row.SentBy</div>
+                            }
+                        </div>
+                        <div>@row.TypeName</div>
+                        <div>@row.Target <span class="dx-text-muted am-by">(@row.ScreenCount)</span></div>
+                        <ActivationWhenCells When="row.When" Viewer="viewer" />
+                        <div class="am-status"><span class="dx-status-dot @Dot(row.Status)"></span>@row.Status</div>
+                        <div class="dx-cell-actions">
+                            @if (row.CanCancel)
+                            {
+                                if (confirming == row.MessageActivationId)
+                                {
+                                    <span class="am-ask">Deactivate?</span>
+                                    <button id="am-confirm-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => CancelAsync(row.MessageActivationId)">Deactivate</button>
+                                    <button id="am-keep-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
+                                }
+                                else
+                                {
+                                    <button id="am-deactivate-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirming = row.MessageActivationId">Deactivate</button>
+                                }
+                            }
+                        </div>
+                    </div>
+                }
+                @if (showOver)
+                {
+                    <div class="dx-panel-hint">Shows the @ActiveMessages.OverLimit most recent that are over. The Message Playback Log has them all.</div>
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private IReadOnlyList<ActiveMessageRow>? rows;
+    private bool showOver;
+    private string searchFilter = "";
+    private int? confirming;
+    private string? problem;
+    private ReportTimeZone viewer = ReportTimeZone.Utc;
+
+    private IEnumerable<ActiveMessageRow> Filtered
+    {
+        get
+        {
+            if (rows is null) return [];
+            var term = searchFilter.Trim();
+            return term.Length == 0
+                ? rows
+                : rows.Where(r => r.MessageName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || r.TypeName.Contains(term, StringComparison.OrdinalIgnoreCase)
+                    || r.Target.Contains(term, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    // The browser's zone waits for the interactive render: a prerender has no browser to ask.
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (!firstRender) return;
+        viewer = await ReportTimeZone.DetectAsync(JS);
+        StateHasChanged();
+    }
+
+    private async Task LoadAsync() => rows = await activeMessages.ListAsync(showOver, default);
+
+    private async Task ToggleOverAsync(ChangeEventArgs e)
+    {
+        showOver = e.Value is true;
+        await LoadAsync();
+    }
+
+    private async Task CancelAsync(int activationId)
+    {
+        confirming = null;
+        var result = await activeMessages.CancelAsync([activationId], default);
+        problem = result.Outcome switch
+        {
+            ActivationCancelOutcome.AlreadyOver => "That Activation had already ended or been cancelled.",
+            ActivationCancelOutcome.NotAllowed => "You may not deactivate Messages.",
+            _ => null,
+        };
+        await LoadAsync();
+    }
+
+    private static string Dot(ActivationStatus status) => status switch
+    {
+        ActivationStatus.Active => "dx-status-dot-green",
+        ActivationStatus.Scheduled => "dx-status-dot-yellow",
+        _ => "dx-status-dot-gray",
+    };
+}

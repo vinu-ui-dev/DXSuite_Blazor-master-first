@@ -1,0 +1,222 @@
+@using DXSuite.Director.Services.Messaging
+@rendermode InteractiveServer
+@inject IDisplayZoneService displayZoneService
+
+@* Configuration > Display Zones (FSD 1.1 ZONE-11, ZONE-12). The Configuration page has already checked
+   config-tab:zone-builder and the Messaging tenant flag; the service checks the key again on every write. *@
+
+<div class="dx-card dx-card-fill">
+    <div class="dx-panel-header">
+        Display Zones
+        <div class="dx-panel-controls">
+            <label class="dz-filter">
+                <input type="checkbox" class="dx-checkbox dz-show-retired" checked="@showRetired" @onchange="ToggleRetiredAsync" />
+                Show retired
+            </label>
+            <button class="dx-btn dx-btn-blue dx-btn-sm dz-add" @onclick="() => OpenEditor(null)"><i class="bi bi-plus-lg"></i> Add Display Zone</button>
+        </div>
+    </div>
+    <div class="dx-panel-hint">Order is list order only and gives no rank. Drag a Display Zone, or use Move up and Move down.</div>
+
+    @if (message is not null)
+    {
+        <div class="dx-panel-alert dx-alert dx-alert-danger">@message</div>
+    }
+
+    <div class="dx-panel-content">
+        @if (displayZones is null)
+        {
+            <div class="dz-loading"><div class="dx-spinner"></div></div>
+        }
+        else if (displayZones.Count == 0)
+        {
+            <div class="dx-panel-hint">No Display Zones yet.</div>
+        }
+        else
+        {
+            <div class="dx-table">
+                <div class="dx-table-header dz-columns">
+                    <div></div>
+                    <div>Display Zone</div>
+                    <div>Description</div>
+                    <div>Displays</div>
+                    <div>Actions</div>
+                </div>
+                @for (var i = 0; i < displayZones.Count; i++)
+                {
+                    var displayZone = displayZones[i];
+                    var first = i == 0;
+                    var last = i == displayZones.Count - 1;
+                    <div id="dz-row-@displayZone.ZoneId"
+                         class="dx-table-row dz-columns @(dragOver == displayZone.ZoneId ? "dz-drag-over" : "")"
+                         draggable="@((!displayZone.IsRetired).ToString().ToLowerInvariant())"
+                         @ondragstart="() => dragged = displayZone.ZoneId"
+                         @ondragover:preventDefault
+                         @ondragover="() => dragOver = displayZone.ZoneId"
+                         @ondrop="() => DropAsync(displayZone.ZoneId)"
+                         @ondragend="() => { dragged = null; dragOver = null; }">
+                        <div class="dz-grip">@(displayZone.IsRetired ? "" : "⠿")</div>
+                        <div>
+                            @displayZone.Name
+                            @if (displayZone.IsRetired)
+                            {
+                                <span class="dx-badge dx-badge-gray">Retired</span>
+                            }
+                            else if (displayZone.InUse)
+                            {
+                                <span class="dx-badge dx-badge-blue">In use</span>
+                            }
+                        </div>
+                        <div class="dx-text-muted">@displayZone.Description</div>
+                        <div>@displayZone.DisplayCount</div>
+                        <div class="dx-cell-actions">
+                            @if (!displayZone.IsRetired)
+                            {
+                                <button id="dz-up-@displayZone.ZoneId" disabled="@first" class="dx-btn dx-btn-gray dx-btn-sm" title="Move up" @onclick="() => MoveAsync(displayZone.ZoneId, -1)"><i class="bi bi-arrow-up"></i></button>
+                                <button id="dz-down-@displayZone.ZoneId" disabled="@last" class="dx-btn dx-btn-gray dx-btn-sm" title="Move down" @onclick="() => MoveAsync(displayZone.ZoneId, 1)"><i class="bi bi-arrow-down"></i></button>
+                                <button id="dz-edit-@displayZone.ZoneId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenEditor(displayZone)">Edit</button>
+                                @* ZONE-12: a Display Zone an Activation has targeted is named in that Activation's history,
+                                   so it can only be retired. *@
+                                @if (displayZone.EverTargeted)
+                                {
+                                    <button id="dz-retire-@displayZone.ZoneId" disabled="@displayZone.InUse" class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => AskRemove(displayZone, retire: true)">Retire</button>
+                                }
+                                else
+                                {
+                                    <button id="dz-delete-@displayZone.ZoneId" disabled="@displayZone.InUse" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => AskRemove(displayZone, retire: false)">Delete</button>
+                                }
+                            }
+                        </div>
+                    </div>
+                    @if (displayZone.InUse && !displayZone.IsRetired)
+                    {
+                        <div class="dx-table-row dz-note">
+                            <div class="dx-form-hint">An active or scheduled Activation uses this Display Zone. Cancel it before deleting or retiring.</div>
+                        </div>
+                    }
+                }
+            </div>
+        }
+    </div>
+</div>
+
+@if (editing)
+{
+    <DisplayZoneEditor DisplayZone="editDisplayZone" OnClose="EditorClosedAsync" />
+}
+
+@if (removing is not null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal">
+            <div class="dx-modal-header">
+                <span>@(removingRetires ? "Retire" : "Delete") Display Zone</span>
+                <button class="dx-modal-close" type="button" @onclick="() => removing = null">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                @if (removingRetires)
+                {
+                    <p>Retire <strong>@removing.Name</strong>? It leaves the list and the send pickers, and its Message access rules stop working. Past Activations still show its name. "Show retired" lists it again.</p>
+                }
+                else
+                {
+                    <p>Delete <strong>@removing.Name</strong>? No Activation has targeted it. Its Message access rules are deleted with it.</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="() => removing = null">Cancel</button>
+                <button class="dx-btn dx-btn-red dz-confirm" @onclick="RemoveAsync">@(removingRetires ? "Retire" : "Delete")</button>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private IReadOnlyList<DisplayZoneSummary>? displayZones;
+    private bool showRetired;
+    private string? message;
+
+    private bool editing;
+    private DisplayZoneSummary? editDisplayZone;
+
+    private DisplayZoneSummary? removing;
+    private bool removingRetires;
+
+    private int? dragged;
+    private int? dragOver;
+
+    protected override Task OnInitializedAsync() => LoadAsync();
+
+    private async Task LoadAsync() => displayZones = await displayZoneService.ListAsync(showRetired);
+
+    private async Task ToggleRetiredAsync(ChangeEventArgs e)
+    {
+        showRetired = e.Value is true || (e.Value is string s && bool.TryParse(s, out var on) && on);
+        await LoadAsync();
+    }
+
+    private async Task MoveAsync(int zoneId, int step)
+    {
+        var order = displayZones!.Select(z => z.ZoneId).ToList();
+        var from = order.IndexOf(zoneId);
+        var to = from + step;
+        if (from < 0 || to < 0 || to >= order.Count) return;
+        await ReorderAsync(order, from, to);
+    }
+
+    private async Task DropAsync(int targetZoneId)
+    {
+        var moving = dragged;
+        dragged = null;
+        dragOver = null;
+        if (moving is null || moving == targetZoneId) return;
+        var order = displayZones!.Select(z => z.ZoneId).ToList();
+        await ReorderAsync(order, order.IndexOf(moving.Value), order.IndexOf(targetZoneId));
+    }
+
+    private async Task ReorderAsync(List<int> order, int from, int to)
+    {
+        if (from < 0 || to < 0) return;
+        var zoneId = order[from];
+        order.RemoveAt(from);
+        order.Insert(to, zoneId);
+        message = null;
+        await displayZoneService.ReorderAsync(order);
+        await LoadAsync();
+    }
+
+    private void OpenEditor(DisplayZoneSummary? displayZone)
+    {
+        message = null;
+        editDisplayZone = displayZone;
+        editing = true;
+    }
+
+    private async Task EditorClosedAsync(bool saved)
+    {
+        editing = false;
+        if (saved) await LoadAsync();
+    }
+
+    private void AskRemove(DisplayZoneSummary displayZone, bool retire)
+    {
+        message = null;
+        removing = displayZone;
+        removingRetires = retire;
+    }
+
+    private async Task RemoveAsync()
+    {
+        var displayZone = removing!;
+        removing = null;
+        var outcome = removingRetires ? await displayZoneService.RetireAsync(displayZone.ZoneId) : await displayZoneService.DeleteAsync(displayZone.ZoneId);
+        message = outcome switch
+        {
+            DisplayZoneRemoval.InUse => $"{displayZone.Name} is used by an active or scheduled Activation. Cancel it first.",
+            DisplayZoneRemoval.Targeted => $"An Activation has targeted {displayZone.Name}, so it can only be retired.",
+            DisplayZoneRemoval.NotFound => $"{displayZone.Name} no longer exists.",
+            _ => null,
+        };
+        await LoadAsync();
+    }
+}

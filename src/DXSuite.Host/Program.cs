@@ -13,6 +13,7 @@ using DXSuite.Shared.Services.Identity;
 using DXSuite.Shared.Module;
 using DXSuite.Shared.Models;
 using DXSuite.Host.Components.Platform;
+using DXSuite.Host.Services.MockCoreApi;
 #if MODULE_AVIATION
 using DXSuite.Aviation;
 #endif
@@ -633,11 +634,102 @@ builder.Services.AddSingleton<IReadOnlyList<IBlazorModule>>(moduleRegistry);
 
 builder.Services.AddScoped<PostLoginNavigationState>();
 
+// Local/offline escape hatch's mock flight feed (see the Database:UseSqlite block below) — cheap to
+// register unconditionally; it only becomes reachable when its endpoints are mapped under that flag.
+builder.Services.AddSingleton<DXSuite.Host.Services.MockCoreApi.MockCoreApiStore>();
+
 var app = builder.Build();
 
 // Eager resolution of ITenantStore ensures the fail-fast (no tenants configured)
 // fires at process start rather than on the first inbound request.
 _ = app.Services.GetRequiredService<DXSuite.Shared.Multitenancy.ITenantStore>();
+
+// Local/offline escape hatch (Database:UseSqlite): this product's schema is normally owned by SQL
+// Server EF Core migrations, applied by hand (see CONTRIBUTING.md). A fresh SQLite file has no
+// migration history to apply, so build each module's schema straight from the current model
+// instead. Safe to run every time — EnsureCreatedAsync is a no-op once the file has tables.
+if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration))
+{
+    using var sqliteInitScope = app.Services.CreateScope();
+    var sqliteInitServices = sqliteInitScope.ServiceProvider;
+
+    async Task EnsureCreatedAsync<TContext>() where TContext : DbContext
+    {
+        var factory = sqliteInitServices.GetService<IDbContextFactory<TContext>>();
+        if (factory is null) return; // module not registered (disabled or not built in)
+        await using var db = await factory.CreateDbContextAsync();
+        await db.Database.EnsureCreatedAsync();
+    }
+
+    await EnsureCreatedAsync<DXSuite.Director.Entities.DirectorDbContext>();
+    await EnsureCreatedAsync<DXSuite.CoreData.Entities.CoreDataDbContext>();
+#if MODULE_AVIATION
+    await EnsureCreatedAsync<DXSuite.Aviation.Entities.AviationDbContext>();
+#endif
+#if MODULE_SENTINEL
+    await EnsureCreatedAsync<DXSuite.Sentinel.Entities.SentinelDBContext>();
+#endif
+#if MODULE_DESIGN
+    await EnsureCreatedAsync<DXSuite.Design.Entities.DesignDbContext>();
+#endif
+#if MODULE_SLC
+    await EnsureCreatedAsync<DXSuite.SLC.Data.SlcPulseDbContext>();
+#endif
+    // DesignDbContext's sibling IdentityDbContext maps a subset of Director's own tables onto the
+    // same SQLite file (see DXSuite.Design/Services/Extensions.cs) — Director's EnsureCreatedAsync
+    // above already created them; running it a second time from the narrower model would conflict.
+
+    // There is no real CoreAPI/RMS server in local mode, so Flight Management and Counter Allocation
+    // would otherwise show nothing. Mount a minimal in-process stand-in and point the tenant's CoreAPI
+    // connection at it automatically, the first time only — a real connection saved later is left alone.
+    app.MapMockCoreApiEndpoints();
+
+    var coreApiSettings = sqliteInitServices.GetService<DXSuite.Connectors.Services.CoreApi.ICoreApiSettingsStore>();
+    if (coreApiSettings is not null && await coreApiSettings.ReadAsync(default) is null)
+    {
+        var selfUrl = (builder.Configuration["urls"] ?? builder.Configuration["ASPNETCORE_URLS"] ?? "http://localhost:5298")
+            .Split(';')[0].TrimEnd('/');
+        await coreApiSettings.SaveAsync("local-mock-key", [selfUrl + DXSuite.Host.Services.MockCoreApi.MockCoreApiEndpoints.BasePath], null, default);
+    }
+
+    // A fresh SQLite file has no users at all. Seed one ready-made Admin account so this mode is
+    // usable immediately — only when the file is genuinely empty; anyone who has already registered
+    // keeps whatever role they have.
+    var directorFactory = sqliteInitServices.GetService<IDbContextFactory<DXSuite.Director.Entities.DirectorDbContext>>();
+    if (directorFactory is not null)
+    {
+        await using var usersDb = await directorFactory.CreateDbContextAsync();
+        if (!await usersDb.TblUsers.AnyAsync())
+        {
+            // The four built-in roles (tblUserRole RoleId 1-4) are rows this product's real SQL Server
+            // database has always had, never captured as EF Core seed data (HasData) or a migration — on
+            // SQL Server they simply already exist. EnsureCreatedAsync builds the table from the model but
+            // inserts nothing, so a fresh SQLite file needs them written by hand before any TblUser.RoleId
+            // foreign key can point at one.
+            if (!await usersDb.TblUserRoles.AnyAsync())
+            {
+                usersDb.TblUserRoles.AddRange(
+                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Admin, RoleName = "Admin", IsSystem = true },
+                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Architect, RoleName = "Architect", IsSystem = true },
+                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Contributor, RoleName = "Contributor", IsSystem = true },
+                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.NewUser, RoleName = "New User", IsSystem = true });
+                await usersDb.SaveChangesAsync();
+            }
+
+            // RolePermissionService lazily seeds each role's permission grants the first time any role's
+            // permissions are asked for; do that now so the Admin role seeded above actually holds every
+            // known permission once RolePermissionService.EnsureDefaultsSyncedAsync runs.
+            var rolePermissions = sqliteInitServices.GetService<DXSuite.Shared.Services.Identity.IRolePermissionService>();
+            if (rolePermissions is not null)
+                await rolePermissions.GetPermissionsForRoleAsync((int)DXSuite.Shared.Authorization.Roles.Role.Admin);
+
+            var localAccounts = sqliteInitServices.GetRequiredService<DXSuite.Shared.Services.Identity.ILocalAccountService>();
+            var seededAdmin = await localAccounts.CreateAccountAsync("admin@local.test", "LocalAdmin#2026");
+            await usersDb.TblUsers.Where(u => u.UserId == seededAdmin.UserId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.RoleId, (int)DXSuite.Shared.Authorization.Roles.Role.Admin));
+        }
+    }
+}
 
 // Absorb truncated-request exceptions from Kestrel. Devices in the field often have
 // a heartbeat POST in-flight when DXSuite restarts; the OS delivers the half-arrived

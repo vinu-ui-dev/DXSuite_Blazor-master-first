@@ -1,0 +1,135 @@
+@page "/messages"
+@rendermode InteractiveServer
+@attribute [RequiresTenantFeature(nameof(TenantFeatureFlags.Messaging))]
+@inject IDirectorDBContext directorDBContext;
+@inject ISessionState sessionState
+@inject IMessageLanguageCatalogue languageCatalogue
+@inject IOptions<D02GtaaMessagingOptions> d02
+@using DXSuite.Director.ConfigTabs;
+@using DXSuite.Director.Models.CoreAPI
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Models.Messages;
+@using DXSuite.Shared.Authorization
+@using DXSuite.Shared.CustomerDeviations
+@using Microsoft.Extensions.Options
+
+
+@if (!accessResolved)
+{
+    <div class="msg-loading">
+        <div class="dx-spinner"></div>
+    </div>
+}
+else if (!hasAccess)
+{
+    <section>
+        <div class="dx-section">
+            <p class="msg-denied">You do not have permission to access this page.</p>
+        </div>
+    </section>
+}
+else
+{
+    <section class="dx-page-header"> <div class="dx-page-header-flex"> <h2>Messages</h2> </div> </section>
+<section class="dx-page-body">
+
+<div class="msg-shell">
+
+    @* Tab bar on desktop; the select replaces it below the tablet breakpoint *@
+    <div class="dx-tab-nav dx-tab-nav-collapsible msg-fixed">
+        @foreach (var tab in settingsTabs)
+        {
+            <button class="dx-tab-btn @(activeTab == tab.Key ? "active" : "")"
+                    @onclick="@(() => activeTab = tab.Key)">
+                @tab.Label
+            </button>
+        }
+    </div>
+    <select class="dx-form-control dx-tab-select msg-fixed" @bind="activeTab">
+        @foreach (var tab in settingsTabs)
+        {
+            <option value="@tab.Key">@tab.Label</option>
+        }
+    </select>
+
+    <div class="dx-tab-content dx-tab-content-standalone msg-fill">
+        @foreach (var tab in settingsTabs)
+        {
+            if (activeTab == tab.Key)
+            {
+                @* Every type tab is a MessagePage: keyed by tab, each gets its own instance and loads its own type's Messages
+                   instead of one instance being handed the next type. *@
+                <DynamicComponent @key="tab.Key" Type="@tab.ComponentType" Parameters="@tab.Parameters" />
+            }
+        }
+    </div>
+
+</div>
+   </section>
+}
+@code
+{
+    bool isLoading = true;
+    private List<TblMessageType> messageTypes = new();
+    private IReadOnlyList<MessageLanguage> languageNames = [];
+
+    private List<MessageTab> settingsTabs = new List<MessageTab>();
+    private string? activeTab;
+
+    private bool accessResolved;
+    private bool hasAccess;
+
+    protected override async Task OnInitializedAsync()
+    {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageMessages);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        await LoadDataAsync();
+        settingsTabs = TabsFor(messageTypes, languageNames, d02.Value.Enabled);
+        activeTab = settingsTabs.FirstOrDefault()?.Key;
+
+    }
+
+    private async Task LoadDataAsync()
+    {
+        messageTypes = await directorDBContext.TblMessageTypes.Include(x => x.Languages).Where(x => !x.IsDeleted).ToListAsync();
+        languageNames = await languageCatalogue.NameAsync(messageTypes.SelectMany(t => t.Languages).Select(l => l.LanguageCode).Distinct());
+        isLoading = false;
+
+    }
+    /// <summary>
+    /// The page's tabs: the fixed Active Messages tab (MSG-18), then one per Message Type in rank order. Each type's tab
+    /// gets the type's own languages (MSG-03). The Messaging tenant flag and page:messages already decide whether the
+    /// page opens (DEV-06). Display Zones are edited on Configuration (ZONE-11).
+    /// Under D-02 the built-in Counter type gets no tab: it sits outside the Display Zone ranking (MSG-20) and its
+    /// Messages are sent from the CUPPS app in 1.2.
+    /// </summary>
+    public static List<MessageTab> TabsFor(IEnumerable<TblMessageType> messageTypes, IReadOnlyList<MessageLanguage> languageNames,
+        bool gtaaMessaging)
+    {
+        var ranked = messageTypes.Where(t => !MessageTypeConfiguration.IsBuiltInCounter(t.Code, gtaaMessaging))
+            .OrderByDescending(t => t.IsTopPriority).ThenBy(t => t.Priority).ThenBy(t => t.MessageTypeId).ToList();
+        List<TblLanguage> LanguagesOf(IEnumerable<string> codes) => codes
+            .Select(code => new TblLanguage
+            {
+                LanguageCode = code,
+                LanguageName = languageNames.FirstOrDefault(l => string.Equals(l.Code, code, StringComparison.OrdinalIgnoreCase))?.Name ?? code
+            })
+            .ToList();
+        static IEnumerable<string> CodesOf(TblMessageType type) => type.Languages.OrderBy(l => l.SortOrder).Select(l => l.LanguageCode);
+
+        var tabs = new List<MessageTab>
+        {
+            new MessageTab() { Key = "ActiveMessages", Order = -1, Label = "Active Messages", ComponentType = typeof(ActiveMessagePage), Parameters = new Dictionary<string, object>() },
+        };
+        for (var i = 0; i < ranked.Count; i++)
+        {
+            var messageType = ranked[i];
+            tabs.Add(new MessageTab() {Key = messageType.Code,Order = i, Label = messageType.DisplayName, ComponentType = typeof(MessagePage), Parameters = new Dictionary<string, object> { {"MessageType", messageType }, {"Languages", LanguagesOf(CodesOf(messageType)) } } });
+        }
+        return tabs.OrderBy(x => x.Order).ToList();
+    }
+
+}
+

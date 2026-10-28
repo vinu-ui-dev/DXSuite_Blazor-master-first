@@ -1,0 +1,174 @@
+@page "/Flight-Data-Editor/Counter-Allocation"
+@attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
+@rendermode InteractiveServer
+@using Microsoft.AspNetCore.Components.Forms
+@using DXSuite.Aviation.Entities
+@using DXSuite.Aviation.Services.CounterAllocation
+@using DXSuite.Aviation.Services.FlightDataEditor
+@using DXSuite.Shared.Authorization
+@inject CounterAllocationService allocationService
+@inject CounterAllocationOutageState outageState
+@inject ISessionState sessionState
+
+@if (!accessResolved)
+{
+    <div class="dx-spinner"></div>
+}
+else if (!hasAccess)
+{
+    <p>You do not have permission to access this page.</p>
+}
+else
+{
+    <div class="dx-card" style="margin-bottom: 1rem; padding: 1rem; display:flex; align-items:center; gap: 1rem;">
+        <strong>Manual mode:</strong>
+        @if (outageState.IsOn)
+        {
+            <span class="dx-badge dx-badge-warning">On since @outageState.SwitchedOnUtc?.ToString("yyyy-MM-dd HH:mm") UTC</span>
+            <button class="dx-btn" @onclick="TurnOffManualMode">Return to normal</button>
+        }
+        else
+        {
+            <span class="dx-badge">Off</span>
+            <button class="dx-btn dx-btn-blue" @onclick="TurnOnManualMode">Switch to manual mode</button>
+        }
+    </div>
+
+    <p class="dx-text-muted">
+        This build has no live CoreAPI/RMS allocation feed. Every row below is entered by hand — there is no
+        automatic return to a feed, because there is no feed to return to yet.
+    </p>
+
+    <div class="dx-card" style="margin-bottom: 1rem; padding: 1rem;">
+        <h4>Add allocation</h4>
+        <div class="dx-form-row" style="display:flex; gap: 0.5rem; flex-wrap: wrap; align-items:flex-end;">
+            <div class="dx-form-group">
+                <label class="dx-form-label">Counter</label>
+                <input class="dx-form-control" @bind="draftCounter" placeholder="e.g. K12" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">Airline (IATA)</label>
+                <input class="dx-form-control" @bind="draftAirlineCode" placeholder="e.g. AC" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">Type</label>
+                <select class="dx-form-select" @bind="draftType">
+                    <option value="Common">Common</option>
+                    <option value="Dedicated">Dedicated</option>
+                    <option value="Info">Info</option>
+                </select>
+            </div>
+            @if (draftType == "Dedicated")
+            {
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Destination</label>
+                    <input class="dx-form-control" @bind="draftDestination" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Flight #</label>
+                    <input class="dx-form-control" @bind="draftFlightNumber" />
+                </div>
+            }
+            <div class="dx-form-group">
+                <label class="dx-form-label">Start</label>
+                <input type="datetime-local" class="dx-form-control" @bind="draftStart" />
+            </div>
+            <div class="dx-form-group">
+                <label class="dx-form-label">End</label>
+                <input type="datetime-local" class="dx-form-control" @bind="draftEnd" />
+            </div>
+            <button class="dx-btn dx-btn-blue" @onclick="AddAsync">Add</button>
+        </div>
+        @if (error is not null)
+        {
+            <p class="dx-text-danger">@error</p>
+        }
+    </div>
+
+    <div class="dx-table">
+        <div class="dx-table-row dx-table-header">
+            <div>Counter</div><div>Airline</div><div>Type</div><div>Destination</div><div>Start (UTC)</div><div>End (UTC)</div><div></div>
+        </div>
+        @foreach (var a in allocations)
+        {
+            <div class="dx-table-row">
+                <div>@a.Counter</div>
+                <div>@a.AirlineCode</div>
+                <div>@a.AllocationType</div>
+                <div>@(a.Destination is null ? "—" : $"{a.Destination} {a.FlightNumber}")</div>
+                <div>@a.StartUtc.ToString("yyyy-MM-dd HH:mm")</div>
+                <div>@a.EndUtc.ToString("yyyy-MM-dd HH:mm")</div>
+                <div><button class="dx-btn dx-btn-sm" @onclick="() => RemoveAsync(a.CounterAllocationId)">Remove</button></div>
+            </div>
+        }
+        @if (allocations.Count == 0)
+        {
+            <div class="dx-table-row"><div>No allocations in the next 12 hours.</div></div>
+        }
+    </div>
+}
+
+@code {
+    private bool accessResolved;
+    private bool hasAccess;
+    private IReadOnlyList<TblCounterAllocation> allocations = [];
+    private string? error;
+
+    private string draftCounter = "";
+    private string draftAirlineCode = "";
+    private string draftType = "Common";
+    private string? draftDestination;
+    private string? draftFlightNumber;
+    private DateTime draftStart = DateTime.UtcNow;
+    private DateTime draftEnd = DateTime.UtcNow.AddHours(2);
+
+    protected override async Task OnInitializedAsync()
+    {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+        if (hasAccess) await RefreshAsync();
+    }
+
+    private async Task RefreshAsync()
+    {
+        var now = DateTime.UtcNow;
+        allocations = await allocationService.GetInRangeAsync(now.AddHours(-1), now.AddHours(12));
+    }
+
+    private async Task AddAsync()
+    {
+        error = null;
+        if (string.IsNullOrWhiteSpace(draftCounter) || string.IsNullOrWhiteSpace(draftAirlineCode))
+        {
+            error = "Counter and airline are required.";
+            return;
+        }
+
+        var result = await allocationService.CreateAsync(
+            new CounterAllocationDraft(draftCounter.Trim(), draftAirlineCode.Trim().ToUpperInvariant(), draftType,
+                draftDestination, draftFlightNumber, draftStart, draftEnd),
+            sessionState.User?.FriendlyName ?? sessionState.User?.UserPrincipalName);
+
+        error = result.Outcome switch
+        {
+            CounterAllocationSaveOutcome.Overlap => $"Counter {draftCounter} already has an allocation for {result.ConflictingAirline} in that range.",
+            CounterAllocationSaveOutcome.InvalidRange => "End must be after start.",
+            _ => null,
+        };
+        if (error is null)
+        {
+            draftCounter = "";
+            draftAirlineCode = "";
+            await RefreshAsync();
+        }
+    }
+
+    private async Task RemoveAsync(int id)
+    {
+        await allocationService.DeleteAsync(id);
+        await RefreshAsync();
+    }
+
+    private void TurnOnManualMode() => outageState.SwitchOn();
+    private void TurnOffManualMode() => outageState.SwitchOff();
+}

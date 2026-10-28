@@ -1,0 +1,27 @@
+@using DXSuite.Director.Services.Messaging
+@using DXSuite.Director.Services.Reports
+
+@* The Start and End cells of an Activation's row (MSG-16). A send now reads in the viewer's time zone; a scheduled
+   send shows the wall-clock range and weekly window the sender chose, which each screen reads on its own clock. *@
+
+<div class="awc-cell">
+    @When.StartText(Viewer)
+    @if (When.IsScheduled)
+    {
+        <div class="dx-text-muted awc-note">@ActivationWhen.ScreenTimeNote</div>
+    }
+</div>
+<div class="awc-cell">
+    @When.EndText(Viewer)
+    @if (When.Window is { } window)
+    {
+        <div class="dx-text-muted awc-note">@window</div>
+    }
+</div>
+
+@code {
+    [Parameter, EditorRequired] public ActivationWhen When { get; set; } = null!;
+
+    /// <summary>The viewer's browser time zone (<see cref="ReportTimeZone.DetectAsync"/>).</summary>
+    [Parameter, EditorRequired] public ReportTimeZone Viewer { get; set; } = ReportTimeZone.Utc;
+}

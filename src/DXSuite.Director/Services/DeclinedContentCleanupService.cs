@@ -79,8 +79,8 @@ public class DeclinedContentCleanupService : BackgroundService
         var locationIds = declinedApprovals.Select(a => a.LocationId).Distinct().ToList();
         var defaultChains = await db.TblApprovalChains
             .AsNoTracking()
-            .Where(c => locationIds.Contains(c.LocationId) && c.IsDefault)
-            .Select(c => new DefaultChainRetention(c.LocationId, c.ApprovalChainId, c.DeclinedContentRetentionDays))
+            .Where(c => c.LocationId != null && locationIds.Contains(c.LocationId.Value) && c.IsDefault)
+            .Select(c => new DefaultChainRetention(c.LocationId!.Value, c.ApprovalChainId, c.DeclinedContentRetentionDays))
             .ToListAsync(ct);
         var chains = RetentionDaysByLocation(defaultChains);
 

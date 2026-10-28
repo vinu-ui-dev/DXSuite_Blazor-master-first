@@ -1225,8 +1225,8 @@
                     publicationInvalidator.AssetsChanged([newAsset.LocationId]);
 
                     var passedModeration = !imageModerationPending;
-                    await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, locationId, passedModeration,
-                        uploadingUserId: null, pickedRuleId: prepared?.PickedRuleId);
+                    await approvalChainService.SubmitToChainAsync(approval.AssetApprovalId, locationId,
+                        sessionState.User?.UserId ?? 0, passedModeration, pickedRuleId: prepared?.PickedRuleId);
 
                     // Written to the staged sidecar: the zone and video-wall manifest path reads
                     // approval state from the sidecar rather than from the database.
@@ -1392,7 +1392,7 @@
             existingApproval.AssetApprovalId,
             sessionState.User.UserId, resubmitComment.Trim());
 
-        await approvalChainService.SubmitToChainAsync(existingApproval.AssetApprovalId, locationId);
+        await approvalChainService.SubmitToChainAsync(existingApproval.AssetApprovalId, locationId, sessionState.User.UserId);
 
         if (!string.IsNullOrEmpty(uploadedAssetLocalPath))
             await UpdateMetadataFile(uploadedAssetLocalPath, "ApprovalStatus", ((int)ApprovalStatus.Pending).ToString(), "ovx_String");

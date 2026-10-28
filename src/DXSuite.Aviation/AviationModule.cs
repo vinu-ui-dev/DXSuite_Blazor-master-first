@@ -24,8 +24,10 @@ public class AviationModule : IBlazorModule
 
     public IEnumerable<NavItem> GetNavItems()
     {
-        // Aviation provides data services only — airline/city management is accessed via Configuration tabs
-        yield break;
+        // Airline/city management is accessed via Configuration tabs, not a nav item.
+        yield return new NavItem("Flight Management", "/Flight-Data-Editor", "bi-airplane-engines", 20, "Aviation",
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.FlightDataEditor),
+            Permission: DXSuite.Shared.Authorization.PermissionKeys.PageFlightDataEditor);
     }
 
     public IEnumerable<ConfigTab> GetConfigTabs()

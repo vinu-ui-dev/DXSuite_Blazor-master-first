@@ -1,0 +1,40 @@
+.dz-editor {
+    width: min(720px, 92vw);
+}
+
+.dz-tree {
+    max-height: 45vh;
+    overflow-y: auto;
+    border: 1px solid var(--dx-border-color);
+    border-radius: 4px;
+}
+
+.dz-location {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--dx-border-color);
+    background-color: var(--dx-bg-alt);
+}
+
+.dz-location-name {
+    font-weight: 600;
+    flex: 1;
+}
+
+.dz-display {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 4px 10px 4px 48px;
+    border-bottom: 1px solid var(--dx-border-color);
+    font-weight: normal;
+}
+
+.dz-loading {
+    display: flex;
+    justify-content: center;
+    min-height: 120px;
+    align-items: center;
+}

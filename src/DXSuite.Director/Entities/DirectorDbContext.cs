@@ -203,8 +203,24 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
     public virtual DbSet<TblMessageActivation> TblMessageActivations { get; set; }
     public virtual DbSet<TblMessageActivationTarget> TblMessageActivationTargets { get; set; }
     public virtual DbSet<TblMessagePermission> TblMessagePermissions { get; set; }
+    public virtual DbSet<TblMessageActivationVersion> TblMessageActivationVersions { get; set; }
+    public virtual DbSet<TblMessageActivationZone> TblMessageActivationZones { get; set; }
+    public virtual DbSet<TblMessageAsset> TblMessageAssets { get; set; }
+    public virtual DbSet<TblMessageRevision> TblMessageRevisions { get; set; }
+    public virtual DbSet<TblMessageRevisionAsset> TblMessageRevisionAssets { get; set; }
+    public virtual DbSet<TblMessageRevisionText> TblMessageRevisionTexts { get; set; }
+    public virtual DbSet<TblMessageTypeAssetLibrary> TblMessageTypeAssetLibraries { get; set; }
+    public virtual DbSet<TblMessageTypeLanguage> TblMessageTypeLanguages { get; set; }
+    public virtual DbSet<TblMessagingDeliveryState> TblMessagingDeliveryStates { get; set; }
     public virtual DbSet<TblZone> TblZones { get; set; }
     public virtual DbSet<TblZoneDisplay> TblZoneDisplays { get; set; }
+
+    // CoreAPI and the Flight Data Editor
+    public virtual DbSet<TblCoreApiConnection> TblCoreApiConnections { get; set; }
+    public virtual DbSet<TblCoreApiServer> TblCoreApiServers { get; set; }
+    public virtual DbSet<TblCoreApiFeedState> TblCoreApiFeedStates { get; set; }
+
+    public virtual DbSet<TblApprovalReminder> TblApprovalReminders { get; set; }
 
     public async Task<int> ExecuteSqlRawAsync(string sqlCommand)
     {
@@ -1486,10 +1502,10 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
         modelBuilder.Entity<TblMessageType>(entity =>
         {
             entity.HasData(
-                new TblMessageType { MessageTypeId = 1, Code = "EMERGENCY", DisplayName = "Emergency", Priority = 10, DisplayMode = MessageDisplayMode.FullScreen, AllowsSignVideo = true, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30 },
-                new TblMessageType { MessageTypeId = 2, Code = "IRROPS", DisplayName = "IRROPS", Priority = 20, DisplayMode = MessageDisplayMode.Overlay, AllowsSignVideo = false, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30 },
-                new TblMessageType { MessageTypeId = 3, Code = "VISUAL_PAGING", DisplayName = "Visual Paging", Priority = 40, DisplayMode = MessageDisplayMode.Overlay, AllowsSignVideo = true, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30 },
-                new TblMessageType { MessageTypeId = 4, Code = "COUNTER", DisplayName = "Counter", Priority = 50, DisplayMode = MessageDisplayMode.Ticker, AllowsSignVideo = true, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30 });
+                new TblMessageType { MessageTypeId = 1, Code = "EMERGENCY", DisplayName = "Emergency", Priority = 10, DisplayMode = MessageDisplayMode.FullScreen, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30, DefaultTextColor = "#FFFFFF", DefaultBackgroundColor = "#C00000" },
+                new TblMessageType { MessageTypeId = 2, Code = "IRROPS", DisplayName = "IRROPS", Priority = 20, DisplayMode = MessageDisplayMode.Overlay, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30, DefaultTextColor = "#FFFFFF", DefaultBackgroundColor = "#C06000" },
+                new TblMessageType { MessageTypeId = 3, Code = "VISUAL_PAGING", DisplayName = "Visual Paging", Priority = 40, DisplayMode = MessageDisplayMode.Overlay, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30, DefaultTextColor = "#FFFFFF", DefaultBackgroundColor = "#004C97" },
+                new TblMessageType { MessageTypeId = 4, Code = "COUNTER", DisplayName = "Counter", Priority = 50, DisplayMode = MessageDisplayMode.Ticker, DefaultDisplaySeconds = 10, DefaultHideSeconds = 30, DefaultTextColor = "#FFFFFF", DefaultBackgroundColor = "#333333" });
         });
 
         modelBuilder.Entity<TblMessage>(entity =>
@@ -1504,11 +1520,6 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
                 .HasForeignKey(d => d.OwningUserGroupId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .HasConstraintName("FK_tblMessage_OwningUserGroup");
-
-            entity.HasOne(d => d.SignVideoAsset).WithMany()
-                .HasForeignKey(d => d.SignVideoAssetId)
-                .OnDelete(DeleteBehavior.Restrict)
-                .HasConstraintName("FK_tblMessage_SignVideoAsset");
         });
 
         modelBuilder.Entity<TblMessageText>(entity =>
@@ -1529,10 +1540,6 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
 
         modelBuilder.Entity<TblMessageActivationTarget>(entity =>
         {
-            entity.ToTable(t => t.HasCheckConstraint(
-                "CK_tblMessageActivationTarget_OneTarget",
-                "(CASE WHEN [ZoneId] IS NULL THEN 0 ELSE 1 END + CASE WHEN [DisplayId] IS NULL THEN 0 ELSE 1 END + CASE WHEN [LocationId] IS NULL THEN 0 ELSE 1 END) = 1"));
-
             entity.HasOne(d => d.MessageActivation).WithMany(p => p.Targets)
                 .OnDelete(DeleteBehavior.Cascade)
                 .HasConstraintName("FK_tblMessageActivationTarget_tblMessageActivation");
@@ -1541,16 +1548,12 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
                 .HasForeignKey(d => d.ZoneId)
                 .OnDelete(DeleteBehavior.Restrict)
                 .HasConstraintName("FK_tblMessageActivationTarget_tblZone");
+        });
 
-            entity.HasOne(d => d.Display).WithMany()
-                .HasForeignKey(d => d.DisplayId)
-                .OnDelete(DeleteBehavior.Restrict)
-                .HasConstraintName("FK_tblMessageActivationTarget_tblDisplay");
-
-            entity.HasOne(d => d.Location).WithMany()
-                .HasForeignKey(d => d.LocationId)
-                .OnDelete(DeleteBehavior.Restrict)
-                .HasConstraintName("FK_tblMessageActivationTarget_tblLocation");
+        modelBuilder.Entity<TblMessagingDeliveryState>(entity =>
+        {
+            // Seeded so a delivery-version bump never has to create the row (INK-09).
+            entity.HasData(new TblMessagingDeliveryState { MessagingDeliveryStateId = TblMessagingDeliveryState.SingleRowId, Version = Guid.NewGuid() });
         });
 
         modelBuilder.Entity<TblMessagePermission>(entity =>

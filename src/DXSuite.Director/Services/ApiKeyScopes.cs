@@ -22,6 +22,11 @@ public static class ApiKeyScopes
     // a binary, and that is the common case.
     public const string UpdatePublish = "update:publish";
     public const string UpdateDeploy = "update:deploy";
+
+    // Messaging (GTAA FSD 1.1 MSG-19, INK-03)
+    public const string MessagingSend = "messaging:send";
+    public const string MessagingRead = "messaging:read";
+
     public const string Wildcard = "*";
 
     /// <summary>
@@ -36,7 +41,9 @@ public static class ApiKeyScopes
         OverrideTrigger,
         TokenValidate,
         UpdatePublish,
-        UpdateDeploy
+        UpdateDeploy,
+        MessagingSend,
+        MessagingRead
     };
 
     /// <summary>

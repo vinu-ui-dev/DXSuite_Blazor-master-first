@@ -1,0 +1,75 @@
+@page "/Flight-Data-Editor"
+@using DXSuite.Shared.Multitenancy
+@attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
+@rendermode InteractiveServer
+@inject ISessionState sessionState
+@using DXSuite.Shared.Authorization
+
+@if (!accessResolved) {
+    <div style="display:flex; justify-content:center; padding:48px 0;">
+        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
+    </div>
+} else if (!hasAccess) {
+    <section>
+        <div class="dx-section">
+            <p style="padding: 24px;">You do not have permission to access this page.</p>
+        </div>
+    </section>
+} else {
+<section class="dx-page-header"> <div class="dx-page-header-flex"> <h2>ADMIN</h2> </div> </section>
+<section class="dx-page-body">
+
+    <div style="display:flex; flex-direction:column; height:calc(100vh - 5.5rem);">
+
+        @* Tab bar on desktop; the select replaces it below the tablet breakpoint *@
+        <div class="dx-tab-nav dx-tab-nav-collapsible" style="flex-shrink:0;">
+            @foreach (var tab in settingsTabs) {
+                <button class="dx-tab-btn @(activeTab == tab.Key ? "active" : "")"
+                        @onclick="@(() => activeTab = tab.Key)">
+                    @tab.Label
+                </button>
+            }
+        </div>
+        <select class="dx-form-control dx-tab-select" style="flex-shrink:0;" @bind="activeTab">
+            @foreach (var tab in settingsTabs) {
+                <option value="@tab.Key">@tab.Label</option>
+            }
+        </select>
+        <div class="dx-tab-content dx-tab-content-standalone" style="flex:1;padding-top:0px">
+            @foreach (var tab in settingsTabs) {
+                if (activeTab == tab.Key) {
+                    <DynamicComponent Type="@tab.ComponentType" />
+                }
+            }
+        </div>
+
+    </div>
+</section>
+}
+@code
+{
+    /// <summary>
+    /// The editor's tabs. 1.1 has Flight Management only; 1.2 adds its pages here (B-132). Each tab checks its
+    /// own key, since a tab's component is also reachable by its own route.
+    /// </summary>
+    public static IReadOnlyList<FlightDataEditorTab> Tabs { get; } =
+    [
+        new() { Key = "FlightManagement", Label = "Flight Management", ComponentType = typeof(FlightManagement), Order = 1 },
+        new() { Key = "CounterAllocation", Label = "Counter Allocation", ComponentType = typeof(DXSuite.Aviation.Pages.CounterAllocation.CounterAllocations), Order = 2 },
+    ];
+
+    private IReadOnlyList<FlightDataEditorTab> settingsTabs = [];
+    private string? activeTab;
+
+    private bool accessResolved;
+    private bool hasAccess;
+
+    protected override async Task OnInitializedAsync() {
+        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+        if (!hasAccess) return;
+
+        settingsTabs = Tabs.OrderBy(t => t.Order).ToList();
+        activeTab = settingsTabs[0].Key;
+    }
+}

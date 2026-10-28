@@ -1,0 +1,8 @@
+@* The Flight Data Editor's banner while CoreAPI is unreachable (FDE-11), on the page and on each open form. *@
+@if (Shown) {
+    <div class="dx-alert dx-alert-warning fde-unreachable" role="status" style="margin-bottom:16px;">@CoreApiReach.Banner</div>
+}
+
+@code {
+    [Parameter] public bool Shown { get; set; }
+}
