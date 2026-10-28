@@ -11,30 +11,16 @@
 @inject ICoreApiSettingsStore coreApiSettings
 @inject ICoreApiLiveFeed liveFeed
 @using TblLocation = DXSuite.Connectors.Services.CoreApi.Models.TblLocation
-@inject NavigationManager Navigation
 @inject Microsoft.Extensions.Options.IOptions<DXSuite.Aviation.Services.FlightDataEditor.FlightDataEditorOptions> editorOptions
 @inject ICoreApiFeedStateReader feedStateReader
 @inject DXSuite.Aviation.Services.FlightDataEditor.IFlightListClock flightListClock
 @using DXSuite.Aviation.Services.FlightDataEditor
 @implements IAsyncDisposable
 @implements ICoreApiHubObserver
-@inject ISessionState sessionState
-@using DXSuite.Shared.Authorization
 
-@if (!accessResolved) {
-    <div style="display:flex; justify-content:center; padding:48px 0;">
-        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
-    </div>
-} else if (!hasAccess) {
-    <section>
-        <div class="dx-section">
-            <p style="padding: 24px;">You do not have permission to access this page.</p>
-        </div>
-    </section>
-} else {
 @if (notConfigured) {
     <div id="fde-not-configured" class="dx-alert dx-alert-warning">
-        The CoreAPI connection is not set up. Ask an administrator to configure it in Settings &gt; CoreAPI Connection.
+        The CoreAPI connection is not set up. Configure it in <a href="/settings/coreapi-connection">Settings &gt; CoreAPI Connection</a>.
     </div>
 } else if (firstLoad) {
     <div>
@@ -216,7 +202,6 @@
     <OverrideArrivalFlightModal @ref="overrideArrivalFlightModal" ReadOnly="formsReadOnly"></OverrideArrivalFlightModal>
     <OverrideFlightsModal @ref="overrideFlightsModal" ReadOnly="formsReadOnly"></OverrideFlightsModal>
 </CascadingValue>
-}
 
 @code
 {
@@ -316,15 +301,9 @@
     public bool ArrivalClaimSort = false;
     public bool ArrivalCarrierSort = false;
     #endregion
-    private bool accessResolved;
-    private bool hasAccess;
     private bool notConfigured;
 
     protected override async Task OnInitializedAsync() {
-        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
-        accessResolved = true;
-        if (!hasAccess) return;
-
         base.OnInitialized();
 
         if (await CheckConfig()) {
@@ -336,11 +315,7 @@
             firstLoad = false;
             _ = FollowTheClockAsync();
             await InvokeAsync(StateHasChanged);
-        } else if (await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection)) {
-            // The CoreAPI connection is a Settings tab (CAPI-10); the link opens that tab rather than Settings' first.
-            Navigation.NavigateTo("/settings/" + PermissionKeys.CoreApiConnectionConfigTabKey);
         } else {
-            // Settings would not offer this user the tab, so sending them there would only bounce them.
             notConfigured = true;
         }
     }

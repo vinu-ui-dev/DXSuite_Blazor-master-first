@@ -1,46 +1,32 @@
 @* The CoreAPI connection settings tab (CAPI-10): the key page and, for a tenant with the Flight Data Editor, the
-   editor's instance-wide field settings (FDE-01). Settings offers it only with config-tab:coreapi-connection; the
-   check here keeps the tab closed to anything that renders it without going through Settings. *@
+   editor's instance-wide field settings (FDE-01). *@
 @using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Multitenancy
-@inject ISessionState sessionState
 @inject ITenantContext tenantContext
 @inject ICoreApiSettingsStore coreApiSettings
 
-@if (!accessResolved) {
-    <div style="display:flex; justify-content:center; padding:48px 0;">
-        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
-    </div>
-} else if (!hasAccess) {
-    <section>
-        <div class="dx-section">
-            <p style="padding: 24px;">You do not have permission to access this page.</p>
-        </div>
-    </section>
-} else {
-    @* Tab bar on desktop; the select replaces it below the tablet breakpoint *@
-    <div class="dx-tab-nav dx-tab-nav-collapsible">
-        @foreach (var tab in tabs) {
-            <button class="dx-tab-btn @(activeTab == tab.Key ? "active" : "")"
-                    @onclick="@(() => activeTab = tab.Key)">
-                @tab.Label
-            </button>
-        }
-    </div>
-    <select class="dx-form-control dx-tab-select" @bind="activeTab">
-        @foreach (var tab in tabs) {
-            <option value="@tab.Key">@tab.Label</option>
-        }
-    </select>
+@* Tab bar on desktop; the select replaces it below the tablet breakpoint *@
+<div class="dx-tab-nav dx-tab-nav-collapsible">
+    @foreach (var tab in tabs) {
+        <button class="dx-tab-btn @(activeTab == tab.Key ? "active" : "")"
+                @onclick="@(() => activeTab = tab.Key)">
+            @tab.Label
+        </button>
+    }
+</div>
+<select class="dx-form-control dx-tab-select" @bind="activeTab">
+    @foreach (var tab in tabs) {
+        <option value="@tab.Key">@tab.Label</option>
+    }
+</select>
 
-    <div>
-        @if (activeTab == KeyManagementTab.Key) {
-            <CoreAPIKey />
-        } else if (activeTab == FieldSettingsTab.Key && flightDataEditorOn) {
-            <FlightDataEditorUserSettings NavigateToManagement="@NavigateToManagement" />
-        }
-    </div>
-}
+<div>
+    @if (activeTab == KeyManagementTab.Key) {
+        <CoreAPIKey />
+    } else if (activeTab == FieldSettingsTab.Key && flightDataEditorOn) {
+        <FlightDataEditorUserSettings NavigateToManagement="@NavigateToManagement" />
+    }
+</div>
 
 @code {
     private sealed record ConnectionTab(string Key, string Label);
@@ -51,17 +37,11 @@
     private List<ConnectionTab> tabs = new();
     private string? activeTab;
 
-    private bool accessResolved;
-    private bool hasAccess;
     // The field settings belong to the Flight Data Editor, so they follow its tenant flag even if another
     // capability later shows this tab.
     private bool flightDataEditorOn;
 
     protected override async Task OnInitializedAsync() {
-        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection);
-        accessResolved = true;
-        if (!hasAccess) return;
-
         await SetTabs();
     }
 

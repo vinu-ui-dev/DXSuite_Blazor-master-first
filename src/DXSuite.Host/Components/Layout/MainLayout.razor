@@ -464,7 +464,7 @@
         // (the real Admin role bypasses permission checks and sees everything).
         var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
         showSettings = availableModules.SelectMany(m => m.GetSettingsTabs())
-            .Any(t => perms == null || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
+            .Any(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
         showConfig = availableModules.SelectMany(m => m.GetConfigTabs())
             .Any(t => perms == null || perms.Contains(PermissionKeys.ForConfigTab(t.Key)));
 

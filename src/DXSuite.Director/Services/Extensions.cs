@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using DXSuite.Connectors.Services.CoreApi.Demo;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using FFMpegCore;
@@ -397,7 +398,9 @@ public static class Extensions
         services.AddScoped<IDisplayZoneService, DisplayZoneService>();
         services.AddCoreApiStores();
         services.AddOutageSwitchOff();
-        services.AddCoreApiClient();
+        var coreApiClient = services.AddCoreApiClient();
+        // Sample flights with no real CoreAPI behind them, for demonstrations and development.
+        if (config.GetValue<bool>("CoreApi:DemoMode")) coreApiClient.UseDemoCoreApi();
         services.AddCoreApiLiveFeed();
         if (runBackgroundServices)
         {

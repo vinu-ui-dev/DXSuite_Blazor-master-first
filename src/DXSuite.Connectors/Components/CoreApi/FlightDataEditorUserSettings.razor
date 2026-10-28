@@ -8,17 +8,6 @@
 @inject IServiceProvider services
 @inject Microsoft.Extensions.Logging.ILogger<FlightDataEditorUserSettings> logger
 
-@if (!accessResolved) {
-    <div style="display:flex; justify-content:center; padding:48px 0;">
-        <div class="dx-spinner" style="width:3rem; height:3rem;"></div>
-    </div>
-} else if (!hasAccess) {
-    <section>
-        <div class="dx-section">
-            <p style="padding: 24px;">You do not have permission to access this page.</p>
-        </div>
-    </section>
-} else {
 <section class="dx-page-header" style="padding:15px 0px; background-color:white"><div class="dx-page-header-flex"><h2>Override Settings</h2></div></section>
 <section class="dx-page-body" style="padding-top: 0">
     @if (!loading) {
@@ -73,7 +62,6 @@
 @if (toastVisible) {
     <div class="dx-toast">@toastMsg</div>
 }
-}
 
 @code {
     [Parameter]
@@ -105,14 +93,7 @@
 
     bool loading = true;
 
-    private bool accessResolved;
-    private bool hasAccess;
-
     protected override async Task OnInitializedAsync() {
-        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.ConfigTabCoreApiConnection);
-        accessResolved = true;
-        if (!hasAccess) return;
-
         if (await CheckConfig()) {
             await GetUserSettings();
             ProcessBools();

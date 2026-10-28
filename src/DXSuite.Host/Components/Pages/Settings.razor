@@ -89,7 +89,7 @@ else
 
         settingsTabs = Modules
             .SelectMany(m => m.GetSettingsTabs())
-            .Where(t => perms == null || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)))
+            .Where(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)))
             .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
             .Where(t => t.TenantFeature == null || typeof(TenantFeatureFlags).GetProperty(t.TenantFeature)?.GetValue(tenantFeatures) is true)
             .Where(t => t.Module == null || moduleNames.Contains(t.Module))

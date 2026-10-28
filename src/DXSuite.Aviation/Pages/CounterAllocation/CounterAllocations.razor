@@ -10,16 +10,6 @@
 @inject CounterAllocationOutageState outageState
 @inject ISessionState sessionState
 
-@if (!accessResolved)
-{
-    <div class="dx-spinner"></div>
-}
-else if (!hasAccess)
-{
-    <p>You do not have permission to access this page.</p>
-}
-else
-{
     <div class="dx-card" style="margin-bottom: 1rem; padding: 1rem; display:flex; align-items:center; gap: 1rem;">
         <strong>Manual mode:</strong>
         @if (outageState.IsOn)
@@ -106,11 +96,8 @@ else
             <div class="dx-table-row"><div>No allocations in the next 12 hours.</div></div>
         }
     </div>
-}
 
 @code {
-    private bool accessResolved;
-    private bool hasAccess;
     private IReadOnlyList<TblCounterAllocation> allocations = [];
     private string? error;
 
@@ -124,9 +111,7 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        hasAccess = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
-        accessResolved = true;
-        if (hasAccess) await RefreshAsync();
+        await RefreshAsync();
     }
 
     private async Task RefreshAsync()

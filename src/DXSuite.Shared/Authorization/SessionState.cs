@@ -214,6 +214,16 @@ namespace DXSuite.Shared.Authorization
         /// </summary>
         private async Task ApplyRoleAsync(TblUser user, IIdentityDbContext db)
         {
+            // Development switch: every signed-in user gets the built-in Admin role for this session, which
+            // every permission, menu and location-access check already treats as "allowed". Nothing is stored.
+            if (_configuration.GetValue<bool>("Authorization:BypassPermissionChecks"))
+            {
+                ActualRoleId = (int)Roles.Role.Admin;
+                RoleEnum = Roles.Role.Admin;
+                ActualRoleName = RoleEnum.ToString();
+                return;
+            }
+
             ActualRoleId = user.RoleId;
 
             if (user.RoleId is >= (int)Roles.Role.Admin and <= (int)Roles.Role.NewUser)
