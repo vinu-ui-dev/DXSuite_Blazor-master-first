@@ -1,0 +1,744 @@
+@page "/cupps-agent-screens"
+@rendermode InteractiveServer
+@using static DXSuite.Aviation.Pages.Cupps.CuppsData
+
+<PageTitle>@Title</PageTitle>
+
+
+@*
+    Prototype (DXME-500, map DXME-430): how the CUPPS app's agent screens should look. Starts from the FSD 1.2
+    v0.7 screens (Diagram 1 My Counter, Diagram 2 All Counters, Diagrams 25/26 Messages, Diagrams 31/32 RMU
+    sign-in) and the DXSuite style guide. All state is in memory; nothing is saved or sent anywhere.
+*@
+<div class="cupps-proto">
+    <div class="pt-frame">
+        <div class="pt-app">
+            @switch (screen)
+            {
+                case "login": @LoginScreen() break;
+                case "rmu-pick": @RmuPick() break;
+                case "ended": @EndedScreen() break;
+                default: @AppScreen() break;
+            }
+        </div>
+    </div>
+
+    @if (toast is not null)
+    {
+        <div class="dx-toast">@toast</div>
+    }
+</div>
+
+@code {
+    private RenderFragment Mark(string airline, string cls = "") =>
+        @<span class="dx-airline-mark @cls" style="background:@Airlines[airline].Bg">@airline</span>;
+
+    // ---------- Screen render (Sent preview), after Diagrams 3 and 37 ----------
+    private RenderFragment Half(CounterSetup? s, bool extra = false, bool flair = false)
+    {
+        if (flair)
+            return @<div class="half" style="background:@Airlines["F8"].Bg"><div class="logo">FLAIR</div><div class="en">Check-In</div><div class="fr">Enregistrement</div></div>;
+        if (s is not { Open: true })
+            return @<div class="half filler">Filler</div>;
+        var a = Airlines[MyAirline];
+        var t = Tpl(s.Page);
+        var bg = t?.Kind == "Custom" ? t.Img : a.Bg;
+        return @<div class="half" style="background:@bg">
+            <div class="logo">@a.Name.ToUpperInvariant()</div>
+            @if (t is not null)
+            {
+                <div class="en">@t.En</div><div class="fr">@t.Fr</div>
+            }
+            @if (s.Asl && !extra)
+            {
+                <span class="asl">ASL video</span>
+            }
+        </div>;
+    }
+
+    /// Destination and time show only while one page fills the screen; two halves drop both on each side.
+    private RenderFragment Band(CounterSetup? s, bool halves = false)
+    {
+        if (s is not { Open: true })
+            return @<div></div>;
+        var msgs = MessagesOf(s);
+        var al = Airlines[MyAirline].Alliance;
+        return @<div>
+            <div class="brow">
+                <span class="alliance">@al@if (s.Sunflower) {<span class="cp-sunflower" style="width:1.6em;height:1.6em;"></span>}</span>
+                @if (!halves && s.Dest != "")
+                {
+                    <span class="bdest">@s.Dest</span>
+                }
+            </div>
+            <div class="brow">
+                @if (msgs.Count > 0) { <span class="ticker">@Cycle(msgs)</span> } else { <span></span> }
+                @if (!halves) { <span class="clock">@Clock12(now)</span> }
+            </div>
+        </div>;
+    }
+
+    private RenderFragment ScreenFor(CounterSetup? st, string size)
+    {
+        var si = GetSplit();
+        var s = st is { Open: true } ? st : null;
+        RenderFragment area = Half(s), band = Band(s);
+        if (si.Split && si.SameAirline)
+        {
+            var o = Pub(si.Other);
+            if (s is not null && s.Layout == "two")
+            {
+                area = @<text>@Half(s, true)@Half(o, true)</text>;
+                band = @<text>@Band(s, true)@Band(o, true)</text>;
+            }
+            else if (s is null && o is { Open: true })
+            {
+                area = Half(o); band = Band(o);
+            }
+        }
+        else if (si.Split)
+        {
+            if (s is not null && si.OtherOpen)
+            {
+                area = @<text>@Half(s, true)@Half(null, true, flair: true)</text>;
+                band = @<text>@Band(s, true)<div></div></text>;
+            }
+            else if (s is null && si.OtherOpen)
+            {
+                area = Half(null, flair: true); band = @<div></div>;
+            }
+        }
+        return @<div class="cp-screen @size"><div class="area">@area</div><div class="band">@band</div></div>;
+    }
+
+    private RenderFragment TextSummary(CounterSetup? s)
+    {
+        if (s is not { Open: true })
+            return @<div class="cp-textsum"><div><b>State</b> Closed, filler showing</div></div>;
+        var t = Tpl(s.Page);
+        var msgs = MessagesOf(s);
+        return @<div class="cp-textsum">
+            <div><b>Page</b> @(t?.En ?? "None")</div>
+            <div><b>Messages</b> @(msgs.Count > 0 ? string.Join(" ", msgs.Select((m, i) => $"{i + 1}. {m}")) : "None")</div>
+            <div><b>ASL</b> @(s.Asl ? "On" : "Off"), <b style="min-width:0">Sunflower</b> @(s.Sunflower ? "On" : "Off")</div>
+            @if (s.Dest != "") { <div><b>Destination</b> @s.Dest</div> }
+        </div>;
+    }
+
+    // ---------- Shell pieces: bare CUPPS layout, as in Diagrams 31 and 32 ----------
+    private RenderFragment Navbar()
+    {
+        var signedIn = screen is "app" or "rmu-pick";
+        return @<div class="dx-navbar">
+            <div class="dx-navbar-user">
+                @if (signedIn)
+                {
+                    <span>@Sc.Who</span>
+                    @if (InApp) { @Mark(MyAirline) }
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="SignOut">Sign out</button>
+                }
+            </div>
+        </div>;
+    }
+
+    private RenderFragment CounterBand()
+    {
+        var id = Station!;
+        var a = AllocFor(id, MyAirline)!;
+        var w = IsWaiting;
+        return @<div class="cp-band">
+            <h2>@id@if (Counters.First(c => c.Id == id).Ssbd) {<span style="font-size:1rem;font-weight:600;"> SSBD</span>}</h2>
+            <div>
+                <span class="cp-alloc">@Airlines[MyAirline].Name allocation (@Hm(a.From) to @Hm(a.To), @a.Type)</span>
+                <span class="cp-left">@(w ? $"Starts in {Left(a.From - now)}" : $"{Left(a.To - now)} remaining")</span>
+            </div>
+        </div>;
+    }
+
+    private RenderFragment Alerts() => @<text>
+        @if (acting is { } act)
+        {
+            <div class="dx-alert dx-alert-info" style="justify-content:space-between;align-items:center;">
+                <span><b>Acting for @Airlines[act.Airline].Name</b> at counter @act.Counter. What you publish is recorded as @Sc.Who acting for @Airlines[act.Airline].Name.</span>
+                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="ChangeActing">Change airline or counter</button>
+            </div>
+        }
+        @if (coreDown)
+        {
+            <div class="dx-alert dx-alert-warning"><span><b>Allocation and flight data are unavailable.</b> You can still publish to @Station. All Counters and flights come back when the connection returns.</span></div>
+        }
+        @if (message is { Dismissed: false })
+        {
+            <div class="dx-alert dx-alert-danger" style="align-items:center;">
+                <span class="dx-badge dx-badge-red">Emergency</span>
+                <span style="flex:1;"><b>@message.En</b><br>@message.Fr</span>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => message.Dismissed = true">Dismiss</button>
+            </div>
+        }
+        @if (IsWaiting)
+        {
+            <div class="dx-alert dx-alert-warning"><span><b>You signed in early.</b> Prepare the counter now. Nothing reaches the screen until @Hm(AllocFor(Station, MyAirline)!.From).</span></div>
+        }
+    </text>;
+
+    private static readonly (string Key, string Label)[] Tabs =
+        [("mine", "My Counter"), ("all", "All Counters"), ("flights", "View Flights"), ("messages", "Messages")];
+
+    private RenderFragment TabRow()
+    {
+        var p = Pub(Station);
+        var w = IsWaiting;
+        var open = p?.Open == true;
+        var dirty = IsDirty();
+        var a = AllocFor(Station, MyAirline)!;
+        return @<div class="cp-tabs">
+            @foreach (var (k, l) in Tabs)
+            {
+                <button class="dx-tab-btn @(tab == k ? "active" : "")" disabled="@(coreDown && k is "all" or "flights")" @onclick="() => SetTab(k)">@l</button>
+            }
+            <div class="cp-tabs-right">
+                @if (confirmClose)
+                {
+                    <span class="cp-confirm">Close @Station? The screen shows filler.
+                        <button class="dx-btn dx-btn-gray" @onclick="() => confirmClose = false">Keep open</button>
+                        <button class="dx-btn dx-btn-red" @onclick="CloseCounter">Close counter</button>
+                    </span>
+                }
+                else
+                {
+                    <span class="cp-status">@Station COUNTER &raquo;
+                        @if (w) { <span class="wait">WAITING</span> } else if (open) { <span class="open">OPEN</span> } else { <span class="closed">CLOSED</span> }
+                    </span>
+                    @if (dirty && !(w && waitingReady))
+                    {
+                        <span class="dx-badge dx-badge-orange">Not published</span>
+                    }
+                    @if (open && !w)
+                    {
+                        <button class="dx-btn dx-btn-outline-red" @onclick="() => confirmClose = true">Close counter</button>
+                    }
+                    @if (w)
+                    {
+                        <button class="dx-btn dx-btn-blue" disabled="@(waitingReady && !dirty)" @onclick="Publish">@(waitingReady && !dirty ? $"Ready for {Hm(a.From)}" : $"Publish at {Hm(a.From)}")</button>
+                    }
+                    else
+                    {
+                        <button class="dx-btn dx-btn-blue" disabled="@(!dirty && open)" @onclick="Publish">Publish</button>
+                    }
+                }
+            </div>
+        </div>;
+    }
+
+    // ---------- My Counter (Diagram 1) ----------
+    /// The preview follows the draft while it has unpublished changes, so a switch or page pick shows at once.
+    private RenderFragment SentBox()
+    {
+        var preview = IsDirty();
+        var p = preview ? DraftPreview() : Pub(Station);
+        var open = p?.Open == true;
+        var t = open ? Tpl(p!.Page) : null;
+        var caption = preview ? "Preview of your changes. Not published yet."
+            : open ? $"Sent to this counter at {Hm(p!.SentAt)}" : "Nothing sent. This counter is closed.";
+        return @<div class="cp-sent">
+            <span class="cp-sub">@if (preview) {<span class="dx-badge dx-badge-orange" style="margin-right:6px;">Preview</span>}@caption</span>
+            @if (fallback)
+            {
+                @TextSummary(p)
+            }
+            else if (open)
+            {
+                <span class="cp-sent-page">@(t?.En ?? Airlines[MyAirline].Name)</span>
+                @ScreenFor(p, "cp-screen-sm")
+            }
+            else
+            {
+                <span class="cp-sent-closed">Closed</span>
+            }
+            <div style="display:flex;justify-content:flex-end;">
+                @if (open && !fallback)
+                {
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => viewSent = true">View &gt;</button>
+                }
+            </div>
+        </div>;
+    }
+
+    private RenderFragment PageOptions()
+    {
+        if (!deviation)
+            return @<div><div class="cp-pages-head"><h4>Page Options</h4></div><div style="border:1px solid #e3e3e3;border-top:0;padding:14px;" class="dx-text-muted">This instance has no counter page list. Publish shows the airline's screen with your Messages.</div></div>;
+        var kind = EffectivePickTab;
+        var all = Usable().Where(t => t.Kind == kind).ToList();
+        var big = all.Count > 15;
+        // Past three rows the grid stops growing: it scrolls inside a fixed height and a search box narrows it.
+        var q = big ? psearch.Trim().ToLowerInvariant() : "";
+        var shown = q != "" ? all.Where(t => $"{t.En} {t.Fr}".ToLowerInvariant().Contains(q)).ToList() : all;
+        var empties = big ? 0 : Math.Max(10, (int)Math.Ceiling(shown.Count / 5.0) * 5) - shown.Count;
+        var selT = Tpl(draft.Page);
+        return @<div>
+            <div class="cp-pages-head">
+                <h4>Page Options</h4>
+                @if (big)
+                {
+                    <input class="dx-search-input cp-psearch" placeholder="Search pages..." @bind="psearch" @bind:event="oninput">
+                }
+                <div class="cp-seg">
+                    @foreach (var k in new[] { "Standard", "Custom" })
+                    {
+                        <button class="@(kind == k ? "on" : "")" @onclick="() => PickTab(k)">@k Templates</button>
+                    }
+                </div>
+            </div>
+            <div class="cp-pages @(big ? "cp-pages-scroll" : "")">
+                @if (shown.Count == 0)
+                {
+                    <div class="dx-text-muted" style="grid-column:1/-1;padding:8px;">No pages match.</div>
+                }
+                @foreach (var t in shown)
+                {
+                    <button class="cp-page @(draft.Page == t.Id ? "on" : "")" @onclick="() => draft.Page = t.Id">
+                        <span>@t.En</span><span class="cp-fr">@t.Fr</span>
+                        @if (t.EndsToday) { <span><span class="cp-ends">Ends today</span></span> }
+                        @if (t.Scope != "airport") { <span class="cp-kind">@Airlines[t.Scope].Name only</span> }
+                    </button>
+                }
+                @for (var i = 0; i < empties; i++)
+                {
+                    <div class="cp-empty"></div>
+                }
+            </div>
+            @if (big)
+            {
+                <div class="cp-pages-foot"><span>Showing @shown.Count of @all.Count</span><span>Selected: <b>@(selT?.En ?? "None")</b></span></div>
+            }
+        </div>;
+    }
+
+    private RenderFragment SharedNote()
+    {
+        var si = GetSplit();
+        if (!si.Split) return @<text></text>;
+        if (si.SameAirline)
+            return @<div class="dx-alert dx-alert-info" style="flex-direction:column;gap:8px;">
+                <b>This screen is shared with counter @si.Other, also yours.</b>
+                <div class="cp-seg" style="border:1px solid #b8daff;">
+                    <button class="@(draft.Layout == "one" ? "on" : "")" @onclick="@(() => draft.Layout = "one")">One page across the screen</button>
+                    <button class="@(draft.Layout == "two" ? "on" : "")" @onclick="@(() => draft.Layout = "two")">Two halves</button>
+                </div>
+                <span>@(draft.Layout == "one" ? $"Your page fills the screen. {si.Other} shows it too." : $"Each counter shows its own page. Set {si.Other} on All Counters.")</span>
+            </div>;
+        return @<div class="dx-alert dx-alert-info" style="flex-direction:column;gap:4px;">
+            <b>This screen is shared with counter @si.Other (another airline).</b>
+            <span>@(si.OtherOpen ? "Both counters are open, so the screen shows two halves. Yours is the left half." : $"{si.Other} is closed, so your page fills the screen.")</span>
+        </div>;
+    }
+
+    private RenderFragment Destination()
+    {
+        if (AllocFor(Station, MyAirline)?.Type != "Dedicated") return @<text></text>;
+        return @<div>
+            <h3 class="cp-h">Destination</h3>
+            <input class="dx-form-control" style="max-width:320px;" @bind="draft.Dest" @bind:event="oninput" placeholder="For example Cancun">
+            <div class="cp-sub" style="margin-top:4px;">Shown because this allocation is Dedicated. Goes out with Publish.</div>
+        </div>;
+    }
+
+    /// A dx-toggle drawn from state alone, so the switch can never show a value the page does not hold.
+    private RenderFragment Switch(bool on, Action<bool> set, string label, bool disabled = false) =>
+        @<button type="button" role="switch" class="dx-toggle cp-switch" aria-checked="@(on ? "true" : "false")" aria-label="@label"
+                 disabled="@disabled" @onclick="() => set(!on)"><span class="dx-toggle-slider @(on ? "on" : "")"></span></button>;
+
+    private RenderFragment Toggle(bool on, Action<bool> set, string label) =>
+        @<text>@Switch(on, set, label)<span>@(on ? "SHOWN" : "HIDDEN")</span></text>;
+
+    private RenderFragment Switches() => @<div class="cp-row2">
+        @if (GetSplit().Split)
+        {
+            <div><h3 class="cp-h">ASL Videos</h3><div class="cp-sub">Not available on a shared screen.</div></div>
+        }
+        else
+        {
+            <div><h3 class="cp-h">ASL Videos</h3><div class="cp-sub">When on, ASL videos show on this counter's screen.</div><div class="cp-tog">@Toggle(draft.Asl, v => draft.Asl = v, "ASL Videos")</div></div>
+        }
+        <div><h3 class="cp-h">International Sunflower</h3><div class="cp-sub">Hidden disabilities Sunflower symbol.</div><div class="cp-tog"><span class="cp-sunflower"></span>@Toggle(draft.Sunflower, v => draft.Sunflower = v, "International Sunflower")</div></div>
+    </div>;
+
+    private RenderFragment MessageRows()
+    {
+        var full = SlotsUsed >= 2;
+        var typedOff = full && draft.Text == "";
+        return @<text>
+            <div class="cp-msg-head"><span>Approved Messages</span><span>ACTIONS</span></div>
+            <div class="cp-msgs">
+                @foreach (var m in CannedMessages)
+                {
+                    var i = draft.Msgs.IndexOf(m.Id);
+                    <div class="cp-msg">
+                        <span>@m.En<span class="cp-fr">@m.Fr</span></span>
+                        <button class="dx-btn dx-btn-sm cp-pick @(i >= 0 ? "dx-btn-blue" : "dx-btn-outline-blue")" disabled="@(i < 0 && full)"
+                                title="@(i < 0 && full ? "Two Messages already selected" : null)" @onclick="() => ToggleMsg(m.Id)">@(i >= 0 ? $"Active {i + 1}" : "Select")</button>
+                    </div>
+                }
+                @if (Can("feature:cupps-free-text"))
+                {
+                    <div class="cp-msg" style="grid-template-columns:1fr auto auto;">
+                        <span>
+                            <input class="dx-form-control" maxlength="160" @bind="draft.Text" @bind:event="oninput"
+                                   placeholder="@(typedOff ? "Two Messages already selected" : "Type a one-off Message for this counter")" disabled="@typedOff">
+                            <span class="cp-sub">@draft.Text.Length / 160</span>
+                        </span>
+                        @if (Can("feature:cupps-save-canned"))
+                        {
+                            <label style="display:flex;gap:6px;align-items:center;font-size:.85rem;white-space:nowrap;"><input type="checkbox" class="dx-checkbox" @bind="draft.SaveText"> Also save to our list</label>
+                        }
+                        else
+                        {
+                            <span></span>
+                        }
+                        <span class="dx-badge @(draft.Text.Trim() != "" ? "dx-badge-blue" : "dx-badge-gray") cp-pick" style="text-align:center;">@(draft.Text.Trim() != "" ? $"Active {draft.Msgs.Count + 1}" : "Not used")</span>
+                    </div>
+                }
+            </div>
+            <div class="cp-sub" style="margin-top:6px;">Select up to two. They play one after the other in the order you select them. Press Publish to send.@(draft.SaveText ? " Saving to the list sends the text for approval first." : "")</div>
+        </text>;
+    }
+
+    private RenderFragment MyMessageSummary()
+    {
+        var items = MessagesOf(new CounterSetup { Msgs = draft.Msgs, Text = draft.Text.Trim() });
+        return @<div>
+            <h3 class="cp-h">My Messages</h3>
+            <div class="cp-mymsg">
+                @if (items.Count == 0)
+                {
+                    <span class="dx-text-muted" style="font-weight:400;">No Message</span>
+                }
+                @for (var i = 0; i < items.Count; i++)
+                {
+                    <span><span class="n">@(i + 1)</span>@items[i]</span>
+                }
+            </div>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:10px;" @onclick="@(() => SetTab("messages"))">Manage Messages</button>
+        </div>;
+    }
+
+    private RenderFragment FlightsTable(int n)
+    {
+        if (coreDown) return @<div class="dx-text-muted">Flights are unavailable while flight data is down.</div>;
+        var list = NextFlights(n);
+        return @<table class="cp-flights">
+            <thead><tr><th>Departing time</th><th>ATA</th><th>Status</th><th>Destination</th><th>Airline / code share</th><th>Flight #</th><th>Gate</th></tr></thead>
+            <tbody>
+                @for (var i = 0; i < list.Count; i++)
+                {
+                    var f = list[i];
+                    // GTAA: one row per flight; airline and flight number cycle main, codeshare 1, main, codeshare 2.
+                    var seq = f.Carriers.Length > 1 ? f.Carriers.Skip(1).SelectMany(cs => new[] { f.Carriers[0], cs }).ToList() : [f.Carriers[0]];
+                    <tr class="first @(i % 2 == 0 ? "alt" : "")">
+                        <td>@Hm(f.Sched)</td><td>@Hm(f.Actual)</td><td class="@(f.Status == "Delayed" ? "cp-delay" : "")">@f.Status</td><td>@f.Dest</td>
+                        <td>@Cycle(seq.Select(x => x.Airline).ToList())</td><td>@Cycle(seq.Select(x => x.No).ToList())</td><td>@f.Gate</td>
+                    </tr>
+                }
+            </tbody>
+        </table>;
+    }
+
+    private RenderFragment MyCounter() => @<text>
+        <div class="cp-grid">
+            <div class="cp-col">@SentBox()@MyMessageSummary()@Destination()</div>
+            <div class="cp-col">@SharedNote()@PageOptions()@Switches()</div>
+        </div>
+        <div><h3 class="cp-h">Next 4 Flights</h3>@FlightsTable(4)</div>
+    </text>;
+
+    private RenderFragment MessagesTab() => @<text>
+        <div class="cp-msgs-title">
+            <h3 class="cp-h" style="font-size:1.8rem;">Messages</h3>
+            <button class="dx-btn dx-btn-outline-red" disabled="@(SlotsUsed == 0)" @onclick="ClearMessages">Clear Message(s)</button>
+        </div>
+        @MessageRows()
+    </text>;
+
+    // ---------- All Counters (Diagram 2) ----------
+    private RenderFragment CounterTile(Counter c)
+    {
+        var code = MyAirline;
+        var w = IsWaiting;
+        var h = HolderNow(c.Id);
+        var label = $"{c.Id}{(c.Ssbd ? " - SSBD" : "")}";
+        RenderFragment shared = c.Split is not null
+            ? @<span class="cp-tile-shared">Shares screen with @c.Split</span>
+            : @<span class="cp-tile-shared">&nbsp;</span>;
+        if (h is not null && h.Code == code)
+        {
+            var p = Pub(c.Id);
+            var open = p?.Open == true;
+            var t = open ? Tpl(p!.Page) : null;
+            var isSel = sel.Contains(c.Id);
+            return @<div class="cp-tile">
+                <span class="cp-tile-id" style="@(c.Id == Station ? "background:var(--dx-blue)" : null)">@label</span>
+                <div class="cp-tile-box @(open ? "" : "closed") @(isSel ? "sel" : "")" @onclick="() => ToggleSel(c.Id)">
+                    @(open ? t?.En ?? Airlines[code].Name : "Closed")
+                    <input type="checkbox" class="dx-checkbox" checked="@isSel" disabled="@w" tabindex="-1" aria-label="Select @c.Id" style="pointer-events:none;">
+                </div>
+                <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@w" @onclick="() => changePage = c.Id">Change Page</button>
+                <span class="cp-tile-foot">
+                    @Switch(open, v => TileOpen(c.Id, v), $"{c.Id} open", w)@(open ? "Open" : "Closed")
+                </span>
+                @shared
+            </div>;
+        }
+        var later = AllocFor(c.Id, code)!;
+        return @<div class="cp-tile">
+            <span class="cp-tile-id" style="background:#888;">@label</span>
+            <div class="cp-tile-box na">Available from<br>@Hm(later.From) - @Hm(later.To)</div>
+            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled>Change Page</button>
+            <span class="cp-tile-foot">&nbsp;</span>
+            @shared
+        </div>;
+    }
+
+    private RenderFragment AllCounters()
+    {
+        var code = MyAirline;
+        var w = IsWaiting;
+        var groups = Counters.Where(c => (zone == "" || c.Zones.Contains(zone)) && AllocFor(c.Id, code) is not null)
+            .GroupBy(c => c.Zones[1]).ToList();
+        var n = sel.Count;
+        return @<text>
+            @if (w)
+            {
+                <div class="dx-alert dx-alert-warning">All Counters is read-only until your allocation starts at @Hm(AllocFor(Station, code)!.From).</div>
+            }
+            <div class="cp-ac-tools">
+                <button class="dx-btn dx-btn-blue" disabled="@(n == 0 || w)" @onclick="BulkOpen">Open selected counters</button>
+                @if (deviation)
+                {
+                    <select class="dx-form-control" aria-label="Page for selected counters" @bind="bulkPage">
+                        @foreach (var t in Usable())
+                        {
+                            <option value="@t.Id">@t.En</option>
+                        }
+                    </select>
+                }
+                <button class="dx-btn dx-btn-outline-red" disabled="@(n == 0 || w)" @onclick="BulkClose">Close selected</button>
+                <span class="dx-text-muted">@n selected</span><span class="grow"></span>
+                <select class="dx-form-control" aria-label="Display Zone" @bind="zone">
+                    <option value="">ZONE: ALL</option>
+                    @foreach (var z in Zones)
+                    {
+                        <option value="@z">ZONE: @z.ToUpperInvariant()</option>
+                    }
+                </select>
+            </div>
+            @foreach (var g in groups)
+            {
+                <div><div class="cp-section">@g.Key</div><div class="cp-tiles">@foreach (var c in g) { @CounterTile(c) }</div></div>
+            }
+            @if (changePage is not null) { @ChangePageModal() }
+        </text>;
+    }
+
+    private RenderFragment ChangePageModal()
+    {
+        var id = changePage!;
+        var p = Pub(id);
+        return @<div class="dx-modal-overlay">
+            <div class="dx-modal" style="width:620px;">
+                <div class="dx-modal-header"><h3 style="margin:0;font-size:1.2rem;">Change page on @id</h3><button class="dx-modal-close" aria-label="Close" @onclick="() => changePage = null">&times;</button></div>
+                <div class="dx-modal-body">
+                    <div class="cp-pages" style="border:0;grid-template-columns:repeat(4,1fr);padding:0;">
+                        @if (deviation)
+                        {
+                            @foreach (var t in Usable())
+                            {
+                                <button class="cp-page @(p?.Open == true && p.Page == t.Id ? "on" : "")" @onclick="() => PickChangePage(t.Id)"><span>@t.En</span><span class="cp-fr">@t.Fr</span></button>
+                            }
+                        }
+                        else
+                        {
+                            <span class="dx-text-muted">No page list on this instance.</span>
+                        }
+                    </div>
+                    <p class="dx-text-muted" style="margin-top:10px;">Goes to @id at once and opens it. Its Messages stay as they are.</p>
+                </div>
+            </div>
+        </div>;
+    }
+
+    // ---------- Screens ----------
+    private RenderFragment AppScreen()
+    {
+        var preview = InApp && tab == "mine" && IsDirty();
+        var p = preview ? DraftPreview() : Pub(Station);
+        return @<text>
+            @CounterBand()
+            <div class="cp-wrap">
+                @Alerts()
+                @TabRow()
+                @switch (tab)
+                {
+                    case "all": @AllCounters() break;
+                    case "flights": <h3 class="cp-h" style="font-size:1.8rem;">Flights</h3>@FlightsTable(7) break;
+                    case "messages": @MessagesTab() break;
+                    default: @MyCounter() break;
+                }
+            </div>
+            @if (viewSent && p is { Open: true })
+            {
+                <div class="dx-modal-overlay">
+                    <div class="dx-modal" style="width:900px;max-width:900px;">
+                        <div class="dx-modal-header"><h3 style="margin:0;font-size:1.2rem;">@(preview ? $"Preview of {Station}, not published yet" : $"Sent to {Station} at {Hm(p.SentAt)}")</h3><button class="dx-modal-close" aria-label="Close" @onclick="() => viewSent = false">&times;</button></div>
+                        <div class="dx-modal-body">@ScreenFor(p, "cp-screen-lg")<p class="dx-text-muted" style="margin-top:10px;">@(preview ? "Shows your changes as they will look after Publish." : "Built from what Director sent. It is not a live view of the screen.")</p></div>
+                    </div>
+                </div>
+            }
+            @if (idle is not null)
+            {
+                <div class="dx-modal-overlay">
+                    <div class="dx-modal" style="width:440px;">
+                        <div class="dx-modal-header"><h3 style="margin:0;font-size:1.2rem;">Still there?</h3></div>
+                        <div class="dx-modal-body"><div style="font-size:2.6rem;font-weight:700;color:#dc3545;">@idle</div><p>You will be signed out in @idle seconds. Counter @Station stays as it is on the screen.</p></div>
+                        <div class="dx-modal-footer"><button class="dx-btn dx-btn-blue" @onclick="StopIdle">Stay signed in</button></div>
+                    </div>
+                </div>
+            }
+        </text>;
+    }
+
+    private RenderFragment LoginBrand() =>
+        @<div class="dx-login-brand"><img src="images/branding/header.png" alt="DXSuite"><div>CUPPS</div></div>;
+
+    private RenderFragment LoginScreen()
+    {
+        var s = Sc;
+        if (s.Kind == "Individual")
+            return @<div class="dx-login-page"><div class="dx-login-card">@LoginBrand()<div class="dx-login-card-body">
+                <div class="dx-login-context">Sign in with your GTAA account to act for an airline.</div>
+                <button class="dx-login-provider-btn" style="margin-top:14px;" @onclick="SignIn">
+                    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect width="8" height="8" fill="#f25022" /><rect x="10" width="8" height="8" fill="#7fba00" /><rect y="10" width="8" height="8" fill="#00a4ef" /><rect x="10" y="10" width="8" height="8" fill="#ffb900" /></svg>Sign in with Microsoft
+                </button>
+            </div></div></div>;
+        return @<div class="dx-login-page"><div class="dx-login-card">@LoginBrand()<div class="dx-login-card-body">
+            <div class="dx-login-context">Check-in counter <strong>@s.Station</strong></div>
+            <div class="dx-login-local-form">
+                <input type="text" class="dx-form-control" value="@s.User" aria-label="Username">
+                <input type="password" class="dx-form-control" value="demo-only" aria-label="Password">
+                <button class="dx-btn dx-btn-blue dx-login-btn" @onclick="SignIn">Sign In</button>
+            </div>
+        </div></div></div>;
+    }
+
+    private List<Alloc> Held(string code) => Allocations.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
+    private List<Alloc> Later(string code) => Allocations.Where(x => x.Code == code && x.From > now).ToList();
+
+    private RenderFragment AirlineTile(Airline x)
+    {
+        var n = Held(x.Code).Count;
+        var nx = Later(x.Code).FirstOrDefault();
+        var sub = n > 0 ? $"{n} counter{(n > 1 ? "s" : "")} allocated now" : nx is not null ? $"Next allocation at {Hm(nx.From)}" : "Not allocated today";
+        return @<button class="dx-pick-tile" disabled="@(n == 0)" @onclick="() => rmuAirline = x.Code">
+            @Mark(x.Code, "lg")<span><div class="dx-pick-title">@x.Name</div><div class="dx-pick-sub">@sub</div></span>
+        </button>;
+    }
+
+    private RenderFragment RmuCounterTile(Alloc x, bool isLater)
+    {
+        var p = Pub(x.CounterId);
+        var open = p?.Open == true;
+        var t = open ? Tpl(p!.Page) : null;
+        return @<button class="dx-pick-tile dx-counter-tile" disabled="@isLater" @onclick="() => PickRmuCounter(x.CounterId)">
+            <div class="dx-counter-id">@x.CounterId</div>
+            <div class="dx-counter-meta">@Hm(x.From) to @Hm(x.To)@(isLater ? "" : $", {Left(x.To - now)} left")</div>
+            <div class="dx-counter-meta">
+                @if (isLater)
+                {
+                    @($"Available from {Hm(x.From)}")
+                }
+                else
+                {
+                    <span class="dx-status-dot @(open ? "dx-status-dot-green" : "dx-status-dot-gray")"></span>
+                    @(open ? $"Open{(t is not null ? ", " + t.En : "")}" : "Closed")
+                }
+            </div>
+        </button>;
+    }
+
+    private RenderFragment RmuPick()
+    {
+        var a = rmuAirline;
+        RenderFragment body;
+        if (a is null)
+        {
+            var q = search.ToLowerInvariant();
+            var list = Airlines.Values.Where(x => q == "" || (x.Name + x.Code).ToLowerInvariant().Contains(q)).ToList();
+            var withNow = list.Where(x => Held(x.Code).Count > 0).ToList();
+            var none = list.Where(x => Held(x.Code).Count == 0).ToList();
+            body = @<text>
+                <div class="dx-step-label">Step 1 of 2</div>
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">Select an airline</h3>
+                    <input class="dx-search-input" placeholder="Search airlines..." @bind="search" @bind:event="oninput">
+                </div>
+                <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
+                @if (none.Count > 0)
+                {
+                    <div class="dx-group-label">No counters allocated right now</div>
+                    <div class="dx-pick-grid">@foreach (var x in none) { @AirlineTile(x) }</div>
+                }
+            </text>;
+        }
+        else
+        {
+            var groups = Held(a).GroupBy(x => string.Join(", ", Counters.First(c => c.Id == x.CounterId).Zones)
+                .Replace("Terminal 3, T3 ", "Terminal 3, ").Replace("Terminal 1, T1 ", "Terminal 1, ")).ToList();
+            var later = Later(a);
+            body = @<text>
+                <div class="dx-step-label">Step 2 of 2</div>
+                <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;">
+                    <button class="dx-btn dx-btn-blue dx-btn-back" aria-label="Back to airlines" @onclick="() => rmuAirline = null">
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                    </button>
+                    @Mark(a)
+                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@Airlines[a].Name</h3>
+                </div>
+                <p style="margin:10px 0 6px;font-size:1.15rem;font-weight:600;">Select the counter you want to manage</p>
+                @foreach (var g in groups)
+                {
+                    <div class="dx-group-label">@g.Key</div>
+                    <div class="dx-pick-grid">@foreach (var x in g) { @RmuCounterTile(x, false) }</div>
+                }
+                @if (later.Count > 0)
+                {
+                    <div class="dx-group-label">Later today</div>
+                    <div class="dx-pick-grid">@foreach (var x in later) { @RmuCounterTile(x, true) }</div>
+                }
+            </text>;
+        }
+        return @<text>
+            @Navbar()
+            <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGN IN FOR AN AIRLINE</h2></div></section>
+            <div class="dx-page-body" style="padding:20px 30px 40px;">
+                @if (rmuNotice is not null)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-bottom:14px;">@rmuNotice</div>
+                }
+                @body
+            </div>
+        </text>;
+    }
+
+    private RenderFragment EndedScreen() => @<text>
+        @Navbar()
+        <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGNED OUT</h2></div></section>
+        <div class="dx-page-body" style="padding:30px;">
+            <div class="dx-card" style="max-width:560px;">
+                <div class="dx-card-body" style="display:flex;flex-direction:column;gap:12px;">
+                    <div>@endedReason</div>
+                    <div><button class="dx-btn dx-btn-blue" @onclick="() => SetScenario(scenario)">Back to sign in</button></div>
+                </div>
+            </div>
+        </div>
+    </text>;
+}

@@ -1,0 +1,180 @@
+/* CUPPS agent screens prototype (DXME-500). Loaded only by /cupps-agent-screens, after dxsuite.css. */
+
+/* ---- Page wrapper: base type for the DXSuite screens inside the Bootstrap app. ---- */
+.cupps-proto {
+  --dx-font-family: 'BAHNSCHRIFT', 'Barlow Semi Condensed', Arial, Helvetica, sans-serif;
+  margin: -1.1rem -1.5rem 0;
+  background: #e4e6ea;
+  color: var(--dx-text-primary);
+  font-family: var(--dx-font-family);
+  font-size: 16px;
+  line-height: 1.5;
+  color-scheme: light;
+}
+.cupps-proto h2, .cupps-proto h3, .cupps-proto h4 { font-weight: 500; line-height: 1.2; margin: 0 0 .5rem; }
+.cupps-proto h2 { font-size: 2rem; }
+.cupps-proto h3 { font-size: 1.5rem; }
+.cupps-proto h4 { font-size: 1.25rem; }
+.cupps-proto p { margin: 0 0 .75rem; }
+.cupps-proto button, .cupps-proto input, .cupps-proto select { font-family: inherit; }
+.cupps-proto .dx-form-control, .cupps-proto .dx-search-input { background-color: #fff; color: var(--dx-text-primary); }
+
+.pt-app { display: flex; flex-direction: column; background: #fff; }
+
+
+/* ---- Prototype frame: a counter PC screen, roughly 1366 wide. ---- */
+.pt-frame { overflow-x: auto; padding: 0; }
+.pt-app { width: 100%; height: auto; min-height: calc(100vh - 3.5rem); margin: 0; border: 0; box-shadow: none; position: relative; }
+/* The real login page fills the viewport; here it fills the app frame. */
+.pt-app .dx-login-page { min-height: 760px; }
+.pt-app .dx-modal-overlay, .pt-app .dx-toast { position: absolute; }
+.pt-app .dx-navbar { position: static; justify-content: flex-end; }
+
+/* ---- CUPPS shell (bare layout, no Director navigation), as in Diagrams 31 and 32. ---- */
+.dx-navbar-user { display: flex; align-items: center; gap: 10px; font-size: .9rem; }
+.cp-prod { margin-left: 14px; font-weight: 600; color: #555; letter-spacing: .04em; }
+.dx-login-brand { background: #f7f7f7; border-bottom: 1px solid #e3e3e3; padding: 26px 24px 18px; text-align: center; }
+.dx-login-brand img { height: 52px; }
+.dx-login-brand div { margin-top: 8px; font-size: 1.1rem; font-weight: 700; letter-spacing: .12em; color: #555; }
+.dx-login-context { display: flex; align-items: center; justify-content: center; gap: 6px; font-size: .9rem; color: var(--dx-text-muted); }
+.dx-login-context strong { color: var(--dx-text-primary); }
+
+/* Counter band, Diagram 1: counter id left, allocation and time remaining right. */
+.cp-band { background: #cfcfcf; padding: 14px 30px; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cp-band h2 { margin: 0; font-size: 1.8rem; font-weight: 700; }
+.cp-band .cp-alloc { color: #555; font-size: .95rem; }
+.cp-band .cp-left { font-size: 1.6rem; font-weight: 700; margin-left: 12px; font-variant-numeric: tabular-nums; }
+.cp-band > div:nth-child(2) { margin-left: auto; }
+
+/* Tab row with the counter status and PUBLISH on the right, Diagram 1. */
+.cp-wrap { padding: 20px 30px 40px; display: flex; flex-direction: column; gap: 18px; }
+.cp-tabs { display: flex; align-items: stretch; background: var(--dx-bg-alt); border-bottom: 1px solid #ccc; }
+.cp-tabs .dx-tab-btn:disabled { opacity: .45; cursor: not-allowed; }
+.cp-tabs-right { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
+.cp-status { font-weight: 700; font-size: 1.1rem; letter-spacing: .02em; }
+.cp-status .open { color: var(--dx-green); }
+.cp-status .closed { color: #6c757d; }
+.cp-status .wait { color: var(--dx-orange); }
+
+.cp-grid { display: grid; grid-template-columns: 420px 1fr; gap: 26px; }
+.cp-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+.cp-h { font-size: 1.5rem; font-weight: 500; margin: 0 0 8px; color: var(--dx-text-primary); }
+.cp-sub { font-size: .85rem; color: var(--dx-text-muted); }
+
+/* "Sent to this counter" box replaces Diagram 1's "Currently Playing". */
+.cp-sent { background: #e9e9e9; border-radius: var(--dx-border-radius); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.cp-sent .cp-sent-page { color: var(--dx-blue); font-size: 2.2rem; font-weight: 700; line-height: 1.05; }
+.cp-sent .cp-sent-closed { color: #6c757d; font-size: 1.6rem; font-weight: 700; }
+
+/* Page Options, Diagram 1: a grey panel header with Standard / Custom switch, then a grid of page tiles. */
+.cp-pages-head { display: flex; justify-content: space-between; align-items: center; background: #e9e9e9; padding: 8px 12px; border-radius: var(--dx-border-radius) var(--dx-border-radius) 0 0; }
+.cp-pages-head h4 { margin: 0; font-size: 1.25rem; font-weight: 500; }
+.cp-seg { display: inline-flex; background: #fff; border-radius: 3px; padding: 2px; gap: 2px; }
+.cp-seg button { border: 0; background: transparent; font: inherit; font-size: .8rem; padding: 3px 10px; border-radius: 3px; color: #555; cursor: pointer; }
+.cp-seg button.on { background: #bbb; color: #222; font-weight: 600; }
+.cp-pages { border: 1px solid #e3e3e3; border-top: 0; padding: 10px; display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; }
+.cp-page { border: 1px solid #ccc; background: #fff; border-radius: 4px; min-height: 64px; padding: 6px 8px; font: inherit; font-size: .85rem; line-height: 1.15; text-align: center; cursor: pointer; display: flex; flex-direction: column; justify-content: center; gap: 3px; color: var(--dx-text-primary); }
+.cp-page:hover { border-color: var(--dx-blue); }
+.cp-page.on { border: 2px solid var(--dx-blue); background: #e8f2fa; font-weight: 600; }
+.cp-page .cp-fr { font-size: .72rem; color: var(--dx-text-muted); font-weight: 400; }
+.cp-page .cp-kind { font-size: .66rem; color: var(--dx-text-muted); text-transform: uppercase; letter-spacing: .05em; }
+.cp-ends { display: inline-block; background: #ffe5c2; color: #8a4b00; border-radius: 3px; padding: 0 5px; font-size: .68rem; font-weight: 700; }
+.cp-empty { border: 1px dashed #ddd; border-radius: 4px; min-height: 64px; }
+/* Past three rows the grid stops growing: it scrolls inside a fixed height and a search box narrows it. */
+.cp-pages-scroll { max-height: 236px; overflow-y: auto; align-content: start; }
+.cp-pages-foot { display: flex; justify-content: space-between; gap: 12px; font-size: .8rem; color: var(--dx-text-muted); padding: 6px 2px 0; }
+.cp-psearch { margin-left: auto; margin-right: 10px; width: 200px; }
+
+.cp-row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 26px; }
+.cp-tog { display: flex; align-items: center; gap: 10px; margin-top: 6px; font-weight: 600; font-size: .85rem; color: #555; }
+.cp-sunflower { width: 20px; height: 20px; border-radius: 50%; background: radial-gradient(circle, #5a3a12 0 32%, #f2c200 34% 70%, #2e7d32 72%); display: inline-block; }
+
+/* Message rows, Diagrams 25 and 26. */
+.cp-msgs { border-top: 2px solid #999; }
+.cp-msg { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 14px; padding: 9px 12px; border-bottom: 1px solid #999; font-size: .95rem; }
+.cp-msg:nth-child(odd) { background: #f0f0f0; }
+.cp-msg .cp-fr { display: block; font-size: .78rem; color: var(--dx-text-muted); }
+.cp-msg-head { display: grid; grid-template-columns: 1fr auto; padding: 6px 12px; font-weight: 600; font-size: .9rem; }
+.cp-pick { min-width: 96px; }
+.cp-msgs-title { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 8px; }
+.cp-msgs-title .cp-h { margin: 0; }
+.cp-mymsg { font-weight: 600; font-size: .95rem; display: flex; flex-direction: column; gap: 6px; }
+.cp-mymsg .n { display: inline-flex; width: 20px; height: 20px; border-radius: 50%; background: var(--dx-blue); color: #fff; font-size: .72rem; align-items: center; justify-content: center; margin-right: 6px; }
+
+/* Next 4 Flights and View Flights, Diagram 1. */
+.cp-flights { width: 100%; border-collapse: collapse; font-size: .9rem; font-variant-numeric: tabular-nums; }
+.cp-flights th { text-align: left; font-size: .8rem; font-weight: 600; padding: 8px 6px; border-bottom: 2px solid #999; text-transform: uppercase; }
+.cp-flights td { padding: 6px; vertical-align: top; }
+.cp-flights tbody tr.first td { border-top: 1px solid #999; }
+.cp-flights tbody tr.alt td { background: #f0f0f0; }
+.cp-delay { color: #dc3545; font-weight: 600; }
+
+/* All Counters, Diagram 2: tile per counter, black label, grey page box, Change Page, open toggle. */
+.cp-ac-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.cp-ac-tools .grow { flex: 1; }
+/* Toolbar controls share one height: outline buttons carry a 1px border that solid ones lack, and selects pad differently. */
+.cp-tabs-right .dx-btn, .cp-ac-tools .dx-btn, .cp-ac-tools select.dx-form-control { height: 38px; }
+.cp-ac-tools select.dx-form-control { width: auto; padding-top: 0; padding-bottom: 0; font-size: 14px; }
+.cp-section { font-size: 1.3rem; font-weight: 500; border-bottom: 1px solid #999; padding-bottom: 4px; margin: 6px 0 12px; }
+.cp-tiles { display: grid; grid-template-columns: repeat(6, 1fr); gap: 14px 6px; }
+.cp-tile { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.cp-tile-id { background: #111; color: #fff; font-weight: 700; font-size: .8rem; padding: 1px 10px; border-radius: 3px; white-space: nowrap; }
+.cp-tile-box { position: relative; width: 100%; height: 84px; background: #ececec; display: flex; align-items: center; justify-content: center; text-align: center; color: var(--dx-blue); font-weight: 700; font-size: 1.15rem; line-height: 1.1; padding: 6px; cursor: pointer; border: 2px solid transparent; }
+.cp-tile-box.sel { border-color: var(--dx-blue); }
+.cp-tile-box.closed { color: #8a8a8a; font-size: .95rem; font-weight: 600; }
+.cp-tile-box.na { background: #fff; border: 1px dashed #aaa; color: #555; font-size: .78rem; font-weight: 500; text-transform: uppercase; cursor: default; }
+.cp-tile-box .dx-checkbox { position: absolute; top: 5px; right: 5px; appearance: none; -webkit-appearance: none; margin: 0; background: transparent; border: 1px solid #767676; border-radius: 3px; }
+.cp-tile-box .dx-checkbox:checked { border-color: var(--dx-blue); background: transparent url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3 8.5l3 3 7-7' fill='none' stroke='%230071BC' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / 14px no-repeat; }
+.cp-tile-foot { display: flex; align-items: center; gap: 6px; font-size: .7rem; color: #666; text-transform: uppercase; }
+.cp-tile-foot .dx-toggle { transform: scale(.8); }
+.cp-tile-shared { font-size: .68rem; color: #666; }
+
+/* Screen render for the Sent preview, after Diagrams 3 and 37: page area above a dark message band. */
+.cp-screen { width: 100%; aspect-ratio: 16 / 9; background: #111; display: flex; flex-direction: column; overflow: hidden; color: #fff; font-family: 'Barlow Semi Condensed', Arial, sans-serif; border-radius: 3px; }
+.cp-screen .area { flex: 856; display: flex; min-height: 0; }
+.cp-screen .half { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; position: relative; min-width: 0; padding: 4%; }
+.cp-screen .logo { font-weight: 700; letter-spacing: .12em; font-size: 2.1em; margin-bottom: .4em; }
+.cp-screen .en, .cp-screen .fr { font-weight: 700; text-transform: uppercase; font-size: 1.8em; line-height: 1.05; }
+/* ASL box from Diagram 3: 464 x 413 of 1920 x 856, with the same 40 px gap to the right edge and to the footer. */
+.cp-screen .asl { position: absolute; right: 2.08%; bottom: 4.67%; width: 24.2%; height: 48.2%; background: #2c3b36; border-radius: 6px; display: flex; align-items: center; justify-content: center; font-size: .8em; color: #cfd8d4; }
+.cp-screen .filler { background: repeating-linear-gradient(45deg, #2a2a2a 0 14px, #242424 14px 28px); color: #aaa; font-weight: 600; }
+.cp-screen .band { flex: 224; background: #1e1e1e; display: flex; min-height: 0; }
+/* Footer: alliance and Sunflower over the Message, Destination and time on the right. Two fixed rows so the Message never covers the logos. */
+.cp-screen .band > div { flex: 1; display: grid; grid-template-rows: 1fr 1fr; padding: 0 2.5%; min-width: 0; }
+.cp-screen .band > div + div { border-left: 2px solid #111; }
+.cp-screen .brow { display: flex; align-items: center; justify-content: space-between; gap: 1em; min-width: 0; }
+.cp-screen .alliance { font-size: .8em; letter-spacing: .14em; display: flex; align-items: center; gap: .5em; }
+.cp-screen .bdest { font-weight: 700; text-transform: uppercase; font-size: 1.2em; white-space: nowrap; }
+.cp-screen .ticker { font-weight: 700; text-transform: uppercase; font-size: 1.2em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.cp-screen .clock { font-weight: 700; font-size: 1.2em; color: #9a9a9a; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cp-screen-sm { font-size: 9px; }
+.cp-screen-lg { font-size: 22px; }
+.cp-textsum { background: #fff; border: 1px dashed #bbb; border-radius: 3px; padding: 8px 10px; font-size: .85rem; }
+.cp-textsum div + div { margin-top: 2px; }
+.cp-textsum b { display: inline-block; min-width: 90px; color: var(--dx-text-muted); font-weight: 600; }
+
+/* Square airline mark, as in the cupps-login and airline wizard wireframes. */
+.dx-airline-mark { width: 32px; height: 32px; flex-shrink: 0; border-radius: 3px; display: inline-flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: .75rem; }
+.dx-airline-mark.lg { width: 52px; height: 52px; font-size: 1rem; border-radius: 4px; }
+.dx-pick-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; }
+.dx-pick-tile { display: flex; gap: 12px; align-items: center; text-align: left; width: 100%; background: #fff; border: 1px solid var(--dx-border-color); border-radius: var(--dx-border-radius); box-shadow: var(--dx-shadow-sm); padding: 14px; cursor: pointer; font: inherit; color: var(--dx-text-primary); }
+.dx-pick-tile:hover:not(:disabled) { border-color: var(--dx-blue); box-shadow: 0 0 0 2px rgba(0, 113, 188, .2); }
+.dx-pick-tile:disabled { cursor: default; background: #fafafa; border-style: dashed; box-shadow: none; color: var(--dx-text-muted); }
+.dx-pick-tile:disabled .dx-airline-mark { opacity: .45; }
+.dx-pick-title { font-weight: 700; font-size: 1.05rem; line-height: 1.2; }
+.dx-pick-sub { font-size: .82rem; color: var(--dx-text-muted); }
+.dx-counter-tile { flex-direction: column; align-items: stretch; gap: 6px; }
+.dx-counter-id { font-size: 1.5rem; font-weight: 700; line-height: 1; }
+.dx-counter-meta { font-size: .82rem; color: var(--dx-text-muted); display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.dx-step-label { font-size: .8rem; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--dx-text-muted); margin-bottom: 6px; }
+.dx-group-label { font-size: .75rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--dx-text-muted); margin: 20px 0 8px; }
+.dx-btn-back { width: 34px; height: 34px; padding: 0; display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; }
+.dx-btn-back svg { width: 18px; height: 18px; }
+.cp-confirm { display: flex; align-items: center; gap: 10px; }
+
+/* State-driven switch: a button carrying the dx-toggle look, with .on in place of input:checked. */
+.cp-switch { border: 0; padding: 0; background: none; flex-shrink: 0; }
+.cp-switch:disabled .dx-toggle-slider { opacity: .5; cursor: not-allowed; }
+.cp-switch:focus-visible { outline: 2px solid var(--dx-blue); outline-offset: 2px; border-radius: 20px; }
+.dx-toggle-slider.on { background-color: var(--dx-green); }
+.dx-toggle-slider.on::before { transform: translateX(20px); }

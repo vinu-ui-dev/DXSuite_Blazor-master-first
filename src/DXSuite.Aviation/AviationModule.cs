@@ -27,6 +27,7 @@ public class AviationModule : IBlazorModule
         // Airline/city management is accessed via Configuration tabs, not a nav item.
         yield return new NavItem("Flight Management", "/Flight-Data-Editor", "bi-airplane-engines", 20, "Aviation",
             Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.FlightDataEditor));
+        yield return new NavItem("CUPPS", "/cupps-agent-screens", "bi-display", 25, "Aviation");
     }
 
     public IEnumerable<ConfigTab> GetConfigTabs()
