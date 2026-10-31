@@ -15,4 +15,13 @@ internal sealed class TenantResolutionOptions
     /// cannot reach the tenant by subdomain. Subdomain requests never consult the header.
     /// </summary>
     public bool AllowApiKeyTenantOverride { get; init; }
+
+    /// <summary>
+    /// Allows the Editor bridge's own tenant cookie (BridgeAuthController.BridgeTenantCookie) to
+    /// replace the default tenant on requests that carry no subdomain. Unlike the API-key override,
+    /// this cookie is set only by BridgeAuthController itself after a server-to-server redeem call
+    /// to Director already validated the identity and its TenantId — so it is not attacker-supplied
+    /// the way an arbitrary request header would be. Still off unless a deployment opts in.
+    /// </summary>
+    public bool AllowEditorBridgeTenantOverride { get; init; }
 }

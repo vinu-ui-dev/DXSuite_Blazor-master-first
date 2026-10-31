@@ -186,4 +186,7 @@ internal sealed class StubTenantStore : ITenantStore
 
     public Task<TenantRecord?> FindTenantByApiKeyHashAsync(string keyHash, CancellationToken ct = default) =>
         Task.FromResult<TenantRecord?>(null);
+
+    public Task<TenantRecord?> FindByTenantIdAsync(string tenantId, CancellationToken ct = default) =>
+        Task.FromResult(_tenants.FirstOrDefault(t => t.TenantId == tenantId));
 }

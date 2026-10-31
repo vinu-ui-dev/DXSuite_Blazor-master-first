@@ -24,6 +24,7 @@ public class AuthController : Controller
     private readonly ILogger<AuthController> _logger;
     private readonly TokenValidationParameters? _tokenValidationParams;
     private readonly IHttpClientFactory? _httpClientFactory;
+    private readonly DXSuite.Host.Bridge.EditorBridgeClient? _bridgeClient;
 
     public AuthController(
         IOptions<AuthenticationConfig> authConfig,
@@ -34,7 +35,8 @@ public class AuthController : Controller
         ILdapCredentialService? ldapCredentialService = null,
         IEmailService? emailService = null,
         TokenValidationParameters? tokenValidationParams = null,
-        IHttpClientFactory? httpClientFactory = null)
+        IHttpClientFactory? httpClientFactory = null,
+        DXSuite.Host.Bridge.EditorBridgeClient? bridgeClient = null)
     {
         _authConfig = authConfig.Value;
         _extConfig = extConfig.Value;
@@ -45,6 +47,7 @@ public class AuthController : Controller
         _emailService = emailService;
         _tokenValidationParams = tokenValidationParams;
         _httpClientFactory = httpClientFactory;
+        _bridgeClient = bridgeClient;
     }
 
     [HttpGet("challenge/{provider}")]
@@ -306,6 +309,10 @@ public class AuthController : Controller
     [HttpGet("logout")]
     public async Task<IActionResult> Logout()
     {
+        var bridgeHandle = User.FindFirst(DXSuite.Shared.Authorization.BridgeSessionClaimTypes.SessionHandle)?.Value;
+        if (!string.IsNullOrEmpty(bridgeHandle) && _bridgeClient is not null)
+            await _bridgeClient.EndAsync(bridgeHandle, HttpContext.RequestAborted);
+
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         return Redirect("/");
     }

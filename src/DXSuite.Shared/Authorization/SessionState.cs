@@ -59,6 +59,7 @@ namespace DXSuite.Shared.Authorization
         public string UserInitials { get; set; } = "";
         public TaskCompletionSource<bool> SessionLoaded { get; private set; } = new();
         public Guid? PlatformUserId { get; private set; }
+        private IReadOnlySet<string>? _bridgePermissions;
         public IReadOnlyList<TenantMembershipInfo> TenantMemberships { get; private set; } = Array.Empty<TenantMembershipInfo>();
         public bool IsPlatformOperator { get; private set; }
         public bool IsTenantAdmin { get; private set; }
@@ -208,6 +209,30 @@ namespace DXSuite.Shared.Authorization
         }
 
         /// <summary>
+        /// Populates the session from a validated Editor bridge identity: no TblUser row is created
+        /// or looked up, and permissions come straight from <paramref name="identity"/> rather than
+        /// IRolePermissionService (see GetPermissionsAsync/HasPermissionAsync below). RoleEnum is set
+        /// only so legacy role checks elsewhere see a sane, least-privilege-leaning value; the real
+        /// gate for bridge users is the permission set itself, not RoleEnum.
+        /// </summary>
+        public Task LoadBridgeIdentityAsync(BridgeSessionIdentity identity)
+        {
+            UserInternal = null;
+            _bridgePermissions = identity.Permissions;
+            ActualRoleName = identity.RoleName;
+            RoleEnum = identity.RoleName switch
+            {
+                "CustomerAdmin" => Roles.Role.Architect,
+                "CustomerUser" => Roles.Role.Contributor,
+                _ => Roles.Role.NewUser,
+            };
+            ActualRoleId = (int)RoleEnum;
+            UserInitials = DeriveInitials(null, null, identity.DisplayName);
+            SessionLoaded.TrySetResult(true);
+            return Task.CompletedTask;
+        }
+
+        /// <summary>
         /// Sets RoleEnum to the effective built-in role: the user's own role when built-in,
         /// otherwise the custom role's BaseRoleId. Missing/invalid base roles fall back to
         /// NewUser (least privilege) rather than failing open.
@@ -258,10 +283,10 @@ namespace DXSuite.Shared.Authorization
         }
 
         public Task<IReadOnlySet<string>> GetPermissionsAsync()
-            => _rolePermissionService.GetPermissionsForRoleAsync(ActualRoleId);
+            => _bridgePermissions is not null ? Task.FromResult(_bridgePermissions) : _rolePermissionService.GetPermissionsForRoleAsync(ActualRoleId);
 
         public Task<bool> HasPermissionAsync(string permissionKey)
-            => _rolePermissionService.HasPermissionAsync(ActualRoleId, permissionKey);
+            => _bridgePermissions is not null ? Task.FromResult(_bridgePermissions.Contains(permissionKey)) : _rolePermissionService.HasPermissionAsync(ActualRoleId, permissionKey);
 
         /// <summary>
         /// Finds or creates the platform identity and tenant membership for the logged-in user.

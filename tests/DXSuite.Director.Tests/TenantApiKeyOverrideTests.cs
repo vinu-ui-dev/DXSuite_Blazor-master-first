@@ -105,4 +105,7 @@ internal sealed class RecordingTenantStore : ITenantStore
         ApiKeyLookupAttempted = true;
         return Task.FromResult<TenantRecord?>(Keyed);
     }
+
+    public Task<TenantRecord?> FindByTenantIdAsync(string tenantId, CancellationToken ct = default) =>
+        Task.FromResult(new[] { Default, Keyed, Acme }.FirstOrDefault(t => t.TenantId == tenantId));
 }

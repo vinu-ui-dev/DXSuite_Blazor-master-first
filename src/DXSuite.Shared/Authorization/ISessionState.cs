@@ -65,6 +65,14 @@ public interface ISessionState
     string? ProfilePhotoDataUri { get; set; }
     string UserInitials { get; set; }
     Task LoadUserAsync(string username, ClaimsPrincipal? claimsPrincipal = null);
+
+    /// <summary>
+    /// Populates the session from a validated Editor bridge identity instead of a local TblUser:
+    /// no DB row is created or looked up. Permissions come straight from the identity's own grants
+    /// (GetPermissionsAsync/HasPermissionAsync read them directly) rather than from
+    /// IRolePermissionService, since a bridge identity has no DXSuite role of its own.
+    /// </summary>
+    Task LoadBridgeIdentityAsync(BridgeSessionIdentity identity);
     TaskCompletionSource<bool> SessionLoaded { get; }
 
     /// <summary>
@@ -109,6 +117,28 @@ public interface ISessionState
     /// Auditors can read audit logs across all tenants but have no write access.
     /// </summary>
     bool IsAuditor { get; }
+}
+
+/// <summary>
+/// A validated identity handed off by the Editor bridge (Director → DXSuite SSO). Carries its own
+/// permission/operation grants rather than a DXSuite role, since the user has no local account.
+/// </summary>
+public sealed record BridgeSessionIdentity(string Subject, string UserName, string DisplayName,
+    string CustomerId, string TenantId, string RoleName, IReadOnlySet<string> Permissions,
+    IReadOnlySet<string> Operations, string SessionHandle, DateTimeOffset ExpiresAt);
+
+/// <summary>Claim types the signed-in cookie principal carries for a bridge session, so a later
+/// request in the same login (e.g. MainLayout's circuit init) can tell it apart from a normal login
+/// and re-hydrate ISessionState via LoadBridgeIdentityAsync instead of LoadUserAsync.</summary>
+public static class BridgeSessionClaimTypes
+{
+    public const string IsBridgeSession = "dxsuite:bridge-session";
+    public const string CustomerId = "dxsuite:bridge-customer-id";
+    public const string TenantId = "dxsuite:bridge-tenant-id";
+    public const string RoleName = "dxsuite:bridge-role-name";
+    public const string Permissions = "dxsuite:bridge-permissions";
+    public const string Operations = "dxsuite:bridge-operations";
+    public const string SessionHandle = "dxsuite:bridge-session-handle";
 }
 
 public static class Roles

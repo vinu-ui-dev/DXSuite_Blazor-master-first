@@ -84,6 +84,12 @@ internal sealed class SqlTenantStore : ITenantStore, IHostedService, IDisposable
     public Task<IReadOnlyList<TenantRecord>> GetAllEnabledAsync(CancellationToken ct = default)
         => Task.FromResult(_tenants);
 
+    public Task<TenantRecord?> FindByTenantIdAsync(string tenantId, CancellationToken ct = default)
+    {
+        var match = _tenants.FirstOrDefault(t => string.Equals(t.TenantId, tenantId, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(match);
+    }
+
     public Task<TenantRecord?> FindTenantByApiKeyHashAsync(string keyHash, CancellationToken ct = default)
     {
         // O(1) lookup via the in-memory dictionary built from TblApiKeyMapping.

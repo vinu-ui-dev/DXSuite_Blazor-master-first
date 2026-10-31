@@ -339,6 +339,11 @@
 
     private string HelpUrl => $"{appConfig["Help:BaseUrl"]?.TrimEnd('/') ?? "/docs"}/index.html";
 
+    private static IReadOnlySet<string> SplitClaim(System.Security.Claims.ClaimsPrincipal user, string claimType) =>
+        (user.FindFirst(claimType)?.Value ?? "")
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .ToHashSet(StringComparer.Ordinal);
+
     private void OpenTenantSwitcher()
     {
         CloseAllDropdowns();
@@ -376,16 +381,36 @@
 
                 if (user.Identity?.IsAuthenticated == true)
                 {
-                    // Extract username from claims — try provider-specific claims in order
-                    var username = user.Claims.FirstOrDefault(x => x.Type == "preferred_username")?.Value
-                                   ?? user.Claims.FirstOrDefault(x => x.Type == "email")?.Value
-                                   ?? user.Claims.FirstOrDefault(x => x.Type == System.Security.Claims.ClaimTypes.Email)?.Value
-                                   ?? user.Identity.Name;
-
-                    if (username != null)
+                    if (user.FindFirst(BridgeSessionClaimTypes.IsBridgeSession) is not null)
                     {
-                        await sessionState.LoadUserAsync(username, user);
+                        // Signed in via the Editor bridge (Director SSO): no TblUser row exists for
+                        // this identity, so its permissions come straight from the bridge claims.
+                        await sessionState.LoadBridgeIdentityAsync(new BridgeSessionIdentity(
+                            Subject: user.Identity.Name ?? "",
+                            UserName: user.Identity.Name ?? "",
+                            DisplayName: user.FindFirst("name")?.Value ?? user.Identity.Name ?? "",
+                            CustomerId: user.FindFirst(BridgeSessionClaimTypes.CustomerId)?.Value ?? "",
+                            TenantId: user.FindFirst(BridgeSessionClaimTypes.TenantId)?.Value ?? "",
+                            RoleName: user.FindFirst(BridgeSessionClaimTypes.RoleName)?.Value ?? "",
+                            Permissions: SplitClaim(user, BridgeSessionClaimTypes.Permissions),
+                            Operations: SplitClaim(user, BridgeSessionClaimTypes.Operations),
+                            SessionHandle: user.FindFirst(BridgeSessionClaimTypes.SessionHandle)?.Value ?? "",
+                            ExpiresAt: DateTimeOffset.UtcNow));
                         IsAuthorized = true;
+                    }
+                    else
+                    {
+                        // Extract username from claims — try provider-specific claims in order
+                        var username = user.Claims.FirstOrDefault(x => x.Type == "preferred_username")?.Value
+                                       ?? user.Claims.FirstOrDefault(x => x.Type == "email")?.Value
+                                       ?? user.Claims.FirstOrDefault(x => x.Type == System.Security.Claims.ClaimTypes.Email)?.Value
+                                       ?? user.Identity.Name;
+
+                        if (username != null)
+                        {
+                            await sessionState.LoadUserAsync(username, user);
+                            IsAuthorized = true;
+                        }
                     }
                 }
             }

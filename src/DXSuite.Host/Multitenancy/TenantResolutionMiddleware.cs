@@ -18,6 +18,10 @@ internal sealed class TenantResolutionMiddleware(
     IOptions<TenantResolutionOptions> options,
     ILogger<TenantResolutionMiddleware> logger)
 {
+    /// <summary>Set by BridgeAuthController after a validated Editor-bridge exchange; read here to
+    /// pick that identity's tenant on the no-subdomain requests that follow (e.g. localhost dev).</summary>
+    public const string BridgeTenantCookie = "dx-bridge-tenant";
+
     private readonly TenantResolutionOptions _options = options.Value;
 
     public async Task InvokeAsync(HttpContext context, ITenantStore store, TenantContext tenantContext,
@@ -81,6 +85,20 @@ internal sealed class TenantResolutionMiddleware(
                             record.Subdomain, tenantByKey.Subdomain, context.Request.Method, context.Request.Path);
                         record = tenantByKey;
                     }
+                }
+            }
+
+            if (_options.AllowEditorBridgeTenantOverride &&
+                context.Request.Cookies.TryGetValue(BridgeTenantCookie, out var bridgeTenantId) &&
+                !string.IsNullOrWhiteSpace(bridgeTenantId))
+            {
+                var tenantByBridge = await store.FindByTenantIdAsync(bridgeTenantId, context.RequestAborted);
+                if (tenantByBridge is not null)
+                {
+                    logger.LogInformation(
+                        "Editor bridge cookie overrode the default tenant '{DefaultTenant}' with '{OverrideTenant}' for {Method} {Path}.",
+                        record.Subdomain, tenantByBridge.Subdomain, context.Request.Method, context.Request.Path);
+                    record = tenantByBridge;
                 }
             }
         }

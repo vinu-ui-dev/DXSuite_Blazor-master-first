@@ -182,6 +182,10 @@ if (isWebRole)
     // ── External integration (JWT launch tokens) ────────────────────────────
     builder.Services.Configure<ExternalIntegrationConfig>(builder.Configuration.GetSection("ExternalIntegration"));
 
+    // ── Editor bridge (Director SSO handoff) ────────────────────────────────
+    builder.Services.Configure<EditorBridgeClientOptions>(builder.Configuration.GetSection("EditorBridgeClient"));
+    builder.Services.AddHttpClient<DXSuite.Host.Bridge.EditorBridgeClient>();
+
     if (extIntegrationConfig.Enabled && !string.IsNullOrEmpty(extIntegrationConfig.Secret))
     {
         builder.Services.AddDistributedMemoryCache();
@@ -920,6 +924,10 @@ if (isWebRole)
         Predicate = hc => hc.Tags.Contains("ready")
     }).AllowAnonymous();
 
+    // Serve RCL static web assets (_content/**) via the classic file provider ahead of
+    // MapStaticAssets(): its dev-time hot-reload patcher resolves _content paths against
+    // Host/wwwroot instead of the owning RCL's wwwroot and 500s on every request.
+    app.UseStaticFiles();
     app.MapStaticAssets();
     app.MapControllers();
     app.MapHub<DXSuite.Director.Hubs.PlayerWakeHub>("/hubs/player-wake");

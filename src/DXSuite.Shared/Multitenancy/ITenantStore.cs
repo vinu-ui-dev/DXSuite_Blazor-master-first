@@ -24,4 +24,11 @@ public interface ITenantStore
     /// Phase 8 replaces this with a central mapping table for O(1) lookup.
     /// </summary>
     Task<TenantRecord?> FindTenantByApiKeyHashAsync(string keyHash, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the tenant matching the given TenantId, or null if not found. Used by
+    /// TenantResolutionMiddleware to honor the Editor bridge's tenant cookie on no-subdomain
+    /// requests, where the TenantId was already validated server-to-server by the bridge exchange.
+    /// </summary>
+    Task<TenantRecord?> FindByTenantIdAsync(string tenantId, CancellationToken ct = default);
 }

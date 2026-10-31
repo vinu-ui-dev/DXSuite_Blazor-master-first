@@ -54,6 +54,12 @@ internal sealed class ConfigTenantStore : ITenantStore
     public Task<IReadOnlyList<TenantRecord>> GetAllEnabledAsync(CancellationToken ct = default)
         => Task.FromResult(_tenants);
 
+    public Task<TenantRecord?> FindByTenantIdAsync(string tenantId, CancellationToken ct = default)
+    {
+        var match = _tenants.FirstOrDefault(t => string.Equals(t.TenantId, tenantId, StringComparison.OrdinalIgnoreCase));
+        return Task.FromResult(match);
+    }
+
     public async Task<TenantRecord?> FindTenantByApiKeyHashAsync(string keyHash, CancellationToken ct = default)
     {
         // Linear scan across tenant Director DBs. This is the Option B implementation;

@@ -555,6 +555,7 @@ public class CoreApiClientTests
         public string? ProfilePhotoDataUri { get; set; }
         public string UserInitials { get; set; } = "";
         public Task LoadUserAsync(string username, ClaimsPrincipal? claimsPrincipal = null) => Task.CompletedTask;
+        public Task LoadBridgeIdentityAsync(BridgeSessionIdentity identity) => Task.CompletedTask;
         public TaskCompletionSource<bool> SessionLoaded { get; } = new();
         public event Action? LocationAccessChanged { add { } remove { } }
         public Task RefreshLocationAccessAsync() => Task.CompletedTask;
