@@ -21,4 +21,11 @@ public class EditorBridgeClientOptions
 
     /// <summary>Must match Clients[ClientId].Secret on the Director side (32+ chars).</summary>
     public string ClientSecret { get; set; } = "";
+
+    /// <summary>
+    /// Origins allowed to call /bridge/dxsuite-exchange cross-origin with credentials (Director's
+    /// Angular app, e.g. "http://localhost:4200"). Empty by default — the endpoint accepts no
+    /// cross-origin callers until a deployment opts a specific origin in.
+    /// </summary>
+    public string[] AllowedUiOrigins { get; set; } = [];
 }

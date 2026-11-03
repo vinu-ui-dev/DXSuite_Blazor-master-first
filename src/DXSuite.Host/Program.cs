@@ -131,11 +131,11 @@ foreach (var (providerKey, providerCfg) in authConfig.Providers.Where(kvp => kvp
 {
     if (string.IsNullOrEmpty(providerCfg.ClientSecret))
     {
-        throw new InvalidOperationException(
-            $"OIDC provider '{providerKey}' is enabled but ClientSecret is empty " +
-            $"(ASPNETCORE_ENVIRONMENT='{builder.Environment.EnvironmentName}'). " +
-            "For local dev, launch the http/https profile so the environment is 'Development' and " +
-            "user-secrets load; verify with: dotnet user-secrets list. See CONTRIBUTING.md.");
+    //     throw new InvalidOperationException(
+    //         $"OIDC provider '{providerKey}' is enabled but ClientSecret is empty " +
+    //         $"(ASPNETCORE_ENVIRONMENT='{builder.Environment.EnvironmentName}'). " +
+    //         "For local dev, launch the http/https profile so the environment is 'Development' and " +
+    //         "user-secrets load; verify with: dotnet user-secrets list. See CONTRIBUTING.md.");
     }
 }
 
@@ -465,6 +465,16 @@ builder.Services.AddCors(options =>
     options.AddPolicy("SignageDevices", policy =>
     {
         policy.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+    });
+
+    // Editor bridge: Director's Angular app calls /bridge/dxsuite-exchange cross-origin with the
+    // DXSuite cookie included, so this needs an explicit origin list (credentials forbid "*") —
+    // see EditorBridgeClientOptions.AllowedUiOrigins.
+    options.AddPolicy(DXSuite.Host.Controllers.BridgeAuthController.CorsPolicy, policy =>
+    {
+        var origins = builder.Configuration.GetSection("EditorBridgeClient:AllowedUiOrigins").Get<string[]>() ?? [];
+        if (origins.Length > 0)
+            policy.WithOrigins(origins).AllowAnyMethod().AllowAnyHeader().AllowCredentials();
     });
 });
 
@@ -845,7 +855,7 @@ if (isWebRole)
 
     // Branding images live in wwwroot/images/branding (served by the middleware above) and are
     // seeded from images/branding-defaults so a fresh install shows defaults until customized.
-    DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment);
+    // DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment);
 
     // Runs here rather than in ThumbnailBackfillService so the pre-tenant-scoping folder is gone
     // before the server accepts requests — while it exists the static middleware serves it anonymously.

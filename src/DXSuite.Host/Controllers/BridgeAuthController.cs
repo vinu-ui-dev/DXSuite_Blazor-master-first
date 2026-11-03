@@ -2,6 +2,7 @@ using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using Microsoft.AspNetCore.Cors;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using DXSuite.Host.Bridge;
@@ -13,34 +14,29 @@ using DXSuite.Shared.Multitenancy;
 namespace DXSuite.Host.Controllers;
 
 /// <summary>
-/// Receives the Editor bridge handoff from Director: Director's Angular app already holds a
-/// Director-user JWT, calls Director's /api/v1/editor-auth/launch with a PKCE challenge, and does a
-/// full browser navigation here with the resulting one-time code. The PKCE verifier travels in the
-/// URL fragment (never sent to this or any server by the browser) rather than the query string, so
-/// <see cref="Callback"/> serves a tiny relay page that reads the fragment client-side and posts
-/// both to <see cref="Exchange"/>, which does the actual server-to-server redeem call to Director.
+/// Receives the Editor bridge handoff from Director. Director's Angular app already holds a
+/// Director-user JWT and the PKCE verifier (it generated the challenge for /launch itself), so it
+/// calls <see cref="Exchange"/> directly — a cross-origin POST with credentials — to redeem the
+/// code and get the DXSuite cookie set, then does a single plain top-level navigation straight to
+/// the target DXSuite page once that succeeds. There is no separate callback page to visit: the
+/// browser's one and only navigation is the real destination, already authenticated.
 /// </summary>
 [Route("bridge")]
+[EnableCors(CorsPolicy)]
 public class BridgeAuthController(
     EditorBridgeClient bridgeClient,
     ITenantStore tenantStore,
     IOptions<EditorBridgeClientOptions> options,
+    IConfiguration configuration,
     ILogger<BridgeAuthController> logger) : Controller
 {
+    public const string CorsPolicy = "EditorBridgeUi";
     private readonly EditorBridgeClientOptions _options = options.Value;
-
-    [HttpGet("dxsuite-callback")]
-    public IActionResult Callback([FromQuery] string? code, [FromQuery] string? returnTo)
-    {
-        if (!_options.Enabled) return NotFound();
-        if (string.IsNullOrWhiteSpace(code)) return Content(RelayHtml.Error("Missing authorization code."), "text/html");
-        return Content(RelayHtml.Relay(code, SafeLocalPath(returnTo)), "text/html");
-    }
 
     /// <summary>
     /// Only a plain in-app path is ever honored: anything else (an absolute URL, a scheme, a
     /// protocol-relative "//host/..." path) could turn this into an open redirect, since the value
-    /// arrives from the Director-controlled link/query string, not from DXSuite itself.
+    /// arrives from the Director-controlled caller, not from DXSuite itself.
     /// </summary>
     private static string SafeLocalPath(string? returnTo) =>
         !string.IsNullOrWhiteSpace(returnTo) && returnTo.StartsWith('/') && !returnTo.StartsWith("//", StringComparison.Ordinal)
@@ -53,7 +49,7 @@ public class BridgeAuthController(
     public async Task<IActionResult> Exchange([FromBody] ExchangeRequest body, CancellationToken ct)
     {
         if (!_options.Enabled) return NotFound();
-        if (string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Verifier))
+        if (body is null || string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Verifier))
             return BadRequest(new { error = "missing-code-or-verifier" });
 
         var identity = await bridgeClient.RedeemAsync(body.Code, body.Verifier, ct);
@@ -65,7 +61,18 @@ public class BridgeAuthController(
         var needsFlightDataEditorFlag = returnTo.StartsWith("/Flight-Data-Editor", StringComparison.OrdinalIgnoreCase);
         if (tenant is null || !tenant.IsEnabled || !tenant.Modules.Aviation || (needsFlightDataEditorFlag && !tenant.Features.FlightDataEditor))
         {
-            logger.LogWarning("Editor bridge identity for tenant '{TenantId}' has no matching enabled DXSuite tenant for '{ReturnTo}'.", identity.TenantId, returnTo);
+            var bySubdomain = await tenantStore.FindBySubdomainAsync("Default", ct);
+            logger.LogWarning("Diag: FindBySubdomainAsync(\"Default\") -> found={Found2}, aviation={Aviation2}, tenantId={TenantId2}",
+                bySubdomain is not null, bySubdomain?.Modules.Aviation, bySubdomain?.TenantId);
+            var modulesSection = configuration.GetSection("Tenants:Default:Modules");
+            logger.LogWarning("Diag: raw config -> sectionExists={Exists}, rawAviation={RawAviation}, keys=[{Keys}]",
+                modulesSection.Exists(), configuration["Tenants:Default:Modules:Aviation"],
+                string.Join(",", modulesSection.GetChildren().Select(c => $"{c.Key}={c.Value}")));
+            logger.LogWarning("Editor bridge identity for tenant '{TenantId}' has no matching enabled DXSuite tenant for '{ReturnTo}' " +
+                "(found={Found}, enabled={Enabled}, aviation={Aviation}, flightDataEditor={Fde}, " +
+                "director={Director}, coreData={CoreData}, storeType={StoreType}, recordTenantId={RecordTenantId}, recordSubdomain={RecordSubdomain}).",
+                identity.TenantId, returnTo, tenant is not null, tenant?.IsEnabled, tenant?.Modules.Aviation, tenant?.Features.FlightDataEditor,
+                tenant?.Modules.Director, tenant?.Modules.CoreData, tenantStore.GetType().FullName, tenant?.TenantId, tenant?.Subdomain);
             return StatusCode((int)HttpStatusCode.Forbidden, new { error = "tenant-not-available" });
         }
 
@@ -98,44 +105,5 @@ public class BridgeAuthController(
         });
 
         return Ok(new { redirectTo = returnTo });
-    }
-
-    private static class RelayHtml
-    {
-        private const string Template = """
-            <!DOCTYPE html>
-            <html><head><title>Signing in…</title></head>
-            <body data-code="__CODE__" data-return-to="__RETURN_TO__">
-            <p>Signing you in&hellip;</p>
-            <script>
-            (function () {
-                var code = document.body.getAttribute('data-code');
-                var returnTo = document.body.getAttribute('data-return-to');
-                var hash = window.location.hash.length > 1 ? window.location.hash.slice(1) : '';
-                var verifier = new URLSearchParams(hash).get('verifier') || '';
-                fetch('/bridge/dxsuite-exchange', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    credentials: 'same-origin',
-                    body: JSON.stringify({ code: code, verifier: verifier, returnTo: returnTo })
-                }).then(function (r) {
-                    if (!r.ok) throw new Error('exchange-failed');
-                    return r.json();
-                }).then(function (data) {
-                    window.location.replace(data.redirectTo || '/Flight-Data-Editor');
-                }).catch(function () {
-                    document.body.textContent = 'Sign-in failed. Please return to Director and try again.';
-                });
-            })();
-            </script>
-            </body></html>
-            """;
-
-        public static string Relay(string code, string returnTo) => Template
-            .Replace("__CODE__", WebUtility.HtmlEncode(code))
-            .Replace("__RETURN_TO__", WebUtility.HtmlEncode(returnTo));
-
-        public static string Error(string message) =>
-            $"<!DOCTYPE html><html><body>{WebUtility.HtmlEncode(message)}</body></html>";
     }
 }
