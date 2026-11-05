@@ -1,12 +1,23 @@
+using DXSuite.Aviation.Services.Cupps;
 using Microsoft.AspNetCore.Components;
 using static DXSuite.Aviation.Pages.Cupps.CuppsData;
 
 namespace DXSuite.Aviation.Pages.Cupps;
 
 // State and actions for the CUPPS agent screens prototype. Ported from the DXME-500 HTML prototype;
-// all state is in memory for this circuit and nothing is saved or sent anywhere.
+// all state is in memory for this circuit and nothing is saved or sent anywhere. The RMU airline/counter
+// picker is the one path wired to live data (CuppsLiveDataProvider); every other scenario keeps using the
+// static CuppsData below, untouched.
 public partial class CuppsAgentScreens : IDisposable
 {
+    [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
+
+    private Dictionary<string, Airline> liveAirlines = [];
+    private List<Alloc> liveAllocations = [];
+    private List<Flight> liveFlights = [];
+    private bool liveLoading;
+    private bool liveLoadFailed;
+
     private string scenario = "agent";
     private string screen = "login";
     private int now = 630;
@@ -44,7 +55,7 @@ public partial class CuppsAgentScreens : IDisposable
     private CancellationTokenSource? toastCts;
 
     /// <summary>Scenario key to start in. "rmu" (RMU Staff, Entra) starts at the Microsoft sign-in screen.</summary>
-    [Parameter] public string StartScenario { get; set; } = "agent";
+    [Parameter] public string StartScenario { get; set; } = "rmu";
 
     [Parameter] public string Title { get; set; } = "CUPPS Agent Screens";
 
@@ -74,31 +85,59 @@ public partial class CuppsAgentScreens : IDisposable
     private bool Can(string key) => Keys[Sc.Role].Contains(key);
     private string? Station => acting?.Counter ?? Sc.Station;
     private string MyAirline => acting?.Airline ?? Sc.Airline ?? "WS";
-    private Alloc? HolderNow(string id) => Allocations.FirstOrDefault(a => a.CounterId == id && a.From <= now && now < a.To);
-    private Alloc? AllocFor(string? id, string code) => Allocations.FirstOrDefault(a => a.CounterId == id && a.Code == code && a.To > now);
+
+    /// <summary>The RMU scenario runs on CoreAPI and counter-allocation data only; the other scenarios are static demos.</summary>
+    private bool Live => scenario == "rmu";
+
+    private List<Alloc> AllAllocs => Live ? liveAllocations : Allocations;
+
+    private List<Counter> CounterList => Live
+        ? [.. liveAllocations.Select(a => a.CounterId).Distinct().Order().Select(id => new Counter(id, ["Counters", "All counters"]))]
+        : Counters;
+
+    private List<string> ZoneList => Live ? [] : [.. Zones];
+
+    private List<Canned> MessageList => Live ? [] : CannedMessages;
+
+    private Alloc? HolderNow(string id) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.From <= now && now < a.To);
+    private Alloc? AllocFor(string? id, string code) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.Code == code && a.To > now);
     private bool IsWaiting => AllocFor(Station, MyAirline) is { } a && a.From > now;
     private CounterSetup? Pub(string? id) => id is not null && published.TryGetValue(id, out var p) ? p : null;
     private bool InApp => screen == "app";
+
+    /// <summary>Airline metadata for a code: live-fetched data first (the RMU picker), falling back to the
+    /// static demo dictionary, falling back to a generic entry so a live code never throws.</summary>
+    private Airline AirlineInfo(string code) =>
+        liveAirlines.TryGetValue(code, out var live) ? live
+        : Airlines.TryGetValue(code, out var demo) ? demo
+        : new Airline(code, code, "#555");
+
+    /// <summary>A counter's static zone/SSBD metadata, or null when it's a live counter id not in the demo
+    /// zone table.</summary>
+    private Counter? CounterInfo(string? id) => Live ? null : Counters.FirstOrDefault(c => c.Id == id);
 
     private List<Template> Usable() =>
         Templates.Concat(Many.Take(many > 0 ? many - 8 : 0))
             .Where(t => t.Scope == "airport" || t.Scope == MyAirline).ToList();
 
     /// <summary>Another airline's view swaps the operating carrier so the table reads as its own flights.</summary>
-    private List<Flight> NextFlights(int n) => Flights.Where(f => f.Sched > now).Take(n).Select(f =>
+    private List<Flight> NextFlights(int n) => Live ? [.. liveFlights.Where(f => f.Sched > now && OperatesOrShares(f, MyAirline)).Take(n)] : Flights.Where(f => f.Sched > now).Take(n).Select(f =>
     {
         var c = MyAirline;
         if (c == "WS") return f;
         var pt = Partners.GetValueOrDefault(c) ?? [];
         var shares = f.Carriers.Skip(1).Select(x => pt.TryGetValue(x.Airline, out var p) ? (p.Name, p.Code + x.No[2..]) : x);
-        return f with { Carriers = [(Airlines[c].Name, f.Carriers[0].No.Replace("WS", c)), .. shares] };
+        return f with { Carriers = [(AirlineInfo(c).Name, f.Carriers[0].No.Replace("WS", c)), .. shares] };
     }).ToList();
+
+    private static bool OperatesOrShares(Flight f, string code) =>
+        f.Carriers.Any(c => c.No.Length > code.Length && c.No.StartsWith(code, StringComparison.OrdinalIgnoreCase) && char.IsDigit(c.No[code.Length]));
 
     private record SplitInfo(bool Split, string? Other = null, bool SameAirline = false, bool OtherOpen = false);
 
     private SplitInfo GetSplit()
     {
-        var c = Counters.FirstOrDefault(x => x.Id == Station);
+        var c = CounterInfo(Station);
         if (c?.Split is null) return new(false);
         var h = HolderNow(c.Split);
         var same = h is not null && h.Code == MyAirline;
@@ -170,13 +209,51 @@ public partial class CuppsAgentScreens : IDisposable
     {
         StopIdle();
         scenario = key; screen = "login"; now = Scenarios[key].Now; acting = null; rmuAirline = null; rmuNotice = null;
-        search = ""; message = null; endedReason = null; published = SeedPublished(); coreDown = false; draft = new();
+        search = ""; message = null; endedReason = null; published = Live ? [] : SeedPublished(); coreDown = false; draft = new();
+        deviation = !Live;
+        liveAirlines = []; liveAllocations = []; liveFlights = []; liveLoading = false; liveLoadFailed = false;
     }
 
-    private void SignIn()
+    private async Task SignIn()
     {
-        if (Sc.Kind == "Individual") screen = "rmu-pick";
+        if (Sc.Kind == "Individual")
+        {
+            screen = "rmu-pick";
+            await LoadLiveCuppsDataAsync();
+        }
         else EnterApp();
+    }
+
+    /// <summary>Loads the RMU picker's airline grid from CoreAPI and its counter grid from
+    /// <see cref="CuppsLiveDataProvider"/>, replacing <see cref="now"/> with the real current time so live
+    /// allocations filter correctly. Demo scenarios never call this, so they're unaffected.</summary>
+    private async Task LoadLiveCuppsDataAsync()
+    {
+        liveLoading = true;
+        liveLoadFailed = false;
+        StateHasChanged();
+        try
+        {
+            var airlinesTask = LiveData.GetOperatingAirlinesAsync();
+            var allocTask = LiveData.GetLiveAllocationsAsync();
+            var flightsTask = LiveData.GetTodaysDeparturesAsync();
+            await Task.WhenAll(airlinesTask, allocTask, flightsTask);
+
+            liveFlights = [.. flightsTask.Result];
+            liveAirlines = airlinesTask.Result.ToDictionary(a => a.Code);
+            var (allocations, nowMinutes) = allocTask.Result;
+            liveAllocations = [.. allocations];
+            now = nowMinutes;
+        }
+        catch (Exception)
+        {
+            liveLoadFailed = true;
+        }
+        finally
+        {
+            liveLoading = false;
+            StateHasChanged();
+        }
     }
 
     private void SignOut()

@@ -1,5 +1,6 @@
 using DXSuite.Aviation.Entities;
 using DXSuite.Aviation.Services.CounterAllocation;
+using DXSuite.Aviation.Services.Cupps;
 using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Shared.Multitenancy;
 using DXSuite.Shared.Services;
@@ -47,6 +48,11 @@ public static class Extensions
         // ──────────────────────────────────────────────────────────────────
         services.AddSingleton<CounterAllocationOutageState>();
         services.AddScoped<CounterAllocationService>();
+
+        // ──────────────────────────────────────────────────────────────────
+        // CUPPS — live airline/counter data for the RMU picker (DXME-500)
+        // ──────────────────────────────────────────────────────────────────
+        services.AddScoped<CuppsLiveDataProvider>();
 
         return services;
     }

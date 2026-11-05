@@ -31,16 +31,16 @@
 
 @code {
     private RenderFragment Mark(string airline, string cls = "") =>
-        @<span class="dx-airline-mark @cls" style="background:@Airlines[airline].Bg">@airline</span>;
+        @<span class="dx-airline-mark @cls" style="background:@AirlineInfo(airline).Bg">@airline</span>;
 
     // ---------- Screen render (Sent preview), after Diagrams 3 and 37 ----------
     private RenderFragment Half(CounterSetup? s, bool extra = false, bool flair = false)
     {
         if (flair)
-            return @<div class="half" style="background:@Airlines["F8"].Bg"><div class="logo">FLAIR</div><div class="en">Check-In</div><div class="fr">Enregistrement</div></div>;
+            return @<div class="half" style="background:@AirlineInfo("F8").Bg"><div class="logo">FLAIR</div><div class="en">Check-In</div><div class="fr">Enregistrement</div></div>;
         if (s is not { Open: true })
             return @<div class="half filler">Filler</div>;
-        var a = Airlines[MyAirline];
+        var a = AirlineInfo(MyAirline);
         var t = Tpl(s.Page);
         var bg = t?.Kind == "Custom" ? t.Img : a.Bg;
         return @<div class="half" style="background:@bg">
@@ -62,7 +62,7 @@
         if (s is not { Open: true })
             return @<div></div>;
         var msgs = MessagesOf(s);
-        var al = Airlines[MyAirline].Alliance;
+        var al = AirlineInfo(MyAirline).Alliance;
         return @<div>
             <div class="brow">
                 <span class="alliance">@al@if (s.Sunflower) {<span class="cp-sunflower" style="width:1.6em;height:1.6em;"></span>}</span>
@@ -147,9 +147,9 @@
         var a = AllocFor(id, MyAirline)!;
         var w = IsWaiting;
         return @<div class="cp-band">
-            <h2>@id@if (Counters.First(c => c.Id == id).Ssbd) {<span style="font-size:1rem;font-weight:600;"> SSBD</span>}</h2>
+            <h2>@id@if (CounterInfo(id)?.Ssbd == true) {<span style="font-size:1rem;font-weight:600;"> SSBD</span>}</h2>
             <div>
-                <span class="cp-alloc">@Airlines[MyAirline].Name allocation (@Hm(a.From) to @Hm(a.To), @a.Type)</span>
+                <span class="cp-alloc">@AirlineInfo(MyAirline).Name allocation (@Hm(a.From) to @Hm(a.To), @a.Type)</span>
                 <span class="cp-left">@(w ? $"Starts in {Left(a.From - now)}" : $"{Left(a.To - now)} remaining")</span>
             </div>
         </div>;
@@ -159,7 +159,7 @@
         @if (acting is { } act)
         {
             <div class="dx-alert dx-alert-info" style="justify-content:space-between;align-items:center;">
-                <span><b>Acting for @Airlines[act.Airline].Name</b> at counter @act.Counter. What you publish is recorded as @Sc.Who acting for @Airlines[act.Airline].Name.</span>
+                <span><b>Acting for @AirlineInfo(act.Airline).Name</b> at counter @act.Counter. What you publish is recorded as @Sc.Who acting for @AirlineInfo(act.Airline).Name.</span>
                 <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="ChangeActing">Change airline or counter</button>
             </div>
         }
@@ -248,7 +248,7 @@
             }
             else if (open)
             {
-                <span class="cp-sent-page">@(t?.En ?? Airlines[MyAirline].Name)</span>
+                <span class="cp-sent-page">@(t?.En ?? AirlineInfo(MyAirline).Name)</span>
                 @ScreenFor(p, "cp-screen-sm")
             }
             else
@@ -300,7 +300,7 @@
                     <button class="cp-page @(draft.Page == t.Id ? "on" : "")" @onclick="() => draft.Page = t.Id">
                         <span>@t.En</span><span class="cp-fr">@t.Fr</span>
                         @if (t.EndsToday) { <span><span class="cp-ends">Ends today</span></span> }
-                        @if (t.Scope != "airport") { <span class="cp-kind">@Airlines[t.Scope].Name only</span> }
+                        @if (t.Scope != "airport") { <span class="cp-kind">@AirlineInfo(t.Scope).Name only</span> }
                     </button>
                 }
                 @for (var i = 0; i < empties; i++)
@@ -371,7 +371,11 @@
         return @<text>
             <div class="cp-msg-head"><span>Approved Messages</span><span>ACTIONS</span></div>
             <div class="cp-msgs">
-                @foreach (var m in CannedMessages)
+                @if (MessageList.Count == 0)
+                {
+                    <div class="dx-text-muted" style="padding:8px;">No approved Messages available.</div>
+                }
+                @foreach (var m in MessageList)
                 {
                     var i = draft.Msgs.IndexOf(m.Id);
                     <div class="cp-msg">
@@ -479,7 +483,7 @@
             return @<div class="cp-tile">
                 <span class="cp-tile-id" style="@(c.Id == Station ? "background:var(--dx-blue)" : null)">@label</span>
                 <div class="cp-tile-box @(open ? "" : "closed") @(isSel ? "sel" : "")" @onclick="() => ToggleSel(c.Id)">
-                    @(open ? t?.En ?? Airlines[code].Name : "Closed")
+                    @(open ? t?.En ?? AirlineInfo(code).Name : "Closed")
                     <input type="checkbox" class="dx-checkbox" checked="@isSel" disabled="@w" tabindex="-1" aria-label="Select @c.Id" style="pointer-events:none;">
                 </div>
                 <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@w" @onclick="() => changePage = c.Id">Change Page</button>
@@ -503,7 +507,7 @@
     {
         var code = MyAirline;
         var w = IsWaiting;
-        var groups = Counters.Where(c => (zone == "" || c.Zones.Contains(zone)) && AllocFor(c.Id, code) is not null)
+        var groups = CounterList.Where(c => (zone == "" || c.Zones.Contains(zone)) && AllocFor(c.Id, code) is not null)
             .GroupBy(c => c.Zones[1]).ToList();
         var n = sel.Count;
         return @<text>
@@ -524,13 +528,16 @@
                 }
                 <button class="dx-btn dx-btn-outline-red" disabled="@(n == 0 || w)" @onclick="BulkClose">Close selected</button>
                 <span class="dx-text-muted">@n selected</span><span class="grow"></span>
-                <select class="dx-form-control" aria-label="Display Zone" @bind="zone">
-                    <option value="">ZONE: ALL</option>
-                    @foreach (var z in Zones)
-                    {
-                        <option value="@z">ZONE: @z.ToUpperInvariant()</option>
-                    }
-                </select>
+                @if (ZoneList.Count > 0)
+                {
+                    <select class="dx-form-control" aria-label="Display Zone" @bind="zone">
+                        <option value="">ZONE: ALL</option>
+                        @foreach (var z in ZoneList)
+                        {
+                            <option value="@z">ZONE: @z.ToUpperInvariant()</option>
+                        }
+                    </select>
+                }
             </div>
             @foreach (var g in groups)
             {
@@ -630,8 +637,8 @@
         </div></div></div>;
     }
 
-    private List<Alloc> Held(string code) => Allocations.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
-    private List<Alloc> Later(string code) => Allocations.Where(x => x.Code == code && x.From > now).ToList();
+    private List<Alloc> Held(string code) => AllAllocs.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
+    private List<Alloc> Later(string code) => AllAllocs.Where(x => x.Code == code && x.From > now).ToList();
 
     private RenderFragment AirlineTile(Airline x)
     {
@@ -669,10 +676,18 @@
     {
         var a = rmuAirline;
         RenderFragment body;
-        if (a is null)
+        if (liveLoading)
+        {
+            body = @<div class="dx-text-muted">Loading airlines...</div>;
+        }
+        else if (liveLoadFailed)
+        {
+            body = @<div class="dx-alert dx-alert-warning">Couldn't load airlines from the flight data feed. <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button></div>;
+        }
+        else if (a is null)
         {
             var q = search.ToLowerInvariant();
-            var list = Airlines.Values.Where(x => q == "" || (x.Name + x.Code).ToLowerInvariant().Contains(q)).ToList();
+            var list = liveAirlines.Values.Where(x => q == "" || (x.Name + x.Code).ToLowerInvariant().Contains(q)).ToList();
             var withNow = list.Where(x => Held(x.Code).Count > 0).ToList();
             var none = list.Where(x => Held(x.Code).Count == 0).ToList();
             body = @<text>
@@ -681,18 +696,26 @@
                     <h3 style="margin:0;font-size:1.3rem;font-weight:600;">Select an airline</h3>
                     <input class="dx-search-input" placeholder="Search airlines..." @bind="search" @bind:event="oninput">
                 </div>
-                <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
-                @if (none.Count > 0)
+                @if (list.Count == 0)
                 {
-                    <div class="dx-group-label">No counters allocated right now</div>
-                    <div class="dx-pick-grid">@foreach (var x in none) { @AirlineTile(x) }</div>
+                    <div class="dx-text-muted">No airlines have flights right now.</div>
+                }
+                else
+                {
+                    <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
+                    @if (none.Count > 0)
+                    {
+                        <div class="dx-group-label">No counters allocated right now</div>
+                        <div class="dx-pick-grid">@foreach (var x in none) { @AirlineTile(x) }</div>
+                    }
                 }
             </text>;
         }
         else
         {
-            var groups = Held(a).GroupBy(x => string.Join(", ", Counters.First(c => c.Id == x.CounterId).Zones)
-                .Replace("Terminal 3, T3 ", "Terminal 3, ").Replace("Terminal 1, T1 ", "Terminal 1, ")).ToList();
+            var groups = Held(a).GroupBy(x => CounterInfo(x.CounterId)?.Zones is { } zones
+                ? string.Join(", ", zones).Replace("Terminal 3, T3 ", "Terminal 3, ").Replace("Terminal 1, T1 ", "Terminal 1, ")
+                : "Other counters").ToList();
             var later = Later(a);
             body = @<text>
                 <div class="dx-step-label">Step 2 of 2</div>
@@ -701,7 +724,7 @@
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
                     </button>
                     @Mark(a)
-                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@Airlines[a].Name</h3>
+                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@AirlineInfo(a).Name</h3>
                 </div>
                 <p style="margin:10px 0 6px;font-size:1.15rem;font-weight:600;">Select the counter you want to manage</p>
                 @foreach (var g in groups)
