@@ -584,13 +584,15 @@
             <div class="cp-wrap">
                 @Alerts()
                 @TabRow()
-                @switch (tab)
-                {
-                    case "all": @AllCounters() break;
-                    case "flights": <h3 class="cp-h" style="font-size:1.8rem;">Flights</h3>@FlightsTable(7) break;
-                    case "messages": @MessagesTab() break;
-                    default: @MyCounter() break;
-                }
+                <div class="cp-body-scroll">
+                    @switch (tab)
+                    {
+                        case "all": @AllCounters() break;
+                        case "flights": <h3 class="cp-h" style="font-size:1.8rem;">Flights</h3>@FlightsTable(7) break;
+                        case "messages": @MessagesTab() break;
+                        default: @MyCounter() break;
+                    }
+                </div>
             </div>
             @if (viewSent && p is { Open: true })
             {

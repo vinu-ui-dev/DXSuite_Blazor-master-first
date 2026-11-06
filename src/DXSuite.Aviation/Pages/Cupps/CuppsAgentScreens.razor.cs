@@ -97,7 +97,7 @@ public partial class CuppsAgentScreens : IDisposable
 
     private List<string> ZoneList => Live ? [] : [.. Zones];
 
-    private List<Canned> MessageList => Live ? [] : CannedMessages;
+    private List<Canned> MessageList => CannedMessages;
 
     private Alloc? HolderNow(string id) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.From <= now && now < a.To);
     private Alloc? AllocFor(string? id, string code) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.Code == code && a.To > now);
@@ -210,7 +210,7 @@ public partial class CuppsAgentScreens : IDisposable
         StopIdle();
         scenario = key; screen = "login"; now = Scenarios[key].Now; acting = null; rmuAirline = null; rmuNotice = null;
         search = ""; message = null; endedReason = null; published = Live ? [] : SeedPublished(); coreDown = false; draft = new();
-        deviation = !Live;
+        deviation = true;
         liveAirlines = []; liveAllocations = []; liveFlights = []; liveLoading = false; liveLoadFailed = false;
     }
 
@@ -264,8 +264,36 @@ public partial class CuppsAgentScreens : IDisposable
             liveFlights = [];
         }
 
+        SeedDemoPublishedState();
+
         liveLoading = false;
         StateHasChanged();
+    }
+
+    /// <summary>Demo-only: pre-opens a few of the manually-inserted demo counters (tagged
+    /// CreatedBy='Claude-Demo-TEMP' in tblCounterAllocation) so a manager walkthrough doesn't need a live
+    /// Publish click first — matching how the reference DXME-500 prototype always starts with some counters
+    /// already open. In-memory only, same as the rest of CUPPS's published state; remove this method (and the
+    /// tagged DB rows) together once the demo is done.</summary>
+    private void SeedDemoPublishedState()
+    {
+        void Open(string counterId, string page, string dest = "", List<string>? msgs = null)
+        {
+            if (!liveAllocations.Any(a => a.CounterId == counterId)) return;
+            published[counterId] = new CounterSetup { Open = true, Page = page, Dest = dest, Msgs = msgs ?? [], SentAt = now };
+        }
+
+        Open("A1", "t6");
+        Open("A2", "t5", "Toronto");
+        Open("A3", "t1");
+        Open("A4", "t3", msgs: ["m2"]);
+        Open("A5", "t2");
+        Open("A6", "t1");
+        Open("A7", "t5");
+        Open("B2", "t2");
+        Open("B3", "t6", "Toronto");
+        Open("B4", "t1");
+        Open("B5", "t5");
     }
 
     private void SignOut()

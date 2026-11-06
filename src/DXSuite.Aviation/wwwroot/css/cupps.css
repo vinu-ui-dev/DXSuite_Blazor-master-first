@@ -24,7 +24,11 @@
 
 /* ---- Prototype frame: a counter PC screen, roughly 1366 wide. ---- */
 .pt-frame { overflow-x: auto; padding: 0; }
-.pt-app { width: 100%; height: auto; min-height: calc(100vh - 3.5rem); margin: 0; border: 0; box-shadow: none; position: relative; }
+/* No fixed min-height here: it was tuned for CUPPS as a bare, chrome-free shell, but when it's
+   embedded inside the full Director app header/nav (taller than assumed) a hardcoded min-height
+   forces extra, mismatched space below the content and makes the page scroll oddly. Let it size
+   to its own content instead. */
+.pt-app { width: 100%; height: auto; margin: 0; border: 0; box-shadow: none; position: relative; }
 /* The real login page fills the viewport; here it fills the app frame. */
 .pt-app .dx-login-page { min-height: 760px; }
 .pt-app .dx-modal-overlay, .pt-app .dx-toast { position: absolute; }
@@ -48,6 +52,10 @@
 
 /* Tab row with the counter status and PUBLISH on the right, Diagram 1. */
 .cp-wrap { padding: 20px 30px 40px; display: flex; flex-direction: column; gap: 18px; }
+/* The band, "Acting for" banner and tab row above this stay in place; just the active tab's
+   content scrolls within its own box, so long content (flights list, template grid) doesn't push
+   the header out of view. */
+.cp-body-scroll { overflow-y: auto; max-height: calc(100vh - 230px); padding-right: 4px; }
 .cp-tabs { display: flex; align-items: stretch; background: var(--dx-bg-alt); border-bottom: 1px solid #ccc; }
 .cp-tabs .dx-tab-btn:disabled { opacity: .45; cursor: not-allowed; }
 .cp-tabs-right { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
