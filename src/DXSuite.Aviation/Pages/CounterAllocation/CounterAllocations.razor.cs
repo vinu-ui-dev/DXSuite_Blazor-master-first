@@ -120,8 +120,13 @@ public partial class CounterAllocations
 
     private async Task LoadAirlinesAsync()
     {
+        // Projected to just these two columns: some deployments of this externally-owned table predate
+        // newer columns (CarrierLogoPath, Pincode, ...) that other, unrelated pages read — loading full
+        // TblAirline entities here would fail on those deployments for columns this page never uses.
         await using var db = await AviationDbFactory.CreateDbContextAsync();
-        airlineNames = await db.TblAirlines.ToDictionaryAsync(a => a.AirlineCode, a => a.CarrierName);
+        airlineNames = await db.TblAirlines
+            .Select(a => new { a.AirlineCode, a.CarrierName })
+            .ToDictionaryAsync(a => a.AirlineCode, a => a.CarrierName);
     }
 
     private async Task LoadCountersAsync()

@@ -226,34 +226,46 @@ public partial class CuppsAgentScreens : IDisposable
 
     /// <summary>Loads the RMU picker's airline grid from CoreAPI and its counter grid from
     /// <see cref="CuppsLiveDataProvider"/>, replacing <see cref="now"/> with the real current time so live
-    /// allocations filter correctly. Demo scenarios never call this, so they're unaffected.</summary>
+    /// allocations filter correctly. Demo scenarios never call this, so they're unaffected. The three sources
+    /// fail independently — e.g. a missing counter-allocation table shouldn't hide an airline list that loaded
+    /// fine, it should just mean no airline shows anything "allocated".</summary>
     private async Task LoadLiveCuppsDataAsync()
     {
         liveLoading = true;
         liveLoadFailed = false;
         StateHasChanged();
+
         try
         {
-            var airlinesTask = LiveData.GetOperatingAirlinesAsync();
-            var allocTask = LiveData.GetLiveAllocationsAsync();
-            var flightsTask = LiveData.GetTodaysDeparturesAsync();
-            await Task.WhenAll(airlinesTask, allocTask, flightsTask);
-
-            liveFlights = [.. flightsTask.Result];
-            liveAirlines = airlinesTask.Result.ToDictionary(a => a.Code);
-            var (allocations, nowMinutes) = allocTask.Result;
-            liveAllocations = [.. allocations];
-            now = nowMinutes;
+            liveAirlines = (await LiveData.GetOperatingAirlinesAsync()).ToDictionary(a => a.Code);
         }
         catch (Exception)
         {
             liveLoadFailed = true;
         }
-        finally
+
+        try
         {
-            liveLoading = false;
-            StateHasChanged();
+            var (allocations, nowMinutes) = await LiveData.GetLiveAllocationsAsync();
+            liveAllocations = [.. allocations];
+            now = nowMinutes;
         }
+        catch (Exception)
+        {
+            liveAllocations = [];
+        }
+
+        try
+        {
+            liveFlights = [.. await LiveData.GetTodaysDeparturesAsync()];
+        }
+        catch (Exception)
+        {
+            liveFlights = [];
+        }
+
+        liveLoading = false;
+        StateHasChanged();
     }
 
     private void SignOut()
