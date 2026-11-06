@@ -33,6 +33,7 @@ public partial class CounterAllocations
     {
         public int? Id;
         public string Counter = "";
+        public string ToCounter = "";
         public string AirlineCode = "";
         public string AllocationType = "Common";
         public string? Destination;
@@ -46,10 +47,12 @@ public partial class CounterAllocations
     private DateTime toLocal;
     private List<AllocView> views = [];
     private Dictionary<string, string?> airlineNames = [];
+    private List<string> allCounterIds = [];
     private List<string> zones = [];
     private string selectedZone = "";
     private readonly HashSet<int> selected = [];
     private string? error;
+    private bool showOutageConfirm;
 
     private AllocFormModel? modal;
     private string? modalError;
@@ -77,7 +80,7 @@ public partial class CounterAllocations
         zone = flightListClock.CurrentWindow().AirportTimeZone;
         SetNowWindowValues();
         await LoadAirlinesAsync();
-        await LoadZonesAsync();
+        await LoadCountersAsync();
         await RefreshAsync();
     }
 
@@ -88,6 +91,14 @@ public partial class CounterAllocations
     {
         var m = ZonePrefixRegex.Match(counterId);
         return m.Success ? $"AISLE {m.Value.ToUpperInvariant()}" : "OTHER COUNTERS";
+    }
+
+    /// <summary>A friendlier form of <see cref="ZoneKeyFor"/> for inline labels, e.g. "Aisle A". There's no
+    /// terminal number to show here — the schema has no terminal/aisle table, only the counter id itself.</summary>
+    private static string ZoneName(string counterId)
+    {
+        var key = ZoneKeyFor(counterId);
+        return key.StartsWith("AISLE ") ? $"Aisle {key["AISLE ".Length..]}" : "Other";
     }
 
     private static int NumericSuffix(string counterId)
@@ -113,11 +124,24 @@ public partial class CounterAllocations
         airlineNames = await db.TblAirlines.ToDictionaryAsync(a => a.AirlineCode, a => a.CarrierName);
     }
 
-    private async Task LoadZonesAsync()
+    private async Task LoadCountersAsync()
     {
         await using var db = await AviationDbFactory.CreateDbContextAsync();
         var counters = await db.TblCounterAllocations.Select(a => a.Counter).Distinct().ToListAsync();
-        zones = [.. counters.Select(ZoneKeyFor).Distinct().OrderBy(z => z)];
+        allCounterIds = [.. counters.OrderBy(ZoneKeyFor).ThenBy(NumericSuffix)];
+        zones = [.. allCounterIds.Select(ZoneKeyFor).Distinct().OrderBy(z => z)];
+    }
+
+    /// <summary>The counters from From to To, inclusive, in the same order as <see cref="allCounterIds"/> — may
+    /// cross a zone boundary; that's fine, it just means the range spans two aisles.</summary>
+    private List<string> CounterRange(string from, string to)
+    {
+        var i1 = allCounterIds.IndexOf(from);
+        var i2 = allCounterIds.IndexOf(to);
+        if (i1 < 0 || i2 < 0) return from == to && from != "" ? [from] : [];
+        var lo = Math.Min(i1, i2);
+        var hi = Math.Max(i1, i2);
+        return allCounterIds[lo..(hi + 1)];
     }
 
     private async Task RefreshAsync()
@@ -161,14 +185,23 @@ public partial class CounterAllocations
     private void ToggleManualMode(ChangeEventArgs e)
     {
         if (e.Value is true) outageState.SwitchOn();
-        else outageState.SwitchOff();
+        else showOutageConfirm = true; // confirm before turning off; the checkbox snaps back until confirmed
     }
+
+    private void ConfirmOutageOff()
+    {
+        outageState.SwitchOff();
+        showOutageConfirm = false;
+    }
+
+    private void CancelOutageOff() => showOutageConfirm = false;
 
     private void OpenAdd(string? counterId)
     {
         var start = NowLocal;
         var rounded = new DateTime(start.Year, start.Month, start.Day, start.Hour, 0, 0);
-        modal = new AllocFormModel { Counter = counterId ?? "", Start = rounded, End = rounded.AddHours(2) };
+        var defaultCounter = counterId ?? allCounterIds.FirstOrDefault() ?? "";
+        modal = new AllocFormModel { Counter = defaultCounter, ToCounter = defaultCounter, Start = rounded, End = rounded.AddHours(2) };
         modalError = null;
     }
 
@@ -192,6 +225,7 @@ public partial class CounterAllocations
     {
         modal = null;
         modalError = null;
+        selected.Clear();
     }
 
     private void OnRowClick(string counterId) => OpenAdd(counterId);
@@ -205,6 +239,7 @@ public partial class CounterAllocations
         else
         {
             selected.Clear();
+            selected.Add(row.CounterAllocationId);
             OpenEdit(row);
         }
     }
@@ -217,33 +252,59 @@ public partial class CounterAllocations
         _ => null,
     };
 
+    private CounterAllocationDraft BuildDraft(string counter) => new(
+        counter, modal!.AirlineCode.Trim().ToUpperInvariant(), modal.AllocationType,
+        modal.AllocationType == "Dedicated" ? modal.Destination : null,
+        modal.AllocationType == "Dedicated" ? modal.FlightNumber : null,
+        ToUtc(modal.Start), ToUtc(modal.End));
+
     private async Task SaveModalAsync()
     {
         if (modal is null) return;
         modalError = null;
-        if (string.IsNullOrWhiteSpace(modal.Counter) || string.IsNullOrWhiteSpace(modal.AirlineCode))
+        if (string.IsNullOrWhiteSpace(modal.AirlineCode))
         {
-            modalError = "Counter and airline are required.";
+            modalError = "Please choose an airline.";
             return;
         }
 
-        var draft = new CounterAllocationDraft(
-            modal.Counter.Trim(), modal.AirlineCode.Trim().ToUpperInvariant(), modal.AllocationType,
-            modal.AllocationType == "Dedicated" ? modal.Destination : null,
-            modal.AllocationType == "Dedicated" ? modal.FlightNumber : null,
-            ToUtc(modal.Start), ToUtc(modal.End));
-
-        var result = modal.Id is { } id
-            ? await allocationService.UpdateAsync(id, draft)
-            : await allocationService.CreateAsync(draft, sessionState.User?.FriendlyName ?? sessionState.User?.UserPrincipalName);
-
-        modalError = Describe(result.Outcome, result.ConflictingAirline);
-        if (modalError is null)
+        if (modal.Id is { } id)
         {
-            modal = null;
-            await LoadZonesAsync();
-            await RefreshAsync();
+            var result = await allocationService.UpdateAsync(id, BuildDraft(modal.Counter));
+            modalError = Describe(result.Outcome, result.ConflictingAirline);
+            if (modalError is not null) return;
         }
+        else
+        {
+            var range = CounterRange(modal.Counter, modal.ToCounter);
+            if (range.Count == 0)
+            {
+                modalError = "Choose a valid counter range.";
+                return;
+            }
+
+            var failures = new List<string>();
+            foreach (var counter in range)
+            {
+                var result = await allocationService.CreateAsync(BuildDraft(counter), sessionState.User?.FriendlyName ?? sessionState.User?.UserPrincipalName);
+                if (result.Outcome != CounterAllocationSaveOutcome.Saved)
+                    failures.Add($"{counter}: {Describe(result.Outcome, result.ConflictingAirline)}");
+            }
+            if (failures.Count > 0)
+            {
+                // Counters earlier in the range that succeeded before a later one failed are already saved —
+                // the grid refresh below shows exactly what went through.
+                modalError = string.Join(" ", failures);
+                await LoadCountersAsync();
+                await RefreshAsync();
+                return;
+            }
+        }
+
+        modal = null;
+        selected.Clear();
+        await LoadCountersAsync();
+        await RefreshAsync();
     }
 
     private async Task DeleteFromModalAsync()
@@ -251,6 +312,7 @@ public partial class CounterAllocations
         if (modal?.Id is not { } id) return;
         await allocationService.DeleteAsync(id);
         modal = null;
+        selected.Clear();
         await RefreshAsync();
     }
 

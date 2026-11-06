@@ -238,6 +238,19 @@
     z-index: 1;
 }
 
+.ca-radio-row {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+}
+
+.ca-radio-row label {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    font-weight: 400;
+}
+
 .ca-empty {
     padding: 24px;
     text-align: center;

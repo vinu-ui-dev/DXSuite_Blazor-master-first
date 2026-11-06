@@ -61,8 +61,8 @@
     <span class="dx-text-muted">Click an empty spot on a counter's row to add an allocation there. Click one to change it. Ctrl+click to select several for copy or delete.</span>
     <div class="ca-actions-right">
         <button class="dx-btn dx-btn-green dx-btn-sm" @onclick="() => OpenAdd(null)">Add Allocation</button>
-        <button class="dx-btn dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="OpenCopy">Copy</button>
-        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete</button>
+        <button class="dx-btn dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="OpenCopy">Copy@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
+        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
     </div>
 </div>
 
@@ -130,32 +130,69 @@
     <div class="dx-modal-overlay">
         <div class="dx-modal" style="width:480px;">
             <div class="dx-modal-header">
-                <h3 style="margin:0;font-size:1.1rem;">@(modal.Id is null ? "Add allocation" : "Edit allocation")</h3>
+                <h3 style="margin:0;font-size:1.1rem;">@(modal.Id is null ? "New Allocation" : "Edit Allocation")</h3>
                 <button class="dx-modal-close" aria-label="Close" @onclick="CloseModal">&times;</button>
             </div>
             <div class="dx-modal-body">
                 <div class="dx-form-group">
-                    <label class="dx-form-label">Counter</label>
-                    <input class="dx-form-control" @bind="modal.Counter" placeholder="e.g. A11" />
-                </div>
-                <div class="dx-form-group">
-                    <label class="dx-form-label">Airline (IATA code)</label>
-                    <input class="dx-form-control" list="ca-airline-options" @bind="modal.AirlineCode" placeholder="e.g. AC" />
-                    <datalist id="ca-airline-options">
-                        @foreach (var kv in airlineNames.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)))
+                    <label class="dx-form-label">Airline</label>
+                    <select class="dx-form-select" @bind="modal.AirlineCode">
+                        <option value="">Choose an airline</option>
+                        @foreach (var kv in airlineNames.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)).OrderBy(kv => kv.Value))
                         {
                             <option value="@kv.Key">@kv.Value (@kv.Key)</option>
                         }
-                    </datalist>
-                </div>
-                <div class="dx-form-group">
-                    <label class="dx-form-label">Type</label>
-                    <select class="dx-form-select" @bind="modal.AllocationType">
-                        <option value="Common">Common</option>
-                        <option value="Dedicated">Dedicated</option>
-                        <option value="Info">Info</option>
                     </select>
                 </div>
+
+                @if (modal.Id is null)
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">From counter</label>
+                        <select class="dx-form-select" @bind="modal.Counter">
+                            @foreach (var c in allCounterIds)
+                            {
+                                <option value="@c">@c (@ZoneName(c))</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">To counter</label>
+                        <select class="dx-form-select" @bind="modal.ToCounter">
+                            @foreach (var c in allCounterIds)
+                            {
+                                <option value="@c">@c (@ZoneName(c))</option>
+                            }
+                        </select>
+                    </div>
+                    <p class="dx-text-muted">One allocation on each counter in the range (@CounterRange(modal.Counter, modal.ToCounter).Count).</p>
+                }
+                else
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Counter</label>
+                        <div>@modal.Counter @ZoneName(modal.Counter)</div>
+                    </div>
+                }
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Start</label>
+                    <input type="datetime-local" class="dx-form-control" @bind="modal.Start" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">End</label>
+                    <input type="datetime-local" class="dx-form-control" @bind="modal.End" />
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Counter type</label>
+                    <div class="ca-radio-row">
+                        <label><input type="radio" name="ca-type" checked="@(modal.AllocationType == "Common")" @onchange="@(() => modal.AllocationType = "Common")" /> Common</label>
+                        <label><input type="radio" name="ca-type" checked="@(modal.AllocationType == "Dedicated")" @onchange="@(() => modal.AllocationType = "Dedicated")" /> Dedicated</label>
+                        <label><input type="radio" name="ca-type" checked="@(modal.AllocationType == "Info")" @onchange="@(() => modal.AllocationType = "Info")" /> Info</label>
+                    </div>
+                </div>
+
                 @if (modal.AllocationType == "Dedicated")
                 {
                     <div class="dx-form-group">
@@ -167,14 +204,7 @@
                         <input class="dx-form-control" @bind="modal.FlightNumber" />
                     </div>
                 }
-                <div class="dx-form-group">
-                    <label class="dx-form-label">Start</label>
-                    <input type="datetime-local" class="dx-form-control" @bind="modal.Start" />
-                </div>
-                <div class="dx-form-group">
-                    <label class="dx-form-label">End</label>
-                    <input type="datetime-local" class="dx-form-control" @bind="modal.End" />
-                </div>
+
                 @if (modalError is not null)
                 {
                     <p class="dx-text-danger">@modalError</p>
@@ -183,7 +213,7 @@
             <div class="dx-modal-footer">
                 @if (modal.Id is not null)
                 {
-                    <button class="dx-btn dx-btn-outline-red" @onclick="DeleteFromModalAsync">Delete</button>
+                    <button class="dx-btn dx-btn-outline-red" @onclick="DeleteFromModalAsync">Delete (@selected.Count)</button>
                 }
                 <span class="grow"></span>
                 <button class="dx-btn" @onclick="CloseModal">Cancel</button>
@@ -215,6 +245,30 @@
             <div class="dx-modal-footer">
                 <button class="dx-btn" @onclick="CloseCopy">Cancel</button>
                 <button class="dx-btn dx-btn-blue" @onclick="SaveCopyAsync">Copy</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (showOutageConfirm)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:420px;">
+            <div class="dx-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;">Turn off allocation outage mode</h3>
+                <button class="dx-modal-close" aria-label="Close" @onclick="CancelOutageOff">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <p>
+                    Allocations already entered by hand stay exactly as they are &mdash; turning this off doesn't remove or
+                    change anything. This build has no live RMS/CoreAPI feed yet, so there's nothing to automatically
+                    return counters to; the "Update modified counters back to feed" button above stays disabled until
+                    that feed exists.
+                </p>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn" @onclick="CancelOutageOff">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="ConfirmOutageOff">Turn off</button>
             </div>
         </div>
     </div>
