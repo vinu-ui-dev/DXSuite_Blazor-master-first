@@ -1,159 +1,221 @@
 @page "/Flight-Data-Editor/Counter-Allocation"
 @attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
 @rendermode InteractiveServer
-@using Microsoft.AspNetCore.Components.Forms
 @using DXSuite.Aviation.Entities
-@using DXSuite.Aviation.Services.CounterAllocation
+@using DXSuite.Aviation.Pages.FlightDataEditor
 @using DXSuite.Aviation.Services.FlightDataEditor
 @using DXSuite.Shared.Authorization
-@inject CounterAllocationService allocationService
-@inject CounterAllocationOutageState outageState
-@inject ISessionState sessionState
+@using DXSuite.Shared.Multitenancy
+@using Microsoft.AspNetCore.Components.Web
 
-    <div class="dx-card" style="margin-bottom: 1rem; padding: 1rem; display:flex; align-items:center; gap: 1rem;">
-        <strong>Manual mode:</strong>
-        @if (outageState.IsOn)
-        {
-            <span class="dx-badge dx-badge-warning">On since @outageState.SwitchedOnUtc?.ToString("yyyy-MM-dd HH:mm") UTC</span>
-            <button class="dx-btn" @onclick="TurnOffManualMode">Return to normal</button>
-        }
-        else
-        {
-            <span class="dx-badge">Off</span>
-            <button class="dx-btn dx-btn-blue" @onclick="TurnOnManualMode">Switch to manual mode</button>
-        }
-    </div>
-
-    <p class="dx-text-muted">
-        This build has no live CoreAPI/RMS allocation feed. Every row below is entered by hand — there is no
-        automatic return to a feed, because there is no feed to return to yet.
-    </p>
-
-    <div class="dx-card" style="margin-bottom: 1rem; padding: 1rem;">
-        <h4>Add allocation</h4>
-        <div class="dx-form-row" style="display:flex; gap: 0.5rem; flex-wrap: wrap; align-items:flex-end;">
-            <div class="dx-form-group">
-                <label class="dx-form-label">Counter</label>
-                <input class="dx-form-control" @bind="draftCounter" placeholder="e.g. K12" />
-            </div>
-            <div class="dx-form-group">
-                <label class="dx-form-label">Airline (IATA)</label>
-                <input class="dx-form-control" @bind="draftAirlineCode" placeholder="e.g. AC" />
-            </div>
-            <div class="dx-form-group">
-                <label class="dx-form-label">Type</label>
-                <select class="dx-form-select" @bind="draftType">
-                    <option value="Common">Common</option>
-                    <option value="Dedicated">Dedicated</option>
-                    <option value="Info">Info</option>
-                </select>
-            </div>
-            @if (draftType == "Dedicated")
+<div class="ca-toolbar">
+    <div class="ca-toolbar-left">
+        <span class="ca-rms-label">RMS Feed</span>
+        <RmsFeedIndicator />
+        <label class="ca-switch">
+            <input type="checkbox" checked="@outageState.IsOn" @onchange="ToggleManualMode" />
+            <span class="ca-switch-track"><span class="ca-switch-thumb"></span></span>
+        </label>
+        <span>
+            Allocation Outage mode
+            @if (outageState.IsOn)
             {
-                <div class="dx-form-group">
-                    <label class="dx-form-label">Destination</label>
-                    <input class="dx-form-control" @bind="draftDestination" />
-                </div>
-                <div class="dx-form-group">
-                    <label class="dx-form-label">Flight #</label>
-                    <input class="dx-form-control" @bind="draftFlightNumber" />
+                <text>on since @ToLocal(outageState.SwitchedOnUtc!.Value).ToString("HH:mm")</text>
+            }
+            else
+            {
+                <text>off</text>
+            }
+        </span>
+    </div>
+    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled title="No live RMS counter feed exists yet to update from.">Update modified counters back to feed</button>
+</div>
+
+<div class="ca-filters">
+    <select class="dx-form-control" @bind="selectedZone">
+        <option value="">Select Zone</option>
+        @foreach (var z in zones)
+        {
+            <option value="@z">@z</option>
+        }
+    </select>
+    <label class="ca-filter-label">From <input type="datetime-local" class="dx-form-control" @bind="fromLocal" @bind:after="RefreshAsync" /></label>
+    <label class="ca-filter-label">To <input type="datetime-local" class="dx-form-control" @bind="toLocal" @bind:after="RefreshAsync" /></label>
+    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SetNowWindow">NOW -1 H TO +12 H</button>
+    <button class="dx-btn dx-btn-sm" @onclick="SetTomorrowWindow">TOMORROW</button>
+</div>
+
+@if (outageState.IsOn)
+{
+    <div class="dx-alert dx-alert-info">
+        Manual mode is on. There is no live RMS/CoreAPI allocation feed yet, so every allocation below was entered by hand.
+    </div>
+}
+
+@if (error is not null)
+{
+    <div class="dx-alert dx-alert-danger">@error</div>
+}
+
+<div class="ca-actions">
+    <span class="dx-text-muted">Click an empty spot on a counter's row to add an allocation there. Click one to change it. Ctrl+click to select several for copy or delete.</span>
+    <div class="ca-actions-right">
+        <button class="dx-btn dx-btn-green dx-btn-sm" @onclick="() => OpenAdd(null)">Add Allocation</button>
+        <button class="dx-btn dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="OpenCopy">Copy</button>
+        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete</button>
+    </div>
+</div>
+
+<div class="ca-grid-scroll">
+    <div class="ca-grid">
+        <div class="ca-grid-header">
+            <div class="ca-row-label-spacer"></div>
+            <div class="ca-timeline-header">
+                @foreach (var tick in HourTicks())
+                {
+                    <div class="ca-tick @(tick.Hour == 0 ? "ca-tick-midnight" : "")" style="left:@(Pct(tick).ToString("0.###"))%;">@TickLabel(tick)</div>
+                }
+                @if (NowInWindow)
+                {
+                    <div class="ca-now-flag" style="left:@(Pct(NowLocal).ToString("0.###"))%;">@NowLocal.ToString("HH:mm")</div>
+                }
+            </div>
+        </div>
+
+        @foreach (var group in Groups)
+        {
+            <div class="ca-zone-header">@group.Key</div>
+            @foreach (var counter in group.Counters)
+            {
+                <div class="ca-row">
+                    <div class="ca-row-label">@counter.Id</div>
+                    <div class="ca-timeline" @onclick="() => OnRowClick(counter.Id)">
+                        @foreach (var a in counter.Allocations)
+                        {
+                            var left = Pct(a.StartLocal);
+                            var width = Math.Max(0.6, Pct(a.EndLocal) - left);
+                            <div class="ca-block ca-type-@a.Row.AllocationType.ToLowerInvariant() @(a.Row.IsManual ? "ca-manual" : "") @(selected.Contains(a.Row.CounterAllocationId) ? "ca-selected" : "")"
+                                 style="left:@(left.ToString("0.###"))%; width:@(width.ToString("0.###"))%; background:@ColorFor(a.Row.AirlineCode);"
+                                 @onclick="(MouseEventArgs e) => OnBlockClick(a.Row, e)" @onclick:stopPropagation="true">
+                                <div class="ca-block-airline">@AirlineName(a.Row.AirlineCode) &middot; @a.Row.AllocationType@(a.Row.IsManual ? " · by hand" : "")</div>
+                                <div class="ca-block-time">@a.StartLocal.ToString("HH:mm") to @a.EndLocal.ToString("HH:mm")</div>
+                            </div>
+                        }
+                        @if (NowInWindow)
+                        {
+                            <div class="ca-now-line" style="left:@(Pct(NowLocal).ToString("0.###"))%;"></div>
+                        }
+                    </div>
                 </div>
             }
-            <div class="dx-form-group">
-                <label class="dx-form-label">Start</label>
-                <input type="datetime-local" class="dx-form-control" @bind="draftStart" />
-            </div>
-            <div class="dx-form-group">
-                <label class="dx-form-label">End</label>
-                <input type="datetime-local" class="dx-form-control" @bind="draftEnd" />
-            </div>
-            <button class="dx-btn dx-btn-blue" @onclick="AddAsync">Add</button>
-        </div>
-        @if (error is not null)
+        }
+
+        @if (Groups.Count == 0)
         {
-            <p class="dx-text-danger">@error</p>
+            <div class="ca-empty">No allocations in this window.</div>
         }
     </div>
+</div>
 
-    <div class="dx-table">
-        <div class="dx-table-row dx-table-header">
-            <div>Counter</div><div>Airline</div><div>Type</div><div>Destination</div><div>Start (UTC)</div><div>End (UTC)</div><div></div>
-        </div>
-        @foreach (var a in allocations)
-        {
-            <div class="dx-table-row">
-                <div>@a.Counter</div>
-                <div>@a.AirlineCode</div>
-                <div>@a.AllocationType</div>
-                <div>@(a.Destination is null ? "—" : $"{a.Destination} {a.FlightNumber}")</div>
-                <div>@a.StartUtc.ToString("yyyy-MM-dd HH:mm")</div>
-                <div>@a.EndUtc.ToString("yyyy-MM-dd HH:mm")</div>
-                <div><button class="dx-btn dx-btn-sm" @onclick="() => RemoveAsync(a.CounterAllocationId)">Remove</button></div>
+<div class="ca-legend">
+    <span><i class="ca-swatch ca-swatch-rms"></i> RMS allocation</span>
+    <span><i class="ca-swatch ca-swatch-manual"></i> Changed by hand</span>
+    <span><i class="ca-swatch ca-swatch-dedicated"></i> Dedicated</span>
+    <span><i class="ca-swatch ca-swatch-info"></i> Info</span>
+    <span><i class="ca-now-dot"></i> Now</span>
+</div>
+
+@if (modal is not null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:480px;">
+            <div class="dx-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;">@(modal.Id is null ? "Add allocation" : "Edit allocation")</h3>
+                <button class="dx-modal-close" aria-label="Close" @onclick="CloseModal">&times;</button>
             </div>
-        }
-        @if (allocations.Count == 0)
-        {
-            <div class="dx-table-row"><div>No allocations in the next 12 hours.</div></div>
-        }
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Counter</label>
+                    <input class="dx-form-control" @bind="modal.Counter" placeholder="e.g. A11" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Airline (IATA code)</label>
+                    <input class="dx-form-control" list="ca-airline-options" @bind="modal.AirlineCode" placeholder="e.g. AC" />
+                    <datalist id="ca-airline-options">
+                        @foreach (var kv in airlineNames.Where(kv => !string.IsNullOrWhiteSpace(kv.Value)))
+                        {
+                            <option value="@kv.Key">@kv.Value (@kv.Key)</option>
+                        }
+                    </datalist>
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Type</label>
+                    <select class="dx-form-select" @bind="modal.AllocationType">
+                        <option value="Common">Common</option>
+                        <option value="Dedicated">Dedicated</option>
+                        <option value="Info">Info</option>
+                    </select>
+                </div>
+                @if (modal.AllocationType == "Dedicated")
+                {
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Destination</label>
+                        <input class="dx-form-control" @bind="modal.Destination" />
+                    </div>
+                    <div class="dx-form-group">
+                        <label class="dx-form-label">Flight #</label>
+                        <input class="dx-form-control" @bind="modal.FlightNumber" />
+                    </div>
+                }
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Start</label>
+                    <input type="datetime-local" class="dx-form-control" @bind="modal.Start" />
+                </div>
+                <div class="dx-form-group">
+                    <label class="dx-form-label">End</label>
+                    <input type="datetime-local" class="dx-form-control" @bind="modal.End" />
+                </div>
+                @if (modalError is not null)
+                {
+                    <p class="dx-text-danger">@modalError</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                @if (modal.Id is not null)
+                {
+                    <button class="dx-btn dx-btn-outline-red" @onclick="DeleteFromModalAsync">Delete</button>
+                }
+                <span class="grow"></span>
+                <button class="dx-btn" @onclick="CloseModal">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveModalAsync">Save</button>
+            </div>
+        </div>
     </div>
+}
 
-@code {
-    private IReadOnlyList<TblCounterAllocation> allocations = [];
-    private string? error;
-
-    private string draftCounter = "";
-    private string draftAirlineCode = "";
-    private string draftType = "Common";
-    private string? draftDestination;
-    private string? draftFlightNumber;
-    private DateTime draftStart = DateTime.UtcNow;
-    private DateTime draftEnd = DateTime.UtcNow.AddHours(2);
-
-    protected override async Task OnInitializedAsync()
-    {
-        await RefreshAsync();
-    }
-
-    private async Task RefreshAsync()
-    {
-        var now = DateTime.UtcNow;
-        allocations = await allocationService.GetInRangeAsync(now.AddHours(-1), now.AddHours(12));
-    }
-
-    private async Task AddAsync()
-    {
-        error = null;
-        if (string.IsNullOrWhiteSpace(draftCounter) || string.IsNullOrWhiteSpace(draftAirlineCode))
-        {
-            error = "Counter and airline are required.";
-            return;
-        }
-
-        var result = await allocationService.CreateAsync(
-            new CounterAllocationDraft(draftCounter.Trim(), draftAirlineCode.Trim().ToUpperInvariant(), draftType,
-                draftDestination, draftFlightNumber, draftStart, draftEnd),
-            sessionState.User?.FriendlyName ?? sessionState.User?.UserPrincipalName);
-
-        error = result.Outcome switch
-        {
-            CounterAllocationSaveOutcome.Overlap => $"Counter {draftCounter} already has an allocation for {result.ConflictingAirline} in that range.",
-            CounterAllocationSaveOutcome.InvalidRange => "End must be after start.",
-            _ => null,
-        };
-        if (error is null)
-        {
-            draftCounter = "";
-            draftAirlineCode = "";
-            await RefreshAsync();
-        }
-    }
-
-    private async Task RemoveAsync(int id)
-    {
-        await allocationService.DeleteAsync(id);
-        await RefreshAsync();
-    }
-
-    private void TurnOnManualMode() => outageState.SwitchOn();
-    private void TurnOffManualMode() => outageState.SwitchOff();
+@if (copyTargetDate is not null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:360px;">
+            <div class="dx-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;">Copy @selected.Count allocation@(selected.Count > 1 ? "s" : "") to</h3>
+                <button class="dx-modal-close" aria-label="Close" @onclick="CloseCopy">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Date</label>
+                    <input type="date" class="dx-form-control" @bind="copyTargetDate" />
+                </div>
+                <p class="dx-text-muted">Keeps each allocation's counter, airline, type and time of day; only the date moves.</p>
+                @if (copyError is not null)
+                {
+                    <p class="dx-text-danger">@copyError</p>
+                }
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn" @onclick="CloseCopy">Cancel</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveCopyAsync">Copy</button>
+            </div>
+        </div>
+    </div>
 }
