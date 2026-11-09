@@ -29,8 +29,10 @@
    forces extra, mismatched space below the content and makes the page scroll oddly. Let it size
    to its own content instead. */
 .pt-app { width: 100%; height: auto; margin: 0; border: 0; box-shadow: none; position: relative; }
-/* The real login page fills the viewport; here it fills the app frame. */
-.pt-app .dx-login-page { min-height: 760px; }
+/* The real login page fills the viewport; here it fills the app frame. A hardcoded min-height
+   (760px) left a gap below the card on taller windows — same mismatch the comment above warns
+   about — so size it off the sticky navbar's actual height (3.5rem, .dx-navbar) instead. */
+.pt-app .dx-login-page { min-height: calc(100vh - 3.5rem); }
 .pt-app .dx-modal-overlay, .pt-app .dx-toast { position: absolute; }
 .pt-app .dx-navbar { position: static; justify-content: flex-end; }
 
