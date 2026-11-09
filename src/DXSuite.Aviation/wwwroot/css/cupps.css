@@ -31,8 +31,11 @@
 .pt-app { width: 100%; height: auto; margin: 0; border: 0; box-shadow: none; position: relative; }
 /* The real login page fills the viewport; here it fills the app frame. A hardcoded min-height
    (760px) left a gap below the card on taller windows — same mismatch the comment above warns
-   about — so size it off the sticky navbar's actual height (3.5rem, .dx-navbar) instead. */
-.pt-app .dx-login-page { min-height: calc(100vh - 3.5rem); }
+   about — so size it off real layout chrome instead. Chain, top to bottom: sticky navbar 3.5rem
+   (.dx-navbar) + host wrapper's padding-top 1rem (.dx-page-body-wrap) − .cupps-proto's own
+   margin-top −1.1rem (self-cancels wrapper's padding-top and 0.1rem more) + wrapper's
+   padding-bottom 1rem, which .cupps-proto's margin (0 on bottom) never cancels. Net: 4.4rem. */
+.pt-app .dx-login-page { min-height: calc(100vh - 4.4rem); }
 .pt-app .dx-modal-overlay, .pt-app .dx-toast { position: absolute; }
 .pt-app .dx-navbar { position: static; justify-content: flex-end; }
 
