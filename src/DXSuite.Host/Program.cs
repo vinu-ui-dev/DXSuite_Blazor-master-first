@@ -712,6 +712,46 @@ if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration)
     var directorFactory = sqliteInitServices.GetService<IDbContextFactory<DXSuite.Director.Entities.DirectorDbContext>>();
     if (directorFactory is not null)
     {
+        // tblLocationType and tblLocationGroup, like tblUserRole above, are rows this product's real
+        // SQL Server database has always had (seeded by db/scripts/director-seed.sql, a SQL Server-only
+        // script this local mode never runs) and are never captured as EF Core HasData. Several Create
+        // Location flows (e.g. CreateLayoutModal's "Card" type) hard-code LocationTypeId values such as
+        // 4 ("Card") that only exist because that script put them there — without it, EnsureCreatedAsync
+        // builds an empty table and every location create fails its LocationTypeId foreign key.
+        await using (var locTypeDb = await directorFactory.CreateDbContextAsync())
+        {
+            if (!await locTypeDb.TblLocationTypes.AnyAsync())
+            {
+                locTypeDb.TblLocationTypes.AddRange(
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1, LocationTypeName = "CheckIn Backwall", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.CheckinBackwall", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 3, LocationTypeName = "Video Wall with Mask", LinkedToDisplay = true, IsCustom = true, ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 4, LocationTypeName = "Card", LinkedToDisplay = true, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Card", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 7, LocationTypeName = "Playlist", LinkedToDisplay = false, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Playlist", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 8, LocationTypeName = "Airline Location Scheduler", LinkedToDisplay = false, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.OW_Scheduler", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 10, LocationTypeName = "Concourse Entry Playlist", LinkedToDisplay = false, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.ConcourseEntryPlaylist", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 11, LocationTypeName = "Welcome Messages", LinkedToDisplay = false, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.WelcomeMessages", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 12, LocationTypeName = "TV Controller", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.TVController", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1012, LocationTypeName = "Override Control", LinkedToDisplay = false, IsCustom = false, ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1013, LocationTypeName = "FloorPlan", LinkedToDisplay = false, IsCustom = true, ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1014, LocationTypeName = "Zone Control", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.ZoneVisualEditor", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1015, LocationTypeName = "Layout Location", LinkedToDisplay = false, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.LayoutLocation", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1016, LocationTypeName = "PTZ Camera Control", LinkedToDisplay = false, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.PtzCameraControl", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1020, LocationTypeName = "Asset Library", LinkedToDisplay = false, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.AssetLibrary", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 1030, LocationTypeName = "Panorama", LinkedToDisplay = true, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Panorama", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2020, LocationTypeName = "Floorplan", LinkedToDisplay = false, IsCustom = false, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.FloorPlan", ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2021, LocationTypeName = "Override Content", LinkedToDisplay = false, IsCustom = false, ShowOverrideSection = false },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2022, LocationTypeName = "VideoWall", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.VideoWall", ShowOverrideSection = true },
+                    new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2023, LocationTypeName = "AirlineClusterView", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.AirlineClusterView", ShowOverrideSection = false });
+                await locTypeDb.SaveChangesAsync();
+            }
+
+            if (!await locTypeDb.TblLocationGroups.AnyAsync())
+            {
+                locTypeDb.TblLocationGroups.Add(new DXSuite.Director.Entities.TblLocationGroup { LocationGroupId = 1, LocationGroupName = "General", SortOrder = 99 });
+                await locTypeDb.SaveChangesAsync();
+            }
+        }
+
         await using var usersDb = await directorFactory.CreateDbContextAsync();
         if (!await usersDb.TblUsers.AnyAsync())
         {
