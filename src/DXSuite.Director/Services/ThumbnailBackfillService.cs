@@ -62,12 +62,22 @@ public class ThumbnailBackfillService : BackgroundService
     {
         // One pass per distinct media root: the global web root plus each tenant root
         // (all identical when tenant media isolation is disabled, so this stays one pass).
-        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
-        {
-            Path.GetFullPath(_env.WebRootPath)
-        };
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!string.IsNullOrEmpty(_env.WebRootPath))
+            roots.Add(Path.GetFullPath(_env.WebRootPath));
+
         foreach (var tenant in await _tenantStore.GetAllEnabledAsync(ct))
-            roots.Add(Path.GetFullPath(TenantMediaPaths.GetRoot(tenant, _env, _config)));
+        {
+            var tenantRoot = TenantMediaPaths.GetRoot(tenant, _env, _config);
+            if (!string.IsNullOrEmpty(tenantRoot))
+                roots.Add(Path.GetFullPath(tenantRoot));
+        }
+
+        if (roots.Count == 0)
+        {
+            _logger.LogWarning("Thumbnail backfill skipped: no media root resolved (WebRootPath is not set)");
+            return;
+        }
 
         foreach (var root in roots)
         {

@@ -32,6 +32,19 @@ public class PlatformElevationMiddleware
 
     public async Task InvokeAsync(HttpContext context)
     {
+        try
+        {
+            await InvokeCoreAsync(context);
+        }
+        catch (OperationCanceledException) when (context.RequestAborted.IsCancellationRequested)
+        {
+            // The client disconnected (refresh, navigation, Blazor reconnect) while a Platform DB
+            // lookup was in flight. Nobody is waiting for this response, so stop quietly.
+        }
+    }
+
+    private async Task InvokeCoreAsync(HttpContext context)
+    {
         // Skip unauthenticated requests — auth middleware handles them.
         if (context.User.Identity?.IsAuthenticated != true)
         {

@@ -179,21 +179,33 @@ public class RolePermissionService : IRolePermissionService
         if (_cache.TryGet(tenant, roleId, out var cached))
             return cached;
 
-        await EnsureDefaultsSyncedAsync(tenant);
+        try
+        {
+            await EnsureDefaultsSyncedAsync(tenant);
 
-        using var scope = _scopeFactory.CreateScope();
-        var db = scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
+            using var scope = _scopeFactory.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<IIdentityDbContext>();
 
-        // Admin holds every known permission; other roles hold their explicit grants.
-        HashSet<string> permissions = roleId == AdminRoleId
-            ? (await db.TblKnownPermissions.AsNoTracking().Select(k => k.PermissionKey).ToListAsync()).ToHashSet()
-            : (await db.TblRolePermissions.AsNoTracking()
-                .Where(p => p.RoleId == roleId)
-                .Select(p => p.PermissionKey)
-                .ToListAsync()).ToHashSet();
+            // Admin holds every known permission; other roles hold their explicit grants.
+            HashSet<string> permissions = roleId == AdminRoleId
+                ? (await db.TblKnownPermissions.AsNoTracking().Select(k => k.PermissionKey).ToListAsync()).ToHashSet()
+                : (await db.TblRolePermissions.AsNoTracking()
+                    .Where(p => p.RoleId == roleId)
+                    .Select(p => p.PermissionKey)
+                    .ToListAsync()).ToHashSet();
 
-        _cache.Set(tenant, roleId, permissions);
-        return permissions;
+            _cache.Set(tenant, roleId, permissions);
+            return permissions;
+        }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            // Don't crash the UI (e.g. MainLayout) when the identity database is briefly
+            // unreachable. Return an empty, uncached permission set so a short-lived outage
+            // only hides menu items instead of taking down the whole page; the next request
+            // will try the DB again.
+            _logger.LogWarning(ex, "Could not resolve permissions for role {RoleId} because the database is unreachable; returning empty set", roleId);
+            return new HashSet<string>();
+        }
     }
 
     public async Task<bool> HasPermissionAsync(int roleId, string permissionKey)
@@ -269,11 +281,28 @@ public class RolePermissionService : IRolePermissionService
 
             _cache.MarkSynced(tenant);
         }
+        catch (Exception ex) when (IsConnectivityFailure(ex))
+        {
+            // The identity database is temporarily unreachable (e.g. network-related SQL
+            // connection failure). Don't mark the tenant as synced so we retry on the next
+            // call, and don't let this bubble up and crash the UI - callers fall back to an
+            // empty/cached permission set instead.
+            _logger.LogWarning(ex, "Skipped default-permission sync for tenant '{Tenant}' because the database is unreachable", tenant);
+        }
         finally
         {
             _cache.SyncLock.Release();
         }
     }
+
+    /// <summary>
+    /// True for transient/connectivity-related DB failures (network issues, unreachable
+    /// server, timeouts) that should degrade gracefully rather than crash the caller.
+    /// </summary>
+    private static bool IsConnectivityFailure(Exception ex) =>
+        ex is Microsoft.Data.SqlClient.SqlException or TimeoutException
+        || ex is InvalidOperationException && ex.InnerException is Microsoft.Data.SqlClient.SqlException
+        || (ex.InnerException != null && IsConnectivityFailure(ex.InnerException));
 
     /// <summary>
     /// All permission keys defined by the current codebase, with the built-in roles that

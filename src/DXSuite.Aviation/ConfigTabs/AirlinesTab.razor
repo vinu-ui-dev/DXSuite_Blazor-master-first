@@ -1,9 +1,11 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
+@using DXSuite.Shared.Authorization
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AirlinesTab> Logger
+@inject ISessionState SessionState
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
 
@@ -15,7 +17,7 @@
             <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
                    value="@searchTerm" @oninput="OnSearchInput"
                    placeholder="Search @allAirlines.Count airlines to onboard..." />
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="FocusSearch">+ ADD AIRLINE</button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
 
             @if (searchResults.Count > 0)
             {
@@ -164,6 +166,10 @@
             <span class="dx-text-muted" style="font-size:0.8rem; margin-left:8px;">Demo only &mdash; shows what an airline-scoped user would see, without a separate login.</span>
         </div>
     }
+}
+else if (viewMode == "wizard")
+{
+    <AddAirlineWizard OnCancel="CloseAddAirline" OnCreated="HandleAirlineCreated" />
 }
 else if (viewMode == "supervisor")
 {
@@ -531,6 +537,44 @@ else
     private async Task FocusSearch()
     {
         await searchInputRef.FocusAsync();
+    }
+
+    private async Task OpenAddAirline()
+    {
+        if (SessionState.RoleEnum == Roles.Role.Admin)
+        {
+            viewMode = "wizard";
+        }
+        else
+        {
+            await FocusSearch();
+        }
+    }
+
+    private void CloseAddAirline()
+    {
+        viewMode = "list";
+    }
+
+    private void HandleAirlineCreated(AddAirlineWizard.NewAirlineResult result)
+    {
+        var row = new AirlineRow(result.RecordId, result.Code, result.Name, result.Icao, result.Active);
+        allAirlines = allAirlines.Where(a => a.RecordId != row.RecordId).Append(row).ToList();
+        onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
+
+        var extra = ExtraFor(row.Code);
+        extra.Alliance = result.Alliance;
+        extra.Dcs = result.DcsLabel;
+        extra.WordmarkColor = result.BackgroundColor;
+        extra.WordmarkStatus = result.HasWordmark ? "Approved" : "Not uploaded";
+        extra.SquareMarkStatus = result.HasSquareMark ? "Approved" : "Not uploaded";
+        extra.ReversedWordmarkStatus = result.HasReversedWordmark ? "Approved" : "No file";
+        extra.Accounts = 1;
+
+        statusMessage = $"{row.Name} created.";
+        statusIsError = false;
+
+        OpenProfile(row, false);
     }
 
     private async Task Onboard(AirlineRow row)

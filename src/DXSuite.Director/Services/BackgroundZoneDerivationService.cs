@@ -144,7 +144,8 @@ public class BackgroundZoneDerivationService : BackgroundService, IBackgroundRen
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // Let the app finish startup before the first sweep.
-        await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken);
+        try { await Task.Delay(TimeSpan.FromSeconds(30), stoppingToken); }
+        catch (OperationCanceledException) { return; }
 
         while (!stoppingToken.IsCancellationRequested)
         {
@@ -152,7 +153,8 @@ public class BackgroundZoneDerivationService : BackgroundService, IBackgroundRen
             catch (OperationCanceledException) { }
             catch (Exception ex) { _logger.LogError(ex, "Background rendition sweep failed"); }
 
-            await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken);
+            try { await Task.Delay(TimeSpan.FromSeconds(60), stoppingToken); }
+            catch (OperationCanceledException) { break; }
         }
     }
 
