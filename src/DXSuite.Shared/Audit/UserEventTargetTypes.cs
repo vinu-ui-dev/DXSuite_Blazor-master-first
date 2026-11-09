@@ -12,4 +12,5 @@ public static class UserEventTargetTypes
     public const string Activation = "Activation";
     public const string MessageType = "MessageType";
     public const string DisplayZone = "DisplayZone";
+    public const string Airline = "Airline";
 }

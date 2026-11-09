@@ -1,11 +1,13 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
+@using DXSuite.Aviation.Services
 @using DXSuite.Shared.Authorization
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AirlinesTab> Logger
 @inject ISessionState SessionState
+@inject AirlineAudit AirlineAudit
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
 
@@ -593,6 +595,8 @@ else
                 onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
                 statusMessage = $"{row.Name} onboarded.";
                 statusIsError = false;
+
+                await AirlineAudit.OnboardedAsync(row.RecordId, row.Code, row.Name);
             }
 
             searchTerm = "";
@@ -621,6 +625,8 @@ else
             onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
             statusMessage = $"{updated.Name} removed from the active list.";
             statusIsError = false;
+
+            await AirlineAudit.RemovedFromActiveListAsync(updated.RecordId, updated.Code, updated.Name);
         }
         catch (Exception ex)
         {

@@ -1,9 +1,11 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
+@using DXSuite.Aviation.Services
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AddAirlineWizard> Logger
+@inject AirlineAudit AirlineAudit
 
 <div class="dx-panel-header">
     <h4 style="margin:0;">Add Airline</h4>
@@ -590,6 +592,15 @@
                 data.Alliance, data.Terminal1, data.Terminal3,
                 data.DcsMode == "provider", dcsLabel, data.BackgroundColor,
                 data.HasWordmark, data.HasSquareMark, data.HasReversedWordmark);
+
+            await AirlineAudit.CreatedAsync(created.RecordId, created.AirlineCode, result.Name, new
+            {
+                alliance = data.Alliance,
+                terminals = TerminalsLabel(),
+                dcs = dcsLabel,
+                backgroundColor = data.BackgroundColor,
+                logos = new { wordmark = data.HasWordmark, square = data.HasSquareMark, reversed = data.HasReversedWordmark },
+            });
 
             await OnCreated.InvokeAsync(result);
         }

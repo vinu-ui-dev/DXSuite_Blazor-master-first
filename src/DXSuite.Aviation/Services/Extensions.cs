@@ -54,6 +54,11 @@ public static class Extensions
         // ──────────────────────────────────────────────────────────────────
         services.AddScoped<CuppsLiveDataProvider>();
 
+        // ──────────────────────────────────────────────────────────────────
+        // Airlines — User Event audit trail for create/onboard/remove
+        // ──────────────────────────────────────────────────────────────────
+        services.AddAirlineAudit();
+
         return services;
     }
 }
