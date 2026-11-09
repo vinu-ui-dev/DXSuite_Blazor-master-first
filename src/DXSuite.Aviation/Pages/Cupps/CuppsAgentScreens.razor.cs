@@ -17,6 +17,7 @@ public partial class CuppsAgentScreens : IDisposable
     private List<Flight> liveFlights = [];
     private bool liveLoading;
     private bool liveLoadFailed;
+    private bool liveAllocLoadFailed;
 
     private string scenario = "agent";
     private string screen = "login";
@@ -233,6 +234,7 @@ public partial class CuppsAgentScreens : IDisposable
     {
         liveLoading = true;
         liveLoadFailed = false;
+        liveAllocLoadFailed = false;
         StateHasChanged();
 
         try
@@ -253,6 +255,7 @@ public partial class CuppsAgentScreens : IDisposable
         catch (Exception)
         {
             liveAllocations = [];
+            liveAllocLoadFailed = true;
         }
 
         try
@@ -290,6 +293,7 @@ public partial class CuppsAgentScreens : IDisposable
         Open("A5", "t2");
         Open("A6", "t1");
         Open("A7", "t5");
+        Open("B1", "t3");
         Open("B2", "t2");
         Open("B3", "t6", "Toronto");
         Open("B4", "t1");

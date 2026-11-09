@@ -1,125 +1,367 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
 @using Microsoft.EntityFrameworkCore
-@using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
-@inject IServiceScopeFactory ScopeFactory
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AirlinesTab> Logger
 
-<div class="dx-card" style="display:flex; flex-direction:column;">
+<div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
+
+@if (viewMode == "list")
+{
     <div class="dx-panel-header">
         <h4>Airlines</h4>
-    </div>
-    <div class="dx-panel-content" style="padding:24px;">
+        <div class="dx-panel-controls" style="position:relative;">
+            <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
+                   value="@searchTerm" @oninput="OnSearchInput"
+                   placeholder="Search @allAirlines.Count airlines to onboard..." />
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="FocusSearch">+ ADD AIRLINE</button>
 
-        @if (!string.IsNullOrEmpty(errorMessage))
-        {
-            <div class="dx-alert dx-alert-danger" style="margin-bottom:16px;">@errorMessage</div>
-        }
-
-        <div class="dx-form-row" style="margin-bottom:16px;">
-            <div class="dx-form-group" style="flex:2; position:relative;">
-                <label class="dx-form-label">Search Airline</label>
-                <input type="text" class="dx-form-control" autocomplete="off"
-                       value="@selectedAirlineName"
-                       @oninput="OnAirlineSearchInput"
-                       @onclick="ShowAirlines"
-                       placeholder="Start typing airline name or code..." />
-
-                @if (filteredAirlines.Any() && showAirlines)
-                {
-                    <div class="dx-typeahead-dropdown">
-                        @foreach (var airline in filteredAirlines)
-                        {
-                            <button class="dx-typeahead-item" @onclick="() => SelectAirline(airline)">
-                                <div class="dx-truncate">
-                                    @airline.CarrierName (@airline.AirlineCode)
-                                </div>
-                            </button>
-                        }
-                    </div>
-                }
-            </div>
-
-            <div class="dx-form-group" style="flex:1;">
-                <label class="dx-form-label">Airline Code</label>
-                <input type="text" class="dx-form-control" value="@selectedAirlineCode" readonly />
-            </div>
-        </div>
-
-        <div class="dx-form-group" style="margin-bottom:16px; position:relative;">
-            <label class="dx-form-label">Search IATA Locations</label>
-            <div style="display:flex; gap:8px; align-items:flex-start; position:relative;">
-                <div style="flex:1; position:relative;">
-                    <input type="text" class="dx-form-control" autocomplete="off"
-                           value="@selectedLocationName"
-                           @oninput="OnLocationSearchInput"
-                           @onclick="ShowLocations"
-                           placeholder="Start typing location name or code..." />
-
-                    @if (filteredLocations.Any() && showLocations)
+            @if (searchResults.Count > 0)
+            {
+                <div class="dx-typeahead-dropdown" style="top:40px; left:0; right:auto; width:340px;">
+                    @foreach (var r in searchResults)
                     {
-                        <div class="dx-typeahead-dropdown">
-                            @foreach (var location in filteredLocations)
+                        <button class="dx-typeahead-item" style="display:flex; justify-content:space-between; align-items:center;"
+                                @onclick="() => Onboard(r)">
+                            <span>@r.Name <span class="dx-text-muted">(@r.Code)</span></span>
+                            @if (r.Shown)
                             {
-                                <button class="dx-typeahead-item" @onclick="() => SelectLocation(location)">
-                                    <div class="dx-truncate">
-                                        @location.Name (@location.IataCode)
-                                    </div>
-                                </button>
+                                <span class="dx-badge dx-badge-green">onboarded</span>
                             }
-                        </div>
+                        </button>
                     }
                 </div>
+            }
+        </div>
+    </div>
 
-                @if (selectedAirline != null && selectedLocation != null)
-                {
-                    <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:2px;" @onclick="() => AddLocation(selectedLocation, selectedAirline)">Add</button>
-                }
-                else
-                {
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" style="margin-top:2px;" disabled>Add</button>
-                }
-            </div>
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
+        <button class="dx-tab-btn @(subTab == "airlines" ? "active" : "")" @onclick="@(() => subTab = "airlines")">Airlines</button>
+        <button class="dx-tab-btn @(subTab == "dcs" ? "active" : "")" @onclick="@(() => subTab = "dcs")">DCS Providers</button>
+        <button class="dx-tab-btn @(subTab == "alliances" ? "active" : "")" @onclick="@(() => subTab = "alliances")">Alliances</button>
+        <button class="dx-tab-btn @(subTab == "logos" ? "active" : "")" @onclick="@(() => subTab = "logos")">Logo libraries</button>
+    </div>
+
+    <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
+
+    @if (subTab == "airlines")
+    {
+        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+            Airlines onboarded for this airport. Search above to onboard any of the @allAirlines.Count airlines in the master list.
         </div>
 
-        @if (assignedLocations.Count > 0)
+        @if (!string.IsNullOrEmpty(statusMessage))
         {
-            <div class="dx-form-group" style="margin-bottom:16px;">
-                <label class="dx-form-label">Assigned Locations</label>
-                <div class="dx-scrollable" style="max-height:180px; border:1px solid var(--dx-border-color, #dee2e6); border-radius:4px;">
-                    @foreach (var location in assignedLocations)
-                    {
-                        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--dx-border-color, #f0f0f0);">
-                            <span>@location.Name (@location.IataCode)</span>
-                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RemoveLocation(location, selectedAirline!)">Remove</button>
-                        </div>
-                    }
-                </div>
-            </div>
+            <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin:12px 20px;">@statusMessage</div>
         }
 
-        @if (airlineWithPin == true)
+        @if (onboarded.Count == 0)
         {
-            <div class="dx-form-row" style="margin-bottom:16px;">
-                <div class="dx-form-group" style="flex:1;">
-                    <label class="dx-form-label">Wayfinding PIN</label>
-                    <input type="text" class="dx-form-control" value="@selectedAirlinePin" readonly />
+            <div style="text-align:center; padding:40px 20px;">
+                <h5>No airlines onboarded yet</h5>
+                <p class="dx-text-muted">Search above and pick an airline to onboard it.</p>
+            </div>
+        }
+        else
+        {
+            <div class="dx-table" style="border-left:none; border-right:none;">
+                <div class="dx-table-header" style="@AirlineGridCols">
+                    <div>Airline</div>
+                    <div>IATA</div>
+                    <div>ICAO</div>
+                    <div>DCS</div>
+                    <div>Alliance</div>
+                    <div>Accounts</div>
+                    <div>Status</div>
+                    <div></div>
                 </div>
-                <div class="dx-form-group" style="flex:2;">
-                    <label class="dx-form-label">Update PIN</label>
-                    <div style="display:flex; gap:8px;">
-                        <input type="text" class="dx-form-control" autocomplete="off"
-                               @bind="selectedPin"
-                               placeholder="Enter 4-digit PIN" />
-                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SavePin(selectedPin ?? string.Empty)">Save</button>
+                @foreach (var a in onboarded)
+                {
+                    var extra = ExtraFor(a.Code);
+                    <div class="dx-table-row" style="@AirlineGridCols">
+                        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                            <div class="al-tile" style="background:@ColorFor(a.Code);">@a.Code</div>
+                            <a href="javascript:void(0)" @onclick="() => OpenProfile(a, false)">@a.Name</a>
+                        </div>
+                        <div>@a.Code</div>
+                        <div>@(a.Icao ?? "—")</div>
+                        <div>@extra.Dcs</div>
+                        <div>@extra.Alliance</div>
+                        <div>@extra.Accounts</div>
+                        <div><span class="dx-badge dx-badge-green">Active</span></div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">EDIT</button></div>
+                    </div>
+                }
+            </div>
+            <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem;">@onboarded.Count airlines</div>
+        }
+    }
+    else if (subTab == "dcs")
+    {
+        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+            Demo preview &mdash; departure control system providers used by onboarded airlines.
+        </div>
+        <div class="dx-table" style="border-left:none; border-right:none;">
+            <div class="dx-table-header" style="grid-template-columns: 200px 1fr;">
+                <div>Provider</div>
+                <div>Airlines</div>
+            </div>
+            @foreach (var g in onboarded.GroupBy(a => ExtraFor(a.Code).Dcs))
+            {
+                <div class="dx-table-row" style="grid-template-columns: 200px 1fr;">
+                    <div>@g.Key</div>
+                    <div>@string.Join(", ", g.Select(a => a.Name))</div>
+                </div>
+            }
+        </div>
+    }
+    else if (subTab == "alliances")
+    {
+        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+            Demo preview &mdash; alliance membership of onboarded airlines.
+        </div>
+        <div class="dx-table" style="border-left:none; border-right:none;">
+            <div class="dx-table-header" style="grid-template-columns: 200px 1fr;">
+                <div>Alliance</div>
+                <div>Airlines</div>
+            </div>
+            @foreach (var g in onboarded.GroupBy(a => ExtraFor(a.Code).Alliance))
+            {
+                <div class="dx-table-row" style="grid-template-columns: 200px 1fr;">
+                    <div>@g.Key</div>
+                    <div>@string.Join(", ", g.Select(a => a.Name))</div>
+                </div>
+            }
+        </div>
+    }
+    else if (subTab == "logos")
+    {
+        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+            Demo preview &mdash; the wordmark chain every airline uploads to; GTAA admins approve new logos here.
+        </div>
+        <div style="padding:16px 20px; display:flex; flex-wrap:wrap; gap:16px;">
+            @foreach (var a in onboarded)
+            {
+                var extra = ExtraFor(a.Code);
+                <div style="width:160px; border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; overflow:hidden;">
+                    <div style="height:70px; background:@extra.WordmarkColor; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; text-align:center; padding:4px;">@a.Name</div>
+                    <div style="padding:8px; font-size:0.8rem; display:flex; justify-content:space-between; align-items:center;">
+                        @a.Code
+                        <span class="dx-badge @(extra.WordmarkStatus == "Approved" ? "dx-badge-green" : extra.WordmarkStatus == "Pending" ? "dx-badge-orange" : "dx-badge-gray")">@extra.WordmarkStatus</span>
                     </div>
                 </div>
-            </div>
-        }
+            }
+        </div>
+    }
 
     </div>
+
+    @if (onboarded.Count > 0)
+    {
+        <div style="padding:10px 20px; border-top:1px solid var(--dx-border-color,#eee); flex-shrink:0;">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="PreviewSupervisor">Preview: sign in as airline supervisor</button>
+            <span class="dx-text-muted" style="font-size:0.8rem; margin-left:8px;">Demo only &mdash; shows what an airline-scoped user would see, without a separate login.</span>
+        </div>
+    }
+}
+else if (viewMode == "supervisor")
+{
+    @* ---- Restricted view: what an airline-scoped supervisor would see ---- *@
+    <div class="dx-panel-header">
+        <h4>Airlines</h4>
+        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ExitSupervisorPreview">Exit preview</button>
+    </div>
+    <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+        You see @supervisorTarget!.Name only, the airline whose user group you are in.
+    </div>
+    <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
+        <div class="dx-table" style="border-left:none; border-right:none;">
+            <div class="dx-table-header" style="@SupervisorGridCols">
+                <div>Airline</div>
+                <div>IATA</div>
+                <div>ICAO</div>
+                <div>Alliance</div>
+                <div>Status</div>
+                <div></div>
+            </div>
+            @{ var extraSup = ExtraFor(supervisorTarget.Code); }
+            <div class="dx-table-row" style="@SupervisorGridCols">
+                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                    <div class="al-tile" style="background:@ColorFor(supervisorTarget.Code);">@supervisorTarget.Code</div>
+                    <a href="javascript:void(0)" @onclick="() => OpenProfile(supervisorTarget, true)">@supervisorTarget.Name</a>
+                </div>
+                <div>@supervisorTarget.Code</div>
+                <div>@(supervisorTarget.Icao ?? "—")</div>
+                <div>@extraSup.Alliance</div>
+                <div><span class="dx-badge dx-badge-green">Active</span></div>
+                <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(supervisorTarget, true)">OPEN</button></div>
+            </div>
+        </div>
+    </div>
+}
+else
+{
+    @* ---- Airline profile ---- *@
+    var extra = ExtraFor(profileAirline!.Code);
+    <div class="dx-panel-header">
+        <div style="display:flex; align-items:center; gap:12px;">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile">&larr;</button>
+            <div class="al-tile al-tile-lg" style="background:@ColorFor(profileAirline.Code);">@profileAirline.Code</div>
+            <h4 style="margin:0;">@profileAirline.Name</h4>
+            <span class="dx-badge dx-badge-green">Active</span>
+        </div>
+        @if (!isSupervisorPreview)
+        {
+            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="Deactivate">Remove from active list</button>
+        }
+    </div>
+
+    @if (isSupervisorPreview)
+    {
+        <div class="dx-alert dx-alert-info" style="margin:12px 20px;">
+            Signed in as @(DemoSupervisorNames.TryGetValue(profileAirline.Code, out var n) ? n : "Airline User").
+            You see @profileAirline.Name's Branding and Counter templates only. The rest of the airline profile is for GTAA admins.
+        </div>
+    }
+
+    <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
+        <button class="dx-tab-btn @(profileTab == "branding" ? "active" : "")" @onclick="@(() => profileTab = "branding")">Branding</button>
+        <button class="dx-tab-btn @(profileTab == "templates" ? "active" : "")" @onclick="@(() => profileTab = "templates")">Counter templates</button>
+    </div>
+
+    <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto;">
+        @if (profileTab == "branding")
+        {
+            <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
+                Demo preview &mdash; each upload would go to GTAA for approval. The logo on screen stays until GTAA approves the new one.
+            </div>
+
+            @LogoCard("Wordmark", false, "Airline wordmarks", extra.WordmarkStatus, "wordmark", "1200 x 400", "90 KB",
+                new[] { "1200 x 400", "400 x 200", "4000 x 1333, 7.7 MB", "1000 x 400" })
+
+            @LogoCard("Square mark (optional)", true, "Airline square marks", extra.SquareMarkStatus, "square", "512 x 512", "30 KB",
+                new[] { "512 x 512", "600 x 300", "128 x 128" },
+                "Shown in the CUPPS header and on counter tiles. The library's constraint: the same shape as 256 x 256, that size or larger. PNG or SVG with a transparent background, up to 1 MB.")
+
+            @LogoCard("Reversed wordmark (optional)", true, "Airline reversed wordmarks", extra.ReversedWordmarkStatus, "reversed", "1200 x 400", "",
+                new[] { "1200 x 400" },
+                "For dark backgrounds. The library's constraint: the same shape as 1200 x 400, that size or larger. PNG or SVG with a transparent background, up to 5 MB.")
+
+            @if (extra.Alliance != "None")
+            {
+                <div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
+                    <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:8px;">Alliance</div>
+                    <div style="display:flex; align-items:center; gap:14px;">
+                        <div style="background:#111; color:#fff; border-radius:6px; padding:14px 18px; text-align:center; min-width:120px;">
+                            <div style="font-size:1.4rem;">&#9678;</div>
+                            <div style="font-weight:700; font-size:0.8rem; letter-spacing:0.05em;">@extra.Alliance.ToUpperInvariant()</div>
+                        </div>
+                        <div style="font-size:0.85rem;">
+                            <strong>@extra.Alliance.</strong> Its footer logo shows in the counter footer at every counter @profileAirline.Name holds.<br />
+                            <span class="dx-text-muted">Set by GTAA. Contact GTAA to change the alliance or its logo.</span>
+                        </div>
+                    </div>
+                </div>
+            }
+
+            <div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
+                <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:10px;">Standard template colours</div>
+                <div style="display:flex; gap:40px; margin-bottom:8px;">
+                    <div>
+                        <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:4px;">Background</div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <span style="width:22px; height:22px; border-radius:4px; display:inline-block; background:@extra.WordmarkColor; border:1px solid #ccc;"></span>
+                            <span>@extra.WordmarkColor</span>
+                        </div>
+                    </div>
+                    <div>
+                        <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:4px;">Text</div>
+                        <span>Automatic (best contrast)</span>
+                    </div>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.8rem;">Set by GTAA.</div>
+            </div>
+
+            <div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
+                <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:10px;">Preview</div>
+                <div style="height:110px; background:@extra.WordmarkColor; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; border-radius:4px;">
+                    <div style="font-size:1.4rem; font-weight:800;">@profileAirline.Name.ToUpperInvariant()</div>
+                    <div style="font-size:0.95rem;">Check-In</div>
+                    <div style="font-size:0.8rem;">Enregistrement</div>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">
+                    Standard template, full screen. Shows the approved wordmark until a new one is approved.
+                </div>
+            </div>
+
+            <div class="dx-text-muted" style="font-size:0.8rem;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
+        }
+        else
+        {
+            <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
+                Demo preview &mdash; the Check-In template's image slots. Template images go to @profileAirline.Name's own chain, not GTAA's.
+            </div>
+
+            <div style="margin-bottom:16px;">
+                <span class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-right:10px;">Images</span>
+                <label style="margin-right:16px; font-size:0.9rem;">
+                    <input type="radio" name="imgmode" checked="@(extra.ImagesMode == "separate")" @onchange='() => SetImagesMode("separate")' />
+                    Separate English and French images
+                </label>
+                <label style="font-size:0.9rem;">
+                    <input type="radio" name="imgmode" checked="@(extra.ImagesMode == "bilingual")" @onchange='() => SetImagesMode("bilingual")' />
+                    One bilingual image
+                </label>
+            </div>
+
+            @if (extra.ImagesMode == "separate")
+            {
+                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+                    @TemplateSlot("English, full", "English", "EN", "dx-badge-blue", "", "CHECK-IN", "full", extra)
+                    @TemplateSlot("French, full", "French", "FR", "", "background:#eee5ff;color:#5b3dab;", "ENREGISTREMENT", "full", extra)
+                </div>
+                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+                    @TemplateSlot("English, half", "English", "EN", "dx-badge-blue", "", "CHECK-IN", "half", extra)
+                    @TemplateSlot("French, half", "French", "FR", "", "background:#eee5ff;color:#5b3dab;", "ENREG.", "half", extra)
+                </div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:16px;">
+                    A file uploaded in a slot is stamped with that slot's language (EN slots English, FR slots French, a bilingual template's slots Bilingual). In the library the value shown is the path a real GTAA media server would use.
+                </div>
+            }
+            else
+            {
+                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
+                    @TemplateSlot("Bilingual, full", "Bilingual", "BI", "dx-badge-gray", "", "CHECK-IN / ENREGISTREMENT", "full", extra)
+                    @TemplateSlot("Bilingual, half", "Bilingual", "BI", "dx-badge-gray", "", "CHECK-IN / ENREG.", "half", extra)
+                </div>
+            }
+
+            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:8px;">Template settings for CUPPS</div>
+            <div class="dx-table" style="border-left:none; border-right:none; max-width:640px; margin-bottom:16px;">
+                <div class="dx-table-header" style="grid-template-columns: 1fr 160px;">
+                    <div>Setting</div>
+                    <div>Value</div>
+                </div>
+                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
+                    <div>Show airport-wide Standard templates in CUPPS</div>
+                    <div>On</div>
+                </div>
+                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
+                    <div>Default Counter template (used on expiry)</div>
+                    <div>Check-In</div>
+                </div>
+                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
+                    <div>CUPPS template picker opens on</div>
+                    <div>Custom</div>
+                </div>
+            </div>
+
+            <div class="dx-text-muted" style="font-size:0.8rem;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
+        }
+    </div>
+}
+
 </div>
 
 <style>
@@ -133,7 +375,7 @@
         border: 1px solid #dee2e6;
         border-radius: 4px;
         box-shadow: 0 4px 12px rgba(0,0,0,0.12);
-        max-height: 220px;
+        max-height: 260px;
         overflow-y: auto;
     }
 
@@ -156,266 +398,331 @@
     .dx-typeahead-item:last-child {
         border-bottom: none;
     }
+
+    .al-tile {
+        width: 36px;
+        height: 36px;
+        border-radius: 8px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: #fff;
+        font-weight: 700;
+        font-size: 0.85rem;
+        flex-shrink: 0;
+    }
+
+    .al-tile-lg {
+        width: 44px;
+        height: 44px;
+        font-size: 1rem;
+        border-radius: 10px;
+    }
 </style>
 
 @code {
-    private List<TblAirline> allAirlines = new();
-    private List<TblAirline> filteredAirlines = new();
-    private TblAirline? selectedAirline;
+    private sealed record AirlineRow(int RecordId, string Code, string Name, string? Icao, bool Shown);
 
-    private string selectedAirlineName = "";
-    private string selectedAirlineCode = "";
-    private int? selectedAirlinePin;
-    private bool? airlineWithPin = false;
-    private string? selectedPin = "";
+    private sealed class AirlineExtra
+    {
+        public string Dcs = "—";
+        public string Alliance = "None";
+        public int Accounts = 0;
+        public string WordmarkColor = "#555";
+        public string WordmarkStatus = "Not uploaded";
+        public string SquareMarkStatus = "Not uploaded";
+        public string ReversedWordmarkStatus = "No file";
+        public string ImagesMode = "separate"; // separate | bilingual
+    }
 
-    private bool showLocations = false;
-    private bool showAirlines = false;
+    // Demo-only decoration layer: this app has no DCS/Alliance/account-group data model,
+    // so these fields are illustrative, not read from or written to the database.
+    private static readonly Dictionary<string, AirlineExtra> DemoExtras = new()
+    {
+        ["AC"] = new() { Dcs = "Airline", Alliance = "Star Alliance", Accounts = 3, WordmarkColor = "#d82331", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+        ["WS"] = new() { Dcs = "Airline", Alliance = "None", Accounts = 2, WordmarkColor = "#00563f", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+        ["UA"] = new() { Dcs = "Swissport", Alliance = "Star Alliance", Accounts = 1, WordmarkColor = "#002244", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+        ["LH"] = new() { Dcs = "Airline", Alliance = "Star Alliance", Accounts = 1, WordmarkColor = "#05164d", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+        ["DL"] = new() { Dcs = "Swissport", Alliance = "SkyTeam", Accounts = 1, WordmarkColor = "#a01933", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+        ["BA"] = new() { Dcs = "Airline", Alliance = "Oneworld", Accounts = 1, WordmarkColor = "#075aaa", WordmarkStatus = "Approved", SquareMarkStatus = "Approved" },
+    };
 
-    private List<TblLocation> allLocations = new();
-    private List<TblLocation> filteredLocations = new();
-    private List<TblLocation> assignedLocations = new();
-    private TblLocation? selectedLocation;
-    private string selectedLocationName = "";
+    private static readonly Dictionary<string, string> DemoSupervisorNames = new()
+    {
+        ["AC"] = "Marie Gagnon",
+        ["WS"] = "Jordan Price",
+    };
 
-    private string errorMessage = "";
+    private List<AirlineRow> allAirlines = new();
+    private List<AirlineRow> onboarded = new();
+    private List<AirlineRow> searchResults = new();
+    private string searchTerm = "";
+    private Microsoft.AspNetCore.Components.ElementReference searchInputRef;
+
+    private string subTab = "airlines";
+    private string viewMode = "list";
+    private AirlineRow? profileAirline;
+    private AirlineRow? supervisorTarget;
+    private string profileTab = "branding";
+    private bool isSupervisorPreview;
+
+    private string statusMessage = "";
+    private bool statusIsError;
+
+    private const string AirlineGridCols = "grid-template-columns: 2fr 70px 70px 120px 140px 90px 90px 90px;";
+    private const string SupervisorGridCols = "grid-template-columns: 2fr 70px 70px 160px 90px 90px;";
 
     protected override async Task OnInitializedAsync()
     {
-        await using var aviationDb = await AviationDbFactory.CreateDbContextAsync();
+        await LoadAirlines();
+    }
 
-        allAirlines = await aviationDb.TblAirlines
-            .OrderBy(a => a.CarrierName)
+    private async Task LoadAirlines()
+    {
+        await using var db = await AviationDbFactory.CreateDbContextAsync();
+
+        // Project only the real columns present on this database's tblAirline table.
+        // Several columns on the shared TblAirline entity (logo path, status flags,
+        // PIN fields) don't exist on this environment's table, so selecting the full
+        // entity throws. See CounterAllocations.razor.cs for the same pattern.
+        var rows = await db.TblAirlines
+            .Select(a => new { a.RecordId, a.AirlineCode, a.CarrierName, a.Icao, a.DisplayWithinSettingsMenu })
             .ToListAsync();
 
-        allLocations = await aviationDb.TblLocations
-            .OrderBy(l => l.Name)
-            .ToListAsync();
+        allAirlines = rows
+            .Select(r => new AirlineRow(r.RecordId, r.AirlineCode, string.IsNullOrWhiteSpace(r.CarrierName) ? r.AirlineCode : r.CarrierName!, r.Icao, r.DisplayWithinSettingsMenu))
+            .ToList();
 
-        filteredLocations = allLocations;
+        onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
     }
 
-    private void OnAirlineSearchInput(ChangeEventArgs e)
+    private AirlineExtra ExtraFor(string code)
     {
-        var term = e.Value?.ToString() ?? "";
-        selectedAirlineName = term;
-
-        if (term.Length >= 2)
+        if (!DemoExtras.TryGetValue(code, out var extra))
         {
-            showAirlines = true;
-            showLocations = false;
+            extra = new AirlineExtra();
+            DemoExtras[code] = extra;
+        }
+        return extra;
+    }
 
-            filteredAirlines = allAirlines
-                .Where(a => (a.AirlineCode?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                            (a.CarrierName?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false))
+    private static string ColorFor(string code)
+    {
+        if (DemoExtras.TryGetValue(code, out var extra)) return extra.WordmarkColor;
+        var hash = 0;
+        foreach (var c in code) hash = hash * 31 + c;
+        var hue = Math.Abs(hash) % 360;
+        return $"hsl({hue},45%,38%)";
+    }
+
+    private void OnSearchInput(ChangeEventArgs e)
+    {
+        searchTerm = e.Value?.ToString() ?? "";
+        searchResults = searchTerm.Length < 2
+            ? new List<AirlineRow>()
+            : allAirlines
+                .Where(a => a.Code.Contains(searchTerm, StringComparison.OrdinalIgnoreCase) ||
+                            a.Name.Contains(searchTerm, StringComparison.OrdinalIgnoreCase))
+                .OrderBy(a => a.Name)
+                .Take(15)
                 .ToList();
-        }
-        else
-        {
-            filteredAirlines.Clear();
-        }
     }
 
-    private void OnLocationSearchInput(ChangeEventArgs e)
+    private async Task FocusSearch()
     {
-        var term = e.Value?.ToString() ?? "";
-        selectedLocationName = term;
-
-        if (term.Length >= 1)
-        {
-            filteredLocations = allLocations
-                .Where(l => (l.Name?.Contains(term, StringComparison.OrdinalIgnoreCase) ?? false) ||
-                            l.IataCode.Contains(term, StringComparison.OrdinalIgnoreCase))
-                .ToList();
-        }
-        else
-        {
-            filteredLocations = allLocations;
-        }
+        await searchInputRef.FocusAsync();
     }
 
-    private async Task SelectAirline(TblAirline airline)
+    private async Task Onboard(AirlineRow row)
     {
-        errorMessage = "";
-        selectedPin = "";
-        selectedAirline = airline;
-        selectedAirlineName = airline.CarrierName ?? "";
-        selectedAirlineCode = airline.AirlineCode;
-
-        airlineWithPin = (airline.Tpenabled1 ?? false) || (airline.Tpenabled2 ?? false);
-        selectedAirlinePin = airline.Pincode;
-
-        filteredAirlines.Clear();
-        showAirlines = false;
-
-        await LoadAirlineLocations();
-        StateHasChanged();
-    }
-
-    private async Task LoadAirlineLocations()
-    {
-        if (selectedAirline == null)
-        {
-            assignedLocations = new List<TblLocation>();
-            return;
-        }
-
-        await using var scope = ScopeFactory.CreateAsyncScope();
-        await using var aviationDb = await scope.ServiceProvider
-            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
-            .CreateDbContextAsync();
-
-        // Load via the many-to-many navigation: TblAirline.IataCodes → TblLocation
-        var airline = await aviationDb.TblAirlines
-            .Include(a => a.IataCodes)
-            .FirstOrDefaultAsync(a => a.AirlineCode == selectedAirline.AirlineCode);
-
-        assignedLocations = airline?.IataCodes.OrderBy(l => l.Name).ToList()
-                            ?? new List<TblLocation>();
-
-        StateHasChanged();
-    }
-
-    private void SelectLocation(TblLocation location)
-    {
-        selectedLocation = location;
-        selectedLocationName = $"{location.Name} ({location.IataCode})";
-        showLocations = false;
-    }
-
-    private void ShowLocations()
-    {
-        showLocations = !showLocations;
-        if (showLocations) showAirlines = false;
-    }
-
-    private void ShowAirlines()
-    {
-        showAirlines = !showAirlines;
-        if (showAirlines) showLocations = false;
-    }
-
-    private async Task AddLocation(TblLocation location, TblAirline airline)
-    {
-        await using var scope = ScopeFactory.CreateAsyncScope();
-        await using var aviationDb = await scope.ServiceProvider
-            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
-            .CreateDbContextAsync();
-
+        statusMessage = "";
         try
         {
-            var trackedAirline = await aviationDb.TblAirlines
-                .Include(a => a.IataCodes)
-                .FirstOrDefaultAsync(a => a.AirlineCode == airline.AirlineCode);
-
-            if (trackedAirline == null)
+            if (!row.Shown)
             {
-                errorMessage = $"Airline '{airline.CarrierName}' not found.";
-                return;
+                await using var db = await AviationDbFactory.CreateDbContextAsync();
+                await db.Database.ExecuteSqlInterpolatedAsync(
+                    $"UPDATE dbo.tblAirline SET DisplayWithinSettingsMenu = 1 WHERE RecordID = {row.RecordId}");
+
+                row = row with { Shown = true };
+                allAirlines = allAirlines.Select(a => a.RecordId == row.RecordId ? row : a).ToList();
+                onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
+                statusMessage = $"{row.Name} onboarded.";
+                statusIsError = false;
             }
 
-            bool alreadyLinked = trackedAirline.IataCodes.Any(l => l.IataCode == location.IataCode);
-            if (alreadyLinked)
-            {
-                errorMessage = $"The location '{location.Name}' is already linked to airline '{airline.CarrierName}'.";
-            }
-            else
-            {
-                var trackedLocation = await aviationDb.TblLocations
-                    .FirstOrDefaultAsync(l => l.IataCode == location.IataCode);
-
-                if (trackedLocation != null)
-                {
-                    trackedAirline.IataCodes.Add(trackedLocation);
-                    await aviationDb.SaveChangesAsync();
-                    errorMessage = "";
-                }
-            }
+            searchTerm = "";
+            searchResults.Clear();
+            OpenProfile(row, false);
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error saving airline location");
-            errorMessage = "An error occurred while saving the location assignment.";
+            Logger.LogError(ex, "Error onboarding airline {Code}", row.Code);
+            statusMessage = $"Couldn't onboard {row.Name}.";
+            statusIsError = true;
         }
-
-        await LoadAirlineLocations();
-
-        selectedLocation = null;
-        selectedLocationName = "";
-        StateHasChanged();
     }
 
-    private async Task RemoveLocation(TblLocation location, TblAirline airline)
+    private async Task Deactivate()
     {
-        await using var scope = ScopeFactory.CreateAsyncScope();
-        await using var aviationDb = await scope.ServiceProvider
-            .GetRequiredService<IDbContextFactory<AviationDbContext>>()
-            .CreateDbContextAsync();
-
+        if (profileAirline == null) return;
         try
         {
-            var trackedAirline = await aviationDb.TblAirlines
-                .Include(a => a.IataCodes)
-                .FirstOrDefaultAsync(a => a.AirlineCode == airline.AirlineCode);
+            await using var db = await AviationDbFactory.CreateDbContextAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"UPDATE dbo.tblAirline SET DisplayWithinSettingsMenu = 0 WHERE RecordID = {profileAirline.RecordId}");
 
-            if (trackedAirline == null)
-            {
-                errorMessage = $"Airline '{airline.CarrierName}' not found.";
-                return;
-            }
-
-            var linkedLocation = trackedAirline.IataCodes.FirstOrDefault(l => l.IataCode == location.IataCode);
-            if (linkedLocation != null)
-            {
-                trackedAirline.IataCodes.Remove(linkedLocation);
-                await aviationDb.SaveChangesAsync();
-                errorMessage = "";
-            }
-            else
-            {
-                errorMessage = $"The location '{location.Name}' is not linked to airline '{airline.CarrierName}'.";
-            }
+            var updated = profileAirline with { Shown = false };
+            allAirlines = allAirlines.Select(a => a.RecordId == updated.RecordId ? updated : a).ToList();
+            onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
+            statusMessage = $"{updated.Name} removed from the active list.";
+            statusIsError = false;
         }
         catch (Exception ex)
         {
-            Logger.LogError(ex, "Error removing airline location");
-            errorMessage = "An error occurred while removing the location assignment.";
+            Logger.LogError(ex, "Error deactivating airline {Code}", profileAirline.Code);
+            statusMessage = $"Couldn't remove {profileAirline.Name}.";
+            statusIsError = true;
         }
-
-        await LoadAirlineLocations();
-        StateHasChanged();
+        CloseProfile();
     }
 
-    private async Task SavePin(string pin)
+    private void OpenProfile(AirlineRow row, bool supervisor)
     {
-        errorMessage = "";
-
-        if (string.IsNullOrWhiteSpace(pin) || pin.Length != 4 || !pin.All(char.IsDigit))
-        {
-            errorMessage = "PIN must be exactly 4 digits.";
-            return;
-        }
-
-        int parsedPin = int.Parse(pin);
-
-        if (selectedAirline == null)
-        {
-            errorMessage = "No airline selected.";
-            return;
-        }
-
-        await using var aviationDb = await AviationDbFactory.CreateDbContextAsync();
-
-        var airline = await aviationDb.TblAirlines.FindAsync(selectedAirline.RecordId);
-        if (airline != null)
-        {
-            airline.Pincode = parsedPin;
-            await aviationDb.SaveChangesAsync();
-            selectedAirline = airline;
-            selectedAirlinePin = airline.Pincode;
-        }
-
-        selectedPin = "";
-        StateHasChanged();
+        profileAirline = row;
+        isSupervisorPreview = supervisor;
+        profileTab = "branding";
+        viewMode = "profile";
     }
+
+    private void CloseProfile()
+    {
+        viewMode = isSupervisorPreview ? "supervisor" : "list";
+    }
+
+    private void PreviewSupervisor()
+    {
+        var target = onboarded.FirstOrDefault(a => a.Code == "AC") ?? onboarded.FirstOrDefault();
+        if (target == null) return;
+        supervisorTarget = target;
+        isSupervisorPreview = true;
+        viewMode = "supervisor";
+    }
+
+    private void ExitSupervisorPreview()
+    {
+        isSupervisorPreview = false;
+        viewMode = "list";
+    }
+
+    private void SimulateUpload(string kind)
+    {
+        if (profileAirline == null) return;
+        var extra = ExtraFor(profileAirline.Code);
+        switch (kind)
+        {
+            case "wordmark": extra.WordmarkStatus = "Pending"; break;
+            case "square": extra.SquareMarkStatus = "Pending"; break;
+            case "reversed": extra.ReversedWordmarkStatus = "Pending"; break;
+        }
+    }
+
+    private void ApproveLogo(string kind)
+    {
+        if (profileAirline == null) return;
+        var extra = ExtraFor(profileAirline.Code);
+        switch (kind)
+        {
+            case "wordmark": extra.WordmarkStatus = "Approved"; break;
+            case "square": extra.SquareMarkStatus = "Approved"; break;
+            case "reversed": extra.ReversedWordmarkStatus = "Approved"; break;
+        }
+    }
+
+    private void SetImagesMode(string mode)
+    {
+        if (profileAirline == null) return;
+        ExtraFor(profileAirline.Code).ImagesMode = mode;
+    }
+
+    private static string AssetPath(string code, string lang, string size)
+    {
+        var hash = 0;
+        foreach (var c in code + lang + size) hash = hash * 31 + c;
+        var folder = Math.Abs(code.GetHashCode()) % 900 + 100;
+        var suffix = (Math.Abs(hash) % 0xffff).ToString("x4");
+        return $@"\\gtaa-dxmedia\MediaAssets\2424\{folder}\checkin-{lang.ToLowerInvariant()}-{size}-{suffix}.png";
+    }
+
+    private RenderFragment LogoCard(string title, bool optional, string chainName, string status, string kind, string dims, string sizeKb, string[] prototypes, string? customNote = null) =>
+        @<div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                <div>
+                    <strong>@title</strong>
+                    <span class="dx-badge @(status == "Approved" ? "dx-badge-green" : status == "Pending" ? "dx-badge-orange" : "dx-badge-gray")" style="margin-left:6px;">@status</span>
+                </div>
+                <div style="display:flex; gap:8px;">
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => SimulateUpload(kind)">CHOOSE AN EARLIER LOGO</button>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SimulateUpload(kind)">@(status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
+                    @if (!isSupervisorPreview && status == "Pending")
+                    {
+                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => ApproveLogo(kind)">APPROVE</button>
+                    }
+                </div>
+            </div>
+            <div class="dx-alert dx-alert-info" style="font-size:0.78rem; padding:8px 10px; margin-bottom:10px;">
+                Approved by GTAA on the @chainName chain (GTAA admins)<br />a library every airline uploads to; you see only your airline's files
+            </div>
+            @if (status is not ("No file" or "Not uploaded"))
+            {
+                <div style="height:90px; background:@(ExtraFor(profileAirline!.Code).WordmarkColor); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; border-radius:4px; text-align:center; padding:4px;">
+                    @profileAirline!.Name.ToUpperInvariant()
+                </div>
+                <div class="dx-text-muted" style="font-size:0.75rem; margin-top:4px;">On screen now</div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
+                    @(customNote ?? $"Drawn on Standard Counter templates. The library's constraint: the same shape as {dims}, that size or larger. PNG or SVG with a transparent background, up to 5 MB.")
+                </div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:4px;">
+                    @($"{kind}-{profileAirline!.Code.ToLowerInvariant()}.png") &middot; @dims@(string.IsNullOrEmpty(sizeKb) ? "" : $" \u00b7 {sizeKb}")
+                </div>
+            }
+            else
+            {
+                <div style="height:90px; border:2px dashed #ccc; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#999; font-size:0.85rem;">No file</div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
+                    @(customNote ?? $"The library's constraint: the same shape as {dims}, that size or larger. PNG or SVG with a transparent background, up to 5 MB.")
+                </div>
+            }
+            <div style="margin-top:10px;">
+                <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase; margin-bottom:4px;">Prototype uploads</div>
+                <div style="display:flex; gap:6px; flex-wrap:wrap;">
+                    @foreach (var p in prototypes)
+                    {
+                        <button class="dx-badge dx-badge-gray" style="border:none; cursor:pointer;" @onclick="() => SimulateUpload(kind)">@p</button>
+                    }
+                </div>
+            </div>
+        </div>;
+
+    private RenderFragment TemplateSlot(string title, string lang, string langCode, string badgeClass, string badgeStyle, string line1, string size, AirlineExtra extra) =>
+        @<div style="width:260px; border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; overflow:hidden;">
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; background:#f5f5f5;">
+                <strong>@title</strong>
+                <span class="dx-badge @badgeClass" style="@badgeStyle">@lang</span>
+            </div>
+            <div style="height:@(size == "full" ? "140px" : "90px"); background:@extra.WordmarkColor; color:#fff; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; padding:4px;">
+                <div style="font-weight:800; font-size:@(size == "full" ? "1rem" : "0.85rem");">@line1</div>
+                <div style="font-size:0.8rem;">@profileAirline!.Name</div>
+            </div>
+            <div style="padding:8px 10px 0; font-size:0.78rem;">
+                @($"checkin-{langCode.ToLowerInvariant()}-{size}.png") &middot; Language <span class="dx-badge @badgeClass" style="@badgeStyle">@lang</span>
+            </div>
+            <div style="margin:8px 10px; padding:6px 8px; font-size:0.72rem; font-family:monospace; color:#666; background:#fafafa; border-radius:4px; word-break:break-all;">
+                Image@langCode (@size) = @AssetPath(profileAirline!.Code, langCode, size)
+            </div>
+            <div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:6px;">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick='() => SimulateUpload("wordmark")'>CHOOSE FROM LIBRARY</button>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled>UPLOAD (PROTOTYPE SAMPLE)</button>
+            </div>
+        </div>;
 }

@@ -126,21 +126,6 @@
     }
 
     // ---------- Shell pieces: bare CUPPS layout, as in Diagrams 31 and 32 ----------
-    private RenderFragment Navbar()
-    {
-        var signedIn = screen is "app" or "rmu-pick";
-        return @<div class="dx-navbar">
-            <div class="dx-navbar-user">
-                @if (signedIn)
-                {
-                    <span>@Sc.Who</span>
-                    @if (InApp) { @Mark(MyAirline) }
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="SignOut">Sign out</button>
-                }
-            </div>
-        </div>;
-    }
-
     private RenderFragment CounterBand()
     {
         var id = Station!;
@@ -584,15 +569,13 @@
             <div class="cp-wrap">
                 @Alerts()
                 @TabRow()
-                <div class="cp-body-scroll">
-                    @switch (tab)
-                    {
-                        case "all": @AllCounters() break;
-                        case "flights": <h3 class="cp-h" style="font-size:1.8rem;">Flights</h3>@FlightsTable(7) break;
-                        case "messages": @MessagesTab() break;
-                        default: @MyCounter() break;
-                    }
-                </div>
+                @switch (tab)
+                {
+                    case "all": @AllCounters() break;
+                    case "flights": <h3 class="cp-h" style="font-size:1.8rem;">Flights</h3>@FlightsTable(7) break;
+                    case "messages": @MessagesTab() break;
+                    default: @MyCounter() break;
+                }
             </div>
             @if (viewSent && p is { Open: true })
             {
@@ -704,7 +687,23 @@
                 }
                 else
                 {
-                    <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
+                    @if (liveAllocLoadFailed)
+                    {
+                        <div class="dx-alert dx-alert-warning" style="margin-bottom:14px;justify-content:space-between;align-items:center;display:flex;">
+                            <span>Couldn't load counter allocations, so no airline can show what's allocated right now.</span>
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button>
+                        </div>
+                    }
+                    else if (withNow.Count == 0)
+                    {
+                        <div class="dx-alert dx-alert-warning" style="margin-bottom:14px;">
+                            No airline has a counter allocated right now.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
+                    }
                     @if (none.Count > 0)
                     {
                         <div class="dx-group-label">No counters allocated right now</div>
@@ -742,7 +741,6 @@
             </text>;
         }
         return @<text>
-            @Navbar()
             <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGN IN FOR AN AIRLINE</h2></div></section>
             <div class="dx-page-body" style="padding:20px 30px 40px;">
                 @if (rmuNotice is not null)
@@ -755,7 +753,6 @@
     }
 
     private RenderFragment EndedScreen() => @<text>
-        @Navbar()
         <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGNED OUT</h2></div></section>
         <div class="dx-page-body" style="padding:30px;">
             <div class="dx-card" style="max-width:560px;">

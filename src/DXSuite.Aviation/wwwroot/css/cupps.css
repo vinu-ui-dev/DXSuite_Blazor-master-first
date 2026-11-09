@@ -52,10 +52,6 @@
 
 /* Tab row with the counter status and PUBLISH on the right, Diagram 1. */
 .cp-wrap { padding: 20px 30px 40px; display: flex; flex-direction: column; gap: 18px; }
-/* The band, "Acting for" banner and tab row above this stay in place; just the active tab's
-   content scrolls within its own box, so long content (flights list, template grid) doesn't push
-   the header out of view. */
-.cp-body-scroll { overflow-y: auto; max-height: calc(100vh - 230px); padding-right: 4px; }
 .cp-tabs { display: flex; align-items: stretch; background: var(--dx-bg-alt); border-bottom: 1px solid #ccc; }
 .cp-tabs .dx-tab-btn:disabled { opacity: .45; cursor: not-allowed; }
 .cp-tabs-right { margin-left: auto; display: flex; align-items: center; gap: 10px; padding: 0 12px; }
@@ -64,8 +60,11 @@
 .cp-status .closed { color: #6c757d; }
 .cp-status .wait { color: var(--dx-orange); }
 
-.cp-grid { display: grid; grid-template-columns: 420px 1fr; gap: 26px; }
-.cp-col { display: flex; flex-direction: column; gap: 22px; min-width: 0; }
+/* align-items: start keeps each column its own natural height — without it, CSS Grid stretches
+   the shorter column to match the taller one, leaving a block of empty space under its content
+   (visible when, say, the message/screen column is taller than the Page Options column). */
+.cp-grid { display: grid; grid-template-columns: 400px 1fr; gap: 20px; align-items: start; }
+.cp-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .cp-h { font-size: 1.5rem; font-weight: 500; margin: 0 0 8px; color: var(--dx-text-primary); }
 .cp-sub { font-size: .85rem; color: var(--dx-text-muted); }
 
