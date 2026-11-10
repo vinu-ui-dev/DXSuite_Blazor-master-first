@@ -32,23 +32,26 @@
 </div>
 
 <div class="ca-filters">
-    <select class="dx-form-control" @bind="selectedZone">
-        <option value="">Select Zone</option>
-        @foreach (var z in zones)
-        {
-            <option value="@z">@z</option>
-        }
-    </select>
     <label class="ca-filter-label">From <input type="datetime-local" class="dx-form-control" @bind="fromLocal" @bind:after="RefreshAsync" /></label>
     <label class="ca-filter-label">To <input type="datetime-local" class="dx-form-control" @bind="toLocal" @bind:after="RefreshAsync" /></label>
     <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SetNowWindow">NOW -1 H TO +12 H</button>
     <button class="dx-btn dx-btn-sm" @onclick="SetTomorrowWindow">TOMORROW</button>
+    <button class="dx-btn @(showDummyData ? "dx-btn-blue" : "dx-btn-outline-blue") dx-btn-sm" @onclick="ToggleDummyDataAsync">
+        @(showDummyData ? "Viewing Sample Data" : "View Sample Data")
+    </button>
 </div>
 
 @if (outageState.IsOn)
 {
     <div class="dx-alert dx-alert-info">
         Manual mode is on. There is no live RMS/CoreAPI allocation feed yet, so every allocation below was entered by hand.
+    </div>
+}
+
+@if (showDummyData)
+{
+    <div class="dx-alert dx-alert-info">
+        Viewing sample data for layout review. These allocations are generated in memory, aren't saved anywhere, and can't be added, edited, copied or deleted — turn off Sample Data to manage real allocations.
     </div>
 }
 
@@ -60,14 +63,14 @@
 <div class="ca-actions">
     <span class="dx-text-muted">Click an empty spot on a counter's row to add an allocation there. Click one to change it. Ctrl+click to select several for copy or delete.</span>
     <div class="ca-actions-right">
-        <button class="dx-btn dx-btn-green dx-btn-sm" @onclick="() => OpenAdd(null)">Add Allocation</button>
-        <button class="dx-btn dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="OpenCopy">Copy@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
-        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
+        <button class="dx-btn dx-btn-green dx-btn-sm" disabled="@showDummyData" @onclick="() => OpenAdd(null)">Add Allocation</button>
+        <button class="dx-btn dx-btn-sm" disabled="@(showDummyData || selected.Count == 0)" @onclick="OpenCopy">Copy@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
+        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(showDummyData || selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
     </div>
 </div>
 
 <div class="ca-grid-scroll">
-    <div class="ca-grid">
+    <div class="ca-grid" style="min-width:@(GridWidthPx.ToString("0"))px;">
         <div class="ca-grid-header">
             <div class="ca-row-label-spacer"></div>
             <div class="ca-timeline-header">

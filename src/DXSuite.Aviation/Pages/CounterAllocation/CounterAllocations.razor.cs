@@ -60,6 +60,71 @@ public partial class CounterAllocations
     private DateTime? copyTargetDate;
     private string? copyError;
 
+    // Sample data for reviewing the grid's layout before a real RMS/CoreAPI feed or seeded counters exist in
+    // this environment. Generated in memory only — nothing here is read from or written to the database.
+    private bool showDummyData;
+
+    private static readonly (string Code, string Name)[] DummyAirlines =
+    [
+        ("LH", "Lufthansa"), ("AC", "Air Canada"), ("UA", "United Airlines"), ("AF", "Air France"), ("KL", "KLM"),
+    ];
+
+    private static readonly string[] DummyCounterIds =
+        ["A11", "A12", "A13", "A14", "A15", "A16", "A17", "A18", "B21", "B22", "B23", "B24"];
+
+    private List<AllocView> GenerateDummyAllocations(DateTime fromLocal, DateTime toLocal)
+    {
+        var result = new List<AllocView>();
+        var rng = new Random(42); // fixed seed: same sample layout every time, for a stable preview
+        var nextId = -1;
+
+        foreach (var counterId in DummyCounterIds)
+        {
+            var cursor = fromLocal;
+            var segments = 2 + rng.Next(0, 3);
+            for (var i = 0; i < segments && cursor < toLocal; i++)
+            {
+                var remainingMinutes = (toLocal - cursor).TotalMinutes;
+                if (remainingMinutes < 30) break;
+
+                var durationMinutes = Math.Min(remainingMinutes, 60 + rng.Next(0, 240));
+                var start = cursor;
+                var end = start.AddMinutes(durationMinutes);
+                var (code, _) = DummyAirlines[rng.Next(DummyAirlines.Length)];
+                var type = rng.NextDouble() switch { < 0.1 => "Info", < 0.25 => "Dedicated", _ => "Common" };
+                var isManual = rng.NextDouble() < 0.15;
+
+                var row = new TblCounterAllocation
+                {
+                    CounterAllocationId = nextId--,
+                    Counter = counterId,
+                    AirlineCode = code,
+                    AllocationType = type,
+                    Destination = type == "Dedicated" ? "Sample Destination" : null,
+                    FlightNumber = type == "Dedicated" ? $"{code}{100 + rng.Next(900)}" : null,
+                    StartUtc = ToUtc(start),
+                    EndUtc = ToUtc(end),
+                    IsManual = isManual,
+                    CreatedUtc = DateTime.UtcNow,
+                    CreatedBy = "Sample Data",
+                };
+                result.Add(new AllocView(row, start, end));
+
+                cursor = end.AddMinutes(rng.Next(0, 3) == 0 ? 15 + rng.Next(0, 30) : 0);
+            }
+        }
+
+        return result;
+    }
+
+    private async Task ToggleDummyDataAsync()
+    {
+        showDummyData = !showDummyData;
+        selectedZone = "";
+        selected.Clear();
+        await RefreshAsync();
+    }
+
     private List<ZoneGroup> Groups =>
         views
             .GroupBy(v => v.Row.Counter)
@@ -72,6 +137,26 @@ public partial class CounterAllocations
 
     private double SpanMinutes => Math.Max(1, (toLocal - fromLocal).TotalMinutes);
     private double Pct(DateTime local) => Math.Clamp((local - fromLocal).TotalMinutes / SpanMinutes * 100, 0, 100);
+
+    /// <summary>Grid width in pixels, scaled to the window so each hour keeps a readable minimum width no
+    /// matter how wide From/To is set — a fixed width made hour columns (and tick labels) shrink to
+    /// illegible slivers once the window grew past a day or so.</summary>
+    private double GridWidthPx
+    {
+        get
+        {
+            var hours = Math.Max(1, SpanMinutes / 60);
+            var pxPerHour = hours switch
+            {
+                <= 16 => 85.0,
+                <= 30 => 55.0,
+                <= 48 => 40.0,
+                <= 72 => 30.0,
+                _ => 16.0,
+            };
+            return Math.Clamp(hours * pxPerHour, 1100, 20000);
+        }
+    }
     private DateTime NowLocal => ToLocal(flightListClock.Time.GetUtcNow().UtcDateTime);
     private bool NowInWindow => NowLocal >= fromLocal && NowLocal <= toLocal;
 
@@ -82,6 +167,14 @@ public partial class CounterAllocations
         await LoadAirlinesAsync();
         await LoadCountersAsync();
         await RefreshAsync();
+
+        // No real allocations anywhere for this tenant (nothing seeded, no RMS/CoreAPI feed yet) — default to
+        // the sample view instead of an empty grid. Switching the toggle off still shows the real (empty) grid.
+        if (views.Count == 0 && allCounterIds.Count == 0)
+        {
+            showDummyData = true;
+            await RefreshAsync();
+        }
     }
 
     private DateTime ToUtc(DateTime local) => TimeZoneInfo.ConvertTimeToUtc(DateTime.SpecifyKind(local, DateTimeKind.Unspecified), zone);
@@ -115,8 +208,15 @@ public partial class CounterAllocations
         return $"hsl({hue},52%,42%)";
     }
 
-    private string AirlineName(string code) =>
-        airlineNames.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name) ? name! : code;
+    private string AirlineName(string code)
+    {
+        if (showDummyData)
+        {
+            var match = DummyAirlines.FirstOrDefault(a => a.Code == code);
+            if (match.Code is not null) return match.Name;
+        }
+        return airlineNames.TryGetValue(code, out var name) && !string.IsNullOrWhiteSpace(name) ? name! : code;
+    }
 
     private async Task LoadAirlinesAsync()
     {
@@ -152,6 +252,12 @@ public partial class CounterAllocations
     private async Task RefreshAsync()
     {
         error = null;
+        if (showDummyData)
+        {
+            views = [.. GenerateDummyAllocations(fromLocal, toLocal).OrderBy(v => v.Row.Counter).ThenBy(v => v.StartLocal)];
+            StateHasChanged();
+            return;
+        }
         var rows = await allocationService.GetInRangeAsync(ToUtc(fromLocal), ToUtc(toLocal));
         views = [.. rows.Select(r => new AllocView(r, ToLocal(r.StartUtc), ToLocal(r.EndUtc))).OrderBy(v => v.Row.Counter).ThenBy(v => v.StartLocal)];
         StateHasChanged();
@@ -178,11 +284,28 @@ public partial class CounterAllocations
         await RefreshAsync();
     }
 
+    /// <summary>Hourly ticks for narrow windows; wider windows thin the interval so labels stop overlapping
+    /// (at 1 tick/hour, a 24h+ window packs more labels than the grid's width can legibly show). Day-boundary
+    /// ticks (the "Mon 9 Nov" style labels) are always included regardless of step, so dates stay visible.</summary>
     private IEnumerable<DateTime> HourTicks()
     {
         var start = new DateTime(fromLocal.Year, fromLocal.Month, fromLocal.Day, fromLocal.Hour, 0, 0);
         if (start < fromLocal) start = start.AddHours(1);
-        for (var t = start; t <= toLocal; t = t.AddHours(1)) yield return t;
+
+        var stepHours = (toLocal - fromLocal).TotalHours switch
+        {
+            <= 16 => 1,
+            <= 30 => 2,
+            <= 48 => 3,
+            <= 72 => 4,
+            _ => 6,
+        };
+
+        var ticks = new SortedSet<DateTime>();
+        for (var t = start; t <= toLocal; t = t.AddHours(stepHours)) ticks.Add(t);
+        for (var d = fromLocal.Date.AddDays(1); d <= toLocal; d = d.AddDays(1)) ticks.Add(d);
+
+        return ticks;
     }
 
     private static string TickLabel(DateTime t) => t.Hour == 0 ? t.ToString("ddd d MMM") : t.ToString("HH:mm");
@@ -233,10 +356,15 @@ public partial class CounterAllocations
         selected.Clear();
     }
 
-    private void OnRowClick(string counterId) => OpenAdd(counterId);
+    private void OnRowClick(string counterId)
+    {
+        if (showDummyData) return;
+        OpenAdd(counterId);
+    }
 
     private void OnBlockClick(TblCounterAllocation row, MouseEventArgs e)
     {
+        if (showDummyData) return;
         if (e.CtrlKey || e.MetaKey)
         {
             if (!selected.Remove(row.CounterAllocationId)) selected.Add(row.CounterAllocationId);

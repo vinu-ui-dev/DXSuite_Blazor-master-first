@@ -220,7 +220,7 @@
 }
 
 .ca-manual {
-    border: 2px dashed rgba(255,255,255,0.85);
+    border: 2px solid rgba(15,23,42,0.55);
 }
 
 .ca-selected {
@@ -282,7 +282,7 @@
 }
 
 .ca-swatch-manual {
-    border: 2px dashed hsl(205,52%,30%);
+    border: 2px solid hsl(205,52%,25%);
 }
 
 .ca-swatch-dedicated {
