@@ -1,8 +1,11 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
 @using DXSuite.Aviation.Services
+@using DXSuite.Shared.Services
+@using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
+@inject IServiceProvider Services
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AddAirlineWizard> Logger
 @inject AirlineAudit AirlineAudit
@@ -97,23 +100,13 @@
             else if (currentStep == 1)
             {
                 <h5>Branding</h5>
-                <p class="dx-text-muted">Logos and colors used to draw the airline's Standard Counter templates.</p>
+                <p class="dx-text-muted">The logos and colours the airline's Standard Counter templates are drawn with.</p>
 
-                <div class="dx-alert dx-alert-info">
-                    One slot per logo role. Logos are saved to the airline's own Asset Library and approved on its chain. You have approval bypass, so a chosen logo is approved when you create, and logged.
-                </div>
+                @BrandingCard("Wordmark", false, "wordmark", "Drawn on Standard Counter templates.")
 
-                @BrandingCard("Wordmark", false, data.HasWordmark, "wordmark", "1200 x 400",
-                    "Drawn on Standard Counter templates. Aspect Ratio 1200 x 400: the same shape, 1200 x 400 or larger. PNG or SVG with a transparent background, up to 5 MB.",
-                    new[] { "1200 X 400", "600 X 200", "4000 X 1333, 7.7 MB", "1000 X 400" })
+                @BrandingCard("Square mark", true, "square", "Stored for later screens; no 1.2 screen draws it.")
 
-                @BrandingCard("Square mark (optional)", true, data.HasSquareMark, "square", "256 x 256",
-                    "Shown in the CUPPS header and on counter tiles. Aspect Ratio 256 x 256: the same shape, 256 x 256 or larger. PNG or SVG with a transparent background, up to 1 MB.",
-                    new[] { "256 X 256", "512 X 512", "128 X 128" })
-
-                @BrandingCard("Reversed wordmark (optional)", true, data.HasReversedWordmark, "reversed", "1200 x 400",
-                    "For dark backgrounds. The same shape as 1200 x 400, that size or larger. PNG or SVG with a transparent background, up to 5 MB.",
-                    new[] { "1200 X 400" })
+                @BrandingCard("Reversed wordmark", true, "reversed", "Stored for later screens; no 1.2 screen draws it.")
 
                 <div class="aaw-field" style="max-width:300px;">
                     <label>Standard template background</label>
@@ -288,9 +281,52 @@
     <div class="dx-alert dx-alert-danger" style="margin:10px 20px;">@errorMessage</div>
 }
 
+@if (pickerKind != null)
+{
+    <div class="aaw-modal-backdrop" @onclick="ClosePicker">
+        <div class="aaw-modal" @onclick:stopPropagation="true">
+            <div class="aaw-modal-head">
+                <strong>Choose a @RoleLabel(pickerKind).ToLowerInvariant() from @(libraryInfo?.Name)</strong>
+                <button class="aaw-modal-close" @onclick="ClosePicker" aria-label="Close">&times;</button>
+            </div>
+            <div class="aaw-modal-body">
+                <p class="dx-text-muted" style="font-size:0.85rem;">Approved files of the library. A file here is already approved, so it is linked on Save with no new approval. To add a new file, use Upload to library.</p>
+                @if (pickerLoading)
+                {
+                    <p class="dx-text-muted">Loading...</p>
+                }
+                else if (pickerFiles.Count == 0)
+                {
+                    <h6 class="dx-text-muted" style="margin:18px 0;">No approved files in this library yet.</h6>
+                }
+                else
+                {
+                    <div class="aaw-picker-grid">
+                        @foreach (var f in pickerFiles)
+                        {
+                            <button class="aaw-picker-item" @onclick="() => PickFile(f)">
+                                <span class="aaw-picker-thumb"><img src="@f.Path" alt="@f.Name" /></span>
+                                <span class="aaw-picker-name">@f.Name</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="aaw-modal-foot">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ClosePicker">CANCEL</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (logoLibrary != null && libraryInfo != null)
+{
+    <DynamicComponent Type="logoLibrary.UploaderComponentType" Parameters="uploaderParameters" @ref="uploaderHost" />
+}
+
 <style>
     .aaw-layout { display:flex; min-height:100%; }
-    .aaw-rail { width:230px; flex-shrink:0; border-right:1px solid var(--dx-border-color,#eee); padding:16px 0; }
+    .aaw-rail { width:240px; flex-shrink:0; border-right:1px solid var(--dx-border-color,#eee); padding:16px 0; background:#f0f0f0; }
     .aaw-rail-item { display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; background:none; border:none; padding:12px 18px; cursor:pointer; border-left:3px solid transparent; }
     .aaw-rail-item:hover { background:#f7f9fc; }
     .aaw-rail-item.active { background:#eef4ff; border-left-color:#0071bc; }
@@ -333,10 +369,33 @@
     .aaw-footer { display:flex; align-items:center; gap:14px; padding:12px 20px; border-top:1px solid var(--dx-border-color,#eee); flex-shrink:0; }
     .aaw-footer span { flex:1; text-align:center; }
 
-    .aaw-logo-card { border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; margin-bottom:16px; }
-    .aaw-logo-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-    .aaw-logo-preview { height:90px; border:2px dashed #ccc; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#999; font-size:0.85rem; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
-    .aaw-logo-preview.has-file { border-style:solid; background:#0071bc; color:#fff; font-weight:700; }
+    .aaw-logo-card { border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:12px 12px 14px; margin-bottom:12px; background:#fff; }
+    .aaw-logo-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
+    .aaw-logo-source { font-size:0.82rem; margin-bottom:10px; }
+    .aaw-logo-preview { width:200px; height:80px; border-radius:2px; display:flex; align-items:center; justify-content:center; color:#555; font-size:0.82rem; background:#ebebeb; }
+    .aaw-logo-preview.has-file { background:#0071bc; color:#fff; font-weight:700; }
+    .aaw-file-pill { background:#e8eaed; color:#333; border-radius:14px; padding:4px 12px; font-size:0.78rem; font-weight:600; }
+    .aaw-file-pill.chosen { background:#d7f0e1; color:#13693a; }
+    .aaw-lib-btn { font-size:0.72rem; font-weight:700; letter-spacing:0.02em; padding:6px 12px; border-radius:4px; border:1px solid #0071bc; cursor:pointer; }
+    .aaw-lib-btn.outline { background:#fff; color:#0071bc; }
+    .aaw-lib-btn.solid { background:#0071bc; color:#fff; }
+    .aaw-lib-btn:disabled, .aaw-lib-btn.disabled { opacity:0.5; cursor:not-allowed; }
+    .aaw-lib-btn { display:inline-flex; align-items:center; gap:4px; margin:0; }
+    .aaw-logo-preview img { max-width:100%; max-height:100%; object-fit:contain; }
+    .aaw-logo-preview.has-file { background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+
+    .aaw-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; display:flex; align-items:center; justify-content:center; }
+    .aaw-modal { background:#fff; border-radius:10px; width:min(720px, 92vw); max-height:80vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,0.35); }
+    .aaw-modal-head { background:#0071bc; color:#fff; padding:16px 22px; display:flex; justify-content:space-between; align-items:center; }
+    .aaw-modal-close { background:none; border:none; color:#fff; font-size:1.4rem; line-height:1; cursor:pointer; }
+    .aaw-modal-body { padding:18px 22px; overflow-y:auto; }
+    .aaw-modal-foot { padding:12px 22px; border-top:1px solid #eee; display:flex; justify-content:flex-end; }
+    .aaw-picker-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; margin-top:12px; }
+    .aaw-picker-item { border:1px solid #dee2e6; border-radius:6px; background:#fff; padding:8px; cursor:pointer; text-align:left; }
+    .aaw-picker-item:hover { border-color:#0071bc; background:#f4f9ff; }
+    .aaw-picker-thumb { display:flex; align-items:center; justify-content:center; height:64px; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+    .aaw-picker-thumb img { max-width:100%; max-height:100%; object-fit:contain; }
+    .aaw-picker-name { display:block; font-size:0.78rem; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 </style>
 
 @code {
@@ -361,9 +420,12 @@
         public bool Terminal3;
         public bool Active = true;
 
-        public bool HasWordmark;
-        public bool HasSquareMark;
-        public bool HasReversedWordmark;
+        public AirlineLogoFile? Wordmark;
+        public AirlineLogoFile? SquareMark;
+        public AirlineLogoFile? ReversedWordmark;
+        public bool HasWordmark => Wordmark != null;
+        public bool HasSquareMark => SquareMark != null;
+        public bool HasReversedWordmark => ReversedWordmark != null;
         public string BackgroundColor = "#0071bc";
 
         public bool FlagCanada = true;
@@ -383,12 +445,24 @@
 
     private readonly (string Title, string Subtitle)[] Steps =
     {
-        ("Identity", "Name, codes, alliance"),
-        ("Branding", "Logos and brand color"),
-        ("CUPPS options", "Flags, Sunflower, ASL"),
+        ("Identity", "Names, codes and terminals"),
+        ("Branding", "Logos and Standard template colours"),
+        ("CUPPS options", "Flags agents can show"),
         ("DCS", "Who checks passengers in"),
-        ("Review and create", "Validate, then create"),
+        ("Review and create", "Check, then create"),
     };
+
+    private static readonly string[] LogoExtensions = { ".png", ".svg" };
+
+    private IAirlineLogoLibrary? logoLibrary;
+    private AirlineLogoLibraryInfo? libraryInfo;
+    private string? pickerKind;
+    private bool pickerLoading;
+    private IReadOnlyList<AirlineLogoFile> pickerFiles = [];
+    private string? uploadKind;
+    private DynamicComponent? uploaderHost;
+    private Dictionary<string, object>? uploaderParameters;
+    private readonly Dictionary<string, string> logoErrors = new();
 
     private WizardData data = new();
     private int currentStep;
@@ -396,6 +470,15 @@
     private DateTime checkedAt = DateTime.Now;
     private bool isCreating;
     private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        logoLibrary = Services.GetService(typeof(IAirlineLogoLibrary)) as IAirlineLogoLibrary;
+        if (logoLibrary == null) return;
+        uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploaded) };
+        try { libraryInfo = await logoLibrary.GetLibraryAsync(); }
+        catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); }
+    }
 
     private List<Issue> Validate()
     {
@@ -409,7 +492,9 @@
             list.Add(new("IDENTITY", "Enter the two-character IATA code. Counter allocations and flights are matched on it.", true, 0));
 
         if (!data.HasWordmark)
-            list.Add(new("BRANDING", "Upload a wordmark. Drawn on Standard Counter templates.", true, 1));
+            list.Add(new("BRANDING", "Choose or upload a wordmark. Drawn on Standard Counter templates.", true, 1));
+        else if (!data.Wordmark!.Approved)
+            list.Add(new("BRANDING", "The wordmark is waiting on the library's approval chain. Standard Counter templates cannot draw it until it is approved.", false, 1));
 
         if (string.IsNullOrWhiteSpace(data.Icao))
             list.Add(new("IDENTITY", "No ICAO code. Flight feeds that use ICAO codes will not match this airline.", false, 0));
@@ -423,7 +508,7 @@
         return list;
     }
 
-    private bool StepHasErrors(int step) => Validate().Any(i => i.IsError && i.StepIndex == step);
+    private bool StepHasErrors(int step) => Validate().Any(i => i.IsError && (step == Steps.Length - 1 || i.StepIndex == step));
 
     private RenderFragment RailIcon(int idx)
     {
@@ -431,15 +516,15 @@
         {
             return @<span class="aaw-rail-icon current">@(idx + 1)</span>;
         }
-        if (visited.Contains(idx) && (idx == 0 || idx == 1) && StepHasErrors(idx))
+        if (idx == Steps.Length - 1 && !visited.Contains(idx))
+        {
+            return @<span class="aaw-rail-icon todo">@(idx + 1)</span>;
+        }
+        if (StepHasErrors(idx))
         {
             return @<span class="aaw-rail-icon err">&#10006;</span>;
         }
-        if (visited.Contains(idx))
-        {
-            return @<span class="aaw-rail-icon ok">&#10003;</span>;
-        }
-        return @<span class="aaw-rail-icon todo">@(idx + 1)</span>;
+        return @<span class="aaw-rail-icon ok">&#10003;</span>;
     }
 
     private void GoNext()
@@ -491,52 +576,124 @@
             }
         </div>;
 
-    private void SimulateUpload(string kind)
+    private AirlineLogoFile? LogoFor(string kind) => kind switch
+    {
+        "wordmark" => data.Wordmark,
+        "square" => data.SquareMark,
+        _ => data.ReversedWordmark,
+    };
+
+    private void SetLogo(string kind, AirlineLogoFile? file)
     {
         switch (kind)
         {
-            case "wordmark": data.HasWordmark = true; break;
-            case "square": data.HasSquareMark = true; break;
-            case "reversed": data.HasReversedWordmark = true; break;
+            case "wordmark": data.Wordmark = file; break;
+            case "square": data.SquareMark = file; break;
+            case "reversed": data.ReversedWordmark = file; break;
         }
     }
 
-    private void ClearUpload(string kind)
+    private static string RoleLabel(string kind) => kind switch
     {
-        switch (kind)
+        "wordmark" => "Wordmark",
+        "square" => "Square mark",
+        _ => "Reversed wordmark",
+    };
+
+    private async Task OpenPicker(string kind)
+    {
+        if (logoLibrary == null) return;
+        pickerKind = kind;
+        pickerLoading = true;
+        pickerFiles = [];
+        logoErrors.Remove(kind);
+        try { pickerFiles = await logoLibrary.ListApprovedAsync(); }
+        catch (Exception ex)
         {
-            case "wordmark": data.HasWordmark = false; break;
-            case "square": data.HasSquareMark = false; break;
-            case "reversed": data.HasReversedWordmark = false; break;
+            Logger.LogError(ex, "Could not list the airline logo library");
+            logoErrors[kind] = "The library could not be read. Try again.";
+            pickerKind = null;
+        }
+        finally { pickerLoading = false; }
+    }
+
+    private void ClosePicker() => pickerKind = null;
+
+    private void PickFile(AirlineLogoFile file)
+    {
+        if (pickerKind != null) SetLogo(pickerKind, file);
+        pickerKind = null;
+    }
+
+    private async Task OpenUpload(string kind)
+    {
+        if (uploaderHost?.Instance is not IAirlineLogoUploader uploader) return;
+        logoErrors.Remove(kind);
+        uploadKind = kind;
+        try
+        {
+            if (await uploader.OpenAsync() is { } problem) logoErrors[kind] = problem;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not open the logo uploader");
+            logoErrors[kind] = "The upload dialog could not be opened. Try again.";
         }
     }
 
-    private RenderFragment BrandingCard(string title, bool optional, bool hasFile, string kind, string dims, string note, string[] prototypes) =>
+    private void OnLogoUploaded(AirlineLogoFile file)
+    {
+        if (uploadKind != null) SetLogo(uploadKind, file);
+        uploadKind = null;
+    }
+
+    private RenderFragment BrandingCard(string title, bool optional, string kind, string note) =>
         @<div class="aaw-logo-card">
             <div class="aaw-logo-head">
-                <div>
+                <div style="display:flex; align-items:center; gap:8px;">
                     <strong>@title</strong>
-                    <span class="dx-badge @(hasFile ? "dx-badge-green" : "dx-badge-gray")" style="margin-left:6px;">@(hasFile ? "File chosen" : "No file")</span>
+                    @if (optional)
+                    {
+                        <span class="dx-text-muted">(optional)</span>
+                    }
+                    <span class="aaw-file-pill @(LogoFor(kind) != null ? "chosen" : "")">@(LogoFor(kind) is { } chosen ? chosen.Name : "No file")</span>
+                    @if (LogoFor(kind) is { Approved: false })
+                    {
+                        <span class="aaw-file-pill">Awaiting approval</span>
+                    }
                 </div>
                 <div style="display:flex; gap:8px;">
-                    @if (hasFile)
+                    @if (LogoFor(kind) != null)
                     {
-                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => ClearUpload(kind)">REMOVE</button>
+                        <button class="aaw-lib-btn outline" @onclick="() => SetLogo(kind, null)">REMOVE</button>
                     }
-                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SimulateUpload(kind)">CHOOSE FILE</button>
+                    <button class="aaw-lib-btn outline" disabled="@(libraryInfo == null)" @onclick="() => OpenPicker(kind)"><i class="bi bi-collection"></i> CHOOSE FROM LIBRARY</button>
+                    <button class="aaw-lib-btn solid" disabled="@(libraryInfo == null)" @onclick="() => OpenUpload(kind)"><i class="bi bi-upload"></i> UPLOAD TO LIBRARY</button>
                 </div>
             </div>
-            <div class="aaw-logo-preview @(hasFile ? "has-file" : "")">@(hasFile ? title : "No file")</div>
+            @if (libraryInfo != null)
+            {
+                <div class="aaw-logo-source"><i class="bi bi-collection"></i> Draws from <strong>@libraryInfo.Name</strong>@(libraryInfo.Width > 0 ? $", Aspect Ratio {libraryInfo.Width} x {libraryInfo.Height}" : ""), approved on that library's chain</div>
+            }
+            else
+            {
+                <div class="aaw-logo-source dx-text-muted"><i class="bi bi-collection"></i> No Airline wordmarks asset library found. Create one in Director to choose or upload logos.</div>
+            }
+            <div class="aaw-logo-preview @(LogoFor(kind) != null ? "has-file" : "")">
+                @if (LogoFor(kind) is { } file)
+                {
+                    <img src="@file.Path" alt="@title" />
+                }
+                else
+                {
+                    <span>No file</span>
+                }
+            </div>
+            @if (logoErrors.TryGetValue(kind, out var logoError))
+            {
+                <div class="aaw-summary-missing" style="font-size:0.8rem; margin-top:6px;">@logoError</div>
+            }
             <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">@note</div>
-            <div style="margin-top:10px;">
-                <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase; margin-bottom:4px;">Prototype samples</div>
-                <div style="display:flex; gap:6px; flex-wrap:wrap;">
-                    @foreach (var p in prototypes)
-                    {
-                        <button class="dx-badge dx-badge-gray" style="border:none; cursor:pointer;" @onclick="() => SimulateUpload(kind)">@p</button>
-                    }
-                </div>
-            </div>
         </div>;
 
     private RenderFragment CuppsToggle(string title, string description, bool value, Action<bool> setter) =>
@@ -572,8 +729,12 @@
                 return;
             }
 
+            // One transaction so a missing logo table cannot leave an airline row behind.
+            await using var tx = await db.Database.BeginTransactionAsync();
+
+            var logoPath = data.Wordmark?.Path;
             await db.Database.ExecuteSqlInterpolatedAsync(
-                $"INSERT INTO dbo.tblAirline (Airline_Code, CarrierName, ICAO, DisplayWithinSettingsMenu) VALUES ({code}, {name}, {icao}, {data.Active})");
+                $"INSERT INTO dbo.tblAirline (Airline_Code, CarrierName, ICAO, DisplayWithinSettingsMenu, CarrierLogoPath) VALUES ({code}, {name}, {icao}, {data.Active}, {logoPath})");
 
             var created = await db.TblAirlines
                 .Where(a => a.AirlineCode == code)
@@ -585,6 +746,22 @@
                 errorMessage = "The airline was not saved. Try again.";
                 return;
             }
+
+            foreach (var (role, logo) in new[] { ("wordmark", data.Wordmark), ("square", data.SquareMark), ("reversed", data.ReversedWordmark) })
+            {
+                if (logo == null) continue;
+                db.TblAirlineLogos.Add(new TblAirlineLogo
+                {
+                    AirlineCode = code,
+                    Role = role,
+                    AssetId = logo.AssetId,
+                    AssetName = logo.Name,
+                    AssetPath = logo.Path,
+                    LinkedUtc = DateTime.UtcNow,
+                });
+            }
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
 
             var dcsLabel = data.DcsMode == "airline" ? "Airline" : data.DcsProvider;
             var result = new NewAirlineResult(

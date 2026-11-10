@@ -262,6 +262,8 @@ public static class Extensions
         services.AddScoped<IAssetApprovalService, AssetApprovalService>();
         services.AddScoped<IAssetIngestService, AssetIngestService>();
         services.AddScoped<IUploadIdentityService, UploadIdentityService>();
+        services.AddScoped<AirlineLogoLibrary>();
+        services.AddScoped<DXSuite.Shared.Services.IAirlineLogoLibrary>(sp => sp.GetRequiredService<AirlineLogoLibrary>());
         services.AddScoped<IContentOverwriteService, ContentOverwriteService>();
         services.AddScoped<IEffectiveContentResolver, EffectiveContentResolver>();
         services.AddSingleton<DeliveryMetrics>();

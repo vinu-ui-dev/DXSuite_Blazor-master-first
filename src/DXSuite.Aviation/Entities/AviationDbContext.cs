@@ -17,6 +17,8 @@ public partial class AviationDbContext : DbContext
 
     public virtual DbSet<TblCounterAllocation> TblCounterAllocations { get; set; }
 
+    public virtual DbSet<TblAirlineLogo> TblAirlineLogos { get; set; }
+
     public virtual DbSet<TblAirlineGate> TblAirlineGates { get; set; }
 
     public virtual DbSet<TblArrival> TblArrivals { get; set; }
