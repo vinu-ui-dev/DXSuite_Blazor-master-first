@@ -251,6 +251,7 @@ public partial class CuppsAgentScreens : IDisposable
             var (allocations, nowMinutes) = await LiveData.GetLiveAllocationsAsync();
             liveAllocations = [.. allocations];
             now = nowMinutes;
+            if (UseDemoAllocations && liveAllocations.Count == 0) liveAllocations = BuildDemoAllocations();
         }
         catch (Exception)
         {
@@ -273,11 +274,30 @@ public partial class CuppsAgentScreens : IDisposable
         StateHasChanged();
     }
 
-    /// <summary>Demo-only: pre-opens a few of the manually-inserted demo counters (tagged
-    /// CreatedBy='Claude-Demo-TEMP' in tblCounterAllocation) so a manager walkthrough doesn't need a live
+    // Demo-only: set to false (and delete BuildDemoAllocations) once real counter allocations exist.
+    private const bool UseDemoAllocations = true;
+
+    /// <summary>Demo-only: spreads counters A1-B5 across the first airlines from the feed, with the next one
+    /// allocated later today, centred on the current time. Used only when the allocation table is empty.</summary>
+    private List<Alloc> BuildDemoAllocations()
+    {
+        string[] counters = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "B1", "B2", "B3", "B4", "B5"];
+        int[] perAirline = [3, 2, 2, 1, 1, 1, 1, 1];
+        var airlines = liveAirlines.Keys.Order().ToList();
+        var result = new List<Alloc>();
+        var c = 0;
+        for (var i = 0; i < airlines.Count && i < perAirline.Length; i++)
+            for (var k = 0; k < perAirline[i] && c < counters.Length; k++, c++)
+                result.Add(new Alloc(counters[c], airlines[i], Math.Max(0, now - 120), Math.Min(1440, now + 240), i % 2 == 0 ? "Common" : "Dedicated"));
+        if (airlines.Count > perAirline.Length)
+            result.Add(new Alloc("B6", airlines[perAirline.Length], Math.Min(1439, now + 90), Math.Min(1440, now + 360), "Common"));
+        return result;
+    }
+
+    /// <summary>Demo-only: pre-opens a few of the demo counters so a manager walkthrough doesn't need a live
     /// Publish click first — matching how the reference DXME-500 prototype always starts with some counters
-    /// already open. In-memory only, same as the rest of CUPPS's published state; remove this method (and the
-    /// tagged DB rows) together once the demo is done.</summary>
+    /// already open. In-memory only, same as the rest of CUPPS's published state; remove this method together
+    /// with <see cref="BuildDemoAllocations"/> once the demo is done.</summary>
     private void SeedDemoPublishedState()
     {
         void Open(string counterId, string page, string dest = "", List<string>? msgs = null)

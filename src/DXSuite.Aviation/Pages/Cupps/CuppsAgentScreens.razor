@@ -34,6 +34,14 @@
         @<span class="dx-airline-mark @cls" style="background:@AirlineInfo(airline).Bg">@airline</span>;
 
     // ---------- Screen render (Sent preview), after Diagrams 3 and 37 ----------
+    /// <summary>
+    /// Renders one half of the counter display (used both for a full single-page screen and, when the
+    /// screen is split between two counters, for each side). <paramref name="flair"/> forces the hard-coded
+    /// Flair filler page used on the "other" side when that counter is closed; otherwise a closed counter
+    /// (<paramref name="s"/> is null or not <c>Open</c>) shows a plain filler block. Otherwise the airline
+    /// logo plus the published template (<see cref="Tpl"/>) text/background is shown, with the ASL video
+    /// badge suppressed when rendering the compact "extra" (split-screen) half.
+    /// </summary>
     private RenderFragment Half(CounterSetup? s, bool extra = false, bool flair = false)
     {
         if (flair)
@@ -56,7 +64,12 @@
         </div>;
     }
 
-    /// Destination and time show only while one page fills the screen; two halves drop both on each side.
+    /// <summary>
+    /// Renders the bottom info band under a counter's screen: the alliance mark/sunflower indicator on the
+    /// left, and (when there is only one page filling the whole screen, i.e. <paramref name="halves"/> is
+    /// false) the destination, scrolling canned-message ticker, and clock. Destination and clock are omitted
+    /// when the screen is split into two halves (<paramref name="halves"/> is true), since there isn't room.
+    /// </summary>
     private RenderFragment Band(CounterSetup? s, bool halves = false)
     {
         if (s is not { Open: true })
@@ -78,6 +91,13 @@
         </div>;
     }
 
+    /// <summary>
+    /// Builds the full on-screen display (area + band) for a counter, handling the three layout cases:
+    /// a single page filling the whole screen, a "two" layout split between this counter's own two pages,
+    /// and a screen physically shared with a neighbouring counter (<see cref="GetSplit"/>) - either showing
+    /// both counters' pages side by side when they belong to the same airline, or this counter's page next
+    /// to the Flair filler/placeholder otherwise.
+    /// </summary>
     private RenderFragment ScreenFor(CounterSetup? st, string size)
     {
         var si = GetSplit();
@@ -111,6 +131,11 @@
         return @<div class="cp-screen @size"><div class="area">@area</div><div class="band">@band</div></div>;
     }
 
+    /// <summary>
+    /// Renders the plain-text (non-visual) summary of what a counter's screen is showing - page, queued
+    /// canned/free-typed messages, ASL/Sunflower toggles, and destination. Used as an accessible/alternate
+    /// view alongside the graphical <see cref="ScreenFor"/> preview.
+    /// </summary>
     private RenderFragment TextSummary(CounterSetup? s)
     {
         if (s is not { Open: true })
@@ -560,6 +585,12 @@
     }
 
     // ---------- Screens ----------
+    /// <summary>
+    /// Main signed-in app shell (Diagram 1 "My Counter"): the counter band/header, alert banners, tab row,
+    /// and whichever tab body is selected (My Counter, All Counters, Flights, or Messages). Also hosts the
+    /// "view sent"/preview modal for the current counter's published (or draft, if unpublished) screen and
+    /// the idle sign-out warning modal.
+    /// </summary>
     private RenderFragment AppScreen()
     {
         var preview = InApp && tab == "mine" && IsDirty();
@@ -599,9 +630,16 @@
         </text>;
     }
 
+    /// <summary>Shared DXSuite/CUPPS logo header shown at the top of every login-style card.</summary>
     private RenderFragment LoginBrand() =>
         @<div class="dx-login-brand"><img src="images/branding/header.png" alt="DXSuite"><div>CUPPS</div></div>;
 
+    /// <summary>
+    /// Renders the sign-in card for the current scenario (<see cref="Sc"/>): a Microsoft sign-in button for
+    /// "Individual" sign-in scenarios (where the airline/counter is picked afterwards via <see cref="RmuPick"/>),
+    /// or a local username/password form pre-bound to the counter for scenarios that sign straight into a
+    /// fixed station.
+    /// </summary>
     private RenderFragment LoginScreen()
     {
         var s = Sc;
@@ -625,6 +663,12 @@
     private List<Alloc> Held(string code) => AllAllocs.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
     private List<Alloc> Later(string code) => AllAllocs.Where(x => x.Code == code && x.From > now).ToList();
 
+    /// <summary>
+    /// One tile in the RMU "Select an airline" airline list (step 1 of 2 in <see cref="RmuPick"/>). Shows the
+    /// airline mark/name plus how many counters it currently has allocated (<see cref="Held"/>), or its next
+    /// upcoming allocation time (<see cref="Later"/>) if none are active now. Disabled when the airline has no
+    /// counters allocated at all today, since there would be nothing to sign into.
+    /// </summary>
     private RenderFragment AirlineTile(Airline x)
     {
         var n = Held(x.Code).Count;
@@ -635,6 +679,12 @@
         </button>;
     }
 
+    /// <summary>
+    /// One tile in the RMU "Select the counter you want to manage" grid (step 2 of 2 in <see cref="RmuPick"/>),
+    /// for a single allocation <paramref name="x"/>. Shows the counter id, its allocation window, and either
+    /// an open/closed status dot with the published page name (for allocations happening now) or an
+    /// "Available from" time when <paramref name="isLater"/> is true, in which case the tile is disabled.
+    /// </summary>
     private RenderFragment RmuCounterTile(Alloc x, bool isLater)
     {
         var p = Pub(x.CounterId);
@@ -657,6 +707,14 @@
         </button>;
     }
 
+    /// <summary>
+    /// RMU sign-in flow (Diagrams 31/32): a two-step wizard for picking an airline and then one of its
+    /// allocated counters. While <c>rmuAirline</c> is null, shows the airline list (<see cref="AirlineTile"/>),
+    /// split into airlines with a counter allocated right now vs. none, with a search box filter; once an
+    /// airline is chosen, shows its counters (<see cref="RmuCounterTile"/>) grouped by zone, plus a "Later
+    /// today" section for allocations that haven't started yet. Also surfaces loading/error states while the
+    /// live flight-data feed is fetching the airline list, and any <c>rmuNotice</c> banner.
+    /// </summary>
     private RenderFragment RmuPick()
     {
         var a = rmuAirline;
@@ -752,6 +810,10 @@
         </text>;
     }
 
+    /// <summary>
+    /// Terminal "signed out" screen, reached after a sign-out or idle timeout (<c>endedReason</c> explains why).
+    /// Offers a button that re-enters the current scenario from its sign-in screen.
+    /// </summary>
     private RenderFragment EndedScreen() => @<text>
         <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGNED OUT</h2></div></section>
         <div class="dx-page-body" style="padding:30px;">
