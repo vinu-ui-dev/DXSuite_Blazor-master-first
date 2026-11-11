@@ -677,17 +677,6 @@ else
         }
     }
 
-    private void ApproveLogo(string kind)
-    {
-        if (profileAirline == null) return;
-        var extra = ExtraFor(profileAirline.Code);
-        switch (kind)
-        {
-            case "wordmark": extra.WordmarkStatus = "Approved"; break;
-            case "square": extra.SquareMarkStatus = "Approved"; break;
-            case "reversed": extra.ReversedWordmarkStatus = "Approved"; break;
-        }
-    }
 
     private void SetImagesMode(string mode)
     {
@@ -714,10 +703,6 @@ else
                 <div style="display:flex; gap:8px;">
                     <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => SimulateUpload(kind)">CHOOSE AN EARLIER LOGO</button>
                     <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SimulateUpload(kind)">@(status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
-                    @if (!isSupervisorPreview && status == "Pending")
-                    {
-                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => ApproveLogo(kind)">APPROVE</button>
-                    }
                 </div>
             </div>
             <div class="dx-alert dx-alert-info" style="font-size:0.78rem; padding:8px 10px; margin-bottom:10px;">

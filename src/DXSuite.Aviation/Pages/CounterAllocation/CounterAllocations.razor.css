@@ -91,7 +91,11 @@
 }
 
 .ca-grid-scroll {
-    overflow-x: auto;
+    /* The only scrollable region on this page (both axes) — pinning everything else (toolbar, filters,
+       legend) outside it avoids the page growing a second, outer scrollbar on top of this one. */
+    overflow: auto;
+    max-height: calc(100vh - 340px);
+    min-height: 300px;
     border-top: 1px solid var(--dx-border-color, #dee2e6);
     border-bottom: 1px solid var(--dx-border-color, #dee2e6);
 }
