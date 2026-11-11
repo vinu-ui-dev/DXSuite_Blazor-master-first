@@ -45,6 +45,7 @@ public static class PermissionKeys
 
     // GTAA FSD 1.1 — Flight Data Editor (Aviation) and Messaging (Director).
     public const string PageFlightDataEditor = "page:flight-data-editor";
+    public const string CounterAllocationEdit = "feature:counter-allocation-edit";
     public const string PageMessages = "page:messages";
     public const string PageMessagePlaybackLog = "page:message-playback-log";
     public const string MessagesAuthor = "feature:messages-author";
@@ -104,8 +105,16 @@ public static class PermissionKeys
         new FeaturePermissionDef(ReportsExport, "Report Export",
             "Export a report (Excel or print) rather than only viewing it on screen.",
             new[] { Roles.Role.Architect, Roles.Role.Contributor }),
+        // NewUser is included because the GTAA FSD's "Airport staff (view-only)" role maps to it in
+        // this app - without it they can't reach the Counter Allocation timeline at all.
         new FeaturePermissionDef(PageFlightDataEditor, "Flight Data Editor Page",
             "Correct, add or hide flights when the RMS feed is wrong or down.",
+            new[] { Roles.Role.Architect, Roles.Role.Contributor, Roles.Role.NewUser }),
+        // Mirrors the GTAA FSD 1.2 Counter Allocation prototype's RMU-can-edit / Airport-staff-view-only
+        // split: everyone who can reach the Flight Data Editor sees the Counter Allocation timeline, but
+        // only a role granted this key can switch Outage mode on/off or add, edit, copy or delete allocations.
+        new FeaturePermissionDef(CounterAllocationEdit, "Counter Allocation Edit",
+            "Switch Allocation Outage mode on or off, and add, edit, copy or delete counter allocations.",
             new[] { Roles.Role.Architect, Roles.Role.Contributor }),
         new FeaturePermissionDef(PageMessages, "Messages Page",
             "Send Emergency, IRROPS and Visual Paging messages to screens.",

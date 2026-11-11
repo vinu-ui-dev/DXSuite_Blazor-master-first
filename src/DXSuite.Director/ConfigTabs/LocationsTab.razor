@@ -18,11 +18,15 @@
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
     <div class="dx-panel-header">
         <h4>Location Management</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
             <input @bind="searchFilter" @bind:event="oninput"
                    class="dx-search-input"
                    placeholder="Search locations..." />
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenCreateLayout">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnly" @onclick="OpenCreateLayout">
                 + Create Location
             </button>
         </div>
@@ -78,41 +82,41 @@
                             }
                             else
                             {
-                                <button class="dx-btn dx-btn-blue dx-btn-sm"
+                                <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnly"
                                         @onclick="() => ManageAccess(loc)">
                                     Manage
                                 </button>
                             }
                         </div>
                         <div class="dx-col-actions" style="display:flex; gap:4px; align-items:center; flex-wrap:wrap;">
-                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditLocation(loc)">Edit</button>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditLocation(loc)">Edit</button>
                             @if (loc.LocationType?.LocationTypeId == 1015)
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditLayoutLocation(loc)">Configure</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditLayoutLocation(loc)">Configure</button>
                             }
                             @if (loc.LocationType?.LocationTypeName == "Floorplan")
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditFloorplanLocation(loc)">Configure</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditFloorplanLocation(loc)">Configure</button>
                             }
                             @if (loc.LocationType?.LocationTypeId == 1030)
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditPanoramaLocation(loc)">Configure</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditPanoramaLocation(loc)">Configure</button>
                             }
                             @if (loc.LocationType?.LocationTypeName == "VideoWall")
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditVideoWallLocation(loc)">Configure</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditVideoWallLocation(loc)">Configure</button>
                             }
                             @if (DXSuite.Director.Services.LocationBundles.LocationBundleConstants.IsBundleType(loc.LocationType))
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenBundleConfigure(loc)">Configure</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => OpenBundleConfigure(loc)">Configure</button>
                             }
                             @if (loc.LocationType?.LinkedToDisplay == false)
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenMetadata(loc)">Metadata</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => OpenMetadata(loc)">Metadata</button>
                             }
                             @if (!isOverrideContent)
                             {
-                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenImage(loc)">Image</button>
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => OpenImage(loc)">Image</button>
                             }
                         </div>
                     </div>
@@ -145,7 +149,7 @@
                                     }
                                 </div>
                                 <div style="display:flex; gap:4px;">
-                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => EditDisplay(display, loc.LocationId)">Edit</button>
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => EditDisplay(display, loc.LocationId)">Edit</button>
                                 </div>
                             </div>
                         }
@@ -212,15 +216,18 @@
                 }
 
                 <div style="display:flex; gap:8px; justify-content:center;">
-                    <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
-                        Upload
-                        <InputFile OnChange="OnLocationImageUpload" accept=".jpg,.jpeg,.png,.gif" style="display:none;" />
-                    </label>
-                    @if (!string.IsNullOrEmpty(imageLocation.LocationImagePath))
+                    @if (!isViewOnly)
                     {
-                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="RemoveLocationImage">
-                            Remove
-                        </button>
+                        <label class="dx-btn dx-btn-blue dx-btn-sm" style="cursor:pointer; margin:0;">
+                            Upload
+                            <InputFile OnChange="OnLocationImageUpload" accept=".jpg,.jpeg,.png,.gif" style="display:none;" />
+                        </label>
+                        @if (!string.IsNullOrEmpty(imageLocation.LocationImagePath))
+                        {
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="RemoveLocationImage">
+                                Remove
+                            </button>
+                        }
                     }
                 </div>
                 <p style="font-size:0.78rem; color:#888; margin-top:8px;">Image must be exactly 180 × 120 pixels. Accepted: JPG, PNG, GIF.</p>
@@ -236,6 +243,9 @@
 }
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private List<TblLocation>? locations;
     private List<TblDisplay>? displays;
     private Dictionary<int, int> accessRuleCounts = new();

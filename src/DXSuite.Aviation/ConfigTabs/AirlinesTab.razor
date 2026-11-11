@@ -8,6 +8,7 @@
 @inject ILogger<AirlinesTab> Logger
 @inject ISessionState SessionState
 @inject AirlineAudit AirlineAudit
+@inject DXSuite.Shared.Services.Identity.IUserGroupService UserGroupService
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
 
@@ -15,6 +16,12 @@
 {
     <div class="dx-panel-header">
         <h4>Airlines</h4>
+        @if (isViewOnlyAirlines)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
+        else
+        {
         <div class="dx-panel-controls" style="position:relative;">
             <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
                    value="@searchTerm" @oninput="OnSearchInput"
@@ -38,6 +45,7 @@
                 </div>
             }
         </div>
+        }
     </div>
 
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
@@ -94,7 +102,7 @@
                         <div>@extra.Alliance</div>
                         <div>@extra.Accounts</div>
                         <div><span class="dx-badge dx-badge-green">Active</span></div>
-                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">EDIT</button></div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines ? "VIEW" : "EDIT")</button></div>
                     </div>
                 }
             </div>
@@ -161,7 +169,7 @@
 
     </div>
 
-    @if (onboarded.Count > 0)
+    @if (onboarded.Count > 0 && !isViewOnlyAirlines)
     {
         <div style="padding:10px 20px; border-top:1px solid var(--dx-border-color,#eee); flex-shrink:0;">
             <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="PreviewSupervisor">Preview: sign in as airline supervisor</button>
@@ -178,10 +186,20 @@ else if (viewMode == "supervisor")
     @* ---- Restricted view: what an airline-scoped supervisor would see ---- *@
     <div class="dx-panel-header">
         <h4>Airlines</h4>
-        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ExitSupervisorPreview">Exit preview</button>
+        @if (!isRealAirlineScope)
+        {
+            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ExitSupervisorPreview">Exit preview</button>
+        }
     </div>
     <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
-        You see @supervisorTarget!.Name only, the airline whose user group you are in.
+        @if (isRealAirlineScope)
+        {
+            @:Signed in as @(SessionState.User?.FriendlyName ?? SessionState.UserName). You see @supervisorTarget!.Name only, the airline whose user group you are in.
+        }
+        else
+        {
+            @:You see @supervisorTarget!.Name only, the airline whose user group you are in.
+        }
     </div>
     <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
         <div class="dx-table" style="border-left:none; border-right:none;">
@@ -214,18 +232,34 @@ else
     var extra = ExtraFor(profileAirline!.Code);
     <div class="dx-panel-header">
         <div style="display:flex; align-items:center; gap:12px;">
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile">&larr;</button>
+            @if (!isRealAirlineScope)
+            {
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile">&larr;</button>
+            }
             <div class="al-tile al-tile-lg" style="background:@ColorFor(profileAirline.Code);">@profileAirline.Code</div>
             <h4 style="margin:0;">@profileAirline.Name</h4>
             <span class="dx-badge dx-badge-green">Active</span>
         </div>
-        @if (!isSupervisorPreview)
+        @if (!isSupervisorPreview && !isRealAirlineScope && !isViewOnlyAirlines)
         {
             <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="Deactivate">Remove from active list</button>
         }
     </div>
 
-    @if (isSupervisorPreview)
+    @if (isViewOnlyAirlines)
+    {
+        <div class="dx-alert dx-alert-info" style="margin:12px 20px;">
+            You have view-only access here &mdash; you can look, but not upload logos, change templates or remove an airline.
+        </div>
+    }
+    else if (isRealAirlineScope)
+    {
+        <div class="dx-alert dx-alert-info" style="margin:12px 20px;">
+            Signed in as @(SessionState.User?.FriendlyName ?? SessionState.UserName).
+            You see @profileAirline.Name's Branding and Counter templates only. The rest of the airline profile is for GTAA admins.
+        </div>
+    }
+    else if (isSupervisorPreview)
     {
         <div class="dx-alert dx-alert-info" style="margin:12px 20px;">
             Signed in as @(DemoSupervisorNames.TryGetValue(profileAirline.Code, out var n) ? n : "Airline User").
@@ -234,16 +268,107 @@ else
     }
 
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
+        @if (isAdminProfile)
+        {
+            <button class="dx-tab-btn @(profileTab == "identity" ? "active" : "")" @onclick="@(() => profileTab = "identity")">Identity</button>
+        }
         <button class="dx-tab-btn @(profileTab == "branding" ? "active" : "")" @onclick="@(() => profileTab = "branding")">Branding</button>
+        @if (isAdminProfile)
+        {
+            <button class="dx-tab-btn @(profileTab == "cupps" ? "active" : "")" @onclick="@(() => profileTab = "cupps")">CUPPS options</button>
+            <button class="dx-tab-btn @(profileTab == "dcs" ? "active" : "")" @onclick="@(() => profileTab = "dcs")">DCS</button>
+        }
         <button class="dx-tab-btn @(profileTab == "templates" ? "active" : "")" @onclick="@(() => profileTab = "templates")">Counter templates</button>
+        @if (isAdminProfile)
+        {
+            <button class="dx-tab-btn @(profileTab == "users" ? "active" : "")" @onclick="@(() => profileTab = "users")">Users</button>
+        }
     </div>
 
     <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto;">
-        @if (profileTab == "branding")
+        @if (profileTab == "identity" && isAdminProfile)
         {
-            <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
-                Demo preview &mdash; each upload would go to GTAA for approval. The logo on screen stays until GTAA approves the new one.
+            <div class="dx-form-group" style="padding:16px 20px;">
+                <div style="display:flex; gap:16px; margin-bottom:12px;">
+                    <div style="flex:1;">
+                        <label class="dx-form-label">Airline name (English)</label>
+                        <input class="dx-form-control" value="@(string.IsNullOrEmpty(extra.NameEn) ? profileAirline.Name : extra.NameEn)" @onchange="e => extra.NameEn = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">Airline name (French)</label>
+                        <input class="dx-form-control" value="@(string.IsNullOrEmpty(extra.NameFr) ? profileAirline.Name : extra.NameFr)" @onchange="e => extra.NameFr = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:16px; margin-bottom:16px;">
+                    <div style="flex:1;">
+                        <label class="dx-form-label">IATA code</label>
+                        <input class="dx-form-control" value="@profileAirline.Code" disabled />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">ICAO code</label>
+                        <input class="dx-form-control" value="@(profileAirline.Icao ?? "")" disabled />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">Name shown in CUPPS</label>
+                        <input class="dx-form-control" value="@(string.IsNullOrEmpty(extra.CuppsName) ? profileAirline.Name : extra.CuppsName)" @onchange="e => extra.CuppsName = e.Value?.ToString() ?? string.Empty" />
+                    </div>
+                </div>
+
+                <div style="margin-bottom:16px; max-width:420px;">
+                    <label class="dx-form-label">Alliance</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <select class="dx-form-control" @bind="extra.Alliance" style="flex:1;">
+                            @foreach (var a in AllianceOptions)
+                            {
+                                <option value="@a">@a</option>
+                            }
+                        </select>
+                        @if (extra.Alliance != "None")
+                        {
+                            <span style="background:#111; color:#fff; border-radius:4px; padding:6px 10px; font-size:0.72rem; font-weight:700; letter-spacing:0.04em; white-space:nowrap;">
+                                &#9678; @extra.Alliance.ToUpperInvariant()
+                            </span>
+                        }
+                    </div>
+                    <div class="dx-text-muted" style="font-size:0.78rem; margin-top:4px;">Its footer logo shows in the upper left of the screen footer at every counter this airline holds.</div>
+                </div>
+
+                <div style="margin-bottom:16px;">
+                    <label class="dx-form-label">Operates in</label>
+                    <div style="display:flex; gap:20px;">
+                        <label><input type="checkbox" @bind="extra.Terminal1" /> Terminal 1</label>
+                        <label><input type="checkbox" @bind="extra.Terminal3" /> Terminal 3</label>
+                    </div>
+                    <div class="dx-text-muted" style="font-size:0.78rem; margin-top:4px;">Limits which counters and zones appear for this airline. Counters themselves come from the RMS allocation feed.</div>
+                </div>
+
+                <div>
+                    <label class="dx-form-label">Status</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <label class="dx-toggle">
+                            <input type="checkbox" checked="@extra.IsActive" @onchange="@(e => extra.IsActive = e.Value is true)" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span>@(extra.IsActive ? "Active. Available in CUPPS once a counter is allocated." : "Inactive.")</span>
+                    </div>
+                </div>
             </div>
+        }
+        else if (profileTab == "branding")
+        {
+            @if (isAdminProfile)
+            {
+                <div class="dx-alert dx-alert-info" style="font-size:0.85rem; margin-bottom:12px;">
+                    One slot per logo role. Each role draws from its own airport-wide Asset Library, set on Logo libraries: choose an approved logo already there, or upload one into it. Uploads are approved on that library's chain (GTAA admins), not the airline's. You have approval bypass, so an upload is approved when you save, and logged.
+                </div>
+            }
+            else
+            {
+                <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
+                    Demo preview &mdash; each upload would go to GTAA for approval. The logo on screen stays until GTAA approves the new one.
+                </div>
+            }
 
             @LogoCard("Wordmark", false, "Airline wordmarks", extra.WordmarkStatus, "wordmark", "1200 x 400", "90 KB",
                 new[] { "1200 x 400", "400 x 200", "4000 x 1333, 7.7 MB", "1000 x 400" })
@@ -305,68 +430,471 @@ else
 
             <div class="dx-text-muted" style="font-size:0.8rem;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
         }
+        else if (profileTab == "cupps" && isAdminProfile)
+        {
+            <div style="padding:16px 20px;">
+            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:8px;">Flag options agents can show</div>
+            <div style="margin-bottom:6px;">
+                <label style="margin-right:16px;"><input type="checkbox" @bind="extra.FlagCanada" /> Canada</label>
+                <label style="margin-right:16px;"><input type="checkbox" @bind="extra.FlagUnitedStates" /> United States</label>
+                <label><input type="checkbox" @bind="extra.FlagInternational" /> International</label>
+            </div>
+            <div class="dx-text-muted" style="font-size:0.78rem; margin-bottom:20px;">"None" is always available.</div>
+
+            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:10px;">Features in CUPPS</div>
+
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; max-width:640px; padding:10px 0; border-bottom:1px solid var(--dx-border-color,#eee);">
+                <div style="padding-right:16px;">
+                    <strong>International Sunflower option</strong>
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Agents can add the Sunflower symbol to the counter screen footer, after the alliance logo.</div>
+                </div>
+                <label class="dx-toggle">
+                    <input type="checkbox" checked="@extra.SunflowerOption" @onchange="@(e => extra.SunflowerOption = e.Value is true)" />
+                    <span class="dx-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; max-width:640px; padding:10px 0; border-bottom:1px solid var(--dx-border-color,#eee);">
+                <div style="padding-right:16px;">
+                    <strong>ASL videos</strong>
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Agents can turn on ASL videos. They play on full screen displays only.</div>
+                </div>
+                <label class="dx-toggle">
+                    <input type="checkbox" checked="@extra.AslVideos" @onchange="@(e => extra.AslVideos = e.Value is true)" />
+                    <span class="dx-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; max-width:640px; padding:10px 0; margin-bottom:16px;">
+                <div style="padding-right:16px;">
+                    <strong>Destination Zone</strong>
+                    <div class="dx-text-muted" style="font-size:0.8rem;">Agents can enter a destination on dedicated counters. Where it is allowed is set in Business Rules.</div>
+                </div>
+                <label class="dx-toggle">
+                    <input type="checkbox" checked="@extra.DestinationZone" @onchange="@(e => extra.DestinationZone = e.Value is true)" />
+                    <span class="dx-toggle-slider"></span>
+                </label>
+            </div>
+
+            <div class="dx-text-muted" style="font-size:0.78rem;">
+                Screens always show English and French. Who may post free text is a role permission, set on Settings &gt; Roles. Counter templates are set up on the airline's Counter templates tab after it is created.
+            </div>
+            </div>
+        }
+        else if (profileTab == "dcs" && isAdminProfile)
+        {
+            <div style="padding:16px 20px;">
+            <div style="display:flex; gap:16px;">
+                <div style="flex:1; max-width:320px; border:2px solid @(extra.Dcs == "Airline" ? "#0d6efd" : "var(--dx-border-color,#dee2e6)"); border-radius:6px; padding:16px; cursor:pointer;" @onclick="@(() => SetDcsMode(extra, false))">
+                    <strong>Airline</strong>
+                    <div class="dx-text-muted" style="font-size:0.85rem; margin-top:6px;">Agents sign in to CUPPS with this airline's accounts at the counters it holds.</div>
+                </div>
+                <div style="flex:1; max-width:320px; border:2px solid @(extra.Dcs != "Airline" ? "#0d6efd" : "var(--dx-border-color,#dee2e6)"); border-radius:6px; padding:16px; cursor:pointer;" @onclick="@(() => SetDcsMode(extra, true))">
+                    <strong>Operates under a DCS provider</strong>
+                    <div class="dx-text-muted" style="font-size:0.85rem; margin-top:6px;">A ground handler such as @(extra.Dcs == "Airline" ? "Swissport" : extra.Dcs) checks passengers in. Its handlers act for this airline at the counters it holds.</div>
+                </div>
+            </div>
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:20px;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
+            </div>
+        }
+        else if (profileTab == "users" && isAdminProfile)
+        {
+            var members = UsersFor(profileAirline!.Code);
+            <div style="padding:16px 20px;">
+            <div class="dx-panel-header" style="padding:0 0 10px;">
+                <span></span>
+                <button class="dx-btn dx-btn-blue dx-btn-sm">MANAGE MEMBERS</button>
+            </div>
+            <div class="dx-table" style="border-left:none; border-right:none;">
+                <div class="dx-table-header" style="grid-template-columns: 2fr 120px 1fr;">
+                    <div>Account</div>
+                    <div>Kind</div>
+                    <div>Role</div>
+                </div>
+                @foreach (var m in members)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 120px 1fr;">
+                        <div>@m.Account</div>
+                        <div>@m.Kind</div>
+                        <div><span class="dx-badge dx-badge-gray">@m.Role</span></div>
+                    </div>
+                }
+                @if (members.Count == 0)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 1fr;">
+                        <div class="dx-text-muted" style="padding:16px; text-align:center;">No members yet.</div>
+                    </div>
+                }
+            </div>
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:12px;">
+                These are the members of the @profileAirline.Name user group. Shared counter accounts and Individual accounts are told apart by kind; agents and supervisors by role.
+            </div>
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:16px;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
+            </div>
+        }
         else
         {
-            <div class="dx-text-muted" style="font-size:0.85rem; margin-bottom:12px;">
-                Demo preview &mdash; the Check-In template's image slots. Template images go to @profileAirline.Name's own chain, not GTAA's.
+            var templates = TemplatesFor(profileAirline!.Code).Where(t => showRetired || !t.Retired).ToList();
+
+            <div class="dx-panel-header">
+                <h4 style="margin:0; font-size:1rem;">Counter templates</h4>
+                <div class="dx-panel-controls" style="display:flex; align-items:center; gap:16px;">
+                    <label style="font-size:0.85rem; display:flex; align-items:center; gap:6px; margin:0;">
+                        <input type="checkbox" @bind="showRetired" /> Show retired
+                    </label>
+                    @if (!isViewOnlyAirlines)
+                    {
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenCreateTemplate">CREATE COUNTER TEMPLATE</button>
+                    }
+                </div>
             </div>
 
-            <div style="margin-bottom:16px;">
-                <span class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-right:10px;">Images</span>
-                <label style="margin-right:16px; font-size:0.9rem;">
-                    <input type="radio" name="imgmode" checked="@(extra.ImagesMode == "separate")" @onchange='() => SetImagesMode("separate")' />
-                    Separate English and French images
-                </label>
-                <label style="font-size:0.9rem;">
-                    <input type="radio" name="imgmode" checked="@(extra.ImagesMode == "bilingual")" @onchange='() => SetImagesMode("bilingual")' />
-                    One bilingual image
-                </label>
+            <div class="dx-text-muted" style="font-size:0.85rem; padding:10px 20px; border-bottom:1px solid var(--dx-border-color,#eee);">
+                You see @profileAirline.Name's Counter templates only@(isViewOnlyAirlines ? "." : ". The rest of the airline profile is for GTAA admins.")
             </div>
 
-            @if (extra.ImagesMode == "separate")
+            <div class="dx-table" style="border-left:none; border-right:none;">
+                <div class="dx-table-header" style="@TemplateGridCols">
+                    <div>Preview</div>
+                    <div>Name shown in CUPPS</div>
+                    <div>Type</div>
+                    <div>Available</div>
+                    <div>Status</div>
+                    <div></div>
+                </div>
+                <div class="dx-table-group">@profileAirline.Name.ToUpperInvariant()</div>
+                @foreach (var t in templates)
+                {
+                    <div class="dx-table-row" style="@TemplateGridCols">
+                        <div>
+                            <div style="width:70px; height:40px; border-radius:4px; background:@(t.Type == "Standard" ? "#111" : extra.WordmarkColor); color:#fff; display:flex; align-items:center; justify-content:center; font-size:0.55rem; font-weight:700; text-align:center; padding:2px;">@t.NameEn</div>
+                        </div>
+                        <div>
+                            <div style="font-weight:600;">@t.Name</div>
+                            @if (!string.IsNullOrEmpty(t.Counters))
+                            {
+                                <div class="dx-text-muted" style="font-size:0.78rem;">Showing now at @t.Counters</div>
+                            }
+                        </div>
+                        <div><span class="dx-badge @(t.Type == "Standard" ? "dx-badge-gray" : "dx-badge-blue")">@t.Type</span></div>
+                        <div style="font-size:0.85rem;">
+                            @(t.StartDate.ToString("MMM d, yyyy"))@(t.EndDate is { } end ? $" to {end:MMM d, yyyy}" : ", no end date")
+                        </div>
+                        <div style="display:flex; gap:4px; flex-wrap:wrap; align-items:flex-start;">
+                            @if (t.Retired)
+                            {
+                                <span class="dx-badge dx-badge-gray">Retired</span>
+                            }
+                            else
+                            {
+                                @if (t.InCupps) { <span class="dx-badge dx-badge-green">In CUPPS</span> }
+                                @if (t.IsDefault) { <span class="dx-badge dx-badge-blue">Default</span> }
+                                @if (!string.IsNullOrEmpty(t.Status)) { <span class="dx-badge dx-badge-orange">@t.Status</span> }
+                            }
+                        </div>
+                        <div style="text-align:right;">
+                            @if (t.Type == "Standard" || isViewOnlyAirlines)
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenViewTemplate(t)">VIEW</button>
+                            }
+                            else
+                            {
+                                <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenEditTemplate(t)">EDIT</button>
+                            }
+                        </div>
+                    </div>
+                }
+                @if (templates.Count == 0)
+                {
+                    <div class="dx-table-row" style="grid-template-columns: 1fr;">
+                        <div class="dx-text-muted" style="padding:16px; text-align:center;">No counter templates yet.</div>
+                    </div>
+                }
+            </div>
+
+            @if (isAdminProfile)
             {
-                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
-                    @TemplateSlot("English, full", "English", "EN", "dx-badge-blue", "", "CHECK-IN", "full", extra)
-                    @TemplateSlot("French, full", "French", "FR", "", "background:#eee5ff;color:#5b3dab;", "ENREGISTREMENT", "full", extra)
+                var firstCustom = templates.FirstOrDefault(t => t.Type == "Custom") ?? templates.FirstOrDefault();
+                var libraryFiles = LibraryFilesFor(profileAirline.Code)
+                    .Concat(DemoAirlineManualUploads.TryGetValue(profileAirline.Code, out var manual) ? manual : Enumerable.Empty<LibraryFileRow>())
+                    .ToList();
+
+                <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin:20px 0 10px;">Template libraries</div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:10px;">
+                    Made when the airline was created, on the airline's own chain, in the instance default mode. The template's four image slots draw from them. Both require the tenant metadata field Language.
                 </div>
-                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
-                    @TemplateSlot("English, half", "English", "EN", "dx-badge-blue", "", "CHECK-IN", "half", extra)
-                    @TemplateSlot("French, half", "French", "FR", "", "background:#eee5ff;color:#5b3dab;", "ENREG.", "half", extra)
+                <div class="dx-table" style="border-left:none; border-right:none; margin-bottom:20px;">
+                    <div class="dx-table-header" style="grid-template-columns: 2fr 120px 1fr 1fr 110px;">
+                        <div>Template library</div>
+                        <div>Size</div>
+                        <div>Language field</div>
+                        <div>Delivery</div>
+                        <div></div>
+                    </div>
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 120px 1fr 1fr 110px;">
+                        <div>
+                            <div style="font-weight:600;">@profileAirline.Name templates, full</div>
+                            <div class="dx-text-muted" style="font-size:0.78rem;">Asset Library 2424 &middot; chain: @profileAirline.Name chain</div>
+                        </div>
+                        <div>1920 x 980</div>
+                        <div>Language, required</div>
+                        <div>
+                            UNC share
+                            <div class="dx-text-muted" style="font-size:0.78rem;">Ink backup: GTAA/@profileAirline.Name templates</div>
+                        </div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-outline-blue dx-btn-sm">EDIT LOCATION</button></div>
+                    </div>
+                    <div class="dx-table-row" style="grid-template-columns: 2fr 120px 1fr 1fr 110px;">
+                        <div>
+                            <div style="font-weight:600;">@profileAirline.Name templates, half</div>
+                            <div class="dx-text-muted" style="font-size:0.78rem;">Asset Library 2425 &middot; chain: @profileAirline.Name chain</div>
+                        </div>
+                        <div>960 x 980</div>
+                        <div>Language, required</div>
+                        <div>
+                            UNC share
+                            <div class="dx-text-muted" style="font-size:0.78rem;">Ink backup: none</div>
+                        </div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-outline-blue dx-btn-sm">EDIT LOCATION</button></div>
+                    </div>
                 </div>
+
+                @if (firstCustom is not null)
+                {
+                    <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:10px;">Custom Template "@firstCustom.Name": Image slots</div>
+                    <div style="margin-bottom:16px;">
+                        <span class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-right:10px;">Images</span>
+                        <label style="margin-right:16px; font-size:0.9rem;">
+                            <input type="radio" name="admin-imgmode" checked="@(extra.ImagesMode == "separate")" @onchange='() => SetImagesMode("separate")' />
+                            Separate English and French images
+                        </label>
+                        <label style="font-size:0.9rem;">
+                            <input type="radio" name="admin-imgmode" checked="@(extra.ImagesMode == "bilingual")" @onchange='() => SetImagesMode("bilingual")' />
+                            One bilingual image
+                        </label>
+                    </div>
+                    <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:20px;">
+                        @if (extra.ImagesMode == "separate")
+                        {
+                            @TemplateSlot("English, full", "English", "EN", "dx-badge-blue", "", "CHECK-IN", "full", extra)
+                            @TemplateSlot("French, full", "French", "FR", "", "background:#eee5ff;color:#5b3dab;", "ENREGISTREMENT", "full", extra)
+                        }
+                        else
+                        {
+                            @TemplateSlot("Bilingual, full", "Bilingual", "BI", "dx-badge-gray", "", "CHECK-IN / ENREGISTREMENT", "full", extra)
+                        }
+                    </div>
+                }
+
                 <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:16px;">
-                    A file uploaded in a slot is stamped with that slot's language (EN slots English, FR slots French, a bilingual template's slots Bilingual). In the library the value shown is the path a real GTAA media server would use.
+                    A file uploaded in a slot is stamped with that slot's Language (EN slots English, FR slots French, a bilingual template's slots Bilingual). In the library the value is read-only, and it goes to the Ink copy as Ink metadata.
                 </div>
-            }
-            else
-            {
-                <div style="display:flex; gap:16px; flex-wrap:wrap; margin-bottom:16px;">
-                    @TemplateSlot("Bilingual, full", "Bilingual", "BI", "dx-badge-gray", "", "CHECK-IN / ENREGISTREMENT", "full", extra)
-                    @TemplateSlot("Bilingual, half", "Bilingual", "BI", "dx-badge-gray", "", "CHECK-IN / ENREG.", "half", extra)
-                </div>
-            }
 
-            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:8px;">Template settings for CUPPS</div>
-            <div class="dx-table" style="border-left:none; border-right:none; max-width:640px; margin-bottom:16px;">
-                <div class="dx-table-header" style="grid-template-columns: 1fr 160px;">
-                    <div>Setting</div>
-                    <div>Value</div>
+                <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:10px;">In the two libraries</div>
+                <div class="dx-table" style="border-left:none; border-right:none; margin-bottom:20px;">
+                    <div class="dx-table-header" style="grid-template-columns: 1.6fr 110px 100px 1.6fr 1.4fr 1.2fr;">
+                        <div>File</div>
+                        <div>Size</div>
+                        <div>Language</div>
+                        <div>Set by</div>
+                        <div>Ink metadata</div>
+                        <div>Used in</div>
+                    </div>
+                    @foreach (var f in libraryFiles)
+                    {
+                        <div class="dx-table-row" style="grid-template-columns: 1.6fr 110px 100px 1.6fr 1.4fr 1.2fr;">
+                            <div>
+                                <div style="font-weight:600;">@f.File</div>
+                                <div class="dx-text-muted" style="font-size:0.78rem;">@profileAirline.Name templates, @(f.Size == "1920 x 980" ? "full" : "half")</div>
+                            </div>
+                            <div>@f.Size</div>
+                            <div><span class="dx-badge @(f.Language == "English" ? "dx-badge-blue" : f.Language == "French" ? "" : "dx-badge-green")" style="@(f.Language == "French" ? "background:#eee5ff;color:#5b3dab;" : "")">@f.Language</span></div>
+                            <div style="font-size:0.82rem;">&#128274; @f.SetBy</div>
+                            <div class="dx-text-muted" style="font-size:0.82rem;">@f.InkMetadata</div>
+                            <div class="dx-text-muted" style="font-size:0.82rem;">@f.UsedIn</div>
+                        </div>
+                    }
                 </div>
-                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
-                    <div>Show airport-wide Standard templates in CUPPS</div>
-                    <div>On</div>
+
+                <div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
+                    <div style="font-weight:600; margin-bottom:10px;">Upload straight to a library</div>
+                    <div style="display:flex; gap:16px; align-items:flex-end; margin-bottom:12px;">
+                        <div style="flex:1;">
+                            <label class="dx-form-label">Library</label>
+                            <select class="dx-form-control" @bind="uploadLibraryChoice">
+                                <option value="full">@profileAirline.Name templates, full</option>
+                                <option value="half">@profileAirline.Name templates, half</option>
+                            </select>
+                        </div>
+                        <div style="flex:1;">
+                            <label class="dx-form-label">Language (required)</label>
+                            <select class="dx-form-control" @bind="uploadLanguageChoice">
+                                <option value="">Choose...</option>
+                                <option value="English">English</option>
+                                <option value="French">French</option>
+                                <option value="Bilingual">Bilingual</option>
+                            </select>
+                        </div>
+                    </div>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@string.IsNullOrEmpty(uploadLanguageChoice)" @onclick="UploadSampleToLibrary">UPLOAD SAMPLE FILE</button>
+                    <div class="dx-text-muted" style="font-size:0.78rem; margin-top:8px;">Only here is Language picked by hand. After upload it is read-only.</div>
                 </div>
-                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
-                    <div>Default Counter template (used on expiry)</div>
-                    <div>Check-In</div>
+            }
+        }
+    </div>
+}
+
+@if (viewTemplate is not null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:520px;">
+            <div class="dx-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;">View Counter Template</h3>
+                <button class="dx-modal-close" aria-label="Close" @onclick="CloseTemplateModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-alert dx-alert-info" style="font-size:0.85rem;">Read-only for you.</div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Template Name</label>
+                    <input class="dx-form-control" value="@viewTemplate.Name" disabled />
                 </div>
-                <div class="dx-table-row" style="grid-template-columns: 1fr 160px;">
-                    <div>CUPPS template picker opens on</div>
-                    <div>Custom</div>
+
+                <div style="display:flex; gap:6px; margin-bottom:12px;">
+                    <span class="dx-badge dx-badge-gray">@viewTemplate.Type</span>
+                    @if (viewTemplate.InCupps) { <span class="dx-badge dx-badge-green">In CUPPS</span> }
+                    @if (viewTemplate.IsDefault) { <span class="dx-badge dx-badge-blue">Default</span> }
+                </div>
+
+                <div style="display:flex; gap:16px; margin-bottom:12px;">
+                    <div style="flex:1;">
+                        <label class="dx-form-label">English</label>
+                        <input class="dx-form-control" value="@viewTemplate.NameEn" disabled />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">French</label>
+                        <input class="dx-form-control" value="@viewTemplate.NameFr" disabled />
+                    </div>
+                </div>
+
+                <div style="display:flex; gap:16px; margin-bottom:8px;">
+                    <div>
+                        <div style="width:220px; height:120px; background:@(viewTemplate.Type == "Standard" ? "#111" : ExtraFor(profileAirline!.Code).WordmarkColor); color:#fff; border-radius:4px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center;">
+                            <div style="font-weight:800;">@viewTemplate.NameEn</div>
+                            <div style="font-size:0.85rem;">@viewTemplate.NameFr</div>
+                        </div>
+                        <div class="dx-text-muted" style="font-size:0.72rem; margin-top:4px;">Full screen</div>
+                    </div>
+                    <div>
+                        <div style="width:110px; height:110px; background:@(viewTemplate.Type == "Standard" ? "#111" : ExtraFor(profileAirline!.Code).WordmarkColor); color:#fff; border-radius:4px; display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-size:0.8rem;">
+                            <div style="font-weight:800;">@viewTemplate.NameEn</div>
+                            <div>@viewTemplate.NameFr</div>
+                        </div>
+                        <div class="dx-text-muted" style="font-size:0.72rem; margin-top:4px;">Half screen</div>
+                    </div>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.8rem; margin-bottom:12px;">Drawn with the logo and background from the airline profile.</div>
+
+                <div style="display:flex; gap:16px;">
+                    <div style="flex:1;">
+                        <label class="dx-form-label">Start Date</label>
+                        <input class="dx-form-control" value="@viewTemplate.StartDate.ToString("dd-MM-yyyy")" disabled />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">End Date (optional)</label>
+                        <input class="dx-form-control" value="@(viewTemplate.EndDate?.ToString("dd-MM-yyyy"))" placeholder="dd-mm-yyyy" disabled />
+                    </div>
                 </div>
             </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseTemplateModal">CLOSE</button>
+            </div>
+        </div>
+    </div>
+}
 
-            <div class="dx-text-muted" style="font-size:0.8rem;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
-        }
+@if (editTemplate is not null)
+{
+    <div class="dx-modal-overlay">
+        <div class="dx-modal" style="width:560px;">
+            <div class="dx-modal-header">
+                <h3 style="margin:0;font-size:1.1rem;">@(isCreatingTemplate ? "Create Counter Template" : "Edit Counter Template")</h3>
+                <button class="dx-modal-close" aria-label="Close" @onclick="CloseTemplateModal">&times;</button>
+            </div>
+            <div class="dx-modal-body">
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Template Name</label>
+                    <input class="dx-form-control" maxlength="50" @bind="editTemplate.Name" @bind:event="oninput" />
+                    <div class="dx-text-muted" style="font-size:0.72rem;">@editTemplate.Name.Length / 50</div>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Select Template Type</label>
+                    <div style="display:flex; gap:16px; align-items:center;">
+                        <label class="dx-text-muted" style="opacity:0.6;"><input type="radio" disabled /> Standard</label>
+                        <label><input type="radio" checked /> Custom</label>
+                    </div>
+                    <div class="dx-text-muted" style="font-size:0.78rem;">Standard templates are written by GTAA admins.</div>
+                </div>
+
+                <div class="dx-form-group">
+                    <label class="dx-form-label">Image Layout</label>
+                    <label style="display:block; margin-bottom:4px;">
+                        <input type="radio" name="tmpl-layout" checked="@editTemplate.ImagesSeparate" @onchange="() => editTemplate.ImagesSeparate = true" />
+                        Separate English and French images (4 images)
+                    </label>
+                    <label>
+                        <input type="radio" name="tmpl-layout" checked="@(!editTemplate.ImagesSeparate)" @onchange="() => editTemplate.ImagesSeparate = false" />
+                        Bilingual images, English and French on one image (2 images)
+                    </label>
+                </div>
+
+                @if (editTemplate.ImagesSeparate)
+                {
+                    <div style="display:flex; gap:24px; margin-bottom:8px;">
+                        <div style="flex:1;">
+                            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:6px;">English Images</div>
+                            @TemplateUploadSlot("Full Screen", "1920 x 980")
+                            @TemplateUploadSlot("Half Screen", "960 x 980")
+                        </div>
+                        <div style="flex:1;">
+                            <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:6px;">French Images</div>
+                            @TemplateUploadSlot("Full Screen", "1920 x 980")
+                            @TemplateUploadSlot("Half Screen", "960 x 980")
+                        </div>
+                    </div>
+                }
+                else
+                {
+                    <div style="margin-bottom:8px; max-width:280px;">
+                        @TemplateUploadSlot("Full Screen", "1920 x 980")
+                        @TemplateUploadSlot("Half Screen", "960 x 980")
+                    </div>
+                }
+
+                <div class="dx-text-muted" style="font-size:0.78rem; margin-bottom:12px;">
+                    Each image goes to @profileAirline!.Name content for approval on its own. Agents can pick the template once all its images are approved.
+                </div>
+
+                <div style="display:flex; gap:16px;">
+                    <div style="flex:1;">
+                        <label class="dx-form-label">Start Date</label>
+                        <input type="date" class="dx-form-control" value="@editTemplate.StartDate.ToString("yyyy-MM-dd")"
+                               @onchange="e => editTemplate.StartDate = DateTime.TryParse(e.Value?.ToString(), out var d) ? d : editTemplate.StartDate" />
+                    </div>
+                    <div style="flex:1;">
+                        <label class="dx-form-label">End Date (optional)</label>
+                        <input type="date" class="dx-form-control" value="@(editTemplate.EndDate?.ToString("yyyy-MM-dd"))"
+                               @onchange="e => editTemplate.EndDate = DateTime.TryParse(e.Value?.ToString(), out var d) ? d : null" />
+                    </div>
+                </div>
+                <div class="dx-text-muted" style="font-size:0.78rem; margin-top:6px;">From 00:01 on the start date to 23:59 on the end date, airport time.</div>
+            </div>
+            <div class="dx-modal-footer">
+                <button class="dx-btn dx-btn-gray" @onclick="CloseTemplateModal">CLOSE</button>
+                <button class="dx-btn dx-btn-blue" @onclick="SaveTemplate">SUBMIT</button>
+            </div>
+        </div>
     </div>
 }
 
@@ -441,7 +969,25 @@ else
         public string SquareMarkStatus = "Not uploaded";
         public string ReversedWordmarkStatus = "No file";
         public string ImagesMode = "separate"; // separate | bilingual
+
+        // Identity tab (admin profile)
+        public string NameEn = "";
+        public string NameFr = "";
+        public string CuppsName = "";
+        public bool Terminal1 = true;
+        public bool Terminal3;
+        public bool IsActive = true;
+
+        // CUPPS options tab (admin profile)
+        public bool FlagCanada = true;
+        public bool FlagUnitedStates = true;
+        public bool FlagInternational = true;
+        public bool SunflowerOption;
+        public bool AslVideos = true;
+        public bool DestinationZone = true;
     }
+
+    private static readonly string[] AllianceOptions = { "None", "Star Alliance", "SkyTeam", "Oneworld" };
 
     // Demo-only decoration layer: this app has no DCS/Alliance/account-group data model,
     // so these fields are illustrative, not read from or written to the database.
@@ -461,6 +1007,84 @@ else
         ["WS"] = "Jordan Price",
     };
 
+    private sealed class CounterTemplateRow
+    {
+        public int Id;
+        public string Name = "";
+        public string Type = "Custom"; // Standard | Custom
+        public string NameEn = "";
+        public string NameFr = "";
+        public string Counters = "";
+        public DateTime StartDate = DateTime.Today;
+        public DateTime? EndDate;
+        public string Status = "";
+        public bool InCupps;
+        public bool IsDefault;
+        public bool Retired;
+        public bool ImagesSeparate = true;
+    }
+
+    // Demo-only: no real counter-template data model exists yet, so each airline gets an
+    // in-memory list that behaves like the GTAA FSD 1.2 Counter Templates prototype (DXME-499).
+    private static readonly Dictionary<string, List<CounterTemplateRow>> DemoCounterTemplates = new()
+    {
+        ["AC"] = new()
+        {
+            new() { Id = 1, Name = "Bag drop only", Type = "Standard", NameEn = "BAG DROP ONLY", NameFr = "DÉPÔT DES BAGAGES SEULEMENT", Counters = "C11", StartDate = new DateTime(2026, 2, 1), InCupps = true, IsDefault = true },
+            new() { Id = 2, Name = "Group check-in", Type = "Standard", NameEn = "GROUP CHECK-IN", NameFr = "ENREGISTREMENT DE GROUPE", StartDate = new DateTime(2026, 10, 20), EndDate = new DateTime(2026, 10, 31), Status = "Scheduled" },
+            new() { Id = 3, Name = "Summer bag drop", Type = "Custom", NameEn = "SUMMER BAG DROP", NameFr = "DÉPÔT DES BAGAGES D'ÉTÉ", Counters = "C12, C14", StartDate = new DateTime(2026, 6, 1), EndDate = new DateTime(2026, 10, 16), Status = "Ends today" },
+            new() { Id = 4, Name = "Holiday check-in", Type = "Custom", NameEn = "HOLIDAY CHECK-IN", NameFr = "ENREGISTREMENT DES FÊTES", StartDate = new DateTime(2026, 11, 15), EndDate = new DateTime(2027, 1, 5), Status = "Needs a fix" },
+            new() { Id = 5, Name = "Priority check-in", Type = "Custom", NameEn = "PRIORITY CHECK-IN", NameFr = "ENREGISTREMENT PRIORITAIRE", Counters = "C01", StartDate = new DateTime(2026, 3, 1), InCupps = true, Status = "Replacement waiting" },
+            new() { Id = 6, Name = "Group travel desk", Type = "Custom", NameEn = "GROUP TRAVEL DESK", NameFr = "COMPTOIR VOYAGES DE GROUPE", StartDate = new DateTime(2026, 10, 20), Status = "Waiting for approval" },
+        },
+    };
+
+    private bool showRetired;
+    private CounterTemplateRow? viewTemplate;
+    private CounterTemplateRow? editTemplate;
+    private bool isCreatingTemplate;
+    private int nextTemplateId = 1000;
+
+    private const string TemplateGridCols = "grid-template-columns: 90px 2fr 100px 220px 220px 90px;";
+
+    private sealed record AirlineUserRow(string Account, string Kind, string Role);
+
+    // Demo-only: the real group for an airline (matched in OnInitializedAsync) usually has just
+    // the one seeded supervisor account, nothing like the richer agent/supervisor mix GTAA admins
+    // actually see, so the Users tab shows an illustrative roster instead of the live membership.
+    private static readonly Dictionary<string, List<AirlineUserRow>> DemoAirlineUsers = new()
+    {
+        ["AC"] = new()
+        {
+            new("ac.t1.c401", "Shared", "Airline Agent"),
+            new("ac.t1.c402", "Shared", "Airline Agent"),
+            new("j.roy", "Individual", "Airline Supervisor"),
+            new("m.gagnon", "Individual", "Airline Supervisor"),
+        },
+    };
+
+    private static List<AirlineUserRow> UsersFor(string code) =>
+        DemoAirlineUsers.TryGetValue(code, out var list) ? list : new List<AirlineUserRow>();
+
+    private sealed record LibraryFileRow(string File, string Size, string Language, string SetBy, string InkMetadata, string UsedIn);
+
+    private static List<LibraryFileRow> LibraryFilesFor(string code)
+    {
+        var c = code.ToLowerInvariant();
+        return new()
+        {
+            new($"checkin-{c}-en-full.png", "1920 x 980", "English", "Stamped from the template slot, read-only", "Language=English on the Ink copy", "Check-In, EN full"),
+            new($"checkin-{c}-fr-full.png", "1920 x 980", "French", "Stamped from the template slot, read-only", "Language=French on the Ink copy", "Check-In, FR full"),
+            new($"checkin-{c}-bilingual-full.png", "1920 x 980", "Bilingual", "Picked by hand on upload, read-only", "Language=Bilingual on the Ink copy", "Not in a slot"),
+            new($"checkin-{c}-en-half.png", "960 x 980", "English", "Stamped from the template slot, read-only", "no Ink copy", "Check-In, EN half"),
+            new($"checkin-{c}-fr-half.png", "960 x 980", "French", "Stamped from the template slot, read-only", "no Ink copy", "Check-In, FR half"),
+            new($"baggage-{c}-half.png", "960 x 980", "English", "Picked by hand on upload, read-only", "no Ink copy", "Not in a slot"),
+        };
+    }
+
+    private string uploadLibraryChoice = "full";
+    private string uploadLanguageChoice = "";
+
     private List<AirlineRow> allAirlines = new();
     private List<AirlineRow> onboarded = new();
     private List<AirlineRow> searchResults = new();
@@ -473,6 +1097,14 @@ else
     private AirlineRow? supervisorTarget;
     private string profileTab = "branding";
     private bool isSupervisorPreview;
+    private bool isRealAirlineScope;
+    private bool isViewOnlyAirlines;
+
+    // The full 6-tab profile (Identity, Branding, CUPPS options, DCS, Counter templates, Users) is
+    // only for GTAA Admin/Architect browsing the real cross-airline list — not the demo supervisor
+    // preview, a real airline-scoped supervisor, or RMU's view-only pass, which all keep the
+    // existing restricted 2-tab (Branding, Counter templates) profile.
+    private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines;
 
     private string statusMessage = "";
     private bool statusIsError;
@@ -483,6 +1115,33 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadAirlines();
+
+        // GTAA FSD 1.2 3.2: "Airline supervisors see only their own airline and may upload or
+        // replace its logos." Admin and Architect get the full cross-airline list (Architect is
+        // this tab's own default-granted role); anyone else reaches this tab only via a role
+        // explicitly granted config-tab:airlines (e.g. the Airline Supervisor custom role) and is
+        // scoped to whichever onboarded airline their user group names, with no way back to the
+        // full list — distinct from the "Preview: sign in as airline supervisor" button below,
+        // which is an admin's own demo toggle, not a real restriction.
+        if (SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect && SessionState.User is not null)
+        {
+            var myGroups = await UserGroupService.GetGroupsForUserAsync(SessionState.User.UserId);
+            var myAirline = onboarded.FirstOrDefault(a =>
+                myGroups.Any(g => string.Equals(g.GroupName, a.Name, StringComparison.OrdinalIgnoreCase)));
+            if (myAirline != null)
+            {
+                isRealAirlineScope = true;
+                supervisorTarget = myAirline;
+                viewMode = "supervisor";
+            }
+            else
+            {
+                // No airline-named group match (e.g. RMU, whose group is "RMU" not an airline name):
+                // per the GTAA FSD 1.2 Alliances/Logo Roles screen (DXME-536), RMU sees the full
+                // cross-airline list and can open any profile, but strictly to look, not to change.
+                isViewOnlyAirlines = true;
+            }
+        }
     }
 
     private async Task LoadAirlines()
@@ -684,6 +1343,65 @@ else
         ExtraFor(profileAirline.Code).ImagesMode = mode;
     }
 
+    private static List<CounterTemplateRow> TemplatesFor(string code)
+    {
+        if (!DemoCounterTemplates.TryGetValue(code, out var list))
+        {
+            list = new List<CounterTemplateRow>();
+            DemoCounterTemplates[code] = list;
+        }
+        return list;
+    }
+
+    private void OpenViewTemplate(CounterTemplateRow t) => viewTemplate = t;
+
+    private void OpenEditTemplate(CounterTemplateRow t)
+    {
+        if (isViewOnlyAirlines) return;
+        isCreatingTemplate = false;
+        editTemplate = new CounterTemplateRow
+        {
+            Id = t.Id, Name = t.Name, Type = t.Type, NameEn = t.NameEn, NameFr = t.NameFr,
+            Counters = t.Counters, StartDate = t.StartDate, EndDate = t.EndDate,
+            InCupps = t.InCupps, IsDefault = t.IsDefault, Retired = t.Retired, ImagesSeparate = t.ImagesSeparate,
+            Status = t.Status,
+        };
+    }
+
+    private void OpenCreateTemplate()
+    {
+        if (isViewOnlyAirlines) return;
+        isCreatingTemplate = true;
+        editTemplate = new CounterTemplateRow { Id = nextTemplateId++, Type = "Custom", StartDate = DateTime.Today, ImagesSeparate = true, Status = "Waiting for approval" };
+    }
+
+    private void CloseTemplateModal()
+    {
+        viewTemplate = null;
+        editTemplate = null;
+    }
+
+    private void SaveTemplate()
+    {
+        if (editTemplate is null || profileAirline is null || isViewOnlyAirlines) return;
+        var list = TemplatesFor(profileAirline.Code);
+        var existing = list.FirstOrDefault(x => x.Id == editTemplate.Id);
+        if (existing is not null) list.Remove(existing);
+        if (string.IsNullOrWhiteSpace(editTemplate.NameEn)) editTemplate.NameEn = editTemplate.Name.ToUpperInvariant();
+        list.Add(editTemplate);
+        CloseTemplateModal();
+    }
+
+    private RenderFragment TemplateUploadSlot(string label, string dims) =>
+        @<div style="margin-bottom:10px;">
+            <div style="font-size:0.78rem; margin-bottom:4px;">
+                @label <span class="dx-text-muted">@dims exactly</span>
+                <span class="dx-badge dx-badge-gray" style="font-size:0.65rem;">sample</span>
+                <span class="dx-badge dx-badge-orange" style="font-size:0.65rem;">wrong size</span>
+            </div>
+            <input type="file" class="dx-form-control" disabled title="Demo preview — file upload isn't wired to real storage" />
+        </div>;
+
     private static string AssetPath(string code, string lang, string size)
     {
         var hash = 0;
@@ -693,6 +1411,40 @@ else
         return $@"\\gtaa-dxmedia\MediaAssets\2424\{folder}\checkin-{lang.ToLowerInvariant()}-{size}-{suffix}.png";
     }
 
+    private static string LibraryAssetPath(string kind, string code)
+    {
+        var hash = 0;
+        foreach (var c in code + kind) hash = hash * 31 + c;
+        var sub = Math.Abs(code.GetHashCode()) % 90 + 10;
+        var suffix = (Math.Abs(hash) % 0xffff).ToString("x4");
+        return $@"\\gtaa-dxmedia\MediaAssets\2301\{sub}\{kind}-{code.ToLowerInvariant()}-{suffix}.png";
+    }
+
+    private void SetDcsMode(AirlineExtra extra, bool providerMode)
+    {
+        extra.Dcs = providerMode ? (extra.Dcs == "Airline" || extra.Dcs == "—" ? "Swissport" : extra.Dcs) : "Airline";
+    }
+
+    private void UploadSampleToLibrary()
+    {
+        if (profileAirline is null || string.IsNullOrEmpty(uploadLanguageChoice)) return;
+        var code = profileAirline.Code;
+        var library = uploadLibraryChoice == "full" ? $"{profileAirline.Name} templates, full" : $"{profileAirline.Name} templates, half";
+        var size = uploadLibraryChoice == "full" ? "1920 x 980" : "960 x 980";
+        var fileName = $"sample-{uploadLanguageChoice.ToLowerInvariant()}-{uploadLibraryChoice}.png";
+        if (!DemoAirlineManualUploads.TryGetValue(code, out var list))
+        {
+            list = new List<LibraryFileRow>();
+            DemoAirlineManualUploads[code] = list;
+        }
+        list.Add(new LibraryFileRow(fileName, size, uploadLanguageChoice, "Picked by hand on upload, read-only", $"Language={uploadLanguageChoice} on the Ink copy", "Not in a slot"));
+        statusMessage = $"{fileName} uploaded to {library} (demo).";
+        statusIsError = false;
+        uploadLanguageChoice = "";
+    }
+
+    private static readonly Dictionary<string, List<LibraryFileRow>> DemoAirlineManualUploads = new();
+
     private RenderFragment LogoCard(string title, bool optional, string chainName, string status, string kind, string dims, string sizeKb, string[] prototypes, string? customNote = null) =>
         @<div style="border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:16px; max-width:640px; margin-bottom:16px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -701,12 +1453,19 @@ else
                     <span class="dx-badge @(status == "Approved" ? "dx-badge-green" : status == "Pending" ? "dx-badge-orange" : "dx-badge-gray")" style="margin-left:6px;">@status</span>
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => SimulateUpload(kind)">CHOOSE AN EARLIER LOGO</button>
-                    <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="() => SimulateUpload(kind)">@(status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnlyAirlines" @onclick="() => SimulateUpload(kind)">@(isAdminProfile ? "CHOOSE FROM LIBRARY" : "CHOOSE AN EARLIER LOGO")</button>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnlyAirlines" @onclick="() => SimulateUpload(kind)">@(isAdminProfile ? "UPLOAD TO LIBRARY" : status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
                 </div>
             </div>
             <div class="dx-alert dx-alert-info" style="font-size:0.78rem; padding:8px 10px; margin-bottom:10px;">
-                Approved by GTAA on the @chainName chain (GTAA admins)<br />a library every airline uploads to; you see only your airline's files
+                @if (isAdminProfile)
+                {
+                    @:Draws from @chainName (Asset Library 2301, ConstraintId 5301) &middot; approved on its chain (GTAA admins)
+                }
+                else
+                {
+                    @:Approved by GTAA on the @chainName chain (GTAA admins)<br />a library every airline uploads to; you see only your airline's files
+                }
             </div>
             @if (status is not ("No file" or "Not uploaded"))
             {
@@ -715,11 +1474,20 @@ else
                 </div>
                 <div class="dx-text-muted" style="font-size:0.75rem; margin-top:4px;">On screen now</div>
                 <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
-                    @(customNote ?? $"Drawn on Standard Counter templates. The library's constraint: the same shape as {dims}, that size or larger. PNG or SVG with a transparent background, up to 5 MB.")
+                    @(customNote ?? (isAdminProfile ? $"Drawn on Standard Counter templates. The library's constraint: Aspect Ratio {dims}." : $"Drawn on Standard Counter templates. The library's constraint: the same shape as {dims}, that size or larger. PNG or SVG with a transparent background, up to 5 MB."))
                 </div>
-                <div class="dx-text-muted" style="font-size:0.8rem; margin-top:4px;">
-                    @($"{kind}-{profileAirline!.Code.ToLowerInvariant()}.png") &middot; @dims@(string.IsNullOrEmpty(sizeKb) ? "" : $" \u00b7 {sizeKb}")
-                </div>
+                @if (isAdminProfile)
+                {
+                    <div class="dx-text-muted" style="font-size:0.72rem; font-family:monospace; margin-top:6px; word-break:break-all;">
+                        @(char.ToUpperInvariant(kind[0]) + kind[1..])Path = @LibraryAssetPath(kind, profileAirline!.Code)
+                    </div>
+                }
+                else
+                {
+                    <div class="dx-text-muted" style="font-size:0.8rem; margin-top:4px;">
+                        @($"{kind}-{profileAirline!.Code.ToLowerInvariant()}.png") &middot; @dims@(string.IsNullOrEmpty(sizeKb) ? "" : $" \u00b7 {sizeKb}")
+                    </div>
+                }
             }
             else
             {
@@ -756,7 +1524,7 @@ else
                 Image@langCode (@size) = @AssetPath(profileAirline!.Code, langCode, size)
             </div>
             <div style="padding:0 10px 10px; display:flex; flex-direction:column; gap:6px;">
-                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick='() => SimulateUpload("wordmark")'>CHOOSE FROM LIBRARY</button>
+                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnlyAirlines" @onclick='() => SimulateUpload("wordmark")'>CHOOSE FROM LIBRARY</button>
                 <button class="dx-btn dx-btn-gray dx-btn-sm" disabled>UPLOAD (PROTOTYPE SAMPLE)</button>
             </div>
         </div>;

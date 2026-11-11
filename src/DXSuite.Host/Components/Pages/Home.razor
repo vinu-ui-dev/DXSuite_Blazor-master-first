@@ -16,12 +16,26 @@
 @{
     var availableModules = Modules.Where(m => m.IsAvailableForTenant(TenantContext)).ToList();
 
+    // These three modules can stay registered (so e.g. Sentinel's Pulse Reporting Configuration
+    // tab keeps working) while still being hidden from this dashboard, mirroring the same
+    // tenant-feature flags that hide their top-nav entries in MainLayout.
+    var tenantFeatures = TenantContext.Features;
+    bool ModuleVisibleOnHome(IBlazorModule m) => m.Name switch
+    {
+        "Platform" => tenantFeatures.ShowPlatformModuleCard,
+        "Sentinel" => tenantFeatures.ShowSentinelNav,
+        "Pulse" => tenantFeatures.ShowPulseNav,
+        _ => true,
+    };
+
     // Only surface modules with a user-facing presence (nav items or a home dashboard card).
     var summaryModules = availableModules
+        .Where(ModuleVisibleOnHome)
         .Where(m => m.GetNavItems().Any() || m.GetHomeDashboardComponent() != null)
         .ToList();
 
     var dashboardModules = availableModules
+        .Where(ModuleVisibleOnHome)
         .Where(m => m.GetHomeDashboardComponent() != null)
         .ToList();
 

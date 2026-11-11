@@ -9,6 +9,7 @@ using DXSuite.Host.Components;
 using DXSuite.Host.Multitenancy;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Services;
 using DXSuite.Shared.Services.Identity;
 using DXSuite.Shared.Module;
 using DXSuite.Shared.Models;
@@ -50,6 +51,20 @@ using Azure.Identity;
 using Azure.Extensions.AspNetCore.Configuration.Secrets;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// WebApplication.CreateBuilder only wires up the dev-time static web assets manifest (the thing
+// that lets _content/** and _framework/** resolve to each referenced project's/package's own
+// files instead of 404ing or being expected physically under this project's wwwroot) when
+// IsDevelopment() is true, i.e. ASPNETCORE_ENVIRONMENT=="Development" exactly. This app's "Local"
+// environment (appsettings.Local.json, Database:UseSqlite) is deliberately a separate name so it
+// never risks being treated as a real deployment, which otherwise leaves every _content/_framework
+// asset unresolvable and MapStaticAssets()'s own dev-time patching 500s trying to read them as if
+// they were physically copied here (see the UseStaticFiles()/MapStaticAssets() comment below) —
+// call it explicitly so "Local" gets the same dev-time asset resolution "Development" gets for
+// free. Safe in a real deployment too: with no manifest file published alongside the app, this is
+// a no-op there.
+if (!builder.Environment.IsProduction())
+    builder.WebHost.UseStaticWebAssets();
 
 // Azure Key Vault. When KeyVault:Uri is set, layer the vault on top of the other configuration
 // sources so secrets resolve from it. DefaultAzureCredential uses a managed identity in Azure and
@@ -515,7 +530,13 @@ var platformConnStr = builder.Configuration.GetConnectionString("Platform");
 if (!string.IsNullOrEmpty(platformConnStr))
 {
     builder.Services.AddDbContext<DXSuite.Shared.Entities.Identity.PlatformDbContext>(opts =>
-        opts.UseSqlServer(platformConnStr));
+        // Every other module's DbContext goes through this (see Director/CoreData/Aviation/etc.
+        // Services/Extensions.cs) so Database:UseSqlite redirects it to a local SQLite file; this one
+        // was registered directly here with a raw UseSqlServer and so was never covered — under Local
+        // mode it kept trying to reach the team's shared dev SQL Server (DCMDEV07) on every request
+        // (PlatformElevationMiddleware runs pre-endpoint for every tenant-scoped route), failing
+        // intermittently depending on network/DNS state.
+        opts.UseConfiguredProvider(builder.Configuration, "Platform", platformConnStr));
     builder.Services.AddScoped<DXSuite.Shared.Entities.Identity.IPlatformDbContext>(sp =>
         sp.GetRequiredService<DXSuite.Shared.Entities.Identity.PlatformDbContext>());
     builder.Services.AddScoped<DXSuite.Shared.Services.Identity.IPlatformIdentityService,
@@ -677,8 +698,31 @@ if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration)
 
     await EnsureCreatedAsync<DXSuite.Director.Entities.DirectorDbContext>();
     await EnsureCreatedAsync<DXSuite.CoreData.Entities.CoreDataDbContext>();
+    // PlatformDbContext is registered scoped (AddDbContext), not via IDbContextFactory like the
+    // modules above, so it needs its own schema creation here rather than going through
+    // EnsureCreatedAsync<TContext>(). Null when ConnectionStrings:Platform is unset entirely.
+    var platformDb = sqliteInitServices.GetService<DXSuite.Shared.Entities.Identity.PlatformDbContext>();
+    if (platformDb is not null) await platformDb.Database.EnsureCreatedAsync();
 #if MODULE_AVIATION
     await EnsureCreatedAsync<DXSuite.Aviation.Entities.AviationDbContext>();
+
+    // tblAirline, like tblLocationType above, is a table the real SQL Server database already has
+    // rows in (loaded by GTAA/ops, never EF seed data) — a fresh SQLite file builds an empty table.
+    // Seed just the two airlines the demo Supervisor accounts (Program.cs, further down) are scoped
+    // to, so Configuration > Airlines has something for AirlinesTab's real per-airline restriction
+    // to resolve against.
+    var aviationFactory = sqliteInitServices.GetService<IDbContextFactory<DXSuite.Aviation.Entities.AviationDbContext>>();
+    if (aviationFactory is not null)
+    {
+        await using var aviationDb = await aviationFactory.CreateDbContextAsync();
+        if (!await aviationDb.TblAirlines.AnyAsync())
+        {
+            aviationDb.TblAirlines.AddRange(
+                new DXSuite.Aviation.Entities.TblAirline { RecordId = 1, AirlineCode = "AC", Icao = "ACA", CarrierName = "Air Canada", DisplayWithinSettingsMenu = true, CreateDate = DateTime.UtcNow },
+                new DXSuite.Aviation.Entities.TblAirline { RecordId = 2, AirlineCode = "WS", Icao = "WJA", CarrierName = "WestJet", DisplayWithinSettingsMenu = true, CreateDate = DateTime.UtcNow });
+            await aviationDb.SaveChangesAsync();
+        }
+    }
 #endif
 #if MODULE_SENTINEL
     await EnsureCreatedAsync<DXSuite.Sentinel.Entities.SentinelDBContext>();
@@ -742,46 +786,175 @@ if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration)
                     new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2021, LocationTypeName = "Override Content", LinkedToDisplay = false, IsCustom = false, ShowOverrideSection = false },
                     new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2022, LocationTypeName = "VideoWall", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.VideoWall", ShowOverrideSection = true },
                     new DXSuite.Director.Entities.TblLocationType { LocationTypeId = 2023, LocationTypeName = "AirlineClusterView", LinkedToDisplay = true, IsCustom = true, ComponentTypeName = "DXSuite.Director.Components.LocationTypes.Custom.AirlineClusterView", ShowOverrideSection = false });
+                // CreateDate has no value set above, and its column default (GETDATE(), a SQL Server-only
+                // function) is reproduced verbatim by EnsureCreatedAsync into the SQLite table's DDL, where
+                // it doesn't exist — SQLite throws "unknown function: getdate()" the moment it has to
+                // evaluate that default for a row that didn't supply the column itself. Stamping it here
+                // avoids ever relying on that default under this local/offline provider.
+                foreach (var e in locTypeDb.ChangeTracker.Entries<DXSuite.Director.Entities.TblLocationType>())
+                    e.Entity.CreateDate = DateTime.UtcNow;
                 await locTypeDb.SaveChangesAsync();
             }
 
             if (!await locTypeDb.TblLocationGroups.AnyAsync())
             {
-                locTypeDb.TblLocationGroups.Add(new DXSuite.Director.Entities.TblLocationGroup { LocationGroupId = 1, LocationGroupName = "General", SortOrder = 99 });
+                locTypeDb.TblLocationGroups.Add(new DXSuite.Director.Entities.TblLocationGroup { LocationGroupId = 1, LocationGroupName = "General", SortOrder = 99, CreateDate = DateTime.UtcNow });
+                await locTypeDb.SaveChangesAsync();
+            }
+
+            // TblDisplayGroup, TblDisplayType and TblConstraint, like TblLocationType/TblLocationGroup
+            // above, are rows this product's real SQL Server database has always had and are never
+            // captured as EF Core seed data — a fresh SQLite file needs them written by hand before any
+            // TblDisplay's DisplayGroupId/DisplayTypeId/ConstraintId foreign key can point at one.
+            if (!await locTypeDb.TblDisplayGroups.AnyAsync())
+            {
+                locTypeDb.TblDisplayGroups.Add(new DXSuite.Director.Entities.TblDisplayGroup { DisplayGroupId = 1, DisplayGroupName = "General", SortOrder = 99, CreateDate = DateTime.UtcNow });
+                await locTypeDb.SaveChangesAsync();
+            }
+
+            if (!await locTypeDb.TblDisplayTypes.AnyAsync())
+            {
+                locTypeDb.TblDisplayTypes.Add(new DXSuite.Director.Entities.TblDisplayType { DisplayTypeId = 1, DisplayTypeName = "Standard Display" });
+                await locTypeDb.SaveChangesAsync();
+            }
+
+            if (!await locTypeDb.TblConstraints.AnyAsync())
+            {
+                locTypeDb.TblConstraints.Add(new DXSuite.Director.Entities.TblConstraint
+                {
+                    ConstraintId = 1, ConstraintName = "1920x1080", IsGlobal = true,
+                    ResolutionWidth = 1920, ResolutionHeight = 1080, CreateDate = DateTime.UtcNow
+                });
+                await locTypeDb.SaveChangesAsync();
+            }
+
+            // Sample Locations/Displays for the airline/counter/terminal demo flow's schedule-related
+            // screens (/schedule/{DisplayId}, /schedule-tv/{DisplayId}, /location/{LocationId} for an
+            // Airline Location Scheduler, and the Ticket Counter Scheduler's VideoWall picker) — a fresh
+            // SQLite file otherwise has no Locations/Displays at all, so those pages have nothing to show.
+            // Fixed high IDs (9001+) so they're predictable and never collide with anything created
+            // through the UI afterward (which starts from the SQLite table's row 1 autoincrement).
+            if (!await locTypeDb.TblLocations.AnyAsync())
+            {
+                locTypeDb.TblLocations.AddRange(
+                    new DXSuite.Director.Entities.TblLocation { LocationId = 9001, LocationName = "T1 Welcome Screen", LocationTypeId = 4, LocationGroupId = 1, SortOrder = 1, CreateDate = DateTime.UtcNow },
+                    new DXSuite.Director.Entities.TblLocation { LocationId = 9002, LocationName = "T1 Check-in TV Wall", LocationTypeId = 12, LocationGroupId = 1, SortOrder = 2, CreateDate = DateTime.UtcNow },
+                    new DXSuite.Director.Entities.TblLocation { LocationId = 9003, LocationName = "Air Canada Counter Desk", LocationTypeId = 8, LocationGroupId = 1, SortOrder = 3, CreateDate = DateTime.UtcNow },
+                    new DXSuite.Director.Entities.TblLocation { LocationId = 9004, LocationName = "T1 Check-in Counter Wall", LocationTypeId = 2022, LocationGroupId = 1, SortOrder = 4, CreateDate = DateTime.UtcNow });
+                await locTypeDb.SaveChangesAsync();
+
+                locTypeDb.TblDisplays.AddRange(
+                    new DXSuite.Director.Entities.TblDisplay
+                    {
+                        DisplayId = 9001, LocationId = 9001, DisplayName = "T1 Welcome Screen", DisplayMode = 0,
+                        DisplayTypeId = 1, DisplayGroupId = 1, DisplayHeight = 1080, DisplayWidth = 1920,
+                        ConstraintId = 1, CreateDate = DateTime.UtcNow
+                    },
+                    new DXSuite.Director.Entities.TblDisplay
+                    {
+                        DisplayId = 9002, LocationId = 9002, DisplayName = "T1 Check-in TV Wall", DisplayMode = 0,
+                        DisplayTypeId = 1, DisplayGroupId = 1, DisplayHeight = 1080, DisplayWidth = 1920,
+                        ConstraintId = 1, CreateDate = DateTime.UtcNow
+                    });
                 await locTypeDb.SaveChangesAsync();
             }
         }
 
         await using var usersDb = await directorFactory.CreateDbContextAsync();
+
+        // The four built-in roles (tblUserRole RoleId 1-4) are rows this product's real SQL Server
+        // database has always had, never captured as EF Core seed data (HasData) or a migration — on
+        // SQL Server they simply already exist. EnsureCreatedAsync builds the table from the model but
+        // inserts nothing, so a fresh SQLite file needs them written by hand before any TblUser.RoleId
+        // foreign key can point at one. Checked every startup (not just on an empty DB) so it still
+        // self-heals if the file was created before this code existed.
+        if (!await usersDb.TblUserRoles.AnyAsync())
+        {
+            usersDb.TblUserRoles.AddRange(
+                new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Admin, RoleName = "Admin", IsSystem = true },
+                new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Architect, RoleName = "Architect", IsSystem = true },
+                new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Contributor, RoleName = "Contributor", IsSystem = true },
+                new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.NewUser, RoleName = "New User", IsSystem = true });
+            await usersDb.SaveChangesAsync();
+        }
+
+        // RolePermissionService lazily seeds each role's permission grants the first time any role's
+        // permissions are asked for; do that now so the Admin role above actually holds every known
+        // permission once RolePermissionService.EnsureDefaultsSyncedAsync runs.
+        var rolePermissions = sqliteInitServices.GetService<DXSuite.Shared.Services.Identity.IRolePermissionService>();
+        if (rolePermissions is not null)
+            await rolePermissions.GetPermissionsForRoleAsync((int)DXSuite.Shared.Authorization.Roles.Role.Admin);
+
+        var localAccounts = sqliteInitServices.GetRequiredService<DXSuite.Shared.Services.Identity.ILocalAccountService>();
+
         if (!await usersDb.TblUsers.AnyAsync())
         {
-            // The four built-in roles (tblUserRole RoleId 1-4) are rows this product's real SQL Server
-            // database has always had, never captured as EF Core seed data (HasData) or a migration — on
-            // SQL Server they simply already exist. EnsureCreatedAsync builds the table from the model but
-            // inserts nothing, so a fresh SQLite file needs them written by hand before any TblUser.RoleId
-            // foreign key can point at one.
-            if (!await usersDb.TblUserRoles.AnyAsync())
-            {
-                usersDb.TblUserRoles.AddRange(
-                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Admin, RoleName = "Admin", IsSystem = true },
-                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Architect, RoleName = "Architect", IsSystem = true },
-                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Contributor, RoleName = "Contributor", IsSystem = true },
-                    new TblUserRole { RoleId = (int)DXSuite.Shared.Authorization.Roles.Role.NewUser, RoleName = "New User", IsSystem = true });
-                await usersDb.SaveChangesAsync();
-            }
-
-            // RolePermissionService lazily seeds each role's permission grants the first time any role's
-            // permissions are asked for; do that now so the Admin role seeded above actually holds every
-            // known permission once RolePermissionService.EnsureDefaultsSyncedAsync runs.
-            var rolePermissions = sqliteInitServices.GetService<DXSuite.Shared.Services.Identity.IRolePermissionService>();
-            if (rolePermissions is not null)
-                await rolePermissions.GetPermissionsForRoleAsync((int)DXSuite.Shared.Authorization.Roles.Role.Admin);
-
-            var localAccounts = sqliteInitServices.GetRequiredService<DXSuite.Shared.Services.Identity.ILocalAccountService>();
             var seededAdmin = await localAccounts.CreateAccountAsync("admin@local.test", "LocalAdmin#2026");
             await usersDb.TblUsers.Where(u => u.UserId == seededAdmin.UserId)
                 .ExecuteUpdateAsync(s => s.SetProperty(u => u.RoleId, (int)DXSuite.Shared.Authorization.Roles.Role.Admin));
         }
+
+        // Named demo accounts for walking through the airline/counter/terminal flow (the dxsuitflight
+        // prototype's personas), so that flow can be clicked through against this real app too, not just
+        // the static prototype. Group names match the ones MessageAccessRulesTests already assumes exist
+        // (e.g. "RMU"). Checked per-account by email (not gated on the DB being empty) so these get created
+        // even on a local-sqlite file that already has other users in it. Local/offline only — never runs
+        // against the real SQL Server database.
+        async Task EnsureDemoUserAsync(string email, string password, int roleId, string groupName)
+        {
+            if (await localAccounts.EmailExistsAsync(email)) return;
+
+            var seeded = await localAccounts.CreateAccountAsync(email, password);
+            await usersDb.TblUsers.Where(u => u.UserId == seeded.UserId)
+                .ExecuteUpdateAsync(s => s.SetProperty(u => u.RoleId, roleId));
+
+            var group = await usersDb.TblUserGroups.FirstOrDefaultAsync(g => g.GroupName == groupName);
+            if (group is null)
+            {
+                group = new TblUserGroup { GroupName = groupName, GroupType = "director", CreateDate = DateTime.UtcNow };
+                usersDb.TblUserGroups.Add(group);
+                await usersDb.SaveChangesAsync();
+            }
+            usersDb.TblUserGroupMemberships.Add(new TblUserGroupMembership { UserGroupId = group.UserGroupId, UserId = seeded.UserId, AddedDate = DateTime.UtcNow });
+            await usersDb.SaveChangesAsync();
+        }
+
+        // Every Config tab (Configuration > Airlines included) defaults to Architect-only
+        // (RolePermissionService.EnumerateDefinedPermissions), and Architect also carries
+        // CounterAllocationEdit and several other admin-ish grants an airline supervisor
+        // shouldn't have (GTAA FSD 1.2 3.2: supervisors manage only their own airline's
+        // branding/logos on Configuration > Airlines; counter allocation is RMU's). Rather than
+        // widen Contributor's defaults for everyone, create a narrow custom role — exactly the
+        // mechanism Settings > Roles already supports (TblUserRole.BaseRoleId) — that behaves
+        // like Contributor everywhere else but additionally sees the Airlines config tab.
+        var supervisorRole = await usersDb.TblUserRoles.FirstOrDefaultAsync(r => r.RoleName == "Airline Supervisor");
+        if (supervisorRole is null)
+        {
+            supervisorRole = new TblUserRole
+            {
+                RoleName = "Airline Supervisor",
+                RoleDescription = "Airline branding/content access (Configuration > Airlines), scoped like Contributor otherwise.",
+                BaseRoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Contributor,
+                IsGlobal = true,
+                IsSystem = false,
+            };
+            usersDb.TblUserRoles.Add(supervisorRole);
+            await usersDb.SaveChangesAsync();
+            usersDb.TblRolePermissions.Add(new DXSuite.Shared.Entities.Identity.TblRolePermission
+            {
+                RoleId = supervisorRole.RoleId,
+                PermissionKey = DXSuite.Shared.Authorization.PermissionKeys.ForConfigTab("airlines"),
+            });
+            await usersDb.SaveChangesAsync();
+        }
+
+        await EnsureDemoUserAsync("ravi.singh@local.test", "GtaaAdmin#2026", (int)DXSuite.Shared.Authorization.Roles.Role.Admin, "GTAA Admin");
+        await EnsureDemoUserAsync("jordan.smith@local.test", "RmuStaff#2026", (int)DXSuite.Shared.Authorization.Roles.Role.Contributor, "RMU");
+        // Group name must match the onboarded airline's CarrierName exactly — AirlinesTab.razor
+        // resolves a scoped supervisor's own airline by that name match.
+        await EnsureDemoUserAsync("marie.gagnon@local.test", "Supervisor#2026", supervisorRole.RoleId, "Air Canada");
+        await EnsureDemoUserAsync("kevin.chen@local.test", "Supervisor#2026", supervisorRole.RoleId, "WestJet");
+        await EnsureDemoUserAsync("airport.viewer@local.test", "ViewOnly#2026", (int)DXSuite.Shared.Authorization.Roles.Role.NewUser, "Airport Staff (View Only)");
     }
 }
 

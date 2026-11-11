@@ -53,9 +53,13 @@ public partial class CounterAllocations
     private readonly HashSet<int> selected = [];
     private string? error;
     private bool showOutageConfirm;
+    private bool canEdit;
+    private bool accessResolved;
+    private bool pageAuthorized;
 
     private AllocFormModel? modal;
     private string? modalError;
+    private AllocView? viewRow;
 
     private DateTime? copyTargetDate;
     private string? copyError;
@@ -162,6 +166,11 @@ public partial class CounterAllocations
 
     protected override async Task OnInitializedAsync()
     {
+        pageAuthorized = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+        if (!pageAuthorized) return;
+
+        canEdit = await sessionState.HasPermissionAsync(PermissionKeys.CounterAllocationEdit);
         zone = flightListClock.CurrentWindow().AirportTimeZone;
         SetNowWindowValues();
         await LoadAirlinesAsync();
@@ -312,6 +321,7 @@ public partial class CounterAllocations
 
     private void ToggleManualMode(ChangeEventArgs e)
     {
+        if (!canEdit) return;
         if (e.Value is true) outageState.SwitchOn();
         else showOutageConfirm = true; // confirm before turning off; the checkbox snaps back until confirmed
     }
@@ -358,13 +368,24 @@ public partial class CounterAllocations
 
     private void OnRowClick(string counterId)
     {
-        if (showDummyData) return;
+        if (showDummyData || !canEdit) return;
         OpenAdd(counterId);
     }
 
     private void OnBlockClick(TblCounterAllocation row, MouseEventArgs e)
     {
         if (showDummyData) return;
+
+        // Read-only users (Airport staff per the FSD 1.2 ALC capability area: "others read it")
+        // can still open an allocation to see its detail — just as a view, with no Save/Delete and
+        // no multi-select for copy. Resolve the matching AllocView from the already-loaded views
+        // list (not just the bare row) so the dialog shows the same local Start/End the grid does.
+        if (!canEdit)
+        {
+            viewRow = views.FirstOrDefault(v => v.Row.CounterAllocationId == row.CounterAllocationId);
+            return;
+        }
+
         if (e.CtrlKey || e.MetaKey)
         {
             if (!selected.Remove(row.CounterAllocationId)) selected.Add(row.CounterAllocationId);
@@ -376,6 +397,8 @@ public partial class CounterAllocations
             OpenEdit(row);
         }
     }
+
+    private void CloseView() => viewRow = null;
 
     private static string? Describe(CounterAllocationSaveOutcome outcome, string? conflict) => outcome switch
     {

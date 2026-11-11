@@ -1,7 +1,9 @@
 @page "/Flight-Data-Editor/Flight-Management"
 @using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Authorization
 @attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
 @rendermode InteractiveServer
+@inject ISessionState sessionState
 @using DXSuite.Connectors.Services.CoreApi
 @using DXSuite.Connectors.Services.CoreApi.Hub
 @using DXSuite.Connectors.Services.CoreApi.Models
@@ -18,7 +20,14 @@
 @implements IAsyncDisposable
 @implements ICoreApiHubObserver
 
-@if (notConfigured) {
+@* FSD 1.1 FDE "Done means": the editor opens only for a user with its permission, direct URL too —
+   this page is independently routable (it's also embedded as a tab of FlightDataEditor.razor, which
+   has the same gate), so it must check on its own rather than relying on the shell. *@
+@if (!accessResolved) {
+    <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+} else if (!isAuthorized) {
+    <div class="dx-alert dx-alert-warning">You do not have permission to access Flight Management.</div>
+} else if (notConfigured) {
     <div id="fde-not-configured" class="dx-alert dx-alert-warning">
         The CoreAPI connection is not set up. Configure it in <a href="/settings/coreapi-connection">Settings &gt; CoreAPI Connection</a>.
     </div>
@@ -302,9 +311,15 @@
     public bool ArrivalCarrierSort = false;
     #endregion
     private bool notConfigured;
+    private bool accessResolved;
+    private bool isAuthorized;
 
     protected override async Task OnInitializedAsync() {
         base.OnInitialized();
+
+        isAuthorized = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+        if (!isAuthorized) return;
 
         if (await CheckConfig()) {
             CoreAPIConfigured = true;

@@ -1,17 +1,23 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
 @using DXSuite.CoreData.Entities
+@using DXSuite.Shared.Authorization
 @using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.DependencyInjection
 @using Microsoft.Extensions.Logging
 @inject IServiceScopeFactory ScopeFactory
 @inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject IDbContextFactory<CoreDataDbContext> CoreDataDbFactory
+@inject ISessionState SessionState
 @inject ILogger<CitiesTab> Logger
 
 <div class="dx-card" style="display:flex; flex-direction:column;">
     <div class="dx-panel-header">
         <h4>Cities</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
     </div>
     <div class="dx-panel-content" style="padding:24px;">
 
@@ -75,7 +81,7 @@
                     }
                 </div>
 
-                @if (selectedCity != null && selectedLanguage != null)
+                @if (selectedCity != null && selectedLanguage != null && !isViewOnly)
                 {
                     <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-top:2px;" @onclick="() => AddLanguage(selectedLanguage, selectedCity)">Add</button>
                 }
@@ -95,7 +101,7 @@
                     {
                         <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid var(--dx-border-color, #f0f0f0);">
                             <span>@language.LanguageName</span>
-                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => RemoveLanguage(language, selectedCity!)">Remove</button>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@isViewOnly" @onclick="() => RemoveLanguage(language, selectedCity!)">Remove</button>
                         </div>
                     }
                 </div>
@@ -142,6 +148,9 @@
 </style>
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private string errorMessage = "";
 
     // City state
@@ -246,6 +255,7 @@
 
     private async Task AddLanguage(TblLanguage language, TblLocation city)
     {
+        if (isViewOnly) return;
         await using var scope = ScopeFactory.CreateAsyncScope();
         await using var aviationDb = await scope.ServiceProvider
             .GetRequiredService<IDbContextFactory<AviationDbContext>>()
@@ -294,6 +304,7 @@
 
     private async Task RemoveLanguage(TblLanguage language, TblLocation city)
     {
+        if (isViewOnly) return;
         await using var scope = ScopeFactory.CreateAsyncScope();
         await using var aviationDb = await scope.ServiceProvider
             .GetRequiredService<IDbContextFactory<AviationDbContext>>()

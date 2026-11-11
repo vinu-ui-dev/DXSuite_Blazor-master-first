@@ -1,7 +1,9 @@
 @using Microsoft.EntityFrameworkCore
+@using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Multitenancy
 @inject IDbContextFactory<DirectorDbContext> DbFactory
 @inject ITenantContext TenantContext
+@inject ISessionState SessionState
 @rendermode InteractiveServer
 
 @*
@@ -15,9 +17,13 @@
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
     <div class="dx-panel-header">
         <h4>Sites</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
             <input @bind="searchFilter" @bind:event="oninput" class="dx-search-input" placeholder="Search sites..." />
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="StartCreate">Add Site</button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnly" @onclick="StartCreate">Add Site</button>
             <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="LoadSites">Refresh</button>
         </div>
     </div>
@@ -100,8 +106,8 @@
                             <div class="dx-truncate">@site.Country</div>
                             <div style="text-align:center;">@deviceCounts.GetValueOrDefault(site.SiteId)</div>
                             <div style="display:flex; gap:6px; justify-content:flex-end;">
-                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => StartEdit(site)">Edit</button>
-                                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => Delete(site)">Delete</button>
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnly" @onclick="() => StartEdit(site)">Edit</button>
+                                <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnly" @onclick="() => Delete(site)">Delete</button>
                             </div>
                         </div>
                     }
@@ -112,6 +118,9 @@
 </div>
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private const string GridStyle = "grid-template-columns: 2fr 1.2fr 0.8fr 1fr 90px 160px;";
 
     private List<TblSite> sites = new();
@@ -174,7 +183,7 @@
 
     private async Task Save()
     {
-        if (editing == null) return;
+        if (editing == null || isViewOnly) return;
 
         if (string.IsNullOrWhiteSpace(editing.SiteName))
         {
@@ -214,6 +223,7 @@
     // Deleting a site never deletes players: the device keeps running and simply has no site.
     private async Task Delete(TblSite site)
     {
+        if (isViewOnly) return;
         await using var db = await DbFactory.CreateDbContextAsync();
         var existing = await db.TblSites.FirstOrDefaultAsync(s => s.SiteId == site.SiteId);
         if (existing != null)

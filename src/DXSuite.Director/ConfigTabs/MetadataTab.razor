@@ -8,8 +8,12 @@
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
     <div class="dx-panel-header">
         <h4>Metadata Keys</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAdd">+ Add Key</button>
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnly" @onclick="OpenAdd">+ Add Key</button>
         </div>
     </div>
 
@@ -47,8 +51,8 @@
                         <div class="dx-truncate dx-text-muted dx-col-hide">@FormatOptions(def.Options)</div>
                         <div class="dx-text-muted dx-col-hide">@def.Description</div>
                         <div class="dx-col-actions" style="display:flex; gap:4px;">
-                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenEdit(def)">Edit</button>
-                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="() => DeleteDef(def)">Delete</button>
+                            <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="() => OpenEdit(def)">Edit</button>
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@isViewOnly" @onclick="() => DeleteDef(def)">Delete</button>
                         </div>
                     </div>
                 }
@@ -196,6 +200,9 @@
 }
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private List<MetadataDefinitionDto> definitions = new();
     private bool isLoading = true;
 
@@ -244,6 +251,7 @@
 
     private void OpenAdd()
     {
+        if (isViewOnly) return;
         isNew = true;
         editId = 0;
         editKey = "";
@@ -259,6 +267,7 @@
 
     private void OpenEdit(MetadataDefinitionDto def)
     {
+        if (isViewOnly) return;
         isNew = false;
         editId = def.MetadataDefinitionId;
         editKey = def.MetadataKey;
@@ -361,6 +370,7 @@
 
     private async Task DeleteDef(MetadataDefinitionDto def)
     {
+        if (isViewOnly) return;
         deleteError = null;
         pendingDeleteUsage = null;
         pendingDelete = def;

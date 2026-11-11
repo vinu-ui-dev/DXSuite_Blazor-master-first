@@ -40,6 +40,35 @@ public class TenantFeatureFlags
     /// </summary>
     public bool FlightDataEditor { get; init; } = false;
 
+    /// <summary>
+    /// Controls visibility of the Pulse top-nav item. Defaults to true so existing tenants are
+    /// unaffected; set to false on deployments (e.g. GTAA/Aviation) with no Pulse signage use case.
+    /// </summary>
+    public bool ShowPulseNav { get; init; } = true;
+
+    /// <summary>
+    /// Controls visibility of the Sentinel top-nav group (Dashboard, Automation). Defaults to
+    /// true; set to false on deployments that don't operate Sentinel-managed devices. Unlike the
+    /// Sentinel module flag, this only hides the nav — Sentinel's Pulse Reporting Configuration
+    /// tab keeps working, since it has no device-ops dependency.
+    /// </summary>
+    public bool ShowSentinelNav { get; init; } = true;
+
+    /// <summary>
+    /// Controls visibility of the Content Log nav item, in addition to its existing
+    /// PageContentLog permission gate — the Admin role bypasses permission checks entirely,
+    /// so a Feature flag is the only way to hide it from Admin too.
+    /// Defaults to true; set to false on deployments that don't use the content log.
+    /// </summary>
+    public bool ShowContentLogNav { get; init; } = true;
+
+    /// <summary>
+    /// Controls whether the Platform module appears in the Home dashboard's Active Modules
+    /// card. Defaults to true; set to false on deployments where tenant administration isn't
+    /// a user-facing concern (e.g. a single-tenant GTAA/Aviation demo).
+    /// </summary>
+    public bool ShowPlatformModuleCard { get; init; } = true;
+
     /// <summary>Looks up a flag by its property name (e.g. <c>nameof(Messaging)</c>), false when unknown.</summary>
     public bool IsEnabled(string featureName) =>
         typeof(TenantFeatureFlags).GetProperty(featureName)?.GetValue(this) is true;
