@@ -72,11 +72,17 @@ else
         var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
 
         var featureFlags = featureFlagsOptions.Value;
+        var tenantFeatures = TenantContext.IsPopulated ? TenantContext.Features : new TenantFeatureFlags();
         allTabs = Modules
             .Where(m => m.IsAvailableForTenant(TenantContext))
             .SelectMany(m => m.GetConfigTabs())
-            .Where(t => perms == null || perms.Contains(PermissionKeys.ForConfigTab(t.Key)))
+            // Message Types is exempt from the per-role tab permission: every Configuration
+            // user should see it regardless of their role's granted config-tab permissions.
+            .Where(t => perms == null
+                || PermissionKeys.ForConfigTab(t.Key) == PermissionKeys.ConfigTabMessageTypes
+                || perms.Contains(PermissionKeys.ForConfigTab(t.Key)))
             .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
+            .Where(t => t.TenantFeature == null || typeof(TenantFeatureFlags).GetProperty(t.TenantFeature)?.GetValue(tenantFeatures) is true)
             .OrderBy(t => t.Order)
             .ToList();
         activeTab = allTabs.FirstOrDefault();

@@ -56,9 +56,9 @@ public class DirectorModule : IBlazorModule
         yield return new ConfigTab("location-bundles", "Location Bundles", typeof(ConfigTabs.LocationBundlesTab), 36, Feature: "LocationBundles");
         yield return new ConfigTab("panels", "Panels", typeof(ConfigTabs.PanelsTab), 37, Feature: "Panels");
         yield return new ConfigTab("message-types", "Message Types", typeof(ConfigTabs.MessageTypeTab), 40,
-            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
+            TenantFeature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
         yield return new ConfigTab("zone-builder", "Display Zones", typeof(ConfigTabs.DisplayZonesTab), 41,
-            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
+            TenantFeature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
     }
 
     public IEnumerable<SettingsTab> GetSettingsTabs()
