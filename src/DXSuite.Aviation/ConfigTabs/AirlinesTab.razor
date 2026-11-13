@@ -16,7 +16,7 @@
 {
     <div class="dx-panel-header">
         <h4>Airlines</h4>
-        @if (isViewOnlyAirlines)
+        @if (isViewOnlyAirlines || isAirlineSupervisorRole)
         {
             <span class="dx-badge dx-badge-gray">View only</span>
         }
@@ -105,7 +105,7 @@
                         <div>@extra.Alliance</div>
                         <div>@extra.Accounts</div>
                         <div><span class="dx-badge dx-badge-green">Active</span></div>
-                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines ? "VIEW" : "EDIT")</button></div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines || isAirlineSupervisorRole ? "VIEW" : "EDIT")</button></div>
                     </div>
                 }
             </div>
@@ -1121,7 +1121,7 @@ else
         await LoadAirlines();
 
         isAirlineSupervisorRole = SessionState.ActualRoleId == 6
-            || string.Equals(SessionState.ActualRoleName, "Airline Supervisor", StringComparison.OrdinalIgnoreCase);
+            || string.Equals(SessionState.ActualRoleName, "Director Airline_Supervisor", StringComparison.OrdinalIgnoreCase);
 
         // GTAA FSD 1.2 3.2: "Airline supervisors see only their own airline and may upload or
         // replace its logos." Admin and Architect get the full cross-airline list (Architect is
