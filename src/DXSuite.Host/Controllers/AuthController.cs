@@ -86,8 +86,13 @@ public class AuthController : Controller
         {
             var user = await _localAccountService.ValidateCredentialsAsync(email, password);
             if (user == null)
+            {
+                _logger.LogInformation("Local login failed for '{Email}': invalid credentials", email);
                 return Redirect("/?error=invalid-credentials");
+            }
 
+            _logger.LogInformation("Local login succeeded: UserId={UserId}, Email={Email}, UserPrincipalName={Upn}",
+                user.UserId, email, user.UserPrincipalName);
             return await IssueAuthCookieAndRedirect(user, email);
         }
         catch (InvalidOperationException ex) when (ex.Message == "email-not-confirmed")
@@ -110,8 +115,13 @@ public class AuthController : Controller
         {
             var user = await _ldapCredentialService.ValidateAsync(username, password, effectiveLdap);
             if (user == null)
+            {
+                _logger.LogInformation("LDAP login failed for '{Username}': invalid credentials", username);
                 return Redirect("/?error=ldap-invalid");
+            }
 
+            _logger.LogInformation("LDAP login succeeded: UserId={UserId}, Username={Username}, UserPrincipalName={Upn}",
+                user.UserId, username, user.UserPrincipalName);
             return await IssueAuthCookieAndRedirect(user, user.UserPrincipalName ?? username);
         }
         catch (InvalidOperationException ex)
@@ -319,6 +329,9 @@ public class AuthController : Controller
 
     private async Task<IActionResult> IssueAuthCookieAndRedirect(DXSuite.Shared.Entities.Identity.TblUser user, string email)
     {
+        _logger.LogInformation("Issuing auth cookie for UserId={UserId}, Email={Email}, FriendlyName={FriendlyName}",
+            user.UserId, email, user.FriendlyName);
+
         var claims = new List<Claim>
         {
             new(ClaimTypes.Name, user.UserPrincipalName ?? email),

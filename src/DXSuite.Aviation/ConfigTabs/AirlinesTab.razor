@@ -50,9 +50,12 @@
 
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
         <button class="dx-tab-btn @(subTab == "airlines" ? "active" : "")" @onclick="@(() => subTab = "airlines")">Airlines</button>
-        <button class="dx-tab-btn @(subTab == "dcs" ? "active" : "")" @onclick="@(() => subTab = "dcs")">DCS Providers</button>
-        <button class="dx-tab-btn @(subTab == "alliances" ? "active" : "")" @onclick="@(() => subTab = "alliances")">Alliances</button>
-        <button class="dx-tab-btn @(subTab == "logos" ? "active" : "")" @onclick="@(() => subTab = "logos")">Logo libraries</button>
+        @if (!isAirlineSupervisorRole)
+        {
+            <button class="dx-tab-btn @(subTab == "dcs" ? "active" : "")" @onclick="@(() => subTab = "dcs")">DCS Providers</button>
+            <button class="dx-tab-btn @(subTab == "alliances" ? "active" : "")" @onclick="@(() => subTab = "alliances")">Alliances</button>
+            <button class="dx-tab-btn @(subTab == "logos" ? "active" : "")" @onclick="@(() => subTab = "logos")">Logo libraries</button>
+        }
     </div>
 
     <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
@@ -1099,12 +1102,13 @@ else
     private bool isSupervisorPreview;
     private bool isRealAirlineScope;
     private bool isViewOnlyAirlines;
+    private bool isAirlineSupervisorRole;
 
     // The full 6-tab profile (Identity, Branding, CUPPS options, DCS, Counter templates, Users) is
     // only for GTAA Admin/Architect browsing the real cross-airline list — not the demo supervisor
-    // preview, a real airline-scoped supervisor, or RMU's view-only pass, which all keep the
-    // existing restricted 2-tab (Branding, Counter templates) profile.
-    private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines;
+    // preview, a real airline-scoped supervisor, RMU's view-only pass, or the Airline Supervisor
+    // role (RoleId 6), which all keep the existing restricted 2-tab (Branding, Counter templates) profile.
+    private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines && !isAirlineSupervisorRole;
 
     private string statusMessage = "";
     private bool statusIsError;
@@ -1115,6 +1119,9 @@ else
     protected override async Task OnInitializedAsync()
     {
         await LoadAirlines();
+
+        isAirlineSupervisorRole = SessionState.ActualRoleId == 6
+            || string.Equals(SessionState.ActualRoleName, "Airline Supervisor", StringComparison.OrdinalIgnoreCase);
 
         // GTAA FSD 1.2 3.2: "Airline supervisors see only their own airline and may upload or
         // replace its logos." Admin and Architect get the full cross-airline list (Architect is
