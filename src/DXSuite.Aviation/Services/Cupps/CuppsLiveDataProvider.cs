@@ -1,65 +1,100 @@
+using System.Net.Http.Json;
 using DXSuite.Aviation.Pages.Cupps;
 using DXSuite.Aviation.Services.CounterAllocation;
 using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Connectors.Services.CoreApi;
 using DXSuite.Connectors.Services.CoreApi.Models;
+using Microsoft.AspNetCore.Components;
 
 namespace DXSuite.Aviation.Services.Cupps;
 
-/// <summary>Live replacements for CUPPS's RMU airline/counter picker: airlines with flights right now
-/// (from CoreAPI, the same source Flight Management uses) and real counter allocations (from
-/// <see cref="CounterAllocationService"/>, the only live counter-allocation data in the solution).
-/// The rest of the CUPPS prototype keeps using <see cref="CuppsData"/>'s static demo data.</summary>
+/// <summary>Live replacements for CUPPS's RMU airline/counter picker: airline accounts from Director's
+/// CUPPS airlines endpoint and real counter allocations (from <see cref="CounterAllocationService"/>,
+/// the only live counter-allocation data in the solution). The rest of the CUPPS prototype keeps using
+/// <see cref="CuppsData"/>'s static demo data.</summary>
 public sealed class CuppsLiveDataProvider(
     CoreApiClient coreApi,
     IFlightListClock flightListClock,
-    CounterAllocationService counterAllocationService)
+    CounterAllocationService counterAllocationService,
+    IHttpClientFactory httpClientFactory,
+    NavigationManager navigationManager)
 {
-    public async Task<IReadOnlyList<Airline>> GetOperatingAirlinesAsync(CancellationToken ct = default)
+    public async Task<IReadOnlyList<OperatingAirlineAccount>> GetOperatingAirlineAccountsAsync(CancellationToken ct = default)
     {
-        var window = flightListClock.CurrentWindow();
-        var arrivalsTask = coreApi.GetArrivalsAsync(window.Start, window.End, ct);
-        var departuresTask = coreApi.GetDeparturesAsync(window.Start, window.End, ct);
-        var airlinesTask = coreApi.GetAirlinesAsync(ct);
-        await Task.WhenAll(arrivalsTask, departuresTask, airlinesTask);
+        var client = httpClientFactory.CreateClient();
+        var uri = new Uri(new Uri(navigationManager.BaseUri), "api/cupps/airlines");
+        var airlines = await client.GetFromJsonAsync<List<CuppsAirlineDto>>(uri, ct) ?? [];
 
-        var arrivals = arrivalsTask.Result;
-        var departures = departuresTask.Result;
-        if (!arrivals.Succeeded && !departures.Succeeded) return [];
+        return airlines
+            .Where(a => !string.IsNullOrWhiteSpace(a.Code))
+            .GroupBy(a => a.Code.Trim().ToUpperInvariant(), StringComparer.OrdinalIgnoreCase)
+            .Select(g =>
+            {
+                var a = g.First();
+                var code = g.Key;
+                var name = string.IsNullOrWhiteSpace(a.Name) ? code : a.Name.Trim();
+                var bg = string.IsNullOrWhiteSpace(a.Bg) ? ColorFor(code) : a.Bg.Trim();
+                var id = (a.AirlineId is > 0 ? a.AirlineId.Value : Math.Abs(code.GetHashCode(StringComparison.OrdinalIgnoreCase)) + 1);
+                return new OperatingAirlineAccount(id, new Airline(code, name, bg));
+            })
+            .OrderBy(a => a.Airline.Name)
+            .ToList();
+    }
 
-        var nameByCode = airlinesTask.Result.Succeeded
-            ? airlinesTask.Result.Value!
-                .Where(a => a is { AirlineCode: not null })
-                .GroupBy(a => a!.AirlineCode)
-                .ToDictionary(g => g.Key, g => g.First()!.CarrierName)
-            : new Dictionary<string, string?>();
+    public async Task<IReadOnlyList<Airline>> GetOperatingAirlinesAsync(CancellationToken ct = default) =>
+        (await GetOperatingAirlineAccountsAsync(ct)).Select(a => a.Airline).ToList();
 
-        var result = new Dictionary<string, Airline>();
+    public async Task<(IReadOnlyList<Template> Templates, string? PickerTab)> GetPageOptionsAsync(int airlineId, string airlineCode,
+        CancellationToken ct = default)
+    {
+        if (airlineId <= 0) return ([], null);
 
-        void Add(string? code, string? name)
+        var client = httpClientFactory.CreateClient();
+        var uri = new Uri(new Uri(navigationManager.BaseUri), $"api/counter-templates/page-options?airlineId={airlineId}");
+        var response = await client.GetFromJsonAsync<CounterTemplatePageOptionsResponse>(uri, ct);
+        if (response is null) return ([], null);
+
+        Template Map(CounterTemplatePageOptionDto t)
         {
-            if (string.IsNullOrWhiteSpace(code) || result.ContainsKey(code)) return;
-            var resolvedName = string.IsNullOrWhiteSpace(name) ? nameByCode.GetValueOrDefault(code) : name;
-            result[code] = new Airline(code, string.IsNullOrWhiteSpace(resolvedName) ? code : resolvedName, ColorFor(code));
+            var kind = string.Equals(t.Kind, "custom", StringComparison.OrdinalIgnoreCase) ? "Custom" : "Standard";
+            var scope = string.Equals(t.Scope, "airport", StringComparison.OrdinalIgnoreCase) ? "airport" : airlineCode;
+            var en = string.IsNullOrWhiteSpace(t.TextEn) ? t.Name : t.TextEn!;
+            var fr = string.IsNullOrWhiteSpace(t.TextFr) ? en : t.TextFr!;
+            return new Template(t.CounterTemplateId.ToString(), kind, scope, en, fr, t.EndsToday);
         }
 
-        if (arrivals.Succeeded)
-            foreach (var f in arrivals.Value!)
-            {
-                if (f is null) continue;
-                Add(f.FLC, f.Carrier);
-                foreach (var cs in f.CodeShares) Add(cs.FLC, null);
-            }
+        var templates = response.StandardTemplates.Concat(response.CustomTemplates).Select(Map).ToList();
+        var pickerTab = response.Airline.PickerTab switch
+        {
+            1 => "Custom",
+            0 => "Standard",
+            _ => null
+        };
+        return (templates, pickerTab);
+    }
 
-        if (departures.Succeeded)
-            foreach (var f in departures.Value!)
-            {
-                if (f is null) continue;
-                Add(f.FLC, f.Carrier);
-                foreach (var cs in f.CodeShares) Add(cs.FLC, null);
-            }
+    public async Task<IReadOnlyList<Canned>> GetApprovedMessagesAsync(int airlineId, string languageCode = "en", CancellationToken ct = default)
+    {
+        if (airlineId <= 0) return [];
 
-        return result.Values.OrderBy(a => a.Name).ToList();
+        // CUPPS message list uses one language only (English by default).
+        var lang = string.IsNullOrWhiteSpace(languageCode) ? "en" : languageCode;
+
+        var client = httpClientFactory.CreateClient();
+        var uri = new Uri(new Uri(navigationManager.BaseUri), $"api/cupps/messages/approved?airlineId={airlineId}&languageCode={Uri.EscapeDataString(lang)}");
+        var response = await client.GetFromJsonAsync<CuppsApprovedMessagesResponse>(uri, ct);
+        if (response is null) return [];
+
+        return response.Messages
+            .Select(m =>
+            {
+                var body = string.IsNullOrWhiteSpace(m.Body)
+                    ? m.Texts.FirstOrDefault(t => t.LanguageCode.StartsWith("en", StringComparison.OrdinalIgnoreCase))?.Body
+                        ?? m.Name
+                    : m.Body;
+                return new Canned(m.MessageId.ToString(), m.Name, body);
+            })
+            .ToList();
     }
 
     public async Task<(IReadOnlyList<Alloc> Allocations, int NowMinutes)> GetLiveAllocationsAsync(CancellationToken ct = default)
@@ -154,4 +189,31 @@ public sealed class CuppsLiveDataProvider(
         var hue = Math.Abs(hash) % 360;
         return $"hsl({hue},55%,32%)";
     }
+
+    private sealed record CuppsAirlineDto(int? AirlineId, string Code, string Name, string? Bg);
+
+    private sealed record CounterTemplatePageOptionsResponse(
+        CounterTemplateAirlineDto Airline,
+        IReadOnlyList<CounterTemplatePageOptionDto> StandardTemplates,
+        IReadOnlyList<CounterTemplatePageOptionDto> CustomTemplates);
+
+    private sealed record CounterTemplateAirlineDto(int AirlineId, byte? PickerTab);
+
+    private sealed record CuppsApprovedMessagesResponse(int AirlineId, string LanguageCode, IReadOnlyList<CuppsApprovedMessageDto> Messages);
+
+    private sealed record CuppsApprovedMessageDto(int MessageId, string Name, string? Body, IReadOnlyList<CuppsMessageTextDto> Texts);
+
+    private sealed record CuppsMessageTextDto(string LanguageCode, string Body);
+
+    private sealed record CounterTemplatePageOptionDto(
+        int CounterTemplateId,
+        string Name,
+        int AirlineId,
+        string Scope,
+        string Kind,
+        bool EndsToday,
+        string? TextEn,
+        string? TextFr);
 }
+
+public sealed record OperatingAirlineAccount(int AirlineId, Airline Airline);

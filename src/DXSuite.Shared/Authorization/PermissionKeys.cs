@@ -50,6 +50,16 @@ public static class PermissionKeys
     public const string PageMessagePlaybackLog = "page:message-playback-log";
     public const string MessagesAuthor = "feature:messages-author";
     public const string MessagesPriorityOverride = "feature:messages-priority-override";
+
+    // GTAA FSD 1.2 — Airlines configuration/profile visibility controls.
+    public const string AirlinesDcsProvidersTab = "feature:airlines-dcs-providers-tab";
+    public const string AirlinesAlliancesTab = "feature:airlines-alliances-tab";
+    public const string AirlinesLogoLibrariesTab = "feature:airlines-logo-libraries-tab";
+    public const string AirlineProfileIdentityTab = "feature:airline-profile-identity-tab";
+    public const string AirlineProfileCuppsTab = "feature:airline-profile-cupps-tab";
+    public const string AirlineProfileDcsTab = "feature:airline-profile-dcs-tab";
+    public const string AirlineProfileUsersTab = "feature:airline-profile-users-tab";
+
     // These three are tab keys, not fixed constants — their permission is the module registry's own
     // ForConfigTab/ForSettingsTab derivation (EnumerateDefinedPermissions), already granted to the tab's
     // registered default. Named here only so a typo in the tab key used to check access fails at compile time;
@@ -128,5 +138,26 @@ public static class PermissionKeys
         new FeaturePermissionDef(MessagesPriorityOverride, "Message Priority Override",
             "Override a Message Type's normal priority rank on an individual send.",
             new[] { Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlinesDcsProvidersTab, "Airlines: DCS Providers Tab",
+            "Show the DCS Providers tab in Configuration > Airlines.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlinesAlliancesTab, "Airlines: Alliances Tab",
+            "Show the Alliances tab in Configuration > Airlines.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlinesLogoLibrariesTab, "Airlines: Logo Libraries Tab",
+            "Show the Logo libraries tab in Configuration > Airlines.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlineProfileIdentityTab, "Airlines: Profile Identity Tab",
+            "Show the Identity tab inside an airline profile.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlineProfileCuppsTab, "Airlines: Profile CUPPS Tab",
+            "Show the CUPPS options tab inside an airline profile.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlineProfileDcsTab, "Airlines: Profile DCS Tab",
+            "Show the DCS tab inside an airline profile.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
+        new FeaturePermissionDef(AirlineProfileUsersTab, "Airlines: Profile Users Tab",
+            "Show the Users tab inside an airline profile.",
+            new[] { Roles.Role.Admin, Roles.Role.Architect }),
     };
 }

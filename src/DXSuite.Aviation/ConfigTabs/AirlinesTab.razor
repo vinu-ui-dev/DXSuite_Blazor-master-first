@@ -16,7 +16,7 @@
 {
     <div class="dx-panel-header">
         <h4>Airlines</h4>
-        @if (isViewOnlyAirlines || isAirlineSupervisorRole)
+        @if (isViewOnlyAirlines)
         {
             <span class="dx-badge dx-badge-gray">View only</span>
         }
@@ -26,7 +26,10 @@
             <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
                    value="@searchTerm" @oninput="OnSearchInput"
                    placeholder="Search @allAirlines.Count airlines to onboard..." />
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
+            @if (SessionState.RoleEnum == Roles.Role.Admin)
+            {
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
+            }
 
             @if (searchResults.Count > 0)
             {
@@ -50,10 +53,16 @@
 
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
         <button class="dx-tab-btn @(subTab == "airlines" ? "active" : "")" @onclick="@(() => subTab = "airlines")">Airlines</button>
-        @if (!isAirlineSupervisorRole)
+        @if (canSeeDcsProvidersTab)
         {
             <button class="dx-tab-btn @(subTab == "dcs" ? "active" : "")" @onclick="@(() => subTab = "dcs")">DCS Providers</button>
+        }
+        @if (canSeeAlliancesTab)
+        {
             <button class="dx-tab-btn @(subTab == "alliances" ? "active" : "")" @onclick="@(() => subTab = "alliances")">Alliances</button>
+        }
+        @if (canSeeLogoLibrariesTab)
+        {
             <button class="dx-tab-btn @(subTab == "logos" ? "active" : "")" @onclick="@(() => subTab = "logos")">Logo libraries</button>
         }
     </div>
@@ -105,14 +114,14 @@
                         <div>@extra.Alliance</div>
                         <div>@extra.Accounts</div>
                         <div><span class="dx-badge dx-badge-green">Active</span></div>
-                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines || isAirlineSupervisorRole ? "VIEW" : "EDIT")</button></div>
+                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines ? "VIEW" : "EDIT")</button></div>
                     </div>
                 }
             </div>
             <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem;">@onboarded.Count airlines</div>
         }
     }
-    else if (subTab == "dcs")
+    else if (subTab == "dcs" && canSeeDcsProvidersTab)
     {
         <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
             Demo preview &mdash; departure control system providers used by onboarded airlines.
@@ -131,7 +140,7 @@
             }
         </div>
     }
-    else if (subTab == "alliances")
+    else if (subTab == "alliances" && canSeeAlliancesTab)
     {
         <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
             Demo preview &mdash; alliance membership of onboarded airlines.
@@ -150,7 +159,7 @@
             }
         </div>
     }
-    else if (subTab == "logos")
+    else if (subTab == "logos" && canSeeLogoLibrariesTab)
     {
         <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
             Demo preview &mdash; the wordmark chain every airline uploads to; GTAA admins approve new logos here.
@@ -271,25 +280,28 @@ else
     }
 
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
-        @if (isAdminProfile)
+        @if (canShowAdminIdentityTab)
         {
             <button class="dx-tab-btn @(profileTab == "identity" ? "active" : "")" @onclick="@(() => profileTab = "identity")">Identity</button>
         }
         <button class="dx-tab-btn @(profileTab == "branding" ? "active" : "")" @onclick="@(() => profileTab = "branding")">Branding</button>
-        @if (isAdminProfile)
+        @if (canShowAdminCuppsTab)
         {
             <button class="dx-tab-btn @(profileTab == "cupps" ? "active" : "")" @onclick="@(() => profileTab = "cupps")">CUPPS options</button>
+        }
+        @if (canShowAdminDcsTab)
+        {
             <button class="dx-tab-btn @(profileTab == "dcs" ? "active" : "")" @onclick="@(() => profileTab = "dcs")">DCS</button>
         }
         <button class="dx-tab-btn @(profileTab == "templates" ? "active" : "")" @onclick="@(() => profileTab = "templates")">Counter templates</button>
-        @if (isAdminProfile)
+        @if (canShowAdminUsersTab)
         {
             <button class="dx-tab-btn @(profileTab == "users" ? "active" : "")" @onclick="@(() => profileTab = "users")">Users</button>
         }
     </div>
 
     <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto;">
-        @if (profileTab == "identity" && isAdminProfile)
+        @if (profileTab == "identity" && canShowAdminIdentityTab)
         {
             <div class="dx-form-group" style="padding:16px 20px;">
                 <div style="display:flex; gap:16px; margin-bottom:12px;">
@@ -433,7 +445,7 @@ else
 
             <div class="dx-text-muted" style="font-size:0.8rem;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
         }
-        else if (profileTab == "cupps" && isAdminProfile)
+        else if (profileTab == "cupps" && canShowAdminCuppsTab)
         {
             <div style="padding:16px 20px;">
             <div class="dx-text-muted" style="font-size:0.75rem; text-transform:uppercase; margin-bottom:8px;">Flag options agents can show</div>
@@ -484,7 +496,7 @@ else
             </div>
             </div>
         }
-        else if (profileTab == "dcs" && isAdminProfile)
+        else if (profileTab == "dcs" && canShowAdminDcsTab)
         {
             <div style="padding:16px 20px;">
             <div style="display:flex; gap:16px;">
@@ -500,7 +512,7 @@ else
             <div class="dx-text-muted" style="font-size:0.8rem; margin-top:20px;">Created 2026-09-02. Changes apply to CUPPS when saved.</div>
             </div>
         }
-        else if (profileTab == "users" && isAdminProfile)
+        else if (profileTab == "users" && canShowAdminUsersTab)
         {
             var members = UsersFor(profileAirline!.Code);
             <div style="padding:16px 20px;">
@@ -1102,13 +1114,26 @@ else
     private bool isSupervisorPreview;
     private bool isRealAirlineScope;
     private bool isViewOnlyAirlines;
-    private bool isAirlineSupervisorRole;
+
+    private bool canSeeDcsProvidersTab;
+    private bool canSeeAlliancesTab;
+    private bool canSeeLogoLibrariesTab;
+    private bool canSeeProfileIdentityTab;
+    private bool canSeeProfileCuppsTab;
+    private bool canSeeProfileDcsTab;
+    private bool canSeeProfileUsersTab;
 
     // The full 6-tab profile (Identity, Branding, CUPPS options, DCS, Counter templates, Users) is
     // only for GTAA Admin/Architect browsing the real cross-airline list — not the demo supervisor
-    // preview, a real airline-scoped supervisor, RMU's view-only pass, or the Airline Supervisor
-    // role (RoleId 6), which all keep the existing restricted 2-tab (Branding, Counter templates) profile.
-    private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines && !isAirlineSupervisorRole;
+    // preview, a real airline-scoped supervisor, or RMU's view-only pass, which all keep the
+    // existing restricted 2-tab (Branding, Counter templates) profile.
+    private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines;
+
+    private bool CanUseAdminProfileTabs => isAdminProfile;
+    private bool canShowAdminIdentityTab => CanUseAdminProfileTabs && canSeeProfileIdentityTab;
+    private bool canShowAdminCuppsTab => CanUseAdminProfileTabs && canSeeProfileCuppsTab;
+    private bool canShowAdminDcsTab => CanUseAdminProfileTabs && canSeeProfileDcsTab;
+    private bool canShowAdminUsersTab => CanUseAdminProfileTabs && canSeeProfileUsersTab;
 
     private string statusMessage = "";
     private bool statusIsError;
@@ -1118,10 +1143,16 @@ else
 
     protected override async Task OnInitializedAsync()
     {
-        await LoadAirlines();
+        canSeeDcsProvidersTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesDcsProvidersTab);
+        canSeeAlliancesTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesAlliancesTab);
+        canSeeLogoLibrariesTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesLogoLibrariesTab);
+        canSeeProfileIdentityTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlineProfileIdentityTab);
+        canSeeProfileCuppsTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlineProfileCuppsTab);
+        canSeeProfileDcsTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlineProfileDcsTab);
+        canSeeProfileUsersTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlineProfileUsersTab);
 
-        isAirlineSupervisorRole = SessionState.ActualRoleId == 6
-            || string.Equals(SessionState.ActualRoleName, "Director Airline_Supervisor", StringComparison.OrdinalIgnoreCase);
+        await LoadAirlines();
+        EnsureVisibleListTab();
 
         // GTAA FSD 1.2 3.2: "Airline supervisors see only their own airline and may upload or
         // replace its logos." Admin and Architect get the full cross-airline list (Architect is
@@ -1307,8 +1338,8 @@ else
     {
         profileAirline = row;
         isSupervisorPreview = supervisor;
-        profileTab = "branding";
         viewMode = "profile";
+        EnsureVisibleProfileTab();
     }
 
     private void CloseProfile()
@@ -1329,6 +1360,28 @@ else
     {
         isSupervisorPreview = false;
         viewMode = "list";
+    }
+
+    private void EnsureVisibleListTab()
+    {
+        if (subTab == "dcs" && !canSeeDcsProvidersTab)
+            subTab = "airlines";
+        else if (subTab == "alliances" && !canSeeAlliancesTab)
+            subTab = "airlines";
+        else if (subTab == "logos" && !canSeeLogoLibrariesTab)
+            subTab = "airlines";
+    }
+
+    private void EnsureVisibleProfileTab()
+    {
+        if (canShowAdminIdentityTab && profileTab == "identity") return;
+        if (profileTab == "branding") return;
+        if (canShowAdminCuppsTab && profileTab == "cupps") return;
+        if (canShowAdminDcsTab && profileTab == "dcs") return;
+        if (profileTab == "templates") return;
+        if (canShowAdminUsersTab && profileTab == "users") return;
+
+        profileTab = "branding";
     }
 
     private void SimulateUpload(string kind)

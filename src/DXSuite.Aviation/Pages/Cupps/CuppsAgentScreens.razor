@@ -690,7 +690,7 @@
         var p = Pub(x.CounterId);
         var open = p?.Open == true;
         var t = open ? Tpl(p!.Page) : null;
-        return @<button class="dx-pick-tile dx-counter-tile" disabled="@isLater" @onclick="() => PickRmuCounter(x.CounterId)">
+        return @<button class="dx-pick-tile dx-counter-tile" disabled="@isLater" @onclick="async () => await PickRmuCounter(x.CounterId)">
             <div class="dx-counter-id">@x.CounterId</div>
             <div class="dx-counter-meta">@Hm(x.From) to @Hm(x.To)@(isLater ? "" : $", {Left(x.To - now)} left")</div>
             <div class="dx-counter-meta">
@@ -725,7 +725,7 @@
         }
         else if (liveLoadFailed)
         {
-            body = @<div class="dx-alert dx-alert-warning">Couldn't load airlines from the flight data feed. <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button></div>;
+            body = @<div class="dx-alert dx-alert-warning">Couldn't load airlines from Director airline accounts. <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button></div>;
         }
         else if (a is null)
         {
@@ -741,7 +741,7 @@
                 </div>
                 @if (list.Count == 0)
                 {
-                    <div class="dx-text-muted">No airlines have flights right now.</div>
+                    <div class="dx-text-muted">No active airlines are available.</div>
                 }
                 else
                 {

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
@@ -18,6 +18,22 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
     }
 
     public virtual DbSet<TblAirlineLocation> TblAirlineLocations { get; set; }
+    public virtual DbSet<TblAirlineAccount> TblAirlineAccounts { get; set; }
+    public virtual DbSet<TblAirlineTerminal> TblAirlineTerminals { get; set; }
+    public virtual DbSet<TblAlliance> TblAlliances { get; set; }
+    public virtual DbSet<TblAllianceLogo> TblAllianceLogos { get; set; }
+    public virtual DbSet<TblCounterPrepared> TblCounterPrepared { get; set; }
+    public virtual DbSet<TblCounterPublish> TblCounterPublish { get; set; }
+    public virtual DbSet<TblCounterPublishTarget> TblCounterPublishTargets { get; set; }
+    public virtual DbSet<TblCounterState> TblCounterStates { get; set; }
+    public virtual DbSet<TblCounterTemplate> TblCounterTemplates { get; set; }
+    public virtual DbSet<TblCounterTemplateAsset> TblCounterTemplateAssets { get; set; }
+    public virtual DbSet<TblCounterTemplateOutcome> TblCounterTemplateOutcomes { get; set; }
+    public virtual DbSet<TblCounterTemplateReplacement> TblCounterTemplateReplacements { get; set; }
+    public virtual DbSet<TblCounterTemplateText> TblCounterTemplateTexts { get; set; }
+    public virtual DbSet<TblDcsProvider> TblDcsProviders { get; set; }
+    public virtual DbSet<TblLogoRoleLibrary> TblLogoRoleLibraries { get; set; }
+    public virtual DbSet<TblTemplateSize> TblTemplateSizes { get; set; }
 
     public virtual DbSet<TblAsset> TblAssets { get; set; }
 
@@ -127,6 +143,12 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
 
     // Access Schedule DbSets
     public virtual DbSet<TblAccessSchedule> TblAccessSchedules { get; set; }
+
+    public virtual DbSet<TblActiveNode> TblActiveNodes { get; set; }
+    public virtual DbSet<TblBusinessRuleValue> TblBusinessRuleValues { get; set; }
+    public virtual DbSet<TblCuppsBannerDismissal> TblCuppsBannerDismissals { get; set; }
+    public virtual DbSet<TblCuppsLockout> TblCuppsLockouts { get; set; }
+    public virtual DbSet<TblCuppsSignInFailure> TblCuppsSignInFailures { get; set; }
 
     // Engage (Control Client) DbSets
     public virtual DbSet<TblControlClient> TblControlClients { get; set; }
@@ -290,6 +312,49 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
             entity.HasOne(d => d.Location).WithMany(p => p.TblAirlineLocations)
                 .OnDelete(DeleteBehavior.ClientSetNull)
                 .HasConstraintName("FK_tblAirlineLocation_tblLocation1");
+        });
+
+        modelBuilder.Entity<TblAirlineAccount>(entity =>
+        {
+            entity.HasKey(e => e.AirlineId);
+        });
+
+        modelBuilder.Entity<TblCounterTemplate>(entity =>
+        {
+            entity.HasKey(e => e.CounterTemplateId);
+        });
+
+        modelBuilder.Entity<TblCounterTemplateAsset>(entity =>
+        {
+            entity.HasOne(d => d.CounterTemplate).WithMany(p => p.Assets)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_tblCounterTemplateAsset_tblCounterTemplate");
+        });
+
+        modelBuilder.Entity<TblCounterTemplateOutcome>(entity =>
+        {
+            entity.HasOne(d => d.CounterTemplate).WithOne(p => p.Outcome)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_tblCounterTemplateOutcome_tblCounterTemplate");
+        });
+
+        modelBuilder.Entity<TblCounterTemplateReplacement>(entity =>
+        {
+            entity.HasOne(d => d.CounterTemplate).WithMany(p => p.Replacements)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_tblCounterTemplateReplacement_tblCounterTemplate");
+        });
+
+        modelBuilder.Entity<TblCounterTemplateText>(entity =>
+        {
+            entity.HasOne(d => d.CounterTemplate).WithMany(p => p.Texts)
+                .OnDelete(DeleteBehavior.ClientSetNull)
+                .HasConstraintName("FK_tblCounterTemplateText_tblCounterTemplate");
+        });
+
+        modelBuilder.Entity<TblTemplateSize>(entity =>
+        {
+            entity.HasKey(e => e.SizeKey);
         });
 
         modelBuilder.Entity<TblAsset>(entity =>

@@ -2,6 +2,7 @@
 @using DXSuite.Director.Services.Messaging
 @using DXSuite.Director.Services.Reports
 @inject ActiveMessages activeMessages
+@inject MessageAuthoring authoring
 @inject IJSRuntime JS
 
 @* The fixed Active Messages tab (FSD 1.1 MSG-18): every Activation that is active or scheduled, and on request the
@@ -64,6 +65,34 @@
                         <ActivationWhenCells When="row.When" Viewer="viewer" />
                         <div class="am-status"><span class="dx-status-dot @Dot(row.Status)"></span>@row.Status</div>
                         <div class="dx-cell-actions">
+                            @if (!row.IsOneOff && canAuthor)
+                            {
+                                <button id="am-edit-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenEditAsync(row.MessageId)">Edit</button>
+                            }
+                            @if (!row.IsOneOff)
+                            {
+                                <button id="am-schedule-@row.MessageActivationId" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenScheduleAsync(row.MessageId)">Schedule</button>
+                            }
+                            @if (!row.IsOneOff && canAuthor)
+                            {
+                                @if (confirmingRemoval == (row.MessageId, Removal.Retire))
+                                {
+                                    <span class="am-ask">Retire?</span>
+                                    <button id="am-confirm-retire-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(row.MessageId, Removal.Retire)">Retire</button>
+                                    <button id="am-keep-retire-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = null">Keep</button>
+                                }
+                                else if (confirmingRemoval == (row.MessageId, Removal.Delete))
+                                {
+                                    <span class="am-ask">Delete?</span>
+                                    <button id="am-confirm-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(row.MessageId, Removal.Delete)">Delete</button>
+                                    <button id="am-keep-delete-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = null">Keep</button>
+                                }
+                                else
+                                {
+                                    <button id="am-retire-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = (row.MessageId, Removal.Retire)">Retire</button>
+                                    <button id="am-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirmingRemoval = (row.MessageId, Removal.Delete)">Delete</button>
+                                }
+                            }
                             @if (row.CanCancel)
                             {
                                 if (confirming == row.MessageActivationId)
@@ -89,12 +118,21 @@
     </div>
 </div>
 
+<ManageMessageModal @ref="manageMessageModal" OnSaved="LoadAsync" />
+<MessageScheduleEditor @ref="messageScheduleEditor" OnClose="LoadAsync" />
+
 @code {
+    private enum Removal { Retire, Delete }
+
     private IReadOnlyList<ActiveMessageRow>? rows;
     private bool showOver;
     private string searchFilter = "";
     private int? confirming;
+    private (int MessageId, Removal Kind)? confirmingRemoval;
     private string? problem;
+    private bool canAuthor;
+    private ManageMessageModal? manageMessageModal;
+    private MessageScheduleEditor? messageScheduleEditor;
     private ReportTimeZone viewer = ReportTimeZone.Utc;
 
     private IEnumerable<ActiveMessageRow> Filtered
@@ -111,7 +149,11 @@
         }
     }
 
-    protected override Task OnInitializedAsync() => LoadAsync();
+    protected override async Task OnInitializedAsync()
+    {
+        canAuthor = await authoring.CanAuthorAsync();
+        await LoadAsync();
+    }
 
     // The browser's zone waits for the interactive render: a prerender has no browser to ask.
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -137,6 +179,25 @@
         {
             ActivationCancelOutcome.AlreadyOver => "That Activation had already ended or been cancelled.",
             ActivationCancelOutcome.NotAllowed => "You may not deactivate Messages.",
+            _ => null,
+        };
+        await LoadAsync();
+    }
+
+    private Task OpenEditAsync(int messageId) => manageMessageModal?.OpenAsync(messageId) ?? Task.CompletedTask;
+
+    private Task OpenScheduleAsync(int messageId) => messageScheduleEditor?.OpenAsync(messageId) ?? Task.CompletedTask;
+
+    private async Task RemoveAsync(int messageId, Removal kind)
+    {
+        confirmingRemoval = null;
+        var outcome = kind == Removal.Retire
+            ? await authoring.RetireAsync(messageId, default)
+            : await authoring.DeleteAsync(messageId, default);
+        problem = outcome switch
+        {
+            MessageRemovalOutcome.Busy => MessageAuthoring.CancelFirst,
+            MessageRemovalOutcome.Forbidden => "You may not retire or delete Messages.",
             _ => null,
         };
         await LoadAsync();

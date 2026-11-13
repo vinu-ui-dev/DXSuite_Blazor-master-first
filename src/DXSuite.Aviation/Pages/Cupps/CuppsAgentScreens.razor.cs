@@ -13,8 +13,12 @@ public partial class CuppsAgentScreens : IDisposable
     [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
 
     private Dictionary<string, Airline> liveAirlines = [];
+    private Dictionary<string, int> liveAirlineIds = [];
+    private Dictionary<string, Counter> liveCounters = [];
     private List<Alloc> liveAllocations = [];
     private List<Flight> liveFlights = [];
+    private List<Template> liveTemplates = [];
+    private List<Canned> liveApprovedMessages = [];
     private bool liveLoading;
     private bool liveLoadFailed;
     private bool liveAllocLoadFailed;
@@ -93,12 +97,14 @@ public partial class CuppsAgentScreens : IDisposable
     private List<Alloc> AllAllocs => Live ? liveAllocations : Allocations;
 
     private List<Counter> CounterList => Live
-        ? [.. liveAllocations.Select(a => a.CounterId).Distinct().Order().Select(id => new Counter(id, ["Counters", "All counters"]))]
+        ? [.. liveCounters.Values.OrderBy(c => c.Id)]
         : Counters;
 
-    private List<string> ZoneList => Live ? [] : [.. Zones];
+    private List<string> ZoneList => Live
+        ? [.. liveCounters.Values.SelectMany(c => c.Zones.Skip(1)).Distinct().Order()]
+        : [.. Zones];
 
-    private List<Canned> MessageList => CannedMessages;
+    private List<Canned> MessageList => Live ? liveApprovedMessages : CannedMessages;
 
     private Alloc? HolderNow(string id) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.From <= now && now < a.To);
     private Alloc? AllocFor(string? id, string code) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.Code == code && a.To > now);
@@ -113,23 +119,42 @@ public partial class CuppsAgentScreens : IDisposable
         : Airlines.TryGetValue(code, out var demo) ? demo
         : new Airline(code, code, "#555");
 
-    /// <summary>A counter's static zone/SSBD metadata, or null when it's a live counter id not in the demo
-    /// zone table.</summary>
-    private Counter? CounterInfo(string? id) => Live ? null : Counters.FirstOrDefault(c => c.Id == id);
+    /// <summary>A counter's zone/SSBD metadata from the active source (live map for RMU, static demo otherwise).</summary>
+    private Counter? CounterInfo(string? id)
+    {
+        if (id is null) return null;
+        return Live
+            ? liveCounters.TryGetValue(id, out var live) ? live : null
+            : Counters.FirstOrDefault(c => c.Id == id);
+    }
 
-    private List<Template> Usable() =>
-        Templates.Concat(Many.Take(many > 0 ? many - 8 : 0))
-            .Where(t => t.Scope == "airport" || t.Scope == MyAirline).ToList();
+    private List<Template> Usable()
+    {
+        var source = Live
+            ? liveTemplates
+            : Templates.Concat(Many.Take(many > 0 ? many - 8 : 0)).ToList();
+        return source.Where(t => t.Scope == "airport" || t.Scope == MyAirline).ToList();
+    }
 
     /// <summary>Another airline's view swaps the operating carrier so the table reads as its own flights.</summary>
-    private List<Flight> NextFlights(int n) => Live ? [.. liveFlights.Where(f => f.Sched > now && OperatesOrShares(f, MyAirline)).Take(n)] : Flights.Where(f => f.Sched > now).Take(n).Select(f =>
+    private List<Flight> NextFlights(int n)
     {
-        var c = MyAirline;
-        if (c == "WS") return f;
-        var pt = Partners.GetValueOrDefault(c) ?? [];
-        var shares = f.Carriers.Skip(1).Select(x => pt.TryGetValue(x.Airline, out var p) ? (p.Name, p.Code + x.No[2..]) : x);
-        return f with { Carriers = [(AirlineInfo(c).Name, f.Carriers[0].No.Replace("WS", c)), .. shares] };
-    }).ToList();
+        if (Live)
+        {
+            var upcoming = liveFlights.Where(f => f.Sched > now).ToList();
+            var mine = upcoming.Where(f => OperatesOrShares(f, MyAirline)).Take(n).ToList();
+            return mine.Count > 0 ? mine : upcoming.Take(n).ToList();
+        }
+
+        return Flights.Where(f => f.Sched > now).Take(n).Select(f =>
+        {
+            var c = MyAirline;
+            if (c == "WS") return f;
+            var pt = Partners.GetValueOrDefault(c) ?? [];
+            var shares = f.Carriers.Skip(1).Select(x => pt.TryGetValue(x.Airline, out var p) ? (p.Name, p.Code + x.No[2..]) : x);
+            return f with { Carriers = [(AirlineInfo(c).Name, f.Carriers[0].No.Replace("WS", c)), .. shares] };
+        }).ToList();
+    }
 
     private static bool OperatesOrShares(Flight f, string code) =>
         f.Carriers.Any(c => c.No.Length > code.Length && c.No.StartsWith(code, StringComparison.OrdinalIgnoreCase) && char.IsDigit(c.No[code.Length]));
@@ -194,8 +219,11 @@ public partial class CuppsAgentScreens : IDisposable
         }
     }
 
-    private static List<string> MessagesOf(CounterSetup s) =>
-        [.. s.Msgs.Select(MsgText), .. (s.Text != "" ? new[] { s.Text } : [])];
+    private List<string> MessagesOf(CounterSetup s)
+    {
+        var byId = MessageList.ToDictionary(m => m.Id, m => m, StringComparer.OrdinalIgnoreCase);
+        return [.. s.Msgs.Select(id => byId.TryGetValue(id, out var msg) ? msg.En : id), .. (s.Text != "" ? new[] { s.Text } : [])];
+    }
 
     private string Cycle(IReadOnlyList<string> seq) => seq.Count == 0 ? "" : seq[tick % seq.Count];
 
@@ -212,7 +240,7 @@ public partial class CuppsAgentScreens : IDisposable
         scenario = key; screen = "login"; now = Scenarios[key].Now; acting = null; rmuAirline = null; rmuNotice = null;
         search = ""; message = null; endedReason = null; published = Live ? [] : SeedPublished(); coreDown = false; draft = new();
         deviation = true;
-        liveAirlines = []; liveAllocations = []; liveFlights = []; liveLoading = false; liveLoadFailed = false;
+        liveAirlines = []; liveAirlineIds = []; liveCounters = []; liveAllocations = []; liveFlights = []; liveTemplates = []; liveApprovedMessages = []; liveLoading = false; liveLoadFailed = false;
     }
 
     private async Task SignIn()
@@ -225,7 +253,7 @@ public partial class CuppsAgentScreens : IDisposable
         else EnterApp();
     }
 
-    /// <summary>Loads the RMU picker's airline grid from CoreAPI and its counter grid from
+    /// <summary>Loads the RMU picker's airline grid from Director's CUPPS airlines API and its counter grid from
     /// <see cref="CuppsLiveDataProvider"/>, replacing <see cref="now"/> with the real current time so live
     /// allocations filter correctly. Demo scenarios never call this, so they're unaffected. The three sources
     /// fail independently — e.g. a missing counter-allocation table shouldn't hide an airline list that loaded
@@ -239,7 +267,11 @@ public partial class CuppsAgentScreens : IDisposable
 
         try
         {
-            liveAirlines = (await LiveData.GetOperatingAirlinesAsync()).ToDictionary(a => a.Code);
+            var accounts = await LiveData.GetOperatingAirlineAccountsAsync();
+            liveAirlines = accounts.ToDictionary(a => a.Airline.Code, a => a.Airline, StringComparer.OrdinalIgnoreCase);
+            liveAirlineIds = accounts
+                .GroupBy(a => a.Airline.Code, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(g => g.Key, g => g.First().AirlineId, StringComparer.OrdinalIgnoreCase);
         }
         catch (Exception)
         {
@@ -252,11 +284,22 @@ public partial class CuppsAgentScreens : IDisposable
             liveAllocations = [.. allocations];
             now = nowMinutes;
             if (UseDemoAllocations && liveAllocations.Count == 0) liveAllocations = BuildDemoAllocations();
+            BuildLiveCounterMap();
         }
         catch (Exception)
         {
-            liveAllocations = [];
             liveAllocLoadFailed = true;
+            if (UseDemoAllocations)
+            {
+                liveAllocations = BuildDemoAllocations();
+                BuildLiveCounterMap();
+                liveAllocLoadFailed = false;
+            }
+            else
+            {
+                liveAllocations = [];
+                liveCounters = [];
+            }
         }
 
         try
@@ -277,21 +320,46 @@ public partial class CuppsAgentScreens : IDisposable
     // Demo-only: set to false (and delete BuildDemoAllocations) once real counter allocations exist.
     private const bool UseDemoAllocations = true;
 
-    /// <summary>Demo-only: spreads counters A1-B5 across the first airlines from the feed, with the next one
-    /// allocated later today, centred on the current time. Used only when the allocation table is empty.</summary>
+    /// <summary>Demo-only fallback: gives each listed airline one active counter so step 1 and step 2 stay
+    /// usable when live allocation data is unavailable.</summary>
     private List<Alloc> BuildDemoAllocations()
     {
-        string[] counters = ["A1", "A2", "A3", "A4", "A5", "A6", "A7", "B1", "B2", "B3", "B4", "B5"];
-        int[] perAirline = [3, 2, 2, 1, 1, 1, 1, 1];
         var airlines = liveAirlines.Keys.Order().ToList();
         var result = new List<Alloc>();
-        var c = 0;
-        for (var i = 0; i < airlines.Count && i < perAirline.Length; i++)
-            for (var k = 0; k < perAirline[i] && c < counters.Length; k++, c++)
-                result.Add(new Alloc(counters[c], airlines[i], Math.Max(0, now - 120), Math.Min(1440, now + 240), i % 2 == 0 ? "Common" : "Dedicated"));
-        if (airlines.Count > perAirline.Length)
-            result.Add(new Alloc("B6", airlines[perAirline.Length], Math.Min(1439, now + 90), Math.Min(1440, now + 360), "Common"));
+        for (var i = 0; i < airlines.Count; i++)
+        {
+            var counter = $"G1-{i + 1}";
+            result.Add(new Alloc(counter, airlines[i], Math.Max(0, now - 120), Math.Min(1440, now + 240), "Dedicated"));
+        }
         return result;
+    }
+
+    private void BuildLiveCounterMap()
+    {
+        liveCounters = liveAllocations
+            .Select(a => a.CounterId)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(id => id)
+            .ToDictionary(
+                id => id,
+                id => new Counter(id, InferZones(id)),
+                StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static string[] InferZones(string counterId)
+    {
+        var parts = counterId.Split('-', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (parts.Length != 2)
+            return ["Counters", "All counters"];
+
+        var aisle = parts[0].ToUpperInvariant();
+        var terminal = aisle.StartsWith("C", StringComparison.OrdinalIgnoreCase) ? "Terminal 1" : "Terminal 3";
+        var zones = new List<string> { terminal, $"{terminal.Replace("Terminal ", "T")} Aisle {aisle}" };
+
+        if (aisle == "G2" && int.TryParse(parts[1], out var n) && n >= 7)
+            zones.Add("T3 SSBDs");
+
+        return [.. zones];
     }
 
     /// <summary>Demo-only: pre-opens a few of the demo counters so a manager walkthrough doesn't need a live
@@ -306,18 +374,18 @@ public partial class CuppsAgentScreens : IDisposable
             published[counterId] = new CounterSetup { Open = true, Page = page, Dest = dest, Msgs = msgs ?? [], SentAt = now };
         }
 
-        Open("A1", "t6");
-        Open("A2", "t5", "Toronto");
-        Open("A3", "t1");
-        Open("A4", "t3", msgs: ["m2"]);
-        Open("A5", "t2");
-        Open("A6", "t1");
-        Open("A7", "t5");
-        Open("B1", "t3");
-        Open("B2", "t2");
-        Open("B3", "t6", "Toronto");
-        Open("B4", "t1");
-        Open("B5", "t5");
+        Open("G1-1", "t6");
+        Open("G1-2", "t5", "Toronto");
+        Open("G2-1", "t1");
+        Open("G2-2", "t3", msgs: ["m2"]);
+        Open("G2-3", "t2");
+        Open("G2-4", "t1");
+        Open("G2-7", "t5");
+        Open("G2-8", "t3");
+        Open("H1-1", "t2");
+        Open("H1-2", "t6", "Toronto");
+        Open("C1-1", "t1");
+        Open("C1-2", "t5");
     }
 
     private void SignOut()
@@ -430,9 +498,41 @@ public partial class CuppsAgentScreens : IDisposable
         screen = "rmu-pick"; rmuAirline = acting?.Airline; acting = null; rmuNotice = null;
     }
 
-    private void PickRmuCounter(string id)
+    private async Task PickRmuCounter(string id)
     {
-        acting = (rmuAirline!, id); rmuNotice = null; EnterApp();
+        var airline = rmuAirline!;
+        acting = (airline, id);
+        rmuNotice = null;
+
+        if (liveAirlineIds.TryGetValue(airline, out var airlineId))
+        {
+            try
+            {
+                var (templates, pickerTab) = await LiveData.GetPageOptionsAsync(airlineId, airline);
+                liveTemplates = [.. templates];
+                if (!string.IsNullOrWhiteSpace(pickerTab)) tabPref = pickerTab;
+            }
+            catch
+            {
+                liveTemplates = [];
+            }
+
+            try
+            {
+                liveApprovedMessages = [.. await LiveData.GetApprovedMessagesAsync(airlineId)];
+            }
+            catch
+            {
+                liveApprovedMessages = [];
+            }
+        }
+        else
+        {
+            liveTemplates = [];
+            liveApprovedMessages = [];
+        }
+
+        EnterApp();
     }
 
     private void StopIdle()
