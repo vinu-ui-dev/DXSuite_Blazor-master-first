@@ -524,10 +524,9 @@
 
     // Top-menu entries hidden for every user by default (Pulse, Style Guide, SLC, Sentinel). The pages
     // still exist; set "Navigation:ShowAllModules": true in appsettings to bring the menu entries back.
-    private static readonly string[] HiddenNavPrefixes = ["/pulse", "/style-guide", "/slc", "/sentinel", "/automation"];
-
     private static bool IsHiddenByDefault(NavItem n) =>
-        HiddenNavPrefixes.Any(p => n.Href.StartsWith(p, StringComparison.OrdinalIgnoreCase));
+        new[] { "/pulse", "/style-guide", "/slc", "/sentinel", "/automation" }
+            .Any(p => n.Href.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
     private const string AirlineAgentRoleName = "Airline Agent";
     private const string CuppsHref = "/cupps-agent-screens";
