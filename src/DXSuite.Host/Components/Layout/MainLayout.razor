@@ -505,12 +505,14 @@
         // (platform identity flags). TenantFeatureFlags is populated from
         // tblTenant.FeaturesJson (hosted) or appsettings Tenants:{id}:Features (standalone).
         var tenantFeatures = tenantContext.Features;
+        var showAllModules = appConfig.GetValue<bool>("Navigation:ShowAllModules");
         navGroups = availableModules
             .SelectMany(m => m.GetNavItems())
             .Where(n => n.Feature == null ||
                         typeof(TenantFeatureFlags).GetProperty(n.Feature)?.GetValue(tenantFeatures) is true)
             .Where(n => n.Permission == null || perms == null || perms.Contains(n.Permission))
             .Where(n => n.IsVisible == null || n.IsVisible(sessionState))
+            .Where(n => showAllModules || !IsHiddenByDefault(n))
             .Where(n => !isAirlineAgent || string.Equals(n.Href, CuppsHref, StringComparison.OrdinalIgnoreCase))
             .OrderBy(n => n.Order)
             .GroupBy(n => n.Group)
@@ -519,6 +521,13 @@
         this.isAirlineAgent = isAirlineAgent && IsAuthorized;
         RedirectAirlineAgentToCupps();
     }
+
+    // Top-menu entries hidden for every user by default (Pulse, Style Guide, SLC, Sentinel). The pages
+    // still exist; set "Navigation:ShowAllModules": true in appsettings to bring the menu entries back.
+    private static readonly string[] HiddenNavPrefixes = ["/pulse", "/style-guide", "/slc", "/sentinel", "/automation"];
+
+    private static bool IsHiddenByDefault(NavItem n) =>
+        HiddenNavPrefixes.Any(p => n.Href.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
     private const string AirlineAgentRoleName = "Airline Agent";
     private const string CuppsHref = "/cupps-agent-screens";
