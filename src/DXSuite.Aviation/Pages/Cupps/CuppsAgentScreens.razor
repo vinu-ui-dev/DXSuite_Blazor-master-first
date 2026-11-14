@@ -151,6 +151,25 @@
     }
 
     // ---------- Shell pieces: bare CUPPS layout, as in Diagrams 31 and 32 ----------
+    /// <summary>Bare CUPPS top bar: brand on the left, and once signed in, the current user, their
+    /// airline mark, and a Sign Out button on the right. Sign Out is always enabled — there's no
+    /// scenario where a signed-in agent shouldn't be able to end their session.</summary>
+    private RenderFragment Navbar()
+    {
+        var signedIn = screen is "app" or "rmu-pick";
+        return @<div class="dx-navbar">
+            <div class="dx-navbar-left"><a class="dx-navbar-brand"><img src="images/branding/header.png" alt="DXSuite" style="height:40px;"></a><span class="cp-prod">CUPPS</span></div>
+            <div class="dx-navbar-user">
+                @if (signedIn)
+                {
+                    <span>@Sc.Who</span>
+                    @if (InApp) { @Mark(MyAirline) }
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="SignOut">Sign out</button>
+                }
+            </div>
+        </div>;
+    }
+
     private RenderFragment CounterBand()
     {
         var id = Station!;
@@ -596,6 +615,7 @@
         var preview = InApp && tab == "mine" && IsDirty();
         var p = preview ? DraftPreview() : Pub(Station);
         return @<text>
+            @Navbar()
             @CounterBand()
             <div class="cp-wrap">
                 @Alerts()
@@ -799,6 +819,7 @@
             </text>;
         }
         return @<text>
+            @Navbar()
             <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGN IN FOR AN AIRLINE</h2></div></section>
             <div class="dx-page-body" style="padding:20px 30px 40px;">
                 @if (rmuNotice is not null)
@@ -815,6 +836,7 @@
     /// Offers a button that re-enters the current scenario from its sign-in screen.
     /// </summary>
     private RenderFragment EndedScreen() => @<text>
+        @Navbar()
         <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGNED OUT</h2></div></section>
         <div class="dx-page-body" style="padding:30px;">
             <div class="dx-card" style="max-width:560px;">

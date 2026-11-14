@@ -1,4 +1,5 @@
 using DXSuite.Aviation.Services.Cupps;
+using DXSuite.Shared.Authorization;
 using Microsoft.AspNetCore.Components;
 using static DXSuite.Aviation.Pages.Cupps.CuppsData;
 
@@ -11,6 +12,11 @@ namespace DXSuite.Aviation.Pages.Cupps;
 public partial class CuppsAgentScreens : IDisposable
 {
     [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
+    [Inject] private ISessionState SessionState { get; set; } = null!;
+
+    /// <summary>Signed-in users holding this role skip the RMU airline/counter picker entirely and land
+    /// straight on their counter's terminal screen, the same as the "agent" demo scenario.</summary>
+    private const string AirlineAgentRoleName = "Director Airline_Agent";
 
     private Dictionary<string, Airline> liveAirlines = [];
     private Dictionary<string, int> liveAirlineIds = [];
@@ -66,7 +72,12 @@ public partial class CuppsAgentScreens : IDisposable
 
     protected override void OnInitialized()
     {
-        SetScenario(StartScenario);
+        // A real "Director Airline_Agent" user already has a fixed counter, so there's nothing for them
+        // to pick — skip straight to the terminal screen instead of the RMU airline/counter picker.
+        var effectiveScenario = string.Equals(SessionState.ActualRoleName, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase)
+            ? "agent"
+            : StartScenario;
+        SetScenario(effectiveScenario);
         // Counter agents land straight in the app; RMU staff go through sign-in and the airline/counter picker.
         if (Sc.Kind != "Individual") EnterApp();
     }
