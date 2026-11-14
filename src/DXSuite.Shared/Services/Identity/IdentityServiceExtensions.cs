@@ -26,6 +26,7 @@ public static class IdentityServiceExtensions
         services.AddSingleton<ILocalAccountService, LocalAccountService>();
         services.AddSingleton<ILdapCredentialService, LdapCredentialService>();
         services.AddSingleton<NotificationBroadcastService>();
+        services.AddSingleton<IInternalCallerTokenService, InternalCallerTokenService>();
         services.AddSingleton<LocationAccessBroadcastService>();
         // Scoped: chrome suppression is per circuit, and the query-string override has to survive
         // in-app navigation within that circuit.

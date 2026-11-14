@@ -1,3 +1,4 @@
+using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -5,16 +6,24 @@ using Microsoft.EntityFrameworkCore;
 
 namespace DXSuite.Director.Controllers;
 
+/// <summary>
+/// Still [AllowAnonymous] for the same reason as <see cref="CuppsAirlinesController"/> — this app's own
+/// CUPPS page loads this endpoint via an internal server-to-self HTTP call that carries no auth cookie.
+/// When a real authenticated session IS present (e.g. a supervisor calling this URL directly with a
+/// different airlineId), <see cref="IAirlineAccessScope"/> rejects access outside their own airline.
+/// </summary>
 [Route("api/counter-templates")]
 [ApiController]
 [AllowAnonymous]
 public sealed class CounterTemplatesController : ControllerBase
 {
     private readonly IDirectorDBContext _db;
+    private readonly IAirlineAccessScope _accessScope;
 
-    public CounterTemplatesController(IDirectorDBContext db)
+    public CounterTemplatesController(IDirectorDBContext db, IAirlineAccessScope accessScope)
     {
         _db = db;
+        _accessScope = accessScope;
     }
 
     [HttpGet("page-options")]
@@ -22,6 +31,10 @@ public sealed class CounterTemplatesController : ControllerBase
     {
         if (airlineId <= 0)
             return BadRequest(new { message = "airlineId must be a positive integer." });
+
+        var allowedAirlineIds = await _accessScope.GetAllowedAirlineIdsAsync(ct);
+        if (allowedAirlineIds is not null && !allowedAirlineIds.Contains(airlineId))
+            return Forbid();
 
         var airline = await _db.TblAirlineAccounts
             .AsNoTracking()

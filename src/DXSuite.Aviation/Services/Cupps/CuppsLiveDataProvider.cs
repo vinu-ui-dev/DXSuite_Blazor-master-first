@@ -4,6 +4,8 @@ using DXSuite.Aviation.Services.CounterAllocation;
 using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Connectors.Services.CoreApi;
 using DXSuite.Connectors.Services.CoreApi.Models;
+using DXSuite.Shared.Authorization;
+using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Components;
 
 namespace DXSuite.Aviation.Services.Cupps;
@@ -17,7 +19,9 @@ public sealed class CuppsLiveDataProvider(
     IFlightListClock flightListClock,
     CounterAllocationService counterAllocationService,
     IHttpClientFactory httpClientFactory,
-    NavigationManager navigationManager)
+    NavigationManager navigationManager,
+    ISessionState sessionState,
+    IInternalCallerTokenService tokenService)
 {
     public async Task<IReadOnlyList<OperatingAirlineAccount>> GetOperatingAirlineAccountsAsync(CancellationToken ct = default)
     {
@@ -71,6 +75,59 @@ public sealed class CuppsLiveDataProvider(
             _ => null
         };
         return (templates, pickerTab);
+    }
+
+    /// <summary>Persists a counter publish (CounterAgentScreens' Publish/SendDraft/TileOpen-open actions)
+    /// to Director's real counter-publish schema, scoped server-side to the signed-in user's own airline
+    /// if they're an Airline Supervisor. Returns false with no persistence if nobody is signed in, or if
+    /// the server rejects the airline as outside the caller's scope.</summary>
+    public async Task<(bool Success, string? Error)> PublishCounterAsync(
+        string counterId, int airlineId, string? counterTemplateId, string? counterTemplateKind,
+        string? counterTemplateName, string? destination, bool? sunflower, CancellationToken ct = default)
+    {
+        if (sessionState.UserName is not { } username) return (false, "Not signed in.");
+
+        var client = AuthenticatedClient(username);
+        var uri = new Uri(new Uri(navigationManager.BaseUri), "api/counter-publish/publish");
+        var body = new
+        {
+            counterId,
+            airlineId,
+            counterTemplateId = int.TryParse(counterTemplateId, out var id) ? id : (int?)null,
+            counterTemplateKind,
+            counterTemplateName,
+            destination,
+            sunflower,
+            pageShowSeconds = (int?)null,
+        };
+
+        var response = await client.PostAsJsonAsync(uri, body, ct);
+        return response.IsSuccessStatusCode
+            ? (true, null)
+            : (false, await response.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>Persists a counter close (CounterAgentScreens' CloseCounter/TileOpen-close actions).</summary>
+    public async Task<(bool Success, string? Error)> CloseCounterAsync(string counterId, CancellationToken ct = default)
+    {
+        if (sessionState.UserName is not { } username) return (false, "Not signed in.");
+
+        var client = AuthenticatedClient(username);
+        var uri = new Uri(new Uri(navigationManager.BaseUri), "api/counter-publish/close");
+        var response = await client.PostAsJsonAsync(uri, new { counterId }, ct);
+        return response.IsSuccessStatusCode
+            ? (true, null)
+            : (false, await response.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>An internal loopback HttpClient carrying a freshly-minted, short-lived token asserting
+    /// the circuit's own already-authenticated username — see IInternalCallerTokenService. Only needed
+    /// for writes; the plain GET calls above stay anonymous/best-effort scoped.</summary>
+    private HttpClient AuthenticatedClient(string username)
+    {
+        var client = httpClientFactory.CreateClient();
+        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username));
+        return client;
     }
 
     public async Task<IReadOnlyList<Canned>> GetApprovedMessagesAsync(int airlineId, string languageCode = "en", CancellationToken ct = default)

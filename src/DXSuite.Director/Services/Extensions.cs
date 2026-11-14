@@ -169,6 +169,8 @@ public static class Extensions
         // Floor Plan and StatusSelector
         services.AddSingleton<ScheduleEvaluator>();
         services.AddSingleton<IFloorPlanService, FloorPlanService>();
+        services.AddScoped<IAirlineAccessScope, AirlineAccessScope>();
+        services.AddScoped<ICounterPublishService, CounterPublishService>();
         services.AddScoped<IStatusSelectorService, StatusSelectorService>();
         services.AddScoped<IPublicationInvalidator, PublicationInvalidator>();
         services.AddScoped<IDisplayOverrideService, DisplayOverrideService>();

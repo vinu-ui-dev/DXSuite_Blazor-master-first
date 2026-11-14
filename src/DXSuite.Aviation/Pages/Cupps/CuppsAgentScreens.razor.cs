@@ -1,5 +1,7 @@
 using DXSuite.Aviation.Services.Cupps;
 using DXSuite.Shared.Authorization;
+using DXSuite.Shared.Entities.Identity;
+using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Components;
 using static DXSuite.Aviation.Pages.Cupps.CuppsData;
 
@@ -13,10 +15,15 @@ public partial class CuppsAgentScreens : IDisposable
 {
     [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
     [Inject] private ISessionState SessionState { get; set; } = null!;
+    [Inject] private IUserGroupService UserGroupService { get; set; } = null!;
 
     /// <summary>Signed-in users holding this role skip the RMU airline/counter picker entirely and land
     /// straight on their counter's terminal screen, the same as the "agent" demo scenario.</summary>
     private const string AirlineAgentRoleName = "Director Airline_Agent";
+
+    /// <summary>Signed-in users holding this role see only their own airline in the RMU picker's airline
+    /// grid, matching the same group-name-equals-airline-name rule Configuration > Airlines already uses.</summary>
+    private const string AirlineSupervisorRoleName = "Airline Supervisor";
 
     private Dictionary<string, Airline> liveAirlines = [];
     private Dictionary<string, int> liveAirlineIds = [];
@@ -283,6 +290,7 @@ public partial class CuppsAgentScreens : IDisposable
             liveAirlineIds = accounts
                 .GroupBy(a => a.Airline.Code, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(g => g.Key, g => g.First().AirlineId, StringComparer.OrdinalIgnoreCase);
+            await ScopeToSupervisorAirlineAsync();
         }
         catch (Exception)
         {
@@ -326,6 +334,43 @@ public partial class CuppsAgentScreens : IDisposable
 
         liveLoading = false;
         StateHasChanged();
+    }
+
+    /// <summary>Narrows the RMU picker's airline grid to just the caller's own airline when they're a
+    /// signed-in Airline Supervisor — same group-name-equals-airline-name rule AirlinesTab.razor already
+    /// uses for Configuration > Airlines, so a supervisor's CUPPS access always lines up with what that
+    /// tab already shows them. Every other role keeps seeing the full airline list, unchanged. If the
+    /// supervisor's group doesn't match any onboarded airline, the full list is left in place rather than
+    /// showing an empty, unexplained picker — the actual write-side enforcement (PublishCounterAsync /
+    /// CloseCounterAsync) is server-side and doesn't depend on this filter being applied.</summary>
+    private async Task ScopeToSupervisorAirlineAsync()
+    {
+        if (!string.Equals(SessionState.ActualRoleName, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase))
+            return;
+        if (SessionState.User is null || liveAirlines.Count == 0)
+            return;
+
+        List<TblUserGroup> myGroups;
+        try
+        {
+            myGroups = await UserGroupService.GetGroupsForUserAsync(SessionState.User.UserId);
+        }
+        catch
+        {
+            return;
+        }
+
+        var myGroupNames = myGroups.Select(g => g.GroupName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var mine = liveAirlines
+            .Where(kv => myGroupNames.Contains(kv.Value.Name))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
+        if (mine.Count == 0)
+            return;
+
+        liveAirlines = mine;
+        liveAirlineIds = liveAirlineIds
+            .Where(kv => mine.ContainsKey(kv.Key))
+            .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
     }
 
     // Demo-only: set to false (and delete BuildDemoAllocations) once real counter allocations exist.
@@ -427,7 +472,12 @@ public partial class CuppsAgentScreens : IDisposable
         published[Station!] = s;
     }
 
-    private void Publish()
+    /// <summary>The caller's own airline id for the live (RMU/scoped-supervisor) flow — null for every
+    /// demo scenario, which never persists. Resolved from the real Director airline list, not the demo
+    /// dictionary, so this only ever matches a real onboarded airline.</summary>
+    private int? MyAirlineId => Live && liveAirlineIds.TryGetValue(MyAirline, out var id) ? id : null;
+
+    private async Task Publish()
     {
         if (IsWaiting)
         {
@@ -439,15 +489,44 @@ public partial class CuppsAgentScreens : IDisposable
         var saved = draft.Text.Trim() != "" && draft.SaveText;
         SendDraft(draft);
         draft.SaveText = false;
+        await PersistPublishAsync();
         ShowToast($"Published to {Station}.{(saved ? " The typed Message also went for approval." : "")}");
     }
 
-    private void CloseCounter()
+    /// <summary>Writes the just-published draft through to Director's real counter-publish tables when
+    /// this is the live flow (RMU staff or an Airline Supervisor/Agent reached through it) — the demo
+    /// scenarios keep being purely in-memory, same as before this existed. The screen already reflects
+    /// the publish via <see cref="published"/> regardless of whether this succeeds; a failure here only
+    /// means Director doesn't have a durable record of it, surfaced as a toast rather than blocking the
+    /// screen the agent/supervisor is looking at.</summary>
+    private async Task PersistPublishAsync()
+    {
+        if (!Live || Station is null || MyAirlineId is not { } airlineId) return;
+
+        var tpl = Usable().FirstOrDefault(t => t.Id == draft.Page);
+        var (ok, error) = await LiveData.PublishCounterAsync(
+            Station, airlineId, draft.Page, tpl?.Kind, tpl?.En, draft.Dest, draft.Sunflower);
+        if (!ok)
+            ShowToast($"{Station} is updated here but Director wasn't saved: {error ?? "unknown error"}.");
+    }
+
+    private async Task CloseCounter()
     {
         published[Station!] = CounterSetup.Closed();
         draft = FreshDraft();
         confirmClose = false;
-        ShowToast($"Closed {Station}.");
+
+        if (Live && Station is not null)
+        {
+            var (ok, error) = await LiveData.CloseCounterAsync(Station);
+            ShowToast(ok
+                ? $"Closed {Station}."
+                : $"{Station} is closed here but Director wasn't saved: {error ?? "unknown error"}.");
+        }
+        else
+        {
+            ShowToast($"Closed {Station}.");
+        }
     }
 
     private void ToggleSel(string id)
