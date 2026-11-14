@@ -81,7 +81,9 @@ public partial class CuppsAgentScreens : IDisposable
     {
         // A real "Director Airline_Agent" user already has a fixed counter, so there's nothing for them
         // to pick — skip straight to the terminal screen instead of the RMU airline/counter picker.
-        var effectiveScenario = string.Equals(SessionState.ActualRoleName, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase)
+        var role = SessionState.ActualRoleName;
+        var effectiveScenario = string.Equals(role, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase)
+                                || string.Equals(role, "Airline Agent", StringComparison.OrdinalIgnoreCase)
             ? "agent"
             : StartScenario;
         SetScenario(effectiveScenario);
