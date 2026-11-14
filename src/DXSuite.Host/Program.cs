@@ -927,6 +927,25 @@ if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration)
         // widen Contributor's defaults for everyone, create a narrow custom role — exactly the
         // mechanism Settings > Roles already supports (TblUserRole.BaseRoleId) — that behaves
         // like Contributor everywhere else but additionally sees the Airlines config tab.
+        // Custom roles are created in a fixed order so a fresh DB gets the same ids as the product DB:
+        // 5 Airline Agent, 6 Airline Supervisor, 7 RMU, 8 RMU Supervisor. Each is added only if its
+        // name is missing, so existing databases are left untouched.
+        async Task EnsureCustomRoleAsync(string roleName, string description)
+        {
+            if (await usersDb.TblUserRoles.AnyAsync(r => r.RoleName == roleName)) return;
+            usersDb.TblUserRoles.Add(new TblUserRole
+            {
+                RoleName = roleName,
+                RoleDescription = description,
+                BaseRoleId = (int)DXSuite.Shared.Authorization.Roles.Role.Contributor,
+                IsGlobal = true,
+                IsSystem = false,
+            });
+            await usersDb.SaveChangesAsync();
+        }
+
+        await EnsureCustomRoleAsync("Airline Agent", "Airline agent: CUPPS access, scoped like Contributor otherwise.");
+
         var supervisorRole = await usersDb.TblUserRoles.FirstOrDefaultAsync(r => r.RoleName == "Airline Supervisor");
         if (supervisorRole is null)
         {
@@ -947,6 +966,9 @@ if (DXSuite.Shared.Services.LocalSqliteProvider.IsEnabled(builder.Configuration)
             });
             await usersDb.SaveChangesAsync();
         }
+
+        await EnsureCustomRoleAsync("RMU", "RMU staff, scoped like Contributor.");
+        await EnsureCustomRoleAsync("RMU Supervisor", "RMU supervisor, scoped like Contributor.");
 
         await EnsureDemoUserAsync("ravi.singh@local.test", "GtaaAdmin#2026", (int)DXSuite.Shared.Authorization.Roles.Role.Admin, "GTAA Admin");
         await EnsureDemoUserAsync("jordan.smith@local.test", "RmuStaff#2026", (int)DXSuite.Shared.Authorization.Roles.Role.Contributor, "RMU");

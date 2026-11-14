@@ -102,7 +102,7 @@
                             {
                                 <div class="dx-profile-dropdown-header">
                                     <span class="dx-profile-dropdown-name">@(sessionState.User.FriendlyName ?? sessionState.UserName)</span>
-                                    <span class="dx-profile-dropdown-role">@FormatRoleName(sessionState.RoleEnum)</span>
+                                    <span class="dx-profile-dropdown-role">@(!string.IsNullOrWhiteSpace(sessionState.ActualRoleName) ? sessionState.ActualRoleName : FormatRoleName(sessionState.RoleEnum))</span>
                                 </div>
                                 <div class="dx-dropdown-divider"></div>
                             }
