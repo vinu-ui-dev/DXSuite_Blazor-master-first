@@ -175,7 +175,11 @@
                DXSuite page title sitting above whatever the page draws. *@
             <CascadingValue Value="kioskMode.IsActive" Name="KioskMode">
                 <div class="dx-page-body-wrap @(kioskMode.IsActive ? "dx-kiosk" : "")">
-                    @Body
+                    @* An Airline Agent never gets another page's content, even by typing its URL. *@
+                    @if (!isAirlineAgent || IsCuppsPath())
+                    {
+                        @Body
+                    }
                 </div>
             </CascadingValue>
 
@@ -488,9 +492,11 @@
         // Menu entries show when the user's role is granted at least one tab behind them
         // (the real Admin role bypasses permission checks and sees everything).
         var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
-        showSettings = availableModules.SelectMany(m => m.GetSettingsTabs())
+        // Airline Agents only work in the CUPPS terminal: no other module links, Settings or Configuration.
+        var isAirlineAgent = string.Equals(sessionState.ActualRoleName, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase);
+        showSettings = !isAirlineAgent && availableModules.SelectMany(m => m.GetSettingsTabs())
             .Any(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
-        showConfig = availableModules.SelectMany(m => m.GetConfigTabs())
+        showConfig = !isAirlineAgent && availableModules.SelectMany(m => m.GetConfigTabs())
             .Any(t => perms == null || perms.Contains(PermissionKeys.ForConfigTab(t.Key)));
 
         // Build navigation groups from module nav items, filtering out items gated by
@@ -505,9 +511,31 @@
                         typeof(TenantFeatureFlags).GetProperty(n.Feature)?.GetValue(tenantFeatures) is true)
             .Where(n => n.Permission == null || perms == null || perms.Contains(n.Permission))
             .Where(n => n.IsVisible == null || n.IsVisible(sessionState))
+            .Where(n => !isAirlineAgent || string.Equals(n.Href, CuppsHref, StringComparison.OrdinalIgnoreCase))
             .OrderBy(n => n.Order)
             .GroupBy(n => n.Group)
             .ToArray();
+
+        this.isAirlineAgent = isAirlineAgent && IsAuthorized;
+        RedirectAirlineAgentToCupps();
+    }
+
+    private const string AirlineAgentRoleName = "Airline Agent";
+    private const string CuppsHref = "/cupps-agent-screens";
+    private bool isAirlineAgent;
+
+    private bool IsCuppsPath()
+    {
+        var path = "/" + Navigation.ToBaseRelativePath(Navigation.Uri).Split('?', '#')[0].Trim('/');
+        return path.Equals(CuppsHref, StringComparison.OrdinalIgnoreCase)
+            || path.StartsWith(CuppsHref + "/", StringComparison.OrdinalIgnoreCase);
+    }
+
+    // Airline Agents may only use the CUPPS terminal: any other page (home after login, or a typed URL) goes back to it.
+    private void RedirectAirlineAgentToCupps()
+    {
+        if (isAirlineAgent && !IsCuppsPath())
+            Navigation.NavigateTo(CuppsHref, replace: true);
     }
 
     private void OnLocationAccessBroadcast(string tenantId, IReadOnlyCollection<int> userIds)
@@ -540,7 +568,12 @@
         }
     }
 
-    private void OnNavigationChanged(object? sender, LocationChangedEventArgs e) => ApplyChromeQuery();
+    private void OnNavigationChanged(object? sender, LocationChangedEventArgs e)
+    {
+        ApplyChromeQuery();
+        RedirectAirlineAgentToCupps();
+        _ = InvokeAsync(StateHasChanged);
+    }
 
     private void OnKioskModeChanged() => _ = InvokeAsync(StateHasChanged);
 
