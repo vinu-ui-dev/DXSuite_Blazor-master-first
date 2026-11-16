@@ -1147,24 +1147,6 @@ if (isWebRole)
 
     app.UseAuthentication();
 
-    // Editor bridge entry: a signed-out user opening one of the editor pages (the link Director shows)
-    // is sent through Director's /editor-launch handover instead of DXSuite's own login page.
-    app.Use(async (ctx, next) =>
-    {
-        var bridge = ctx.RequestServices.GetRequiredService<IOptions<DXSuite.Shared.Models.EditorBridgeClientOptions>>().Value;
-        if (bridge.Enabled
-            && HttpMethods.IsGet(ctx.Request.Method)
-            && ctx.User.Identity?.IsAuthenticated != true
-            && ctx.Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase)
-            && bridge.EntryPaths.Any(p => ctx.Request.Path.StartsWithSegments(p, StringComparison.OrdinalIgnoreCase)))
-        {
-            var returnTo = ctx.Request.Path + ctx.Request.QueryString;
-            ctx.Response.Redirect($"{ctx.Request.PathBase}/bridge/start?returnTo={Uri.EscapeDataString(returnTo)}");
-            return;
-        }
-        await next();
-    });
-
     // JIT elevation enforcement — operators must hold a live TblPlatformElevation row
     // for the resolved tenant before any tenant-scoped request proceeds.
     // No-op when Platform DB is not configured (IPlatformDbContext resolves to null).
