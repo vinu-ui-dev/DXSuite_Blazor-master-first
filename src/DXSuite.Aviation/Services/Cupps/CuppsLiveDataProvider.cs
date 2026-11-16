@@ -83,7 +83,7 @@ public sealed class CuppsLiveDataProvider(
     /// the server rejects the airline as outside the caller's scope.</summary>
     public async Task<(bool Success, string? Error)> PublishCounterAsync(
         string counterId, int airlineId, string? counterTemplateId, string? counterTemplateKind,
-        string? counterTemplateName, string? destination, bool? sunflower, CancellationToken ct = default)
+        string? counterTemplateName, string? destination, bool? sunflower, bool? aslOn = null, CancellationToken ct = default)
     {
         if (sessionState.UserName is not { } username) return (false, "Not signed in.");
 
@@ -98,6 +98,7 @@ public sealed class CuppsLiveDataProvider(
             counterTemplateName,
             destination,
             sunflower,
+            aslOn,
             pageShowSeconds = (int?)null,
         };
 
@@ -105,6 +106,43 @@ public sealed class CuppsLiveDataProvider(
         return response.IsSuccessStatusCode
             ? (true, null)
             : (false, await response.Content.ReadAsStringAsync(ct));
+    }
+
+    /// <summary>What every counter's screen currently shows, read from Director's persisted counter state (the
+    /// same rows Publish/Close write). Replaces the in-memory seed the page used to start from, so open/closed,
+    /// page, ASL, sunflower, destination and "sent at" survive a reload and are shared across agents.</summary>
+    public async Task<CuppsCounterStates> GetCounterStatesAsync(CancellationToken ct = default)
+    {
+        var client = httpClientFactory.CreateClient();
+        var uri = new Uri(new Uri(navigationManager.BaseUri), "api/counter-publish/states");
+        var rows = await client.GetFromJsonAsync<List<CounterStateRow>>(uri, ct) ?? [];
+        var zone = flightListClock.CurrentWindow().AirportTimeZone;
+
+        var published = new Dictionary<string, CounterSetup>(StringComparer.OrdinalIgnoreCase);
+        var templates = new Dictionary<string, Template>(StringComparer.OrdinalIgnoreCase);
+        var holders = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var r in rows)
+        {
+            if (string.IsNullOrWhiteSpace(r.CounterId)) continue;
+            var page = r.CounterTemplateId?.ToString();
+            published[r.CounterId] = new CounterSetup
+            {
+                Open = r.Open,
+                Page = r.Open ? page : null,
+                Asl = r.AslOn == true,
+                Sunflower = r.Sunflower == true,
+                Dest = r.Destination ?? "",
+                SentAt = r.SentUtc is { } sent ? MinutesSinceMidnight(sent, zone) : 0,
+            };
+            if (r.HolderAirlineId is { } holder) holders[r.CounterId] = holder;
+            if (page is not null && !templates.ContainsKey(page))
+            {
+                var kind = string.Equals(r.CounterTemplateKind, "custom", StringComparison.OrdinalIgnoreCase) ? "Custom" : "Standard";
+                var name = string.IsNullOrWhiteSpace(r.CounterTemplateName) ? $"Template {page}" : r.CounterTemplateName!;
+                templates[page] = new Template(page, kind, r.TemplateAirlineId is 0 ? "airport" : "airline", name, name);
+            }
+        }
+        return new CuppsCounterStates(published, templates, holders);
     }
 
     /// <summary>Persists a counter close (CounterAgentScreens' CloseCounter/TileOpen-close actions).</summary>
@@ -247,6 +285,19 @@ public sealed class CuppsLiveDataProvider(
         return $"hsl({hue},55%,32%)";
     }
 
+    private sealed record CounterStateRow(
+        string CounterId,
+        int? HolderAirlineId,
+        bool Open,
+        int? CounterTemplateId,
+        string? CounterTemplateKind,
+        string? CounterTemplateName,
+        int? TemplateAirlineId,
+        bool? Sunflower,
+        bool? AslOn,
+        string? Destination,
+        DateTime? SentUtc);
+
     private sealed record CuppsAirlineDto(int? AirlineId, string Code, string Name, string? Bg);
 
     private sealed record CounterTemplatePageOptionsResponse(
@@ -272,5 +323,10 @@ public sealed class CuppsLiveDataProvider(
         string? TextEn,
         string? TextFr);
 }
+
+public sealed record CuppsCounterStates(
+    Dictionary<string, CounterSetup> Published,
+    Dictionary<string, Template> Templates,
+    Dictionary<string, int> HolderAirlineIds);
 
 public sealed record OperatingAirlineAccount(int AirlineId, Airline Airline);

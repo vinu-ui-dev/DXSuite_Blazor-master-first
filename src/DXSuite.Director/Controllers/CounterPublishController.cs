@@ -27,6 +27,13 @@ public sealed class CounterPublishController : ControllerBase
         _tokenService = tokenService;
     }
 
+    /// <summary>Read-only snapshot of every counter's persisted screen state. Anonymous and best-effort, like the
+    /// other CUPPS GETs (counter-templates/page-options, cupps/airlines), because CuppsLiveDataProvider calls it
+    /// over an internal loopback HttpClient that carries no auth cookie.</summary>
+    [HttpGet("states")]
+    public async Task<IActionResult> GetStates(CancellationToken ct) =>
+        Ok(await _publishService.GetStatesAsync(ct));
+
     [HttpPost("publish")]
     public async Task<IActionResult> Publish([FromBody] PublishRequestDto body, CancellationToken ct)
     {
@@ -46,7 +53,8 @@ public sealed class CounterPublishController : ControllerBase
             body.CounterTemplateName,
             body.Destination,
             body.Sunflower,
-            body.PageShowSeconds), ct);
+            body.PageShowSeconds,
+            body.AslOn), ct);
 
         if (!result.Success)
             return Forbid();
@@ -80,6 +88,7 @@ public sealed record PublishRequestDto(
     string? CounterTemplateName,
     string? Destination,
     bool? Sunflower,
-    int? PageShowSeconds);
+    int? PageShowSeconds,
+    bool? AslOn = null);
 
 public sealed record CloseRequestDto(string CounterId);

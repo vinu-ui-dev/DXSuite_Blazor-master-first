@@ -7,10 +7,9 @@ using static DXSuite.Aviation.Pages.Cupps.CuppsData;
 
 namespace DXSuite.Aviation.Pages.Cupps;
 
-// State and actions for the CUPPS agent screens prototype. Ported from the DXME-500 HTML prototype;
-// all state is in memory for this circuit and nothing is saved or sent anywhere. The RMU airline/counter
-// picker is the one path wired to live data (CuppsLiveDataProvider); every other scenario keeps using the
-// static CuppsData below, untouched.
+// State and actions for the CUPPS agent screens. Everything is loaded from Director/CoreAPI through
+// CuppsLiveDataProvider (airlines, allocations, page templates, approved Messages, flights, and what each counter
+// currently shows), and every publish/open/close is written back to Director's counter-publish tables.
 public partial class CuppsAgentScreens : IDisposable
 {
     [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
@@ -36,7 +35,7 @@ public partial class CuppsAgentScreens : IDisposable
     private bool liveLoadFailed;
     private bool liveAllocLoadFailed;
 
-    private string scenario = "agent";
+    private string scenario = "rmu";
     private string screen = "login";
     private int now = 630;
     private string tab = "mine";
@@ -44,8 +43,9 @@ public partial class CuppsAgentScreens : IDisposable
     private bool deviation = true;
     private readonly bool fallback = false;
     private string tabPref = "Standard";
-    private bool otherOpen = true;
-    private Dictionary<string, CounterSetup> published = SeedPublished();
+    private Dictionary<string, CounterSetup> published = [];
+    private readonly Dictionary<string, Template> templateCache = new(StringComparer.OrdinalIgnoreCase);
+    private Scenario? sc;
     private CounterSetup draft = new();
     private string? pickTab;
     private bool confirmClose;
@@ -55,7 +55,7 @@ public partial class CuppsAgentScreens : IDisposable
     private int? idle;
     private readonly HashSet<string> sel = [];
     private string zone = "";
-    private string bulkPage = "t1";
+    private string bulkPage = "";
     private string? changePage;
     private bool viewSent;
     private string? rmuAirline;
@@ -77,18 +77,17 @@ public partial class CuppsAgentScreens : IDisposable
 
     [Parameter] public string Title { get; set; } = "CUPPS Agent Screens";
 
-    protected override void OnInitialized()
+    protected override async Task OnInitializedAsync()
     {
-        // A real "Director Airline_Agent" user already has a fixed counter, so there's nothing for them
-        // to pick — skip straight to the terminal screen instead of the RMU airline/counter picker.
-        var role = SessionState.ActualRoleName;
-        var effectiveScenario = string.Equals(role, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase)
-                                || string.Equals(role, "Airline Agent", StringComparison.OrdinalIgnoreCase)
-            ? "agent"
-            : StartScenario;
-        SetScenario(effectiveScenario);
-        // Counter agents land straight in the app; RMU staff go through sign-in and the airline/counter picker.
-        if (Sc.Kind != "Individual") EnterApp();
+        if (!SessionState.SessionLoaded.Task.IsCompleted)
+            await SessionState.SessionLoaded.Task;
+
+        SetScenario("rmu");
+
+        // Already signed in to DXSuite: no second sign-in. Go straight to the airline/counter step; airline
+        // agents and supervisors are scoped to their own airline and land on their counter when it's unambiguous.
+        if (SessionState.User is not null)
+            await SignIn();
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -106,25 +105,48 @@ public partial class CuppsAgentScreens : IDisposable
     }
 
     // ---------- Derived state ----------
-    private Scenario Sc => Scenarios[scenario];
+    private Scenario Sc => sc ??= BuildScenario();
     private bool Can(string key) => Keys[Sc.Role].Contains(key);
     private string? Station => acting?.Counter ?? Sc.Station;
-    private string MyAirline => acting?.Airline ?? Sc.Airline ?? "WS";
+    private string MyAirline => acting?.Airline ?? Sc.Airline ?? "";
 
-    /// <summary>The RMU scenario runs on CoreAPI and counter-allocation data only; the other scenarios are static demos.</summary>
-    private bool Live => scenario == "rmu";
+    /// <summary>The signed-in user as a CUPPS identity. Role decides which features are offered.</summary>
+    private Scenario BuildScenario()
+    {
+        var role = SessionState.ActualRoleName;
+        var kind = IsAirlineAgentRole(role) ? "Airline Agent"
+            : string.Equals(role, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase) ? "Airline Supervisor"
+            : "RMU";
+        var user = SessionState.UserName ?? "";
+        var who = SessionState.User?.FriendlyName is { Length: > 0 } f ? f : user;
+        return new Scenario("Individual", user, who, kind, null, now);
+    }
 
-    private List<Alloc> AllAllocs => Live ? liveAllocations : Allocations;
+    private static bool IsAirlineAgentRole(string? role) =>
+        string.Equals(role, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase)
+        || string.Equals(role, "Airline Agent", StringComparison.OrdinalIgnoreCase);
 
-    private List<Counter> CounterList => Live
-        ? [.. liveCounters.Values.OrderBy(c => c.Id)]
-        : Counters;
+    /// <summary>Airline agents and supervisors only ever work for their own airline.</summary>
+    private bool IsAirlineScoped =>
+        IsAirlineAgentRole(SessionState.ActualRoleName)
+        || string.Equals(SessionState.ActualRoleName, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase);
 
-    private List<string> ZoneList => Live
-        ? [.. liveCounters.Values.SelectMany(c => c.Zones.Skip(1)).Distinct().Order()]
-        : [.. Zones];
+    private List<Alloc> AllAllocs => liveAllocations;
 
-    private List<Canned> MessageList => Live ? liveApprovedMessages : CannedMessages;
+    private List<Counter> CounterList => [.. liveCounters.Values.OrderBy(c => c.Id)];
+
+    private List<string> ZoneList => [.. liveCounters.Values.SelectMany(c => c.Zones.Skip(1)).Distinct().Order()];
+
+    private List<Canned> MessageList => liveApprovedMessages;
+
+    /// <summary>A page template by id: the acting airline's own page options first, then any template seen on a
+    /// counter's persisted state (so another counter's tile can still show its page name).</summary>
+    private Template? Tpl(string? id) =>
+        id is null ? null : liveTemplates.FirstOrDefault(t => t.Id == id) ?? templateCache.GetValueOrDefault(id);
+
+    /// <summary>The first Standard page the airline can use - what a bare "Open" publishes.</summary>
+    private string? DefaultPage() =>
+        Usable().FirstOrDefault(t => t.Kind == "Standard")?.Id ?? Usable().FirstOrDefault()?.Id;
 
     private Alloc? HolderNow(string id) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.From <= now && now < a.To);
     private Alloc? AllocFor(string? id, string code) => AllAllocs.FirstOrDefault(a => a.CounterId == id && a.Code == code && a.To > now);
@@ -132,48 +154,23 @@ public partial class CuppsAgentScreens : IDisposable
     private CounterSetup? Pub(string? id) => id is not null && published.TryGetValue(id, out var p) ? p : null;
     private bool InApp => screen == "app";
 
-    /// <summary>Airline metadata for a code: live-fetched data first (the RMU picker), falling back to the
-    /// static demo dictionary, falling back to a generic entry so a live code never throws.</summary>
+    /// <summary>Airline metadata for a code, from Director's airline accounts; a generic entry if unknown.</summary>
     private Airline AirlineInfo(string code) =>
-        liveAirlines.TryGetValue(code, out var live) ? live
-        : Airlines.TryGetValue(code, out var demo) ? demo
-        : new Airline(code, code, "#555");
+        liveAirlines.TryGetValue(code, out var live) ? live : new Airline(code, code, "#555");
 
-    /// <summary>A counter's zone/SSBD metadata from the active source (live map for RMU, static demo otherwise).</summary>
-    private Counter? CounterInfo(string? id)
-    {
-        if (id is null) return null;
-        return Live
-            ? liveCounters.TryGetValue(id, out var live) ? live : null
-            : Counters.FirstOrDefault(c => c.Id == id);
-    }
+    /// <summary>A counter's zone/SSBD metadata, from the counters that appear in today's allocations.</summary>
+    private Counter? CounterInfo(string? id) =>
+        id is not null && liveCounters.TryGetValue(id, out var live) ? live : null;
 
-    private List<Template> Usable()
-    {
-        var source = Live
-            ? liveTemplates
-            : Templates.Concat(Many.Take(many > 0 ? many - 8 : 0)).ToList();
-        return source.Where(t => t.Scope == "airport" || t.Scope == MyAirline).ToList();
-    }
+    private List<Template> Usable() =>
+        liveTemplates.Where(t => t.Scope == "airport" || t.Scope == MyAirline).ToList();
 
-    /// <summary>Another airline's view swaps the operating carrier so the table reads as its own flights.</summary>
+    /// <summary>The next departures from CoreAPI; the acting airline's own (operated or codeshared) first.</summary>
     private List<Flight> NextFlights(int n)
     {
-        if (Live)
-        {
-            var upcoming = liveFlights.Where(f => f.Sched > now).ToList();
-            var mine = upcoming.Where(f => OperatesOrShares(f, MyAirline)).Take(n).ToList();
-            return mine.Count > 0 ? mine : upcoming.Take(n).ToList();
-        }
-
-        return Flights.Where(f => f.Sched > now).Take(n).Select(f =>
-        {
-            var c = MyAirline;
-            if (c == "WS") return f;
-            var pt = Partners.GetValueOrDefault(c) ?? [];
-            var shares = f.Carriers.Skip(1).Select(x => pt.TryGetValue(x.Airline, out var p) ? (p.Name, p.Code + x.No[2..]) : x);
-            return f with { Carriers = [(AirlineInfo(c).Name, f.Carriers[0].No.Replace("WS", c)), .. shares] };
-        }).ToList();
+        var upcoming = liveFlights.Where(f => f.Sched > now).ToList();
+        var mine = upcoming.Where(f => OperatesOrShares(f, MyAirline)).Take(n).ToList();
+        return mine.Count > 0 ? mine : upcoming.Take(n).ToList();
     }
 
     private static bool OperatesOrShares(Flight f, string code) =>
@@ -187,7 +184,7 @@ public partial class CuppsAgentScreens : IDisposable
         if (c?.Split is null) return new(false);
         var h = HolderNow(c.Split);
         var same = h is not null && h.Code == MyAirline;
-        var oOpen = c.Split == "G2-5" ? otherOpen : Pub(c.Split)?.Open == true;
+        var oOpen = Pub(c.Split)?.Open == true;
         return new(true, c.Split, same, oOpen);
     }
 
@@ -252,25 +249,41 @@ public partial class CuppsAgentScreens : IDisposable
     {
         screen = "app"; tab = "mine"; draft = FreshDraft(); pickTab = null; confirmClose = false;
         sel.Clear(); waitingReady = false; viewSent = false; changePage = null;
+        bulkPage = DefaultPage() ?? "";
     }
 
     private void SetScenario(string key)
     {
         StopIdle();
-        scenario = key; screen = "login"; now = Scenarios[key].Now; acting = null; rmuAirline = null; rmuNotice = null;
-        search = ""; message = null; endedReason = null; published = Live ? [] : SeedPublished(); coreDown = false; draft = new();
+        scenario = key; sc = null; screen = "login"; acting = null; rmuAirline = null; rmuNotice = null;
+        search = ""; message = null; endedReason = null; published = []; templateCache.Clear(); coreDown = false; draft = new();
         deviation = true;
         liveAirlines = []; liveAirlineIds = []; liveCounters = []; liveAllocations = []; liveFlights = []; liveTemplates = []; liveApprovedMessages = []; liveLoading = false; liveLoadFailed = false;
     }
 
     private async Task SignIn()
     {
-        if (Sc.Kind == "Individual")
-        {
-            screen = "rmu-pick";
-            await LoadLiveCuppsDataAsync();
-        }
-        else EnterApp();
+        StopIdle();
+        screen = "rmu-pick";
+        await LoadLiveCuppsDataAsync();
+        await AutoSelectOwnCounterAsync();
+    }
+
+    /// <summary>For an airline agent/supervisor scoped to exactly one airline: skip the airline step, and if that
+    /// airline holds exactly one counter right now, skip the counter step too.</summary>
+    private async Task AutoSelectOwnCounterAsync()
+    {
+        if (!IsAirlineScoped || liveLoadFailed || liveAirlines.Count != 1) return;
+        var code = liveAirlines.Keys.First();
+        rmuAirline = code;
+
+        var held = AllAllocs
+            .Where(a => a.Code.Equals(code, StringComparison.OrdinalIgnoreCase) && a.From <= now && now < a.To)
+            .Select(a => a.CounterId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (held.Count == 1)
+            await PickRmuCounter(held[0]);
+        else
+            StateHasChanged();
     }
 
     /// <summary>Loads the RMU picker's airline grid from Director's CUPPS airlines API and its counter grid from
@@ -304,23 +317,13 @@ public partial class CuppsAgentScreens : IDisposable
             var (allocations, nowMinutes) = await LiveData.GetLiveAllocationsAsync();
             liveAllocations = [.. allocations];
             now = nowMinutes;
-            if (UseDemoAllocations && liveAllocations.Count == 0) liveAllocations = BuildDemoAllocations();
             BuildLiveCounterMap();
         }
         catch (Exception)
         {
             liveAllocLoadFailed = true;
-            if (UseDemoAllocations)
-            {
-                liveAllocations = BuildDemoAllocations();
-                BuildLiveCounterMap();
-                liveAllocLoadFailed = false;
-            }
-            else
-            {
-                liveAllocations = [];
-                liveCounters = [];
-            }
+            liveAllocations = [];
+            liveCounters = [];
         }
 
         try
@@ -332,7 +335,16 @@ public partial class CuppsAgentScreens : IDisposable
             liveFlights = [];
         }
 
-        SeedDemoPublishedState();
+        try
+        {
+            var states = await LiveData.GetCounterStatesAsync();
+            published = states.Published;
+            foreach (var (id, t) in states.Templates) templateCache[id] = t;
+        }
+        catch (Exception)
+        {
+            published = [];
+        }
 
         liveLoading = false;
         StateHasChanged();
@@ -347,7 +359,7 @@ public partial class CuppsAgentScreens : IDisposable
     /// CloseCounterAsync) is server-side and doesn't depend on this filter being applied.</summary>
     private async Task ScopeToSupervisorAirlineAsync()
     {
-        if (!string.Equals(SessionState.ActualRoleName, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase))
+        if (!IsAirlineScoped)
             return;
         if (SessionState.User is null || liveAirlines.Count == 0)
             return;
@@ -373,23 +385,6 @@ public partial class CuppsAgentScreens : IDisposable
         liveAirlineIds = liveAirlineIds
             .Where(kv => mine.ContainsKey(kv.Key))
             .ToDictionary(kv => kv.Key, kv => kv.Value, StringComparer.OrdinalIgnoreCase);
-    }
-
-    // Demo-only: set to false (and delete BuildDemoAllocations) once real counter allocations exist.
-    private const bool UseDemoAllocations = true;
-
-    /// <summary>Demo-only fallback: gives each listed airline one active counter so step 1 and step 2 stay
-    /// usable when live allocation data is unavailable.</summary>
-    private List<Alloc> BuildDemoAllocations()
-    {
-        var airlines = liveAirlines.Keys.Order().ToList();
-        var result = new List<Alloc>();
-        for (var i = 0; i < airlines.Count; i++)
-        {
-            var counter = $"G1-{i + 1}";
-            result.Add(new Alloc(counter, airlines[i], Math.Max(0, now - 120), Math.Min(1440, now + 240), "Dedicated"));
-        }
-        return result;
     }
 
     private void BuildLiveCounterMap()
@@ -418,32 +413,6 @@ public partial class CuppsAgentScreens : IDisposable
             zones.Add("T3 SSBDs");
 
         return [.. zones];
-    }
-
-    /// <summary>Demo-only: pre-opens a few of the demo counters so a manager walkthrough doesn't need a live
-    /// Publish click first — matching how the reference DXME-500 prototype always starts with some counters
-    /// already open. In-memory only, same as the rest of CUPPS's published state; remove this method together
-    /// with <see cref="BuildDemoAllocations"/> once the demo is done.</summary>
-    private void SeedDemoPublishedState()
-    {
-        void Open(string counterId, string page, string dest = "", List<string>? msgs = null)
-        {
-            if (!liveAllocations.Any(a => a.CounterId == counterId)) return;
-            published[counterId] = new CounterSetup { Open = true, Page = page, Dest = dest, Msgs = msgs ?? [], SentAt = now };
-        }
-
-        Open("G1-1", "t6");
-        Open("G1-2", "t5", "Toronto");
-        Open("G2-1", "t1");
-        Open("G2-2", "t3", msgs: ["m2"]);
-        Open("G2-3", "t2");
-        Open("G2-4", "t1");
-        Open("G2-7", "t5");
-        Open("G2-8", "t3");
-        Open("H1-1", "t2");
-        Open("H1-2", "t6", "Toronto");
-        Open("C1-1", "t1");
-        Open("C1-2", "t5");
     }
 
     private void SignOut()
@@ -477,7 +446,7 @@ public partial class CuppsAgentScreens : IDisposable
     /// <summary>The caller's own airline id for the live (RMU/scoped-supervisor) flow — null for every
     /// demo scenario, which never persists. Resolved from the real Director airline list, not the demo
     /// dictionary, so this only ever matches a real onboarded airline.</summary>
-    private int? MyAirlineId => Live && liveAirlineIds.TryGetValue(MyAirline, out var id) ? id : null;
+    private int? MyAirlineId => liveAirlineIds.TryGetValue(MyAirline, out var id) ? id : null;
 
     private async Task Publish()
     {
@@ -503,11 +472,11 @@ public partial class CuppsAgentScreens : IDisposable
     /// screen the agent/supervisor is looking at.</summary>
     private async Task PersistPublishAsync()
     {
-        if (!Live || Station is null || MyAirlineId is not { } airlineId) return;
+        if (Station is null || MyAirlineId is not { } airlineId) return;
 
         var tpl = Usable().FirstOrDefault(t => t.Id == draft.Page);
         var (ok, error) = await LiveData.PublishCounterAsync(
-            Station, airlineId, draft.Page, tpl?.Kind, tpl?.En, draft.Dest, draft.Sunflower);
+            Station, airlineId, draft.Page, tpl?.Kind, tpl?.En, draft.Dest, draft.Sunflower, draft.Asl);
         if (!ok)
             ShowToast($"{Station} is updated here but Director wasn't saved: {error ?? "unknown error"}.");
     }
@@ -518,7 +487,7 @@ public partial class CuppsAgentScreens : IDisposable
         draft = FreshDraft();
         confirmClose = false;
 
-        if (Live && Station is not null)
+        if (Station is not null)
         {
             var (ok, error) = await LiveData.CloseCounterAsync(Station);
             ShowToast(ok
@@ -544,14 +513,35 @@ public partial class CuppsAgentScreens : IDisposable
         return s;
     }
 
-    private void TileOpen(string id, bool on)
+    /// <summary>Writes one counter's new state through to Director: a publish when it's open, a close otherwise.
+    /// The screen already reflects the change in <see cref="published"/>; a failure only means Director has no
+    /// durable record of it, shown as a toast.</summary>
+    private async Task PersistCounterAsync(string id, CounterSetup s)
     {
-        published[id] = on ? new CounterSetup { Open = true, Page = deviation ? "t1" : null, SentAt = now } : CounterSetup.Closed();
-        if (id == Station) draft = FreshDraft();
-        ShowToast($"{(on ? "Opened" : "Closed")} {id}.");
+        if (!s.Open)
+        {
+            var (closed, closeError) = await LiveData.CloseCounterAsync(id);
+            if (!closed) ShowToast($"{id} is closed here but Director wasn't saved: {closeError ?? "unknown error"}.");
+            return;
+        }
+
+        var holder = HolderNow(id)?.Code ?? MyAirline;
+        if (!liveAirlineIds.TryGetValue(holder, out var airlineId)) return;
+        var tpl = Tpl(s.Page);
+        var (ok, error) = await LiveData.PublishCounterAsync(id, airlineId, s.Page, tpl?.Kind, tpl?.En, s.Dest, s.Sunflower, s.Asl);
+        if (!ok) ShowToast($"{id} is updated here but Director wasn't saved: {error ?? "unknown error"}.");
     }
 
-    private void PickChangePage(string page)
+    private async Task TileOpen(string id, bool on)
+    {
+        var s = on ? new CounterSetup { Open = true, Page = deviation ? DefaultPage() : null, SentAt = now } : CounterSetup.Closed();
+        published[id] = s;
+        if (id == Station) draft = FreshDraft();
+        ShowToast($"{(on ? "Opened" : "Closed")} {id}.");
+        await PersistCounterAsync(id, s);
+    }
+
+    private async Task PickChangePage(string page)
     {
         var id = changePage!;
         var s = Reopen(Pub(id));
@@ -559,30 +549,36 @@ public partial class CuppsAgentScreens : IDisposable
         published[id] = s;
         if (id == Station) draft = FreshDraft();
         changePage = null;
-        ShowToast($"{id} now shows {Tpl(page)!.En}.");
+        ShowToast($"{id} now shows {Tpl(page)?.En ?? "the new page"}.");
+        await PersistCounterAsync(id, s);
     }
 
-    private void BulkOpen()
+    private async Task BulkOpen()
     {
         var n = sel.Count;
+        var changed = new List<(string Id, CounterSetup Setup)>();
         foreach (var id in sel)
         {
             var s = Reopen(Pub(id));
             s.Page = deviation ? bulkPage : null; s.SentAt = now;
             published[id] = s;
+            changed.Add((id, s));
         }
         if (sel.Contains(Station!)) draft = FreshDraft();
         sel.Clear();
         ShowToast($"Opened {n} counter{(n > 1 ? "s" : "")}.");
+        foreach (var (id, setup) in changed) await PersistCounterAsync(id, setup);
     }
 
-    private void BulkClose()
+    private async Task BulkClose()
     {
         var n = sel.Count;
-        foreach (var id in sel) published[id] = CounterSetup.Closed();
+        var ids = sel.ToList();
+        foreach (var id in ids) published[id] = CounterSetup.Closed();
         if (sel.Contains(Station!)) draft = FreshDraft();
         sel.Clear();
         ShowToast($"Closed {n} counter{(n > 1 ? "s" : "")}.");
+        foreach (var id in ids) await PersistCounterAsync(id, CounterSetup.Closed());
     }
 
     private void ChangeActing()

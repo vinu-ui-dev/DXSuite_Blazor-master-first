@@ -17,7 +17,23 @@ public interface ICounterPublishService
 {
     Task<CounterPublishResult> PublishAsync(CounterPublishRequest request, CancellationToken ct = default);
     Task<CounterPublishResult> CloseAsync(string counterId, string actingUsername, CancellationToken ct = default);
+
+    /// <summary>What every counter's screen currently shows, as last persisted by publish/close.</summary>
+    Task<IReadOnlyList<CounterStateDto>> GetStatesAsync(CancellationToken ct = default);
 }
+
+public sealed record CounterStateDto(
+    string CounterId,
+    int? HolderAirlineId,
+    bool Open,
+    int? CounterTemplateId,
+    string? CounterTemplateKind,
+    string? CounterTemplateName,
+    int? TemplateAirlineId,
+    bool? Sunflower,
+    bool? AslOn,
+    string? Destination,
+    DateTime? SentUtc);
 
 public sealed record CounterPublishRequest(
     string CounterId,
@@ -28,7 +44,8 @@ public sealed record CounterPublishRequest(
     string? CounterTemplateName = null,
     string? Destination = null,
     bool? Sunflower = null,
-    int? PageShowSeconds = null);
+    int? PageShowSeconds = null,
+    bool? AslOn = null);
 
 public sealed record CounterPublishResult(bool Success, string? Error, long? PublishId);
 
@@ -80,6 +97,7 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
         state.CounterTemplateId = request.CounterTemplateId;
         state.CounterTemplateKind = request.CounterTemplateKind;
         state.Sunflower = request.Sunflower;
+        state.AslOn = request.AslOn;
         state.Destination = request.Destination;
         state.LastPublishId = publish.PublishId;
 
@@ -106,11 +124,36 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
             state.HolderAirlineId = null;
             state.CounterTemplateId = null;
             state.CounterTemplateKind = null;
+            state.Sunflower = null;
+            state.AslOn = null;
             state.Destination = null;
             await db.SaveChangesAsync(ct);
         }
 
         return new CounterPublishResult(true, null, state?.LastPublishId);
+    }
+
+    public async Task<IReadOnlyList<CounterStateDto>> GetStatesAsync(CancellationToken ct = default)
+    {
+        var rows = await (
+            from s in db.TblCounterStates.AsNoTracking()
+            join p in db.TblCounterPublish.AsNoTracking() on s.LastPublishId equals (long?)p.PublishId into pj
+            from p in pj.DefaultIfEmpty()
+            join t in db.TblCounterTemplates.AsNoTracking() on s.CounterTemplateId equals (int?)t.CounterTemplateId into tj
+            from t in tj.DefaultIfEmpty()
+            select new
+            {
+                s.CounterId, s.HolderAirlineId, s.Open, s.CounterTemplateId, s.CounterTemplateKind,
+                TemplateName = t != null ? t.Name : p != null ? p.CounterTemplateName : null,
+                TemplateAirlineId = t != null ? (int?)t.AirlineId : null,
+                s.Sunflower, s.AslOn, s.Destination,
+                SentUtc = p != null ? (DateTime?)p.SentUtc : null,
+            }).ToListAsync(ct);
+
+        return rows.Select(r => new CounterStateDto(
+            r.CounterId, r.HolderAirlineId, r.Open, r.CounterTemplateId, r.CounterTemplateKind, r.TemplateName,
+            r.TemplateAirlineId, r.Sunflower, r.AslOn, r.Destination,
+            r.SentUtc is { } u ? DateTime.SpecifyKind(u, DateTimeKind.Utc) : null)).ToList();
     }
 
     private async Task<CounterPublishResult?> CheckAccessAsync(string actingUsername, int airlineId, CancellationToken ct)
