@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using DXSuite.Host.Logging;
 using DXSuite.Shared.Models;
 
 namespace DXSuite.Host.Bridge;
@@ -46,7 +47,9 @@ public sealed class EditorBridgeClient(HttpClient http, IOptions<EditorBridgeCli
         try
         {
             using var request = BuildRequest(HttpMethod.Post, path, body);
+            BridgeFileLog.Write($"[BRIDGE-HTTP] before POST {request.RequestUri}");
             using var response = await http.SendAsync(request, ct);
+            BridgeFileLog.Write($"[BRIDGE-HTTP] after POST {request.RequestUri} -> {(int)response.StatusCode}");
             if (!response.IsSuccessStatusCode)
             {
                 var text = await response.Content.ReadAsStringAsync(ct);
@@ -58,6 +61,7 @@ public sealed class EditorBridgeClient(HttpClient http, IOptions<EditorBridgeCli
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
         {
+            BridgeFileLog.Write($"[BRIDGE-HTTP] EXCEPTION calling {path}: {ex.GetType().Name}: {ex.Message}");
             logger.LogWarning(ex, "Editor bridge call to {Path} failed.", path);
             return null;
         }
