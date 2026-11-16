@@ -202,6 +202,16 @@ public class BridgeAuthController(
             protector.Protect(JsonSerializer.Serialize(new PkceState(state, verifier, safeReturn))),
             PkceCookieOptions(TimeSpan.FromMinutes(10)));
 
+        // Director's SPA is served from this same origin (https://site/ and https://site/director): its login token
+        // and customer are readable here, so request the code directly. This avoids needing the SPA to serve a
+        // deep link such as /editor-launch (a 404 unless the host rewrites unknown paths to index.html).
+        if (Uri.TryCreate(ui, UriKind.Absolute, out var uiUri) &&
+            string.Equals(uiUri.GetLeftPart(UriPartial.Authority), $"{Request.Scheme}://{Request.Host}", StringComparison.OrdinalIgnoreCase))
+        {
+            BridgeFileLog.Write($"[BRIDGE] start (same-origin relay) returnTo={safeReturn}");
+            return Content(RelayPage(ui, _options.DirectorBaseUrl.TrimEnd('/'), CallbackUrl(), challenge, state), "text/html");
+        }
+
         var target = $"{ui}/editor-launch" +
             $"?clientId={Uri.EscapeDataString(_options.ClientId)}" +
             $"&redirectUri={Uri.EscapeDataString(CallbackUrl())}" +
@@ -209,6 +219,33 @@ public class BridgeAuthController(
             $"&state={Uri.EscapeDataString(state)}";
         BridgeFileLog.Write($"[BRIDGE] start -> {ui}/editor-launch (redirectUri={CallbackUrl()}, returnTo={safeReturn})");
         return Redirect(target);
+    }
+
+    private string RelayPage(string ui, string apiBase, string callback, string challenge, string state)
+    {
+        static string J(string v) => JsonSerializer.Serialize(v);
+        return $$"""
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"><title>Signing in…</title></head>
+            <body><p id="m">Signing you in&hellip;</p>
+            <script>
+            (async function () {
+                var ui = {{J(ui)}}, api = {{J(apiBase)}}, callback = {{J(callback)}};
+                var token = localStorage.getItem('token'), user = null;
+                try { user = JSON.parse(localStorage.getItem('userList') || 'null'); } catch (e) { }
+                var customerId = user && user.customerId;
+                if (!token || !customerId) { location.replace(ui + '/'); return; }
+                var r = await fetch(api + '/api/v1/editor-auth/launch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ clientId: {{J(_options.ClientId)}}, customerId: customerId, redirectUri: callback, codeChallenge: {{J(challenge)}} })
+                });
+                if (!r.ok) throw new Error('launch ' + r.status);
+                var d = await r.json();
+                location.replace(callback + '?code=' + encodeURIComponent(d.code) + '&state=' + encodeURIComponent({{J(state)}}));
+            })().catch(function () { document.getElementById('m').textContent = 'Editor sign-in failed. Return to Director and try again.'; });
+            </script></body></html>
+            """;
     }
 
     [HttpGet("dxsuite-callback")]
