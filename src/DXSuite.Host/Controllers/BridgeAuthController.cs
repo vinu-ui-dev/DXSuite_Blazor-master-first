@@ -240,12 +240,26 @@ public class BridgeAuthController(
                     headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
                     body: JSON.stringify({ clientId: {{J(_options.ClientId)}}, customerId: customerId, redirectUri: callback, codeChallenge: {{J(challenge)}} })
                 });
-                if (!r.ok) throw new Error('launch ' + r.status);
+                if (!r.ok) { var t = ''; try { t = (await r.text()).slice(0, 300); } catch (e) { } throw new Error('launch returned HTTP ' + r.status + (t ? ': ' + t : '')); }
                 var d = await r.json();
                 location.replace(callback + '?code=' + encodeURIComponent(d.code) + '&state=' + encodeURIComponent({{J(state)}}));
-            })().catch(function () { document.getElementById('m').textContent = 'Editor sign-in failed. Return to Director and try again.'; });
+            })().catch(function (e) {
+                var msg = (e && e.message) ? e.message : String(e);
+                document.getElementById('m').textContent = 'Editor sign-in failed. Return to Director and try again. (' + msg + ')';
+                try { fetch(callback.replace('dxsuite-callback', 'relay-log'), { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: msg }); } catch (x) { }
+            });
             </script></body></html>
             """;
+    }
+
+    [HttpPost("relay-log")]
+    [Consumes("text/plain")]
+    public async Task<IActionResult> RelayLog()
+    {
+        using var reader = new StreamReader(Request.Body);
+        var text = (await reader.ReadToEndAsync()).ReplaceLineEndings(" ");
+        BridgeFileLog.Write($"[BRIDGE] relay FAIL (browser): {(text.Length > 400 ? text[..400] : text)}");
+        return NoContent();
     }
 
     [HttpGet("dxsuite-callback")]
