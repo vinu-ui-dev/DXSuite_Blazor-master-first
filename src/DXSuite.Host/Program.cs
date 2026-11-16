@@ -1096,7 +1096,12 @@ if (isWebRole)
 
     // Branding images live in wwwroot/images/branding (served by the middleware above) and are
     // seeded from images/branding-defaults so a fresh install shows defaults until customized.
-    // DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment);
+    try { DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment); }
+    catch (Exception ex)
+    {
+        // Cosmetic only (login/header images); never block startup if the folder is read-only.
+        app.Logger.LogWarning(ex, "Could not seed default branding images.");
+    }
 
     // Runs here rather than in ThumbnailBackfillService so the pre-tenant-scoping folder is gone
     // before the server accepts requests — while it exists the static middleware serves it anonymously.
