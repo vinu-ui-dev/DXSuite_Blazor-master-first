@@ -9,6 +9,8 @@ using DXSuite.Shared.Models;
 using DXSuite.Shared.Multitenancy;
 using DXSuite.Shared.Services;
 using DXSuite.Shared.Services.Identity;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 
 namespace DXSuite.Host.Controllers;
 
@@ -226,6 +228,8 @@ public class AuthController : Controller
     /// Validates a signed JWT from an external platform, confirms with the external API,
     /// then issues an auth cookie and redirects to /.
     /// </summary>
+    /// 
+    [AllowAnonymous]
     [HttpGet("launch")]
     public async Task<IActionResult> Launch([FromQuery] string? token)
     {
