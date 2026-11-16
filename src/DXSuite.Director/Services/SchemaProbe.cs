@@ -11,7 +11,7 @@ internal static class SchemaProbe
 {
     /// <summary>
     /// True when <paramref name="table"/>.<paramref name="column"/> exists. Non-SQL Server
-    /// providers (the local SQLite mode builds tables straight from the model) always return true.
+    /// providers always return true.
     /// </summary>
     public static async Task<bool> ColumnExistsAsync(
         object context, string table, string column, CancellationToken cancellationToken = default)

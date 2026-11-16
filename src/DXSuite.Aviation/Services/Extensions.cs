@@ -36,7 +36,7 @@ public static class Extensions
                 connStr = config.GetConnectionString("Aviation");
             if (string.IsNullOrWhiteSpace(connStr))
                 connStr = config.GetConnectionString("Director");
-            options.UseConfiguredProvider(config, "Aviation", connStr!);
+            options.UseSqlServer(connStr!);
         }, ServiceLifetime.Scoped);
 
         // ──────────────────────────────────────────────────────────────────

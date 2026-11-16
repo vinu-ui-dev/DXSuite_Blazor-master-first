@@ -69,7 +69,7 @@ public static class Extensions
                 : config.GetConnectionString("Director")
                   ?? throw new InvalidOperationException(
                       "No Director connection string in app config (background service path).");
-            options.UseConfiguredProvider(config, "Director", connStr);
+            options.UseSqlServer(connStr);
 
             // Every registered IDirectorSaveChangesInterceptor (e.g. Messaging's DeliveryVersionInterceptor)
             // runs on every save through every DirectorDbContext instance.

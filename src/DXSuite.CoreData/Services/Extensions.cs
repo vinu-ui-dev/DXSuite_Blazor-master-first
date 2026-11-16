@@ -28,7 +28,7 @@ public static class Extensions
                 : config.GetConnectionString("CoreData")
                   ?? throw new InvalidOperationException(
                       "No CoreData connection string in app config (background service path).");
-            options.UseConfiguredProvider(config, "CoreData", connStr);
+            options.UseSqlServer(connStr);
         }, ServiceLifetime.Scoped);
 
         // Scoped because it queries per-tenant CoreData DB via the scoped factory above.
