@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using DXSuite.Connectors;
@@ -685,7 +685,7 @@ var app = builder.Build();
 // Optional virtual-directory hosting (e.g. https://host/director/...). Must be the first middleware
 // so every later component sees the prefix as PathBase. Harmless if the proxy already strips it.
 var configuredPathBase = builder.Configuration["DXSuite:PathBase"];
-if (!string.IsNullOrWhiteSpace(configuredPathBase))
+if (!string.IsNullOrWhiteSpace(configuredPathBase) && !app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Local"))
     app.UsePathBase("/" + configuredPathBase.Trim('/'));
 
 // Eager resolution of ITenantStore ensures the fail-fast (no tenants configured)
