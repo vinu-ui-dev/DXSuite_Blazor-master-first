@@ -2,7 +2,11 @@ using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authentication.Cookies;
+using System.Security.Cryptography;
+using System.Text;
+using System.Text.Json;
 using Microsoft.AspNetCore.Cors;
+using Microsoft.AspNetCore.DataProtection;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using DXSuite.Host.Bridge;
@@ -29,6 +33,7 @@ public class BridgeAuthController(
     ITenantStore tenantStore,
     IOptions<EditorBridgeClientOptions> options,
     IConfiguration configuration,
+    IDataProtectionProvider dataProtection,
     ILogger<BridgeAuthController> logger) : Controller
 {
     public const string CorsPolicy = "EditorBridgeUi";
@@ -44,41 +49,13 @@ public class BridgeAuthController(
             && !returnTo.Contains('\\') && !returnTo.Contains("://", StringComparison.Ordinal)
             ? returnTo : "/Flight-Data-Editor";
 
-    public sealed record ExchangeRequest(string Code, string Verifier, string? ReturnTo);
-
-    [HttpPost("dxsuite-exchange")]
-    public async Task<IActionResult> Exchange([FromBody] ExchangeRequest body, CancellationToken ct)
+    /// <summary>
+    /// Shared by <see cref="Exchange"/> (Angular-driven) and <see cref="Callback"/> (DXSuite-driven):
+    /// checks the redeemed identity's tenant, then issues the DXSuite auth cookie and tenant cookie.
+    /// Returns null on success, or the failure result to send back.
+    /// </summary>
+    private async Task<IActionResult?> CompleteSignInAsync(BridgeIdentity identity, string returnTo, CancellationToken ct)
     {
-        logger.LogInformation("[BRIDGE] 1/5 exchange called. Host={Host} PathBase={PathBase} Origin={Origin} Enabled={Enabled} DirectorBaseUrl='{Url}' ClientId='{ClientId}' HasSecret={HasSecret}",
-            Request.Host, Request.PathBase, Request.Headers.Origin.ToString(), _options.Enabled,
-            _options.DirectorBaseUrl, _options.ClientId, !string.IsNullOrEmpty(_options.ClientSecret));
-
-        BridgeFileLog.Write($"[BRIDGE] exchange called Host={Request.Host} PathBase={Request.PathBase} Origin={Request.Headers.Origin} Enabled={_options.Enabled} DirectorBaseUrl='{_options.DirectorBaseUrl}' ClientId='{_options.ClientId}' HasSecret={!string.IsNullOrEmpty(_options.ClientSecret)} ReturnTo='{body?.ReturnTo}'");
-        if (!_options.Enabled)
-        {
-            BridgeFileLog.Write("[BRIDGE] FAIL: EditorBridgeClient:Enabled is false -> 404");
-            logger.LogWarning("[BRIDGE] FAIL at 1/5: EditorBridgeClient:Enabled is false -> 404.");
-            return NotFound();
-        }
-        if (body is null || string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Verifier))
-        {
-            BridgeFileLog.Write("[BRIDGE] FAIL: body missing code or verifier -> 400");
-            logger.LogWarning("[BRIDGE] FAIL at 2/5: request body missing code or verifier (bodyNull={BodyNull}).", body is null);
-            return BadRequest(new { error = "missing-code-or-verifier" });
-        }
-
-        var identity = await bridgeClient.RedeemAsync(body.Code, body.Verifier, ct);
-        if (identity is null)
-        {
-            BridgeFileLog.Write("[BRIDGE] FAIL: Director redeem returned no identity -> 401 (check [BRIDGE-HTTP] line for status; usually ClientSecret mismatch, bad/expired code or PKCE verifier)");
-            logger.LogWarning("[BRIDGE] FAIL at 3/5: Director redeem returned no identity (see preceding [BRIDGE-HTTP] line for status/reason).");
-            return Unauthorized(new { error = "exchange-failed" });
-        }
-        BridgeFileLog.Write($"[BRIDGE] redeem OK User={identity.UserName} TenantId={identity.TenantId}");
-        logger.LogInformation("[BRIDGE] 3/5 redeem OK. User={User} TenantId={TenantId}", identity.UserName, identity.TenantId);
-
-        var returnTo = SafeLocalPath(body.ReturnTo);
-
         var tenant = await tenantStore.FindByTenantIdAsync(identity.TenantId, ct);
         var needsFlightDataEditorFlag = returnTo.StartsWith("/Flight-Data-Editor", StringComparison.OrdinalIgnoreCase);
         if (tenant is null || !tenant.IsEnabled || !tenant.Modules.Aviation || (needsFlightDataEditorFlag && !tenant.Features.FlightDataEditor))
@@ -129,6 +106,185 @@ public class BridgeAuthController(
 
         BridgeFileLog.Write($"[BRIDGE] SUCCESS cookie issued for {identity.UserName}; redirectTo={returnTo}");
         logger.LogInformation("[BRIDGE] 5/5 cookie issued for {User}; redirectTo={ReturnTo}", identity.UserName, returnTo);
+        return null;
+    }
+
+    public sealed record ExchangeRequest(string Code, string Verifier, string? ReturnTo);
+
+    [HttpPost("dxsuite-exchange")]
+    public async Task<IActionResult> Exchange([FromBody] ExchangeRequest body, CancellationToken ct)
+    {
+        logger.LogInformation("[BRIDGE] 1/5 exchange called. Host={Host} PathBase={PathBase} Origin={Origin} Enabled={Enabled} DirectorBaseUrl='{Url}' ClientId='{ClientId}' HasSecret={HasSecret}",
+            Request.Host, Request.PathBase, Request.Headers.Origin.ToString(), _options.Enabled,
+            _options.DirectorBaseUrl, _options.ClientId, !string.IsNullOrEmpty(_options.ClientSecret));
+
+        BridgeFileLog.Write($"[BRIDGE] exchange called Host={Request.Host} PathBase={Request.PathBase} Origin={Request.Headers.Origin} Enabled={_options.Enabled} DirectorBaseUrl='{_options.DirectorBaseUrl}' ClientId='{_options.ClientId}' HasSecret={!string.IsNullOrEmpty(_options.ClientSecret)} ReturnTo='{body?.ReturnTo}'");
+        if (!_options.Enabled)
+        {
+            BridgeFileLog.Write("[BRIDGE] FAIL: EditorBridgeClient:Enabled is false -> 404");
+            logger.LogWarning("[BRIDGE] FAIL at 1/5: EditorBridgeClient:Enabled is false -> 404.");
+            return NotFound();
+        }
+        if (body is null || string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Verifier))
+        {
+            BridgeFileLog.Write("[BRIDGE] FAIL: body missing code or verifier -> 400");
+            logger.LogWarning("[BRIDGE] FAIL at 2/5: request body missing code or verifier (bodyNull={BodyNull}).", body is null);
+            return BadRequest(new { error = "missing-code-or-verifier" });
+        }
+
+        var identity = await bridgeClient.RedeemAsync(body.Code, body.Verifier, ct);
+        if (identity is null)
+        {
+            BridgeFileLog.Write("[BRIDGE] FAIL: Director redeem returned no identity -> 401 (check [BRIDGE-HTTP] line for status; usually ClientSecret mismatch, bad/expired code or PKCE verifier)");
+            logger.LogWarning("[BRIDGE] FAIL at 3/5: Director redeem returned no identity (see preceding [BRIDGE-HTTP] line for status/reason).");
+            return Unauthorized(new { error = "exchange-failed" });
+        }
+        BridgeFileLog.Write($"[BRIDGE] redeem OK User={identity.UserName} TenantId={identity.TenantId}");
+        logger.LogInformation("[BRIDGE] 3/5 redeem OK. User={User} TenantId={TenantId}", identity.UserName, identity.TenantId);
+
+        var returnTo = SafeLocalPath(body.ReturnTo);
+
+        var failure = await CompleteSignInAsync(identity, returnTo, ct);
+        if (failure is not null) return failure;
+
         return Ok(new { redirectTo = returnTo });
+    }
+
+    // ── DXSuite-initiated flow (what Director's Angular /editor-launch page implements) ──────────
+    // 1. A signed-out user opens a DXSuite editor page; Start makes the PKCE verifier, challenge and
+    //    state, keeps them in a short-lived protected cookie, and sends the browser to Director's
+    //    /editor-launch page with the challenge.
+    // 2. Director (already signed in) obtains the code and redirects back to Callback.
+    // 3. Callback checks state, redeems the code with the stored verifier and signs the user in.
+
+    public const string PkceCookie = "dx-bridge-pkce";
+    private sealed record PkceState(string State, string Verifier, string ReturnTo);
+
+    private static string RandomToken() => Base64Url(RandomNumberGenerator.GetBytes(32));
+
+    private static string Base64Url(byte[] bytes) =>
+        Convert.ToBase64String(bytes).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+
+    private string CallbackUrl() =>
+        !string.IsNullOrWhiteSpace(_options.RedirectUri)
+            ? _options.RedirectUri
+            : $"{Request.Scheme}://{Request.Host}{Request.PathBase}/bridge/dxsuite-callback";
+
+    private string? DirectorUiBase() =>
+        (!string.IsNullOrWhiteSpace(_options.DirectorUiBaseUrl) ? _options.DirectorUiBaseUrl : _options.AllowedUiOrigins.FirstOrDefault())?.TrimEnd('/');
+
+    private CookieOptions PkceCookieOptions(TimeSpan? lifetime) => new()
+    {
+        HttpOnly = true,
+        Secure = !_options.AllowLoopbackHttp,
+        SameSite = SameSiteMode.Lax,
+        Path = string.IsNullOrEmpty(Request.PathBase.Value) ? "/" : Request.PathBase.Value,
+        MaxAge = lifetime,
+    };
+
+    [HttpGet("start")]
+    public IActionResult Start([FromQuery] string? returnTo)
+    {
+        var ui = DirectorUiBase();
+        if (!_options.Enabled || string.IsNullOrEmpty(ui))
+        {
+            BridgeFileLog.Write($"[BRIDGE] start FAIL: Enabled={_options.Enabled}, DirectorUiBaseUrl/AllowedUiOrigins empty={string.IsNullOrEmpty(ui)}");
+            return NotFound();
+        }
+
+        var verifier = RandomToken();
+        var challenge = Base64Url(SHA256.HashData(Encoding.ASCII.GetBytes(verifier)));
+        var state = RandomToken();
+        var safeReturn = SafeLocalPath(returnTo);
+
+        var protector = dataProtection.CreateProtector("DXSuite.EditorBridge.Pkce");
+        Response.Cookies.Append(PkceCookie,
+            protector.Protect(JsonSerializer.Serialize(new PkceState(state, verifier, safeReturn))),
+            PkceCookieOptions(TimeSpan.FromMinutes(10)));
+
+        // Director's SPA is served from this same origin (https://site/ and https://site/director): its login token
+        // and customer are readable here, so request the code directly. This avoids needing the SPA to serve a
+        // deep link such as /editor-launch (a 404 unless the host rewrites unknown paths to index.html).
+        if (Uri.TryCreate(ui, UriKind.Absolute, out var uiUri) &&
+            string.Equals(uiUri.GetLeftPart(UriPartial.Authority), $"{Request.Scheme}://{Request.Host}", StringComparison.OrdinalIgnoreCase))
+        {
+            BridgeFileLog.Write($"[BRIDGE] start (same-origin relay) returnTo={safeReturn}");
+            return Content(RelayPage(ui, _options.DirectorBaseUrl.TrimEnd('/'), CallbackUrl(), challenge, state), "text/html");
+        }
+
+        var target = $"{ui}/editor-launch" +
+            $"?clientId={Uri.EscapeDataString(_options.ClientId)}" +
+            $"&redirectUri={Uri.EscapeDataString(CallbackUrl())}" +
+            $"&codeChallenge={Uri.EscapeDataString(challenge)}" +
+            $"&state={Uri.EscapeDataString(state)}";
+        BridgeFileLog.Write($"[BRIDGE] start -> {ui}/editor-launch (redirectUri={CallbackUrl()}, returnTo={safeReturn})");
+        return Redirect(target);
+    }
+
+    private string RelayPage(string ui, string apiBase, string callback, string challenge, string state)
+    {
+        static string J(string v) => JsonSerializer.Serialize(v);
+        return $$"""
+            <!DOCTYPE html>
+            <html><head><meta charset="utf-8"><title>Signing in…</title></head>
+            <body><p id="m">Signing you in&hellip;</p>
+            <script>
+            (async function () {
+                var ui = {{J(ui)}}, api = {{J(apiBase)}}, callback = {{J(callback)}};
+                var token = localStorage.getItem('token'), user = null;
+                try { user = JSON.parse(localStorage.getItem('userList') || 'null'); } catch (e) { }
+                var customerId = user && user.customerId;
+                if (!token || !customerId) { location.replace(ui + '/'); return; }
+                var r = await fetch(api + '/api/v1/editor-auth/launch', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+                    body: JSON.stringify({ clientId: {{J(_options.ClientId)}}, customerId: customerId, redirectUri: callback, codeChallenge: {{J(challenge)}} })
+                });
+                if (!r.ok) throw new Error('launch ' + r.status);
+                var d = await r.json();
+                location.replace(callback + '?code=' + encodeURIComponent(d.code) + '&state=' + encodeURIComponent({{J(state)}}));
+            })().catch(function () { document.getElementById('m').textContent = 'Editor sign-in failed. Return to Director and try again.'; });
+            </script></body></html>
+            """;
+    }
+
+    [HttpGet("dxsuite-callback")]
+    public async Task<IActionResult> Callback([FromQuery] string? code, [FromQuery] string? state, CancellationToken ct)
+    {
+        if (!_options.Enabled) return NotFound();
+
+        PkceState? saved = null;
+        if (Request.Cookies.TryGetValue(PkceCookie, out var protectedValue))
+        {
+            try
+            {
+                saved = JsonSerializer.Deserialize<PkceState>(dataProtection.CreateProtector("DXSuite.EditorBridge.Pkce").Unprotect(protectedValue));
+            }
+            catch (Exception ex) when (ex is CryptographicException or JsonException)
+            {
+                BridgeFileLog.Write($"[BRIDGE] callback FAIL: PKCE cookie unreadable ({ex.GetType().Name})");
+            }
+        }
+        Response.Cookies.Delete(PkceCookie, PkceCookieOptions(null));
+
+        if (saved is null || string.IsNullOrWhiteSpace(code) || string.IsNullOrWhiteSpace(state) ||
+            !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(saved.State), Encoding.UTF8.GetBytes(state)))
+        {
+            BridgeFileLog.Write($"[BRIDGE] callback FAIL: missing/expired PKCE cookie or state mismatch (cookie={(saved is not null)}, code={!string.IsNullOrWhiteSpace(code)})");
+            return Redirect($"{Request.PathBase}/?error=editor-sign-in-failed");
+        }
+
+        var identity = await bridgeClient.RedeemAsync(code, saved.Verifier, ct);
+        if (identity is null)
+        {
+            BridgeFileLog.Write("[BRIDGE] callback FAIL: Director redeem returned no identity (see [BRIDGE-HTTP] line: ClientSecret mismatch, expired code, or RedirectUri mismatch)");
+            return Redirect($"{Request.PathBase}/?error=editor-sign-in-failed");
+        }
+
+        var failure = await CompleteSignInAsync(identity, saved.ReturnTo, ct);
+        if (failure is not null) return Redirect($"{Request.PathBase}/?error=editor-tenant-unavailable");
+
+        BridgeFileLog.Write($"[BRIDGE] callback SUCCESS for {identity.UserName}; redirectTo={saved.ReturnTo}");
+        return Redirect($"{Request.PathBase}{saved.ReturnTo}");
     }
 }

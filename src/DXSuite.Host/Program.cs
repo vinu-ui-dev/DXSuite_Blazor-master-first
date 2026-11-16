@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using DXSuite.Connectors;
@@ -685,7 +685,7 @@ var app = builder.Build();
 // Optional virtual-directory hosting (e.g. https://host/director/...). Must be the first middleware
 // so every later component sees the prefix as PathBase. Harmless if the proxy already strips it.
 var configuredPathBase = builder.Configuration["DXSuite:PathBase"];
-if (!string.IsNullOrWhiteSpace(configuredPathBase))
+if (!string.IsNullOrWhiteSpace(configuredPathBase) && !app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Local"))
     app.UsePathBase("/" + configuredPathBase.Trim('/'));
 
 // Eager resolution of ITenantStore ensures the fail-fast (no tenants configured)
@@ -1146,6 +1146,24 @@ if (isWebRole)
     });
 
     app.UseAuthentication();
+
+    // Editor bridge entry: a signed-out user opening one of the editor pages (the link Director shows)
+    // is sent through Director's /editor-launch handover instead of DXSuite's own login page.
+    app.Use(async (ctx, next) =>
+    {
+        var bridge = ctx.RequestServices.GetRequiredService<IOptions<DXSuite.Shared.Models.EditorBridgeClientOptions>>().Value;
+        if (bridge.Enabled
+            && HttpMethods.IsGet(ctx.Request.Method)
+            && ctx.User.Identity?.IsAuthenticated != true
+            && ctx.Request.Headers.Accept.ToString().Contains("text/html", StringComparison.OrdinalIgnoreCase)
+            && bridge.EntryPaths.Any(p => ctx.Request.Path.StartsWithSegments(p, StringComparison.OrdinalIgnoreCase)))
+        {
+            var returnTo = ctx.Request.Path + ctx.Request.QueryString;
+            ctx.Response.Redirect($"{ctx.Request.PathBase}/bridge/start?returnTo={Uri.EscapeDataString(returnTo)}");
+            return;
+        }
+        await next();
+    });
 
     // JIT elevation enforcement — operators must hold a live TblPlatformElevation row
     // for the resolved tenant before any tenant-scoped request proceeds.
