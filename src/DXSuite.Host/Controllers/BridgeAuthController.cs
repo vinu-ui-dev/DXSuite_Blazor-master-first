@@ -48,12 +48,28 @@ public class BridgeAuthController(
     [HttpPost("dxsuite-exchange")]
     public async Task<IActionResult> Exchange([FromBody] ExchangeRequest body, CancellationToken ct)
     {
-        if (!_options.Enabled) return NotFound();
+        logger.LogInformation("[BRIDGE] 1/5 exchange called. Host={Host} PathBase={PathBase} Origin={Origin} Enabled={Enabled} DirectorBaseUrl='{Url}' ClientId='{ClientId}' HasSecret={HasSecret}",
+            Request.Host, Request.PathBase, Request.Headers.Origin.ToString(), _options.Enabled,
+            _options.DirectorBaseUrl, _options.ClientId, !string.IsNullOrEmpty(_options.ClientSecret));
+
+        if (!_options.Enabled)
+        {
+            logger.LogWarning("[BRIDGE] FAIL at 1/5: EditorBridgeClient:Enabled is false -> 404.");
+            return NotFound();
+        }
         if (body is null || string.IsNullOrWhiteSpace(body.Code) || string.IsNullOrWhiteSpace(body.Verifier))
+        {
+            logger.LogWarning("[BRIDGE] FAIL at 2/5: request body missing code or verifier (bodyNull={BodyNull}).", body is null);
             return BadRequest(new { error = "missing-code-or-verifier" });
+        }
 
         var identity = await bridgeClient.RedeemAsync(body.Code, body.Verifier, ct);
-        if (identity is null) return Unauthorized(new { error = "exchange-failed" });
+        if (identity is null)
+        {
+            logger.LogWarning("[BRIDGE] FAIL at 3/5: Director redeem returned no identity (see preceding [BRIDGE-HTTP] line for status/reason).");
+            return Unauthorized(new { error = "exchange-failed" });
+        }
+        logger.LogInformation("[BRIDGE] 3/5 redeem OK. User={User} TenantId={TenantId}", identity.UserName, identity.TenantId);
 
         var returnTo = SafeLocalPath(body.ReturnTo);
 
@@ -104,6 +120,7 @@ public class BridgeAuthController(
             Expires = identity.ExpiresAt,
         });
 
+        logger.LogInformation("[BRIDGE] 5/5 cookie issued for {User}; redirectTo={ReturnTo}", identity.UserName, returnTo);
         return Ok(new { redirectTo = returnTo });
     }
 }

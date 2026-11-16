@@ -37,12 +37,23 @@ public sealed class EditorBridgeClient(HttpClient http, IOptions<EditorBridgeCli
 
     private async Task<T?> PostAsync<T>(string path, object body, CancellationToken ct) where T : class
     {
-        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.DirectorBaseUrl)) return null;
+        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.DirectorBaseUrl))
+        {
+            logger.LogWarning("[BRIDGE-HTTP] skipped {Path}: Enabled={Enabled}, DirectorBaseUrl empty={Empty}.",
+                path, _options.Enabled, string.IsNullOrWhiteSpace(_options.DirectorBaseUrl));
+            return null;
+        }
         try
         {
             using var request = BuildRequest(HttpMethod.Post, path, body);
             using var response = await http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return null;
+            if (!response.IsSuccessStatusCode)
+            {
+                var text = await response.Content.ReadAsStringAsync(ct);
+                logger.LogWarning("[BRIDGE-HTTP] {Url} -> {Status}. Response body: {Body}",
+                    request.RequestUri, (int)response.StatusCode, text.Length > 500 ? text[..500] : text);
+                return null;
+            }
             return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
