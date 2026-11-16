@@ -23,8 +23,9 @@
     var tenantFeatures = TenantContext.Features;
     // Pulse, Style Guide, SLC, Sentinel and Platform are hidden for every user by default (same as
     // their top-nav entries in MainLayout); "Navigation:ShowAllModules": true brings them back.
+    // Design is hidden from this Active Modules table only (its nav entry is unchanged).
     var showAllModules = Config.GetValue<bool>("Navigation:ShowAllModules");
-    string[] hiddenByDefault = ["Pulse", "Style Guide", "SLC", "Sentinel", "Platform"];
+    string[] hiddenByDefault = ["Pulse", "Style Guide", "SLC", "Sentinel", "Platform", "Design"];
     bool ModuleVisibleOnHome(IBlazorModule m) =>
         (showAllModules || !hiddenByDefault.Contains(m.Name, StringComparer.OrdinalIgnoreCase)) && m.Name switch
         {
