@@ -40,7 +40,7 @@ public sealed class FileLoggerProvider : ILoggerProvider
         public bool IsEnabled(LogLevel logLevel)
             => logLevel != LogLevel.None
                && (logLevel >= minLevel
-                   || ((categoryName == "ApiTrace" || categoryName.EndsWith("AuthController")) && logLevel >= LogLevel.Information));
+                   || ((categoryName == "ApiTrace" || categoryName.EndsWith("AuthController") || categoryName.EndsWith("EditorBridgeClient")) && logLevel >= LogLevel.Information));
 
         public void Log<TState>(
             LogLevel logLevel,
