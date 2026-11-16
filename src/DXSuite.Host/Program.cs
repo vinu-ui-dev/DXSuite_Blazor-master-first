@@ -675,6 +675,12 @@ builder.Services.AddSingleton<DXSuite.Host.Services.MockCoreApi.MockCoreApiStore
 
 var app = builder.Build();
 
+// Optional virtual-directory hosting (e.g. https://host/director/...). Must be the first middleware
+// so every later component sees the prefix as PathBase. Harmless if the proxy already strips it.
+var configuredPathBase = builder.Configuration["DXSuite:PathBase"];
+if (!string.IsNullOrWhiteSpace(configuredPathBase))
+    app.UsePathBase("/" + configuredPathBase.Trim('/'));
+
 // Eager resolution of ITenantStore ensures the fail-fast (no tenants configured)
 // fires at process start rather than on the first inbound request.
 _ = app.Services.GetRequiredService<DXSuite.Shared.Multitenancy.ITenantStore>();

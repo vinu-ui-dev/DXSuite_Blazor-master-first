@@ -4,7 +4,7 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <base href="/" />
+    <base href="@BaseHref" />
     <link href="lib/bootstrap/css/bootstrap.min.css" rel="stylesheet" />
     <link href="lib/bootstrap-icons/font/bootstrap-icons.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="_content/DXSuite.Shared/dxsuite.css" />
@@ -59,6 +59,11 @@
 </html>
 
 @code {
+    [CascadingParameter] private HttpContext? HttpContext { get; set; }
+
+    // "/" normally; "/director/" when hosted under a virtual directory (DXSuite:PathBase).
+    private string BaseHref => (HttpContext?.Request.PathBase.Value ?? "").TrimEnd('/') + "/";
+
 #if MODULE_DESIGN
     private const bool ModuleDesignEnabled = true;
 #else
