@@ -5,6 +5,7 @@ using DXSuite.Connectors;
 using DXSuite.CoreData;
 using DXSuite.Director;
 using DXSuite.Host;
+using DXSuite.Host.Logging;
 using DXSuite.Host.Components;
 using DXSuite.Host.Multitenancy;
 using DXSuite.Shared.Entities.Identity;
@@ -51,6 +52,12 @@ using Azure.Identity;
 using Azure.Extensions.AspNetCore.Configuration.Secrets;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var logsDirectory = Path.Combine(builder.Environment.ContentRootPath, "logs");
+Directory.CreateDirectory(logsDirectory);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddProvider(new FileLoggerProvider(logsDirectory, LogLevel.Warning));
 
 // WebApplication.CreateBuilder only wires up the dev-time static web assets manifest (the thing
 // that lets _content/** and _framework/** resolve to each referenced project's/package's own
@@ -1117,6 +1124,27 @@ if (isWebRole)
     // Authentication & Authorization
     // Must run unconditionally so device/admin API key schemes work even when no
     // interactive login providers are configured (e.g. SSO-only environments).
+    app.Use(async (ctx, next) =>
+    {
+        var trace = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApiTrace");
+        var isApi = ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/auth");
+        if (isApi)
+            trace.LogInformation("REQUEST START {Method} {Path}{Query} IP={Ip} Authenticated={Auth}", ctx.Request.Method, ctx.Request.Path, ctx.Request.QueryString, ctx.Connection.RemoteIpAddress, ctx.User?.Identity?.IsAuthenticated);
+        try
+        {
+            await next();
+        }
+        catch (Exception ex)
+        {
+            trace.LogError(ex, "REQUEST FAILED {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+            throw;
+        }
+        if (isApi)
+            trace.LogInformation("REQUEST END {Method} {Path} Status={Status} User={User}", ctx.Request.Method, ctx.Request.Path, ctx.Response.StatusCode, ctx.User?.Identity?.Name ?? "anonymous");
+        if (ctx.Response.StatusCode is 401 or 403)
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] API authorization {(ctx.Response.StatusCode == 401 ? "UNAUTHORIZED (401)" : "FORBIDDEN (403)")}: {ctx.Request.Method} {ctx.Request.Path} User={ctx.User?.Identity?.Name ?? "anonymous"} IP={ctx.Connection.RemoteIpAddress}");
+    });
+
     app.UseAuthentication();
 
     // JIT elevation enforcement — operators must hold a live TblPlatformElevation row

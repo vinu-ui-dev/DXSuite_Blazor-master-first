@@ -32,7 +32,11 @@ public static class Extensions
                 : config.GetConnectionString("Aviation")
                   ?? throw new InvalidOperationException(
                       "No Aviation connection string in app config (background service path).");
-            options.UseConfiguredProvider(config, "Aviation", connStr);
+            if (string.IsNullOrWhiteSpace(connStr))
+                connStr = config.GetConnectionString("Aviation");
+            if (string.IsNullOrWhiteSpace(connStr))
+                connStr = config.GetConnectionString("Director");
+            options.UseConfiguredProvider(config, "Aviation", connStr!);
         }, ServiceLifetime.Scoped);
 
         // ──────────────────────────────────────────────────────────────────

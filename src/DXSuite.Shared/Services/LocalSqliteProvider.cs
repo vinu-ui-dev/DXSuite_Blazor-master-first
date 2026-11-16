@@ -20,7 +20,7 @@ namespace DXSuite.Shared.Services;
 /// </remarks>
 public static class LocalSqliteProvider
 {
-    public static bool IsEnabled(IConfiguration config) => config.GetValue<bool>("Database:UseSqlite");
+    public static bool IsEnabled(IConfiguration config) => false;
 
     /// <summary>
     /// Configures <paramref name="options"/> for a per-module SQLite file when local SQLite mode is on;
@@ -35,14 +35,6 @@ public static class LocalSqliteProvider
     public static DbContextOptionsBuilder UseConfiguredProvider(
         this DbContextOptionsBuilder options, IConfiguration config, string moduleName, string? sqlServerConnStr)
     {
-        if (IsEnabled(config))
-        {
-            var dir = config["Database:SqliteDirectory"] ?? "App_Data/local-sqlite";
-            Directory.CreateDirectory(dir);
-            var path = Path.Combine(dir, $"{moduleName}.db");
-            return options.UseSqlite($"Data Source={path}");
-        }
-
         return options.UseSqlServer(sqlServerConnStr);
     }
 }
