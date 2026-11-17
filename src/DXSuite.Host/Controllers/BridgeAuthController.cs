@@ -263,6 +263,8 @@ public class BridgeAuthController(
     }
 
     [HttpGet("dxsuite-callback")]
+    // Same handler under the callback URL already registered with Director for the "director" client.
+    [HttpGet("~/auth/dxsuite/callback")]
     public async Task<IActionResult> Callback([FromQuery] string? code, [FromQuery] string? state, CancellationToken ct)
     {
         if (!_options.Enabled) return NotFound();
