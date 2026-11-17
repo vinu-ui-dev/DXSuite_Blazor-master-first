@@ -75,22 +75,18 @@ public class DirectorMonitoringService : BackgroundService
 
         while (!stoppingToken.IsCancellationRequested)
         {
-            // Shutdown/restart cancels the token mid-query; that is not a failure, so stop quietly
-            // instead of logging a SqlException (error 3980 "Operation cancelled by user").
-            IDisposable? distLock;
-            try { distLock = await _lockService.TryAcquireLockAsync("director-monitoring", TimeSpan.FromMinutes(2), stoppingToken); }
-            catch (Exception) when (stoppingToken.IsCancellationRequested) { break; }
-            using (distLock)
+            using (var distLock = await _lockService.TryAcquireLockAsync(
+                       "director-monitoring", TimeSpan.FromMinutes(2), stoppingToken))
             {
                 if (distLock != null)
                 {
                     try { await SweepUrlsAsync(stoppingToken); }
-                    catch (Exception ex) when (!stoppingToken.IsCancellationRequested) { _logger.LogError(ex, "DirectorMonitoringService: URL sweep failed"); }
+                    catch (Exception ex) { _logger.LogError(ex, "DirectorMonitoringService: URL sweep failed"); }
 
                     if (++_cycle % PixeraProbeEveryNthCycle == 0)
                     {
                         try { await ProbePixeraConnectorsAsync(stoppingToken); }
-                        catch (Exception ex) when (!stoppingToken.IsCancellationRequested) { _logger.LogError(ex, "DirectorMonitoringService: Pixera probe failed"); }
+                        catch (Exception ex) { _logger.LogError(ex, "DirectorMonitoringService: Pixera probe failed"); }
                     }
                 }
             }

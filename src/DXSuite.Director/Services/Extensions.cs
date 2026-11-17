@@ -169,8 +169,6 @@ public static class Extensions
         // Floor Plan and StatusSelector
         services.AddSingleton<ScheduleEvaluator>();
         services.AddSingleton<IFloorPlanService, FloorPlanService>();
-        services.AddScoped<IAirlineAccessScope, AirlineAccessScope>();
-        services.AddScoped<ICounterPublishService, CounterPublishService>();
         services.AddScoped<IStatusSelectorService, StatusSelectorService>();
         services.AddScoped<IPublicationInvalidator, PublicationInvalidator>();
         services.AddScoped<IDisplayOverrideService, DisplayOverrideService>();
@@ -264,8 +262,6 @@ public static class Extensions
         services.AddScoped<IAssetApprovalService, AssetApprovalService>();
         services.AddScoped<IAssetIngestService, AssetIngestService>();
         services.AddScoped<IUploadIdentityService, UploadIdentityService>();
-        services.AddScoped<AirlineLogoLibrary>();
-        services.AddScoped<DXSuite.Shared.Services.IAirlineLogoLibrary>(sp => sp.GetRequiredService<AirlineLogoLibrary>());
         services.AddScoped<IContentOverwriteService, ContentOverwriteService>();
         services.AddScoped<IEffectiveContentResolver, EffectiveContentResolver>();
         services.AddSingleton<DeliveryMetrics>();

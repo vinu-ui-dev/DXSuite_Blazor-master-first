@@ -1,5 +1,4 @@
 using DXSuite.Director.Services.DistributedLock;
-using DXSuite.Shared.Multitenancy;
 
 namespace DXSuite.Director.Services;
 
@@ -8,7 +7,7 @@ namespace DXSuite.Director.Services;
 /// </summary>
 public class AutoHealBackgroundService : BackgroundService
 {
-    private readonly IWorkerScopeFactory _workerScopeFactory;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<AutoHealBackgroundService> _logger;
     private readonly IDistributedLockService _lockService;
 
@@ -16,11 +15,11 @@ public class AutoHealBackgroundService : BackgroundService
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
     public AutoHealBackgroundService(
-        IWorkerScopeFactory workerScopeFactory,
+        IServiceScopeFactory scopeFactory,
         ILogger<AutoHealBackgroundService> logger,
         IDistributedLockService lockService)
     {
-        _workerScopeFactory = workerScopeFactory;
+        _scopeFactory = scopeFactory;
         _logger = logger;
         _lockService = lockService;
     }
@@ -43,25 +42,10 @@ public class AutoHealBackgroundService : BackgroundService
 
                 if (distLock != null)
                 {
-                    foreach (var tenantSubdomain in _workerScopeFactory.WorkerTenants)
-                    {
-                        if (stoppingToken.IsCancellationRequested) break;
-                        try
-                        {
-                            using var scope = await _workerScopeFactory.CreateTenantScopeAsync(tenantSubdomain, stoppingToken);
-                            var autoHealService = scope.ServiceProvider.GetRequiredService<IAutoHealService>();
+                    using var scope = _scopeFactory.CreateScope();
+                    var autoHealService = scope.ServiceProvider.GetRequiredService<IAutoHealService>();
 
-                            await autoHealService.CheckAndHealDevicesAsync(stoppingToken);
-                        }
-                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
-                        {
-                            throw;
-                        }
-                        catch (Exception ex)
-                        {
-                            _logger.LogError(ex, "Error in auto-heal check for tenant {Tenant}", tenantSubdomain);
-                        }
-                    }
+                    await autoHealService.CheckAndHealDevicesAsync(stoppingToken);
                 }
                 else
                 {

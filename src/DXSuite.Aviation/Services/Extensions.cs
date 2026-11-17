@@ -32,11 +32,7 @@ public static class Extensions
                 : config.GetConnectionString("Aviation")
                   ?? throw new InvalidOperationException(
                       "No Aviation connection string in app config (background service path).");
-            if (string.IsNullOrWhiteSpace(connStr))
-                connStr = config.GetConnectionString("Aviation");
-            if (string.IsNullOrWhiteSpace(connStr))
-                connStr = config.GetConnectionString("Director");
-            options.UseConfiguredProvider(config, "Aviation", connStr!);
+            options.UseConfiguredProvider(config, "Aviation", connStr);
         }, ServiceLifetime.Scoped);
 
         // ──────────────────────────────────────────────────────────────────
@@ -57,11 +53,6 @@ public static class Extensions
         // CUPPS — live airline/counter data for the RMU picker (DXME-500)
         // ──────────────────────────────────────────────────────────────────
         services.AddScoped<CuppsLiveDataProvider>();
-
-        // ──────────────────────────────────────────────────────────────────
-        // Airlines — User Event audit trail for create/onboard/remove
-        // ──────────────────────────────────────────────────────────────────
-        services.AddAirlineAudit();
 
         return services;
     }

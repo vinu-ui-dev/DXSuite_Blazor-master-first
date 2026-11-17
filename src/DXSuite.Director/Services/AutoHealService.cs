@@ -9,8 +9,7 @@ namespace DXSuite.Director.Services;
 /// </summary>
 public class AutoHealService : IAutoHealService
 {
-    private readonly IDirectorDBContext _db;
-    private readonly IPlayerSyncSettingsService _playerSyncSettings;
+    private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILgDisplayControlService _lgDisplayControl;
     private readonly ILogger<AutoHealService> _logger;
 
@@ -18,13 +17,11 @@ public class AutoHealService : IAutoHealService
     private static readonly TimeSpan CooldownPeriod = TimeSpan.FromMinutes(30);
 
     public AutoHealService(
-        IDirectorDBContext db,
-        IPlayerSyncSettingsService playerSyncSettings,
+        IServiceScopeFactory scopeFactory,
         ILgDisplayControlService lgDisplayControl,
         ILogger<AutoHealService> logger)
     {
-        _db = db;
-        _playerSyncSettings = playerSyncSettings;
+        _scopeFactory = scopeFactory;
         _lgDisplayControl = lgDisplayControl;
         _logger = logger;
     }
@@ -36,17 +33,13 @@ public class AutoHealService : IAutoHealService
     {
         _logger.LogInformation("=== AUTO-HEAL CHECK STARTING ===");
 
-        var db = _db;
-
-        // Newer Director schemas drop tblDevice.AutoHealEnabled; skip rather than fail every cycle.
-        if (!await SchemaProbe.ColumnExistsAsync(db, "tblDevice", "AutoHealEnabled", cancellationToken))
-        {
-            _logger.LogDebug("tblDevice.AutoHealEnabled is not in this database; auto-heal check skipped.");
-            return;
-        }
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
 
         // Track the configured poll cadence: a slower fleet pace must not trigger heals
-        var syncSettings = await _playerSyncSettings.GetAsync();
+        var syncSettings = await scope.ServiceProvider
+            .GetRequiredService<IPlayerSyncSettingsService>()
+            .GetAsync();
 
         var now = DateTime.UtcNow;
         var offlineThreshold = now - syncSettings.OnlineThreshold;
@@ -155,7 +148,8 @@ public class AutoHealService : IAutoHealService
     {
         var result = new AutoHealResult { DeviceId = deviceId };
 
-        var db = _db;
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
 
         // Get device
         var device = await db.TblDevices.FirstOrDefaultAsync(d => d.DeviceId == deviceId, cancellationToken);
@@ -243,7 +237,9 @@ public class AutoHealService : IAutoHealService
 
     public async Task<DateTime?> GetLastHealAttemptAsync(string deviceId)
     {
-        return await GetLastHealAttemptForDeviceAsync(_db, deviceId);
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
+        return await GetLastHealAttemptForDeviceAsync(db, deviceId);
     }
 
     private async Task<DateTime?> GetLastHealAttemptForDeviceAsync(IDirectorDBContext db, string deviceId)
@@ -263,9 +259,12 @@ public class AutoHealService : IAutoHealService
 
     public async Task<AutoHealStats> GetStatsAsync()
     {
-        var db = _db;
+        using var scope = _scopeFactory.CreateScope();
+        var db = scope.ServiceProvider.GetRequiredService<IDirectorDBContext>();
 
-        var syncSettings = await _playerSyncSettings.GetAsync();
+        var syncSettings = await scope.ServiceProvider
+            .GetRequiredService<IPlayerSyncSettingsService>()
+            .GetAsync();
 
         var now = DateTime.Now;
         var offlineThreshold = now - syncSettings.OnlineThreshold;

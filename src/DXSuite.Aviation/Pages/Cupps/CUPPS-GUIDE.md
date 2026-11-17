@@ -1,8 +1,5 @@
 # CUPPS Agent Screens — How It Works
 
-> **Update:** the demo data described below (`CuppsData` seed lists, scenarios, `SeedPublished`) has been removed. The page now loads airlines, allocations, page templates, approved Messages, flights and each counter's published state from Director/CoreAPI via `CuppsLiveDataProvider` (`GET api/counter-publish/states`), and persists publish/open/close through `api/counter-publish`. Typed/selected ticker Messages are still session-only (not yet persisted).
-
-
 A walkthrough of `src/DXSuite.Aviation/Pages/Cupps/`, for understanding how the screens are built,
 how variables are bound to the UI, and how data flows through the component.
 

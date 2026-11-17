@@ -72,11 +72,7 @@ public class TempFileCleanupService : BackgroundService
             roots.Add(Path.GetFullPath(_env.WebRootPath));
 
         foreach (var tenant in _tenantStore.GetAllEnabledAsync().GetAwaiter().GetResult())
-        {
-            var tenantRoot = DXSuite.Shared.Multitenancy.TenantMediaPaths.GetRoot(tenant, _env, _config);
-            if (!string.IsNullOrEmpty(tenantRoot))
-                roots.Add(Path.GetFullPath(tenantRoot));
-        }
+            roots.Add(Path.GetFullPath(DXSuite.Shared.Multitenancy.TenantMediaPaths.GetRoot(tenant, _env, _config)));
 
         return roots;
     }

@@ -1,4 +1,4 @@
-<Project Sdk="Microsoft.NET.Sdk.Web">
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
 
   <PropertyGroup>
     <TargetFramework>net10.0</TargetFramework>
@@ -22,13 +22,13 @@
   -->
 	<PropertyGroup>
 		<IncludeAviation Condition="'$(IncludeAviation)'   == ''">true</IncludeAviation>
-    <IncludePulse Condition="'$(IncludePulse)'      == ''">false</IncludePulse>
-    <IncludeSentinel Condition="'$(IncludeSentinel)'   == ''">false</IncludeSentinel>
-    <IncludeDesign Condition="'$(IncludeDesign)'     == ''">false</IncludeDesign>
-    <IncludeStyleGuide Condition="'$(IncludeStyleGuide)' == ''">false</IncludeStyleGuide>
-    <IncludeNetJets Condition="'$(IncludeNetJets)'    == ''">false</IncludeNetJets>
-    <IncludeSLC Condition="'$(IncludeSLC)'        == ''">false</IncludeSLC>
-    <IncludeDeviceProxy Condition="'$(IncludeDeviceProxy)' == ''">false</IncludeDeviceProxy>
+		<IncludePulse Condition="'$(IncludePulse)'      == ''">true</IncludePulse>
+		<IncludeSentinel Condition="'$(IncludeSentinel)'   == ''">true</IncludeSentinel>
+		<IncludeDesign Condition="'$(IncludeDesign)'     == ''">true</IncludeDesign>
+		<IncludeStyleGuide Condition="'$(IncludeStyleGuide)' == ''">true</IncludeStyleGuide>
+		<IncludeNetJets Condition="'$(IncludeNetJets)'    == ''">true</IncludeNetJets>
+		<IncludeSLC Condition="'$(IncludeSLC)'        == ''">true</IncludeSLC>
+		<IncludeDeviceProxy Condition="'$(IncludeDeviceProxy)' == ''">true</IncludeDeviceProxy>
 	</PropertyGroup>
 
   <!--

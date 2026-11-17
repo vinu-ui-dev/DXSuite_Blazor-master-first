@@ -91,11 +91,7 @@
 }
 
 .ca-grid-scroll {
-    /* The only scrollable region on this page (both axes) — pinning everything else (toolbar, filters,
-       legend) outside it avoids the page growing a second, outer scrollbar on top of this one. */
-    overflow: auto;
-    max-height: calc(100vh - 340px);
-    min-height: 300px;
+    overflow-x: auto;
     border-top: 1px solid var(--dx-border-color, #dee2e6);
     border-bottom: 1px solid var(--dx-border-color, #dee2e6);
 }
@@ -224,7 +220,7 @@
 }
 
 .ca-manual {
-    border: 2px solid rgba(15,23,42,0.55);
+    border: 2px dashed rgba(255,255,255,0.85);
 }
 
 .ca-selected {
@@ -286,7 +282,7 @@
 }
 
 .ca-swatch-manual {
-    border: 2px solid hsl(205,52%,25%);
+    border: 2px dashed hsl(205,52%,30%);
 }
 
 .ca-swatch-dedicated {

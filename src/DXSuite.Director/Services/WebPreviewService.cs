@@ -93,16 +93,9 @@ public class WebPreviewService
     /// </summary>
     public static void RemoveLegacyThumbnails(IWebHostEnvironment env, ILogger logger)
     {
-        string? legacyRoot = null;
+        var legacyRoot = Path.Combine(env.WebRootPath, "WebThumbnails");
         try
         {
-            var webRootPath = env.WebRootPath;
-            if (string.IsNullOrEmpty(webRootPath))
-            {
-                return;
-            }
-
-            legacyRoot = Path.Combine(webRootPath, "WebThumbnails");
             if (Directory.Exists(legacyRoot))
             {
                 Directory.Delete(legacyRoot, recursive: true);
