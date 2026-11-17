@@ -39,4 +39,11 @@ public class EditorBridgeClientOptions
     /// (the link Director shows opens one of these). Prefix match, case-insensitive.
     /// </summary>
     public string[] EntryPaths { get; set; } = ["/Flight-Data-Editor", "/cupps-agent-screens", "/messages"];
+
+    /// <summary>
+    /// Maps the TenantId Director's bridge returns (EditorBridge:Customers:&lt;customerId&gt;:TenantId) to this
+    /// host's own TenantId (Tenants:&lt;subdomain&gt;:TenantId), for when the two sides name a tenant differently,
+    /// e.g. { "6df7eda2-...": "dev" }. A TenantId with no entry is used unchanged. Keys are case-insensitive.
+    /// </summary>
+    public Dictionary<string, string> TenantIdMap { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 }

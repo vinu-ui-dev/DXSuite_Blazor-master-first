@@ -89,6 +89,13 @@ public class BridgeAuthController(
     /// </summary>
     private async Task<bool> CompleteSignInAsync(BridgeIdentity identity, string returnTo, CancellationToken ct)
     {
+        // Director and DXSuite may name the same tenant differently; an explicit map reconciles them.
+        if (_options.TenantIdMap.TryGetValue(identity.TenantId, out var mappedTenantId) && !string.IsNullOrWhiteSpace(mappedTenantId))
+        {
+            Trace($"tenant mapped via EditorBridgeClient:TenantIdMap: '{identity.TenantId}' -> '{mappedTenantId}'");
+            identity = identity with { TenantId = mappedTenantId };
+        }
+
         var tenant = await tenantStore.FindByTenantIdAsync(identity.TenantId, ct);
         if (!TenantAllows(tenant, returnTo))
         {
