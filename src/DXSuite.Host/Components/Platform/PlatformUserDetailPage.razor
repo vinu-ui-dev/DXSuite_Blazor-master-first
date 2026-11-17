@@ -22,7 +22,7 @@
     {
         <div class="dx-platform-header">
             <h2>@(user.DisplayName ?? user.PrimaryEmail)</h2>
-            <a href="/platform/users" class="dx-btn dx-btn-gray dx-btn-sm">← Back</a>
+            <a href="platform/users" class="dx-btn dx-btn-gray dx-btn-sm">← Back</a>
         </div>
 
         <dl class="dx-dl">
@@ -99,7 +99,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

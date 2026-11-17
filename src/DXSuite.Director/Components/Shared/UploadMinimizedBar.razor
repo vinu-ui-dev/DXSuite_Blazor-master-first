@@ -97,7 +97,7 @@
             else
             {
                 UploadService.SetPendingExpand(task.Id);
-                NavMan.NavigateTo($"/location/{task.LocationId}");
+                NavMan.NavigateTo($"location/{task.LocationId}");
             }
         }
         else if (task.Stage is "uploading" or "processing")
@@ -112,7 +112,7 @@
             else
             {
                 UploadService.SetPendingExpand(task.Id);
-                NavMan.NavigateTo($"/location/{task.LocationId}");
+                NavMan.NavigateTo($"location/{task.LocationId}");
             }
         }
     }

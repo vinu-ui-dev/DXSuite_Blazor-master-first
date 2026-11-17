@@ -29,7 +29,7 @@ else
         <div class="unauthorized-wrapper">
             <h1>Unauthorized</h1>
             <p>You do not have permission to access this page.</p>
-            <a href="/">Return Home</a>
+            <a href="./">Return Home</a>
         </div>
     }
     else if (!isDatabaseAvailable)
@@ -37,7 +37,7 @@ else
         <div class="sentinel-db-warning">
             <h2>Sentinel Database Not Initialized</h2>
             <p>The Sentinel database has not been created yet. Run <code>Scripts\Sentinel_CreateDatabase.sql</code> to initialize it.</p>
-            <a href="/">Return Home</a>
+            <a href="./">Return Home</a>
         </div>
     }
     else
@@ -83,7 +83,7 @@ else
             }
 
             <div style="text-align: center; margin: 16px 0;">
-                <a href="/Configuration" class="action-link">Manage devices in Configuration</a>
+                <a href="Configuration" class="action-link">Manage devices in Configuration</a>
             </div>
 
             <!-- Zone 4: Recent Activity Feed -->

@@ -11,7 +11,7 @@
 <div class="dx-platform-page">
     <div class="dx-platform-header">
         <h2>Elevation Queue</h2>
-        <a href="/platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
+        <a href="platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
     </div>
     <p class="dx-text-muted">
         Approve or reject operator access requests for <strong>@TenantContext.TenantId</strong>.
@@ -113,7 +113,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsTenantAdmin || !SessionState.PlatformUserId.HasValue)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

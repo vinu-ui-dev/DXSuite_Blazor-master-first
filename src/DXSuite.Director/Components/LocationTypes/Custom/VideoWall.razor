@@ -48,7 +48,7 @@
                                 <span class="vw-sb-display-name dx-text-muted">@sbDisp.DisplayName</span>
                                 <div class="vw-sb-display-actions">
                                     <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
-                                            @onclick="@(() => navMan.NavigateTo("/display/" + sbDisp.DisplayId))">
+                                            @onclick="@(() => navMan.NavigateTo("display/" + sbDisp.DisplayId))">
                                         EDIT
                                     </button>
                                     @if (sbDisp.DisplayMode == (int)Types.DisplayMode.Override)
@@ -84,7 +84,7 @@
                                 <span class="vw-sb-display-name dx-text-muted">@sbDisp.DisplayName</span>
                                 <div class="vw-sb-display-actions">
                                     <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
-                                            @onclick="@(() => navMan.NavigateTo("/display/" + sbDisp.DisplayId))">
+                                            @onclick="@(() => navMan.NavigateTo("display/" + sbDisp.DisplayId))">
                                         EDIT
                                     </button>
                                     @if (sbDisp.DisplayMode == (int)Types.DisplayMode.Override)
@@ -555,7 +555,7 @@
         {
             <div class="vw-hover-overlay" style="border: 2px solid #16FF00;"></div>
             <div class="vw-top-banner">@(display.DisplayName?.ToUpper())</div>
-            <div class="vw-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT CONTENT</div>
+            <div class="vw-bottom-banner" @onclick="@(() => navMan.NavigateTo("display/" + display.DisplayId))">EDIT CONTENT</div>
         }
     };
 

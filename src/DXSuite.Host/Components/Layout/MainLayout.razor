@@ -39,7 +39,7 @@
                             <path d="M4 6h16M4 12h16M4 18h16" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
                         </svg>
                     </button>
-                    <a class="dx-navbar-brand" href="/">
+                    <a class="dx-navbar-brand" href="./">
                         <img src="images/branding/header.png" alt="DXSuite" style="height:40px;" onerror="this.style.display='none'; this.nextElementSibling.style.display='inline';" />
                         <strong style="display:none;">DXSuite</strong>
                     </a>
@@ -118,14 +118,14 @@
 
                             @if (showSettings)
                             {
-                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("/settings"))">
+                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("settings"))">
                                     Settings
                                 </button>
                             }
 
                             @if (showConfig)
                             {
-                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("/configuration"))">
+                                <button class="dx-dropdown-item" @onclick="@(() => NavigateTo("configuration"))">
                                     Configuration
                                 </button>
                             }
@@ -604,7 +604,8 @@
     private void NavigateTo(string href)
     {
         CloseAllDropdowns();
-        Navigation.NavigateTo(href);
+        // Nav item hrefs are written as "/page"; keep them base-relative so they stay inside the IIS application path.
+        Navigation.NavigateTo(href.TrimStart('/'));
     }
 
     private void ToggleProfileDropdown()
@@ -697,7 +698,7 @@
     private void SignInWithProvider(string providerName)
     {
         // All providers route through AuthController so per-tenant scheme selection applies.
-        Navigation.NavigateTo($"/auth/challenge/{providerName}", forceLoad: true);
+        Navigation.NavigateTo($"auth/challenge/{providerName}", forceLoad: true);
     }
 
     protected override async Task OnAfterRenderAsync(bool firstRender)
@@ -717,7 +718,7 @@
     private void BeginLogout()
     {
         CloseAllDropdowns();
-        Navigation.NavigateTo("/auth/logout", forceLoad: true);
+        Navigation.NavigateTo("auth/logout", forceLoad: true);
     }
 
     private bool IsActive(string href)

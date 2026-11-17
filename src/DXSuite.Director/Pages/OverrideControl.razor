@@ -24,7 +24,7 @@ else
         <div class="unauthorized-wrapper">
             <h1>Unauthorized</h1>
             <p>You do not have permission to access this page.</p>
-            <a href="/director">Return Home</a>
+            <a href="director">Return Home</a>
         </div>
     }
     else
@@ -706,12 +706,12 @@ else
 
     private void CreateNewOverride()
     {
-        navMan.NavigateTo("/OverrideEditor");
+        navMan.NavigateTo("OverrideEditor");
     }
 
     private void EditOverride(int overrideId)
     {
-        navMan.NavigateTo($"/OverrideEditor/{overrideId}");
+        navMan.NavigateTo($"OverrideEditor/{overrideId}");
     }
 
     private async Task ToggleOverride(TblOverride over)

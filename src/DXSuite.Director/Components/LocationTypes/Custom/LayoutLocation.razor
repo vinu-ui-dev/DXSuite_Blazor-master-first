@@ -227,7 +227,7 @@
         // If zone has a display assigned, go to Schedule page for that display
         if (zone.SourceDisplayId.HasValue)
         {
-            navMan.NavigateTo($"/Schedule/{zone.SourceDisplayId.Value}");
+            navMan.NavigateTo($"Schedule/{zone.SourceDisplayId.Value}");
             return;
         }
 
@@ -240,13 +240,13 @@
                 var display = loc.TblDisplays?.FirstOrDefault();
                 if (display != null)
                 {
-                    navMan.NavigateTo($"/Schedule/{display.DisplayId}");
+                    navMan.NavigateTo($"Schedule/{display.DisplayId}");
                     return;
                 }
             }
         }
 
         // Default: navigate to the location page (Playlist style)
-        navMan.NavigateTo($"/Location/{zone.SourceLocationId}");
+        navMan.NavigateTo($"Location/{zone.SourceLocationId}");
     }
 }

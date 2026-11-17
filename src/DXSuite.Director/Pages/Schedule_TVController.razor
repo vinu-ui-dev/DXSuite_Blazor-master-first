@@ -470,7 +470,7 @@
                 // Non-TV displays belong on the tabbed schedule page
                 if (display.Location?.LocationType?.ComponentTypeName?.EndsWith(".TVController") != true)
                 {
-                    navMan.NavigateTo($"/schedule/{DisplayId}", replace: true);
+                    navMan.NavigateTo($"schedule/{DisplayId}", replace: true);
                     return;
                 }
 

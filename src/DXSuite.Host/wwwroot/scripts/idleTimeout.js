@@ -52,7 +52,7 @@ window.idleTimeout = {
     // and null when the server could not be reached (unreachable != signed out).
     ping: async function () {
         try {
-            var res = await fetch('/auth/keepalive', {
+            var res = await fetch('auth/keepalive', {
                 method: 'GET',
                 cache: 'no-store',
                 credentials: 'same-origin',
@@ -71,7 +71,7 @@ window.idleTimeout = {
 
     expire: function () {
         if (this._idleTimer) clearTimeout(this._idleTimer);
-        window.location.href = '/session-timeout';
+        window.location.href = 'session-timeout';
     },
 
     _resetIdleTimer: function () {

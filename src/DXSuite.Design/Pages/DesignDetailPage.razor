@@ -17,7 +17,7 @@ else if (!isAuthorized)
     <div class="unauthorized-wrapper">
         <h1>Unauthorized</h1>
         <p>You do not have permission to view this page.</p>
-        <a href="/">Return Home</a>
+        <a href="./">Return Home</a>
     </div>
 }
 else if (notFound)
@@ -26,7 +26,7 @@ else if (notFound)
         <h2>Design not found</h2>
     </div>
     <p>This design does not exist or you do not have access to it.</p>
-    <a href="/design">← Back to Designs</a>
+    <a href="design">← Back to Designs</a>
 }
 else if (design is null)
 {
@@ -35,7 +35,7 @@ else if (design is null)
 else
 {
     <div class="dx-page-header" style="display:flex; align-items:center; gap:16px; flex-wrap:wrap">
-        <a href="/design" class="dx-btn dx-btn-outline-blue dx-btn-sm">← Designs</a>
+        <a href="design" class="dx-btn dx-btn-outline-blue dx-btn-sm">← Designs</a>
 
         @* Inline rename: clicking the design name reveals an input backed by _renameDesignValue *@
         @if (_renamingDesign)

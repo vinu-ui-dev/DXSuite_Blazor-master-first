@@ -69,7 +69,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator && !SessionState.IsAuditor)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

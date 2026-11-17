@@ -23,13 +23,13 @@
                     <div style="position:absolute; display:flex; gap:10px; @((Location.DisplayAnchorTop != 0.0)? "top:" + ((Location.DisplayAnchorTop * scaleFactor) - 38).ToString() + "px;":"top:-38px;") left:10px; z-index:10;">
                         @if (backgroundDisplay != null)
                         {
-                            <button class="dx-btn dx-btn-blue" style="padding-top:5px; padding-bottom:5px;" @onclick="@(()=> navMan.NavigateTo("/schedule/" + backgroundDisplay.DisplayId.ToString()))">
+                            <button class="dx-btn dx-btn-blue" style="padding-top:5px; padding-bottom:5px;" @onclick="@(()=> navMan.NavigateTo("schedule/" + backgroundDisplay.DisplayId.ToString()))">
                                 EDIT BACKGROUND
                             </button>
                         }
                         @if (backgroundMask != null)
                         {
-                            <button class="dx-btn dx-btn-blue" style="padding-top:5px; padding-bottom:5px;" @onclick="@(()=> navMan.NavigateTo("/schedule/" + backgroundMask.DisplayId.ToString()))">
+                            <button class="dx-btn dx-btn-blue" style="padding-top:5px; padding-bottom:5px;" @onclick="@(()=> navMan.NavigateTo("schedule/" + backgroundMask.DisplayId.ToString()))">
                                 EDIT MASK
                             </button>
                         }
@@ -102,7 +102,7 @@
                                             <div class="hoverOverlay" style="border: 2px solid #16FF00;"></div>
                                             <div class="cb-top-banner">@(display.DisplayName.ToUpper())</div>
                                             <div class="cb-edit-btn"
-                                                @onclick="@(()=> navMan.NavigateTo("/schedule/" + display.DisplayId.ToString()))">
+                                                @onclick="@(()=> navMan.NavigateTo("schedule/" + display.DisplayId.ToString()))">
                                                 EDIT SCHEDULE
                                             </div>
                                         }

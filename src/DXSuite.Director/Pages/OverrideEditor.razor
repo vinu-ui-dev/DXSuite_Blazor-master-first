@@ -26,7 +26,7 @@ else
         <div class="unauthorized-wrapper">
             <h1>Unauthorized</h1>
             <p>You do not have permission to access this page.</p>
-            <a href="/director">Return Home</a>
+            <a href="director">Return Home</a>
         </div>
     }
     else
@@ -1318,7 +1318,7 @@ else
                     overrideEntity.OverrideId, rc.Width, rc.Height, rc.ContentPath!, rc.AssetId, rc.Duration);
             }
 
-            navMan.NavigateTo("/overrides");
+            navMan.NavigateTo("overrides");
         }
         catch (Exception ex)
         {
@@ -1331,7 +1331,7 @@ else
         }
     }
 
-    private void Cancel() { navMan.NavigateTo("/overrides"); }
+    private void Cancel() { navMan.NavigateTo("overrides"); }
 
     private bool IsDeviceOnline(DateTime heartbeat) => (DateTime.UtcNow - heartbeat).TotalMinutes <= 2;
 

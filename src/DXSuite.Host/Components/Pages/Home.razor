@@ -91,7 +91,7 @@
                             <td style="padding:8px 8px;">
                                 @if (nav is not null)
                                 {
-                                    <a href="@nav.Href" style="font-size:0.85rem;">@nav.Label →</a>
+                                    <a href="@nav.Href.TrimStart('/')" style="font-size:0.85rem;">@nav.Label →</a>
                                 }
                             </td>
                         </tr>

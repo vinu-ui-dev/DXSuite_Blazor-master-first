@@ -621,7 +621,7 @@
                 // TVController locations keep the legacy single-page workflow until their own rework
                 if (display.Location?.LocationType?.ComponentTypeName?.EndsWith(".TVController") == true)
                 {
-                    navMan.NavigateTo($"/schedule-tv/{DisplayId}", replace: true);
+                    navMan.NavigateTo($"schedule-tv/{DisplayId}", replace: true);
                     return;
                 }
 

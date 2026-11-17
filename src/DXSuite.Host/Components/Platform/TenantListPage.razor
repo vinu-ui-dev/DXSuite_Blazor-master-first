@@ -11,7 +11,7 @@
         <h2>Tenants</h2>
         @if (ProvisioningService.IsAvailable)
         {
-            <a href="/platform/tenants/new" class="dx-btn dx-btn-blue dx-btn-sm">+ New Tenant</a>
+            <a href="platform/tenants/new" class="dx-btn dx-btn-blue dx-btn-sm">+ New Tenant</a>
         }
     </div>
 
@@ -50,7 +50,7 @@
                         }
                     </div>
                     <div>
-                        <a href="/platform/tenants/@t.TenantId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
+                        <a href="platform/tenants/@t.TenantId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
                     </div>
                 </div>
             }
@@ -73,7 +73,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

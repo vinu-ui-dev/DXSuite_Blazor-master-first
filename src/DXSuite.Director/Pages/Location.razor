@@ -33,7 +33,7 @@ else
         <div class="unauthorized-wrapper">
             <h1>Unauthorized</h1>
             <p>You do not have permission to access this page.</p>
-            <a href="/director">Return Home</a>
+            <a href="director">Return Home</a>
         </div>
     }
     else
@@ -149,7 +149,7 @@ else
                             </p>
                             @if (sessionState.RoleEnum == Roles.Role.Admin || sessionState.RoleEnum == Roles.Role.Architect)
                             {
-                                <a href="/configuration" class="dx-btn dx-btn-outline-blue">Configure in Configuration Management</a>
+                                <a href="configuration" class="dx-btn dx-btn-outline-blue">Configure in Configuration Management</a>
                             }
                         </div>
                     }
@@ -216,7 +216,7 @@ else
             // Access to this location was revoked mid-session — leave immediately.
             if (!sessionState.AssignedLocationIds.Contains(LocationId))
             {
-                navMan.NavigateTo("/director");
+                navMan.NavigateTo("director");
                 return;
             }
             StateHasChanged();

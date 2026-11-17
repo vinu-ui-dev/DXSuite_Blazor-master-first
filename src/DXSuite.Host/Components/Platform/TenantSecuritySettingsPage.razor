@@ -11,7 +11,7 @@
 <div class="dx-platform-page">
     <div class="dx-platform-header">
         <h2>Security Settings</h2>
-        <a href="/platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
+        <a href="platform/tenant-admin" class="dx-btn dx-btn-gray dx-btn-sm">← Dashboard</a>
     </div>
     <p class="dx-text-muted">Security controls for vendor access to <strong>@TenantContext.TenantId</strong>.</p>
 
@@ -68,7 +68,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsTenantAdmin)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

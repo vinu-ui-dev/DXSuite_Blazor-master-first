@@ -225,7 +225,7 @@
 
     private void NavigateToLocation(int locationId)
     {
-        navManager.NavigateTo($"/Location/{locationId}");
+        navManager.NavigateTo($"Location/{locationId}");
     }
 
     private async Task ZoomIn() => await JSRuntime.InvokeVoidAsync("floorPlanPanZoom.zoom", _canvasId, 1.2);

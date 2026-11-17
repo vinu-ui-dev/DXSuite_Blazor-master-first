@@ -24,7 +24,7 @@
     else
     {
         <div class="dx-card-grid">
-            <a href="/platform/tenant-admin/elevations" class="dx-card dx-card-action">
+            <a href="platform/tenant-admin/elevations" class="dx-card dx-card-action">
                 <div class="dx-card-icon"><i class="bi bi-shield-lock"></i></div>
                 <div class="dx-card-body">
                     <div class="dx-card-title">Elevation Queue</div>
@@ -33,14 +33,14 @@
                     </div>
                 </div>
             </a>
-            <a href="/platform/tenant-admin/settings" class="dx-card dx-card-action">
+            <a href="platform/tenant-admin/settings" class="dx-card dx-card-action">
                 <div class="dx-card-icon"><i class="bi bi-gear"></i></div>
                 <div class="dx-card-body">
                     <div class="dx-card-title">Security Settings</div>
                     <div class="dx-card-sub">Elevation approvals, duration caps</div>
                 </div>
             </a>
-            <a href="/platform/tenant-admin/access-log" class="dx-card dx-card-action">
+            <a href="platform/tenant-admin/access-log" class="dx-card dx-card-action">
                 <div class="dx-card-icon"><i class="bi bi-journal-text"></i></div>
                 <div class="dx-card-body">
                     <div class="dx-card-title">Vendor Access Log</div>
@@ -59,7 +59,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsTenantAdmin)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

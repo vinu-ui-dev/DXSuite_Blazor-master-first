@@ -36,7 +36,7 @@
                     <div>@(u.IsPlatformOperator ? "Yes" : "No")</div>
                     <div>@u.Memberships.Count(m => m.IsActive)</div>
                     <div>
-                        <a href="/platform/users/@u.PlatformUserId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
+                        <a href="platform/users/@u.PlatformUserId" class="dx-btn dx-btn-gray dx-btn-sm">View</a>
                     </div>
                 </div>
             }
@@ -59,7 +59,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

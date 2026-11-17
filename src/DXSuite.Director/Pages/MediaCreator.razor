@@ -657,7 +657,7 @@
         }
     }
 
-    private void GoBack() { Navigation.NavigateTo($"/location/{LocationId}"); }
+    private void GoBack() { Navigation.NavigateTo($"location/{LocationId}"); }
 
     private void SelectElement(string elementId)
     {
@@ -853,7 +853,7 @@
                 try { Directory.Delete(stagingFolder, recursive: true); } catch { }
 
                 var returnDisplayId = DisplayId ?? GetDisplayIdForConstraint(ConstraintId);
-                Navigation.NavigateTo($"/display/{returnDisplayId}");
+                Navigation.NavigateTo($"display/{returnDisplayId}");
             }
             else
             {
@@ -1203,7 +1203,7 @@
         mediaUploaderModal?.Open(uploadConfig);
     }
 
-    private async Task OnMediaUploaderSubmit() { Navigation.NavigateTo($"/location/{LocationId}"); }
+    private async Task OnMediaUploaderSubmit() { Navigation.NavigateTo($"location/{LocationId}"); }
 
     private async Task PopulateRequiredMetadata(MediaFile mediaFile)
     {

@@ -48,7 +48,7 @@
                 <div class="preview-container">
                     @if (!string.IsNullOrEmpty(_cameraConfig.RtspUrl))
                     {
-                        <img src="/api/camera/stream/@Location.LocationId"
+                        <img src="api/camera/stream/@Location.LocationId"
                              class="camera-stream"
                              alt="Camera Live Feed"
                              @onerror="HandleStreamError" />

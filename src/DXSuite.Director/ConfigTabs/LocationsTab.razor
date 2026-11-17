@@ -67,7 +67,7 @@
                         </div>
                         <div class="dx-col-id dx-col-hide">@loc.LocationId</div>
                         <div class="dx-col-primary">
-                            <a href="/location/@loc.LocationId" class="dx-col-link">@loc.LocationName</a>
+                            <a href="location/@loc.LocationId" class="dx-col-link">@loc.LocationName</a>
                         </div>
                         <div class="dx-col-hide">
                             <span>@(loc.LocationGroup?.LocationGroupName ?? "—")</span>
@@ -136,7 +136,7 @@
                                 <div class="dx-col-id dx-col-hide">@display.DisplayId</div>
                                 <div>
                                     <span class="dx-display-connector">└─</span>
-                                    <a href="/schedule/@display.DisplayId" class="dx-col-link">@display.DisplayName</a>
+                                    <a href="schedule/@display.DisplayId" class="dx-col-link">@display.DisplayName</a>
                                     @if (display.DisplayWidth > 0 && display.DisplayHeight > 0)
                                     {
                                         <span class="dx-display-resolution" style="margin-left:6px;">(@(display.DisplayWidth)×@(display.DisplayHeight))</span>

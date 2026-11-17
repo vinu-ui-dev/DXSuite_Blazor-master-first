@@ -59,7 +59,7 @@
                                         else if (display.DisplayId == hoverDisplayId)
                                         {
                                             <div class="hoverOverlay" style="border: 2px solid #16FF00;"></div>
-                                            <div class="bottomBanner" @onclick="@(() => navMan.NavigateTo("/schedule/" + display.DisplayId))">
+                                            <div class="bottomBanner" @onclick="@(() => navMan.NavigateTo("schedule/" + display.DisplayId))">
                                                 EDIT SCHEDULE
                                             </div>
                                         }

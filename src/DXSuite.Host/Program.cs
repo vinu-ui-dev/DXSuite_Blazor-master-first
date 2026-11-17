@@ -349,7 +349,7 @@ if (isWebRole)
                     {
                         var logger = ctx.HttpContext.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("OidcAuth");
                         logger.LogError(ctx.Failure, "OIDC RemoteFailure for {Provider}", name);
-                        ctx.Response.Redirect("/?error=remote-failure");
+                        ctx.Response.Redirect($"{ctx.Request.PathBase}/?error=remote-failure");
                         ctx.HandleResponse();
                         return Task.CompletedTask;
                     },
@@ -892,7 +892,7 @@ if (isWebRole)
     app.MapGet("/session-timeout", async (HttpContext context) =>
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
-        context.Response.Redirect("/");
+        context.Response.Redirect($"{context.Request.PathBase}/");
     }).AllowAnonymous();
 
     // Session keepalive for Blazor circuits. Circuit traffic runs over a WebSocket and never

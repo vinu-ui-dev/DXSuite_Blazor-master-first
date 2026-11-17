@@ -40,7 +40,7 @@
                                     {
                                         <div class="pano-hover-overlay" style="border: 2px solid #16FF00;"></div>
                                         <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
-                                        <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT SCHEDULE</div>
+                                        <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("display/" + display.DisplayId))">EDIT SCHEDULE</div>
                                     }
                                 </div>
 
@@ -95,7 +95,7 @@
                                         {
                                             <div class="pano-hover-overlay" style="border: 2px solid #16FF00;"></div>
                                             <div class="pano-top-banner">@(display.DisplayName?.ToUpper())</div>
-                                            <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("/display/" + display.DisplayId))">EDIT SCHEDULE</div>
+                                            <div class="pano-bottom-banner" @onclick="@(() => navMan.NavigateTo("display/" + display.DisplayId))">EDIT SCHEDULE</div>
                                         }
                                     </div>
 

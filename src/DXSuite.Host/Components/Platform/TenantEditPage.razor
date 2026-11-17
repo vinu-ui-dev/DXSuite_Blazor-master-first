@@ -29,7 +29,7 @@
     {
         <div class="dx-platform-header">
             <h2>Edit Tenant — @tenant.DisplayName</h2>
-            <a href="/platform/tenants/@TenantId" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
+            <a href="platform/tenants/@TenantId" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
         </div>
 
         <div class="dx-form" style="max-width:600px;">
@@ -136,7 +136,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator || !ProvisioningService.IsAvailable)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
 

@@ -21,7 +21,7 @@
     {
         <div class="dx-platform-header">
             <h2>New Tenant</h2>
-            <a href="/platform/tenants" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
+            <a href="platform/tenants" class="dx-btn dx-btn-gray dx-btn-sm">Cancel</a>
         </div>
 
         <div class="dx-form" style="max-width:600px;">
@@ -74,7 +74,7 @@
         await SessionState.SessionLoaded.Task;
         if (!SessionState.IsPlatformOperator || !ProvisioningService.IsAvailable)
         {
-            Nav.NavigateTo("/403");
+            Nav.NavigateTo("403");
             return;
         }
     }
@@ -98,7 +98,7 @@
         try
         {
             var created = await ProvisioningService.CreateTenantAsync(model, SessionState.PlatformUserId.Value, token.Value);
-            Nav.NavigateTo($"/platform/tenants/{created.TenantId}");
+            Nav.NavigateTo($"platform/tenants/{created.TenantId}");
         }
         catch (Exception ex)
         {

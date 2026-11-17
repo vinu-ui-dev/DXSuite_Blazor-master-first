@@ -55,7 +55,7 @@ else if (LocationId == 0)
             <div class="tcs-picker-list">
                 @foreach (var loc in wallLocations)
                 {
-                    <div class="tcs-picker-card" @onclick="@(() => navMan.NavigateTo($"/ticket-counter-scheduler/{loc.LocationId}"))">
+                    <div class="tcs-picker-card" @onclick="@(() => navMan.NavigateTo($"ticket-counter-scheduler/{loc.LocationId}"))">
                         <span class="bi bi-grid-3x3 tcs-picker-icon"></span>
                         <span class="tcs-picker-name">@loc.LocationName</span>
                     </div>

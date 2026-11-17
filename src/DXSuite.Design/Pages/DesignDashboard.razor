@@ -18,7 +18,7 @@ else if (!isAuthorized)
     <div class="unauthorized-wrapper">
         <h1>Unauthorized</h1>
         <p>You do not have permission to view this page.</p>
-        <a href="/">Return Home</a>
+        <a href="./">Return Home</a>
     </div>
 }
 else
@@ -26,7 +26,7 @@ else
 <div class="dx-page-header" style="display:flex; justify-content:space-between; align-items:center">
     <h2>Designs</h2>
     <div style="display:flex; gap:8px">
-        <a href="/design/ai-access" class="dx-btn dx-btn-outline-blue" title="Personal access tokens for AI assistants"><i class="bi bi-robot"></i> AI Access</a>
+        <a href="design/ai-access" class="dx-btn dx-btn-outline-blue" title="Personal access tokens for AI assistants"><i class="bi bi-robot"></i> AI Access</a>
         <button class="dx-btn dx-btn-blue" @onclick="OpenNew"><i class="bi bi-plus-lg"></i> New Design</button>
     </div>
 </div>
@@ -178,12 +178,12 @@ else
     {
         showNewModal = false;
         if (newDesignId.HasValue)
-            Nav.NavigateTo($"/design/{newDesignId.Value}");
+            Nav.NavigateTo($"design/{newDesignId.Value}");
         else
             await LoadAsync();
     }
 
-    private void Navigate(int designId) => Nav.NavigateTo($"/design/{designId}");
+    private void Navigate(int designId) => Nav.NavigateTo($"design/{designId}");
 
     private void RequestDelete(int designId)
     {

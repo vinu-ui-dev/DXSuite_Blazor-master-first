@@ -12,13 +12,13 @@
         <div style="display: flex; gap: 10px; padding-bottom: 10px;">
             @if (contentDisplay != null)
             {
-                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("/schedule/" + contentDisplay.DisplayId.ToString()))">
+                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("schedule/" + contentDisplay.DisplayId.ToString()))">
                     EDIT CONTENT LAYER
                 </button>
             }
             @if (maskDisplay != null)
             {
-                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("/schedule/" + maskDisplay.DisplayId.ToString()))">
+                <button class="dx-btn dx-btn-blue" @onclick="@(()=> navMan.NavigateTo("schedule/" + maskDisplay.DisplayId.ToString()))">
                     EDIT MASK LAYER
                 </button>
             }

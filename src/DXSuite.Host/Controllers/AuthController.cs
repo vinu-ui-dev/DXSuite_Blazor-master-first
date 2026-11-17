@@ -89,7 +89,7 @@ public class AuthController : Controller
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
         {
             _logger.LogWarning("AUTH local login rejected: missing credentials");
-            return Redirect("/?error=missing-credentials");
+            return Redirect($"{Request.PathBase}/?error=missing-credentials");
         }
 
         try
@@ -98,7 +98,7 @@ public class AuthController : Controller
             if (user == null)
             {
                 _logger.LogWarning("AUTH local login failed: invalid credentials for {Email}", email);
-                return Redirect("/?error=invalid-credentials");
+                return Redirect($"{Request.PathBase}/?error=invalid-credentials");
             }
 
             _logger.LogInformation("AUTH local login succeeded for {Email}", email);
@@ -107,7 +107,7 @@ public class AuthController : Controller
         catch (InvalidOperationException ex) when (ex.Message == "email-not-confirmed")
         {
             _logger.LogWarning("AUTH local login failed: email not confirmed for {Email}", email);
-            return Redirect("/?error=email-not-confirmed");
+            return Redirect($"{Request.PathBase}/?error=email-not-confirmed");
         }
     }
 
@@ -125,7 +125,7 @@ public class AuthController : Controller
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
         {
             _logger.LogWarning("AUTH ldap login rejected: missing credentials");
-            return Redirect("/?error=missing-credentials");
+            return Redirect($"{Request.PathBase}/?error=missing-credentials");
         }
 
         try
@@ -134,7 +134,7 @@ public class AuthController : Controller
             if (user == null)
             {
                 _logger.LogWarning("AUTH ldap login failed: invalid credentials for {Username}", username);
-                return Redirect("/?error=ldap-invalid");
+                return Redirect($"{Request.PathBase}/?error=ldap-invalid");
             }
 
             _logger.LogInformation("AUTH ldap login succeeded for {Username}", username);
@@ -143,12 +143,12 @@ public class AuthController : Controller
         catch (InvalidOperationException ex)
         {
             _logger.LogError(ex, "LDAP configuration error during login for '{Username}'", username);
-            return Redirect("/?error=ldap-config-error");
+            return Redirect($"{Request.PathBase}/?error=ldap-config-error");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected LDAP login error for '{Username}'", username);
-            return Redirect("/?error=ldap-failed");
+            return Redirect($"{Request.PathBase}/?error=ldap-failed");
         }
     }
 
@@ -156,13 +156,13 @@ public class AuthController : Controller
     public async Task<IActionResult> Register([FromForm] string email, [FromForm] string password, [FromForm] string confirmPassword)
     {
         if (!_authConfig.LocalAccounts.Enabled || !_authConfig.LocalAccounts.AllowSelfRegistration || _localAccountService == null)
-            return Redirect("/?error=registration-disabled");
+            return Redirect($"{Request.PathBase}/?error=registration-disabled");
 
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
-            return Redirect("/?error=missing-credentials&mode=register");
+            return Redirect($"{Request.PathBase}/?error=missing-credentials&mode=register");
 
         if (password != confirmPassword)
-            return Redirect("/?error=passwords-mismatch&mode=register");
+            return Redirect($"{Request.PathBase}/?error=passwords-mismatch&mode=register");
 
         try
         {
@@ -190,7 +190,7 @@ public class AuthController : Controller
                     _logger.LogWarning("Cannot send confirmation email: EmailService={HasService}, SMTP not configured or unavailable", _emailService != null);
                 }
 
-                return Redirect("/?message=confirm-email");
+                return Redirect($"{Request.PathBase}/?message=confirm-email");
             }
             else
             {
@@ -200,11 +200,11 @@ public class AuthController : Controller
         }
         catch (InvalidOperationException ex)
         {
-            return Redirect($"/?error={Uri.EscapeDataString(ex.Message)}&mode=register");
+            return Redirect($"{Request.PathBase}/?error={Uri.EscapeDataString(ex.Message)}&mode=register");
         }
         catch (ArgumentException ex)
         {
-            return Redirect($"/?error={Uri.EscapeDataString(ex.Message)}&mode=register");
+            return Redirect($"{Request.PathBase}/?error={Uri.EscapeDataString(ex.Message)}&mode=register");
         }
     }
 
@@ -215,12 +215,12 @@ public class AuthController : Controller
             return BadRequest("Local accounts are not enabled.");
 
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(token))
-            return Redirect("/?error=invalid-token");
+            return Redirect($"{Request.PathBase}/?error=invalid-token");
 
         var confirmed = await _localAccountService.ConfirmEmailAsync(email, token);
         return confirmed
-            ? Redirect("/?message=email-confirmed")
-            : Redirect("/?error=invalid-token");
+            ? Redirect($"{Request.PathBase}/?message=email-confirmed")
+            : Redirect($"{Request.PathBase}/?error=invalid-token");
     }
 
     /// <summary>
@@ -243,7 +243,7 @@ public class AuthController : Controller
         if (string.IsNullOrWhiteSpace(token))
         {
             _logger.LogWarning("AUTH launch rejected: missing token");
-            return Redirect("/?error=missing-token");
+            return Redirect($"{Request.PathBase}/?error=missing-token");
         }
 
         try
@@ -259,7 +259,7 @@ public class AuthController : Controller
             if (string.IsNullOrEmpty(jti))
             {
                 _logger.LogWarning("Launch token missing jti claim");
-                return Redirect("/?error=invalid-token");
+                return Redirect($"{Request.PathBase}/?error=invalid-token");
             }
 
             // Generate or retrieve session ID for replay prevention
@@ -280,7 +280,7 @@ public class AuthController : Controller
             {
                 _logger.LogWarning("Launch token validation failed: {Status} for jti={Jti}",
                     response.StatusCode, jti);
-                return Redirect("/?error=token-already-used");
+                return Redirect($"{Request.PathBase}/?error=token-already-used");
             }
 
             _logger.LogInformation("Launch token validated for jti={Jti}, sessionId={SessionId}", jti, sessionId);
@@ -324,22 +324,22 @@ public class AuthController : Controller
                 });
 
             _logger.LogInformation("AUTH launch succeeded: cookie issued for {Email}", email);
-            return Redirect("/");
+            return Redirect($"{Request.PathBase}/");
         }
         catch (SecurityTokenExpiredException)
         {
             _logger.LogWarning("Launch token expired");
-            return Redirect("/?error=token-expired");
+            return Redirect($"{Request.PathBase}/?error=token-expired");
         }
         catch (SecurityTokenException ex)
         {
             _logger.LogWarning(ex, "Launch token validation failed");
-            return Redirect("/?error=invalid-token");
+            return Redirect($"{Request.PathBase}/?error=invalid-token");
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Unexpected error during launch token validation");
-            return Redirect("/?error=launch-failed");
+            return Redirect($"{Request.PathBase}/?error=launch-failed");
         }
     }
 
@@ -353,7 +353,7 @@ public class AuthController : Controller
 
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         _logger.LogInformation("AUTH logout completed");
-        return Redirect("/");
+        return Redirect($"{Request.PathBase}/");
     }
 
     private async Task<IActionResult> IssueAuthCookieAndRedirect(DXSuite.Shared.Entities.Identity.TblUser user, string email)
@@ -382,6 +382,6 @@ public class AuthController : Controller
 
         _logger.LogInformation("AUTH cookie issued for {User}", user.UserPrincipalName ?? email);
 
-        return Redirect("/");
+        return Redirect($"{Request.PathBase}/");
     }
 }
