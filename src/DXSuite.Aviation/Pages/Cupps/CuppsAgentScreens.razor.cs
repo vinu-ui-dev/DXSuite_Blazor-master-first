@@ -14,6 +14,9 @@ public partial class CuppsAgentScreens : IDisposable
 {
     [Inject] private CuppsLiveDataProvider LiveData { get; set; } = null!;
     [Inject] private ISessionState SessionState { get; set; } = null!;
+    [Inject] private Microsoft.AspNetCore.Components.Authorization.AuthenticationStateProvider AuthProvider { get; set; } = null!;
+    // Name/login of a user signed in from Director (no local user row): taken from the sign-in cookie.
+    private string? directorLogin, directorName;
     [Inject] private IUserGroupService UserGroupService { get; set; } = null!;
 
     /// <summary>Signed-in users holding this role skip the RMU airline/counter picker entirely and land
@@ -82,12 +85,16 @@ public partial class CuppsAgentScreens : IDisposable
         if (!SessionState.SessionLoaded.Task.IsCompleted)
             await SessionState.SessionLoaded.Task;
 
+        var auth = (await AuthProvider.GetAuthenticationStateAsync()).User;
+        directorLogin = auth.Identity?.Name;
+        directorName = auth.FindFirst("name")?.Value;
+
         SetScenario("rmu");
 
-        // Already signed in to DXSuite: no second sign-in. Go straight to the airline/counter step; airline
-        // agents and supervisors are scoped to their own airline and land on their counter when it's unambiguous.
-        if (SessionState.User is not null)
-            await SignIn();
+        // The page only renders for a user already signed in to DXSuite (directly or from Director), so there is
+        // no second sign-in: go straight to the airline/counter step. Airline agents and supervisors are scoped to
+        // their own airline and land on their counter when it's unambiguous.
+        await SignIn();
     }
 
     protected override void OnAfterRender(bool firstRender)
@@ -117,8 +124,9 @@ public partial class CuppsAgentScreens : IDisposable
         var kind = IsAirlineAgentRole(role) ? "Airline Agent"
             : string.Equals(role, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase) ? "Airline Supervisor"
             : "RMU";
-        var user = SessionState.UserName ?? "";
-        var who = SessionState.User?.FriendlyName is { Length: > 0 } f ? f : user;
+        var user = SessionState.UserName ?? directorLogin ?? "";
+        var who = SessionState.User?.FriendlyName is { Length: > 0 } f ? f
+            : !string.IsNullOrWhiteSpace(directorName) ? directorName : user;
         return new Scenario("Individual", user, who, kind, null, now);
     }
 
@@ -259,6 +267,13 @@ public partial class CuppsAgentScreens : IDisposable
         search = ""; message = null; endedReason = null; published = []; templateCache.Clear(); coreDown = false; draft = new();
         deviation = true;
         liveAirlines = []; liveAirlineIds = []; liveCounters = []; liveAllocations = []; liveFlights = []; liveTemplates = []; liveApprovedMessages = []; liveLoading = false; liveLoadFailed = false;
+    }
+
+    /// <summary>After "Signed out": back to the airline/counter step (the user is still signed in to DXSuite).</summary>
+    private async Task RestartAsync()
+    {
+        SetScenario(scenario);
+        await SignIn();
     }
 
     private async Task SignIn()

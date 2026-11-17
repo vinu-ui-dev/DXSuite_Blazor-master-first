@@ -15,7 +15,7 @@
         <div class="pt-app">
             @switch (screen)
             {
-                case "login": @LoginScreen() break;
+                case "login": <div class="dx-loading-overlay"><div class="dx-spinner"></div></div> break;
                 case "rmu-pick": @RmuPick() break;
                 case "ended": @EndedScreen() break;
                 default: @AppScreen() break;
@@ -156,23 +156,9 @@
     /// scenario where a signed-in agent shouldn't be able to end their session.</summary>
     private RenderFragment Navbar()
     {
-        // A logged-in Airline Agent already has the app's own top bar and profile menu (with Log Out);
-        // this CUPPS brand/user/Sign out bar is not shown to them.
-        if (string.Equals(SessionState.ActualRoleName, "Airline Agent", StringComparison.OrdinalIgnoreCase))
-            return @<text></text>;
-
-        var signedIn = screen is "app" or "rmu-pick";
-        return @<div class="dx-navbar">
-            <div class="dx-navbar-left"><a class="dx-navbar-brand"><img src="images/branding/header.png" alt="DXSuite" style="height:40px;"></a><span class="cp-prod">CUPPS</span></div>
-            <div class="dx-navbar-user">
-                @if (signedIn)
-                {
-                    <span>@Sc.Who</span>
-                    @if (InApp) { @Mark(MyAirline) }
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="SignOut">Sign out</button>
-                }
-            </div>
-        </div>;
+        // The app's own top bar and profile menu (with Log Out) are always shown, so this second CUPPS
+        // brand/user/Sign out bar is not rendered for anyone.
+        return @<text></text>;
     }
 
     private RenderFragment CounterBand()
@@ -655,36 +641,6 @@
         </text>;
     }
 
-    /// <summary>Shared DXSuite/CUPPS logo header shown at the top of every login-style card.</summary>
-    private RenderFragment LoginBrand() =>
-        @<div class="dx-login-brand"><img src="images/branding/header.png" alt="DXSuite"><div>CUPPS</div></div>;
-
-    /// <summary>
-    /// Renders the sign-in card for the current scenario (<see cref="Sc"/>): a Microsoft sign-in button for
-    /// "Individual" sign-in scenarios (where the airline/counter is picked afterwards via <see cref="RmuPick"/>),
-    /// or a local username/password form pre-bound to the counter for scenarios that sign straight into a
-    /// fixed station.
-    /// </summary>
-    private RenderFragment LoginScreen()
-    {
-        var s = Sc;
-        if (s.Kind == "Individual")
-            return @<div class="dx-login-page"><div class="dx-login-card">@LoginBrand()<div class="dx-login-card-body">
-                <div class="dx-login-context">Sign in with your GTAA account to act for an airline.</div>
-                <button class="dx-login-provider-btn" style="margin-top:14px;" @onclick="SignIn">
-                    <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true"><rect width="8" height="8" fill="#f25022" /><rect x="10" width="8" height="8" fill="#7fba00" /><rect y="10" width="8" height="8" fill="#00a4ef" /><rect x="10" y="10" width="8" height="8" fill="#ffb900" /></svg>Sign in with Microsoft
-                </button>
-            </div></div></div>;
-        return @<div class="dx-login-page"><div class="dx-login-card">@LoginBrand()<div class="dx-login-card-body">
-            <div class="dx-login-context">Check-in counter <strong>@s.Station</strong></div>
-            <div class="dx-login-local-form">
-                <input type="text" class="dx-form-control" value="@s.User" aria-label="Username">
-                <input type="password" class="dx-form-control" value="demo-only" aria-label="Password">
-                <button class="dx-btn dx-btn-blue dx-login-btn" @onclick="SignIn">Sign In</button>
-            </div>
-        </div></div></div>;
-    }
-
     private List<Alloc> Held(string code) => AllAllocs.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
     private List<Alloc> Later(string code) => AllAllocs.Where(x => x.Code == code && x.From > now).ToList();
 
@@ -847,7 +803,7 @@
             <div class="dx-card" style="max-width:560px;">
                 <div class="dx-card-body" style="display:flex;flex-direction:column;gap:12px;">
                     <div>@endedReason</div>
-                    <div><button class="dx-btn dx-btn-blue" @onclick="() => SetScenario(scenario)">Back to sign in</button></div>
+                    <div><button class="dx-btn dx-btn-blue" @onclick="RestartAsync">Continue</button></div>
                 </div>
             </div>
         </div>
