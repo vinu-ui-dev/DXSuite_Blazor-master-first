@@ -347,12 +347,21 @@ public class AuthController : Controller
     public async Task<IActionResult> Logout()
     {
         _logger.LogInformation("AUTH logout: user={User}", User.Identity?.Name);
+        var cameFromDirector = User.FindFirst(DXSuite.Shared.Authorization.BridgeSessionClaimTypes.IsBridgeSession) is not null;
         var bridgeHandle = User.FindFirst(DXSuite.Shared.Authorization.BridgeSessionClaimTypes.SessionHandle)?.Value;
         if (!string.IsNullOrEmpty(bridgeHandle) && _bridgeClient is not null)
             await _bridgeClient.EndAsync(bridgeHandle, HttpContext.RequestAborted);
 
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
         _logger.LogInformation("AUTH logout completed");
+
+        // Signed in from Director: send the user back to Director's Angular app (hash routing: https://site/#/home).
+        var directorUi = cameFromDirector
+            ? HttpContext.RequestServices.GetService<IOptions<EditorBridgeClientOptions>>()?.Value.DirectorUiBaseUrl
+            : null;
+        if (!string.IsNullOrWhiteSpace(directorUi))
+            return Redirect($"{directorUi.TrimEnd('/')}/#/home");
+
         return Redirect($"{Request.PathBase}/");
     }
 

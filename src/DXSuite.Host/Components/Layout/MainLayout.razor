@@ -94,7 +94,7 @@
                     <div class="dx-profile-dropdown">
                         <button class="dx-profile-avatar @(showProfileDropdown ? "active" : "")"
                                 @onclick="ToggleProfileDropdown" @onclick:stopPropagation="true"
-                                title="@(sessionState?.User?.FriendlyName ?? "Profile")">
+                                title="@(sessionState?.User?.FriendlyName ?? bridgeDisplayName ?? "Profile")">
                             <span class="dx-profile-initials">@(sessionState?.UserInitials ?? "?")</span>
                         </button>
                         <div class="dx-profile-dropdown-menu @(showProfileDropdown ? "show" : "")">
@@ -103,6 +103,15 @@
                                 <div class="dx-profile-dropdown-header">
                                     <span class="dx-profile-dropdown-name">@(sessionState.User.FriendlyName ?? sessionState.UserName)</span>
                                     <span class="dx-profile-dropdown-role">@(!string.IsNullOrWhiteSpace(sessionState.ActualRoleName) ? sessionState.ActualRoleName : FormatRoleName(sessionState.RoleEnum))</span>
+                                </div>
+                                <div class="dx-dropdown-divider"></div>
+                            }
+                            else if (!string.IsNullOrWhiteSpace(bridgeDisplayName))
+                            {
+                                @* Signed in from Director: no local user row, so show the Director name and role. *@
+                                <div class="dx-profile-dropdown-header">
+                                    <span class="dx-profile-dropdown-name">@bridgeDisplayName</span>
+                                    <span class="dx-profile-dropdown-role">@sessionState.ActualRoleName</span>
                                 </div>
                                 <div class="dx-dropdown-divider"></div>
                             }
@@ -330,6 +339,7 @@
     private Task<AuthenticationState>? authStateTask { get; set; }
 
     private bool IsAuthorized;
+    private string? bridgeDisplayName;
     private bool idleTimeoutStarted;
     private bool sessionLoading = true;
     private bool showProfileDropdown;
@@ -401,6 +411,7 @@
                             SessionHandle: user.FindFirst(BridgeSessionClaimTypes.SessionHandle)?.Value ?? "",
                             ExpiresAt: DateTimeOffset.UtcNow));
                         IsAuthorized = true;
+                        bridgeDisplayName = user.FindFirst("name")?.Value ?? user.Identity.Name;
                     }
                     else
                     {

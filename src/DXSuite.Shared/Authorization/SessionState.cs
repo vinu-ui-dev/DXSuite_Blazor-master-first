@@ -579,8 +579,11 @@ namespace DXSuite.Shared.Authorization
 
             if (!string.IsNullOrEmpty(upn))
             {
-                var local = upn.Split('@')[0].Split('.')[0].Split('\\').Last();
-                return !string.IsNullOrEmpty(local) ? $"{char.ToUpper(local[0])}" : "?";
+                // A display name ("GTAA Admin") or a dotted login ("john.doe@x") gives two letters: first letters of the first two words.
+                var local = upn.Split('@')[0].Split('\\').Last();
+                var words = local.Split(new[] { ' ', '.', '_', '-' }, StringSplitOptions.RemoveEmptyEntries);
+                if (words.Length >= 2) return $"{char.ToUpper(words[0][0])}{char.ToUpper(words[1][0])}";
+                return words.Length == 1 ? $"{char.ToUpper(words[0][0])}" : "?";
             }
 
             return "?";
