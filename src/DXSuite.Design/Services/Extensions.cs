@@ -39,7 +39,7 @@ public static class Extensions
                   ?? throw new InvalidOperationException(
                       "No Design connection string in app config (background service path).");
 
-            options.UseConfiguredProvider(config, "Design", connStr);
+            options.UseSqlServer(connStr);
         }, ServiceLifetime.Scoped);
 
         services.AddScoped<DesignDbContext>(sp =>
@@ -70,9 +70,8 @@ public static class Extensions
                   ?? throw new InvalidOperationException(
                       "No Director connection string in app config.");
 
-            // Same physical database as Director's own context (see comment above), so it must
-            // resolve to the same SQLite file under local SQLite mode.
-            options.UseConfiguredProvider(config, "Director", connStr);
+            // Same physical database as Director's own context (see comment above).
+            options.UseSqlServer(connStr);
         }, ServiceLifetime.Scoped);
 
         services.AddSingleton<NetsuiteCredentialProtector>();

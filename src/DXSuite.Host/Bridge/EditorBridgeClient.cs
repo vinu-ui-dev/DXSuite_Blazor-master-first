@@ -1,6 +1,7 @@
 using System.Net.Http.Json;
 using System.Text.Json;
 using Microsoft.Extensions.Options;
+using DXSuite.Host.Logging;
 using DXSuite.Shared.Models;
 
 namespace DXSuite.Host.Bridge;
@@ -15,6 +16,13 @@ public sealed class EditorBridgeClient(HttpClient http, IOptions<EditorBridgeCli
 {
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true };
     private readonly EditorBridgeClientOptions _options = options.Value;
+
+    /// <summary>
+    /// Short, fixed-vocabulary reason for the most recent failed call on this instance (never contains
+    /// secrets or user input), e.g. "http-401", "tls", "unreachable", "not-configured". Typed HttpClients
+    /// are transient, so each controller instance sees only its own calls.
+    /// </summary>
+    public string? LastFailure { get; private set; }
 
     public async Task<BridgeIdentity?> RedeemAsync(string code, string verifier, CancellationToken ct) =>
         await PostAsync<BridgeIdentity>("/api/v1/editor-auth/redeem", new RedeemRequest(code, verifier), ct);
@@ -37,16 +45,38 @@ public sealed class EditorBridgeClient(HttpClient http, IOptions<EditorBridgeCli
 
     private async Task<T?> PostAsync<T>(string path, object body, CancellationToken ct) where T : class
     {
-        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.DirectorBaseUrl)) return null;
+        if (!_options.Enabled || string.IsNullOrWhiteSpace(_options.DirectorBaseUrl))
+        {
+            LastFailure = !_options.Enabled ? "bridge-disabled" : "no-director-url";
+            BridgeFileLog.Write($"[BRIDGE-HTTP] skipped {path}: Enabled={_options.Enabled}, DirectorBaseUrl empty={string.IsNullOrWhiteSpace(_options.DirectorBaseUrl)}");
+            logger.LogWarning("Editor bridge call to {Path} skipped: Enabled={Enabled}, DirectorBaseUrl empty={Empty}.",
+                path, _options.Enabled, string.IsNullOrWhiteSpace(_options.DirectorBaseUrl));
+            return null;
+        }
         try
         {
             using var request = BuildRequest(HttpMethod.Post, path, body);
+            BridgeFileLog.Write($"[BRIDGE-HTTP] POST {request.RequestUri} clientId='{_options.ClientId}' hasSecret={!string.IsNullOrEmpty(_options.ClientSecret)} secretLength={_options.ClientSecret?.Length ?? 0}");
             using var response = await http.SendAsync(request, ct);
-            if (!response.IsSuccessStatusCode) return null;
+            BridgeFileLog.Write($"[BRIDGE-HTTP] {request.RequestUri} -> {(int)response.StatusCode} {response.StatusCode}");
+            if (!response.IsSuccessStatusCode)
+            {
+                LastFailure = $"http-{(int)response.StatusCode}";
+                // Never log the request (code, verifier, secret); the response body only carries an error reason.
+                var text = await response.Content.ReadAsStringAsync(ct);
+                BridgeFileLog.Write($"[BRIDGE-HTTP] response body: {(text.Length > 300 ? text[..300] : text)}   (401 = wrong ClientId/ClientSecret, or code expired/already used, or PKCE verifier mismatch; 403 = non-https caller or access rules; 404 = EditorBridge:Enabled false on Director)");
+                logger.LogWarning("Editor bridge call to {Url} returned {Status} (clientId={ClientId}). Response: {Body}",
+                    request.RequestUri, (int)response.StatusCode, _options.ClientId, text.Length > 300 ? text[..300] : text);
+                return null;
+            }
             return await response.Content.ReadFromJsonAsync<T>(JsonOptions, ct);
         }
         catch (Exception ex) when (ex is HttpRequestException or OperationCanceledException or JsonException)
         {
+            LastFailure = ex is HttpRequestException && ex.InnerException is System.Security.Authentication.AuthenticationException ? "tls"
+                : ex is HttpRequestException ? "unreachable"
+                : ex is OperationCanceledException ? "timeout" : "bad-response";
+            BridgeFileLog.Write($"[BRIDGE-HTTP] EXCEPTION calling {path}: {ex.GetType().Name}: {ex.Message} (DNS/TLS/firewall from this server to DirectorBaseUrl '{_options.DirectorBaseUrl}'?)");
             logger.LogWarning(ex, "Editor bridge call to {Path} failed.", path);
             return null;
         }

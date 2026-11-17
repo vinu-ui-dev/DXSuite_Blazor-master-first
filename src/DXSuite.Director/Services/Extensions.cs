@@ -1,5 +1,4 @@
 using Microsoft.EntityFrameworkCore;
-using DXSuite.Connectors.Services.CoreApi.Demo;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using FFMpegCore;
@@ -69,7 +68,7 @@ public static class Extensions
                 : config.GetConnectionString("Director")
                   ?? throw new InvalidOperationException(
                       "No Director connection string in app config (background service path).");
-            options.UseConfiguredProvider(config, "Director", connStr);
+            options.UseSqlServer(connStr);
 
             // Every registered IDirectorSaveChangesInterceptor (e.g. Messaging's DeliveryVersionInterceptor)
             // runs on every save through every DirectorDbContext instance.
@@ -398,9 +397,7 @@ public static class Extensions
         services.AddScoped<IDisplayZoneService, DisplayZoneService>();
         services.AddCoreApiStores();
         services.AddOutageSwitchOff();
-        var coreApiClient = services.AddCoreApiClient();
-        // Sample flights with no real CoreAPI behind them, for demonstrations and development.
-        if (config.GetValue<bool>("CoreApi:DemoMode")) coreApiClient.UseDemoCoreApi();
+        services.AddCoreApiClient();
         services.AddCoreApiLiveFeed();
         if (runBackgroundServices)
         {

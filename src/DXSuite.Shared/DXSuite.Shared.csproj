@@ -16,10 +16,6 @@
 
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.7" />
-    <!-- Local/offline escape hatch only (Database:UseSqlite) — see LocalSqliteProvider. Production always uses SQL Server. -->
-    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" Version="10.0.7" />
-    <!-- Pinned to patch GHSA-2m69-gcr7-jv3q (transitive from Microsoft.EntityFrameworkCore.Sqlite). -->
-    <PackageReference Include="SQLitePCLRaw.lib.e_sqlite3" Version="3.53.4.1-pre1" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="10.0.7">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>

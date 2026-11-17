@@ -21,4 +21,22 @@ public class EditorBridgeClientOptions
 
     /// <summary>Must match Clients[ClientId].Secret on the Director side (32+ chars).</summary>
     public string ClientSecret { get; set; } = "";
+
+    /// <summary>
+    /// Base URL of Director's Angular app (where /editor-launch lives), e.g. "https://director.example".
+    /// No trailing slash.
+    /// </summary>
+    public string DirectorUiBaseUrl { get; set; } = "";
+
+    /// <summary>
+    /// Optional absolute URL of this host's /bridge/dxsuite-callback. Must equal Clients[ClientId].RedirectUri
+    /// on the Director side byte-for-byte. When empty it is built from the incoming request.
+    /// </summary>
+    public string RedirectUri { get; set; } = "";
+
+    /// <summary>
+    /// DXSuite pages that start the Director sign-in automatically for a signed-out user
+    /// (the link Director shows opens one of these). Prefix match, case-insensitive.
+    /// </summary>
+    public string[] EntryPaths { get; set; } = ["/Flight-Data-Editor", "/cupps-agent-screens", "/messages"];
 }

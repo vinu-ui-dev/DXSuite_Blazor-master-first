@@ -467,9 +467,16 @@
             "ldap-invalid"      => "Invalid username or password.",
             "ldap-config-error" => "Directory authentication is currently unavailable. Please contact your administrator.",
             "ldap-failed"       => "An error occurred during directory authentication.",
+            "editor-sign-in-failed"       => "Sign-in from Director failed. Return to Director and open the editor again.",
+            "editor-tenant-unavailable"   => "Your Director account's tenant is not enabled for this page.",
             null => null,
             _ => Uri.UnescapeDataString(errorParam),
         };
+
+        // Which step of the Director sign-in failed (fixed vocabulary set by BridgeAuthController).
+        if (errorParam == "editor-sign-in-failed" && query["reason"] is { Length: > 0 and <= 60 } failReason
+            && failReason.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_'))
+            loginError += $" (reason: {failReason})";
 
         loginMessage = query["message"] switch
         {
@@ -487,7 +494,9 @@
 
         // Menu entries show when the user's role is granted at least one tab behind them
         // (the real Admin role bypasses permission checks and sees everything).
-        var perms = sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
+        // Signed-out visitors only see the login card, which needs no permissions: skip the role-permission
+        // lookup (it hits the database and syncs defaults) so a database hiccup cannot 500 the login page.
+        var perms = !IsAuthorized || sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
         showSettings = availableModules.SelectMany(m => m.GetSettingsTabs())
             .Any(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
         showConfig = availableModules.SelectMany(m => m.GetConfigTabs())

@@ -173,7 +173,6 @@ visibility into its console output instead of guessing blind.
 - `System.Security.Cryptography.Xml` 10.0.10 → `11.0.0-rc.3.26522.148` across all 9 csproj files
   that referenced it (Aviation, Connectors, CoreData, Director, Host, Pulse, Sentinel, Shared,
   StyleGuide). Also fixes the transitive `System.Security.Cryptography.Pkcs` NU1903 flag.
-- `SQLitePCLRaw.lib.e_sqlite3` 2.1.11 (transitive via `Microsoft.EntityFrameworkCore.Sqlite` in
-  `DXSuite.Shared`) fixed with a direct `PackageReference` override to `3.53.4.1-pre1`.
+- SQLite support (`Microsoft.EntityFrameworkCore.Sqlite`, `SQLitePCLRaw`) has been removed from the project.
 - `mcp_nuget_mcp_ser_update_package_version` errored in this env ("NuGet.Frameworks ... manifest
   definition does not match") — edit the `.csproj` files directly instead.

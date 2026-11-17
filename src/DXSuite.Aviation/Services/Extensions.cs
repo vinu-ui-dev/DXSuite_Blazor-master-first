@@ -31,7 +31,7 @@ public static class Extensions
                 : config.GetConnectionString("Aviation")
                   ?? throw new InvalidOperationException(
                       "No Aviation connection string in app config (background service path).");
-            options.UseConfiguredProvider(config, "Aviation", connStr);
+            options.UseSqlServer(connStr);
         }, ServiceLifetime.Scoped);
 
         // ──────────────────────────────────────────────────────────────────

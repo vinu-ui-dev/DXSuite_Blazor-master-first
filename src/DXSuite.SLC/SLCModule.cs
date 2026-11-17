@@ -37,7 +37,7 @@ public class SLCModule : IBlazorModule
                 ?? throw new InvalidOperationException(
                     "No 'Pulse' connection string configured. Add ConnectionStrings:Pulse to appsettings.json.");
 
-            options.UseConfiguredProvider(config, "SlcPulse", connStr);
+            options.UseSqlServer(connStr);
         }, ServiceLifetime.Scoped);
     }
 
