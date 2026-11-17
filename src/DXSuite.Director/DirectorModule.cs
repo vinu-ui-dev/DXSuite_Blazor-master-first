@@ -37,7 +37,9 @@ public class DirectorModule : IBlazorModule
         yield return new NavItem("Overrides", "/overrides", "bi-lightning", 12, "Director", Feature: "Overrides");
         yield return new NavItem("Approvals", "/approvals", "bi-check2-square", 13, "Director");
         yield return new NavItem("Counter Scheduler", "/ticket-counter-scheduler", "bi-grid-3x3", 14, "Director", Feature: "CounterScheduler");
-        yield return new NavItem("Content Log", "/content-log", "bi-journal-text", 15, "Director", Permission: PermissionKeys.PageContentLog);
+        yield return new NavItem("Content Log", "/content-log", "bi-journal-text", 15, "Director",
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.ShowContentLogNav),
+            Permission: PermissionKeys.PageContentLog);
     }
 
     public IEnumerable<ConfigTab> GetConfigTabs()
@@ -54,16 +56,15 @@ public class DirectorModule : IBlazorModule
         yield return new ConfigTab("location-bundles", "Location Bundles", typeof(ConfigTabs.LocationBundlesTab), 36, Feature: "LocationBundles");
         yield return new ConfigTab("panels", "Panels", typeof(ConfigTabs.PanelsTab), 37, Feature: "Panels");
         yield return new ConfigTab("message-types", "Message Types", typeof(ConfigTabs.MessageTypeTab), 40,
-            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
+            TenantFeature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
         yield return new ConfigTab("zone-builder", "Display Zones", typeof(ConfigTabs.DisplayZonesTab), 41,
-            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
+            TenantFeature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));
     }
 
     public IEnumerable<SettingsTab> GetSettingsTabs()
     {
         // Admin-only tabs (default MinimumRole = Admin)
         yield return new SettingsTab("users", "Users", typeof(DXSuite.Shared.Components.Settings.UsersListView), 10);
-        yield return new SettingsTab("groups", "Groups", typeof(DXSuite.Director.Components.Settings.DirectorGroupsView), 20);
         yield return new SettingsTab("roles", "Roles", typeof(DXSuite.Shared.Components.Settings.RolesListView), 25);
         yield return new SettingsTab("branding", "Branding", typeof(DXSuite.Shared.Components.Settings.Branding), 30, TenantFeature: "BrandingManagement");
         yield return new SettingsTab("apikeys", "API Keys", typeof(Components.Settings.ApiKeys), 40);
@@ -84,8 +85,9 @@ public class DirectorModule : IBlazorModule
         yield return new SettingsTab("systeminfo", "System Info", typeof(Components.Settings.SystemInfo), 110);
         yield return new SettingsTab("vendoraccess", "Vendor Access Log", typeof(Components.Settings.VendorAccessLog), 120, RequiresPlatform: true);
 
-        // Contributor-accessible tabs
+        // Contributor-accessible tabs (RMU and other non-Admin/Architect roles see these too)
         yield return new SettingsTab("notifications", "Notifications", typeof(DXSuite.Shared.Components.Settings.NotificationPreferences), 5, Roles.Role.Contributor);
+        yield return new SettingsTab("groups", "Groups", typeof(DXSuite.Director.Components.Settings.DirectorGroupsView), 20, Roles.Role.Contributor);
     }
 
     /// <summary>

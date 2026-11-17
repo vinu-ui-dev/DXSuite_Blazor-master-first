@@ -33,6 +33,10 @@
     {
     <div class="dx-panel-header">
         <h4>Device Management</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
             <input @bind="searchFilter" @bind:event="oninput" @onkeyup="OnSearchChanged"
                    class="dx-search-input"
@@ -58,10 +62,10 @@
                 }
             </div>
 
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDeviceView">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnly" @onclick="SaveDeviceView">
                 Save View
             </button>
-            <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ResetDeviceView">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnly" @onclick="ResetDeviceView">
                 Reset View
             </button>
             <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadDevices">
@@ -142,6 +146,10 @@
     {
         <div class="dx-panel-header">
             <h4>Device Settings</h4>
+            @if (isViewOnly)
+            {
+                <span class="dx-badge dx-badge-gray">View only</span>
+            }
         </div>
         <div class="dx-panel-content" style="max-width:640px;">
             <h5>Playback</h5>
@@ -157,7 +165,7 @@
                     </p>
                 </div>
                 <div style="padding-top:4px;">
-                    <input type="checkbox" class="dx-checkbox" @bind="settingAllowHttpFallback" />
+                    <input type="checkbox" class="dx-checkbox" disabled="@isViewOnly" @bind="settingAllowHttpFallback" />
                 </div>
             </div>
             <div class="mt-3">
@@ -165,7 +173,7 @@
                 {
                     <span class="@(deviceSettingsSaveError ? "text-danger" : "text-success") small me-3">@deviceSettingsSaveMessage</span>
                 }
-                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDeviceSettings" disabled="@deviceSettingsSaving">
+                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveDeviceSettings" disabled="@(deviceSettingsSaving || isViewOnly)">
                     @(deviceSettingsSaving ? "Saving…" : "Save")
                 </button>
             </div>
@@ -210,7 +218,7 @@
                                         title="@(CanClearFlavour(selectedSettingsDevice)
                                                  ? "Return this device to the applet by clearing its flavour"
                                                  : $"This player is still running {selectedSettingsDevice.Flavour}. Move it back to the applet first.")"
-                                        disabled="@(!CanClearFlavour(selectedSettingsDevice) || isClearingFlavour)"
+                                        disabled="@(!CanClearFlavour(selectedSettingsDevice) || isClearingFlavour || isViewOnly)"
                                         @onclick="ClearFlavour">
                                     @(isClearingFlavour ? "Clearing..." : "Clear Flavour")
                                 </button>
@@ -230,14 +238,14 @@
                         <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Orientation</div>
                         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                             <select class="dx-form-control" style="width:340px;" @bind="editingOrientation"
-                                    disabled="@isSavingOrientation">
+                                    disabled="@(isSavingOrientation || isViewOnly)">
                                 @foreach (var orientation in DeviceOrientation.All)
                                 {
                                     <option value="@orientation">@OrientationLabels[orientation]</option>
                                 }
                             </select>
                             <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveOrientation"
-                                    disabled="@(isSavingOrientation || editingOrientation == selectedSettingsDevice.Orientation)">
+                                    disabled="@(isSavingOrientation || editingOrientation == selectedSettingsDevice.Orientation || isViewOnly)">
                                 @(isSavingOrientation ? "Saving…" : "Apply Orientation")
                             </button>
                         </div>
@@ -252,7 +260,7 @@
                         <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Video Transitions</div>
                         <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
                             <label class="dx-toggle" title="@(seamlessSupported ? "Seamless transitions between clips" : $"Not available on {selectedSettingsDevice.Model}")">
-                                <input type="checkbox" checked="@seamlessOn" disabled="@(!seamlessSupported || isSavingVideoPath)"
+                                <input type="checkbox" checked="@seamlessOn" disabled="@(!seamlessSupported || isSavingVideoPath || isViewOnly)"
                                        @onchange="@(e => SaveVideoPath((bool)e.Value!))" />
                                 <span class="dx-toggle-slider"></span>
                             </label>
@@ -284,7 +292,7 @@
                         <label class="dx-toggle" title="@(consoleLoggingEnabled ? "Disable logging" : "Enable logging")">
                             <input type="checkbox" checked="@consoleLoggingEnabled"
                                    @onchange="@(e => ToggleConsoleLogging((bool)e.Value!))"
-                                   disabled="@isTogglingConsoleLogging" />
+                                   disabled="@(isTogglingConsoleLogging || isViewOnly)" />
                             <span class="dx-toggle-slider"></span>
                         </label>
                         <span class="dx-text-muted" style="font-size:0.9rem;">
@@ -295,7 +303,7 @@
                                 @(isLoadingConsoleLogs ? "Refreshing..." : "Refresh")
                             </button>
                             <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ClearConsoleLogs"
-                                    disabled="@(consoleLogs.Count == 0 || isClearingConsoleLogs)">
+                                    disabled="@(consoleLogs.Count == 0 || isClearingConsoleLogs || isViewOnly)">
                                 @(isClearingConsoleLogs ? "Clearing..." : "Clear Logs")
                             </button>
                         </div>
@@ -360,7 +368,7 @@
 
                         <div style="display:flex; align-items:center; gap:12px; margin-bottom:12px; flex-wrap:wrap;">
                             <label class="dx-label" style="min-width:80px;">Mode</label>
-                            <select class="dx-form-control" style="width:190px;"
+                            <select class="dx-form-control" style="width:190px;" disabled="@isViewOnly"
                                     @bind="windowModeSettings.Mode">
                                 <option value="fullscreen">Fullscreen</option>
                                 <option value="windowed">Windowed</option>
@@ -395,7 +403,7 @@
 
                         <div style="display:flex; align-items:center; gap:12px;">
                             <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SaveWindowMode"
-                                    disabled="@isSavingWindowMode">
+                                    disabled="@(isSavingWindowMode || isViewOnly)">
                                 @(isSavingWindowMode ? "Saving…" : "Apply Window Mode")
                             </button>
                             <span class="dx-text-muted" style="font-size:0.8rem;">
@@ -414,7 +422,7 @@
                 <div style="border-top:1px solid var(--dx-border); padding-top:16px;">
                     <div style="font-weight:600; margin-bottom:8px; font-size:0.85rem; text-transform:uppercase; letter-spacing:.05em; color:var(--dx-text-muted);">Cache Management</div>
                     <div style="display:flex; align-items:center; gap:12px;">
-                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="QueueFlushCache" disabled="@(isFlushingCache || flushCacheQueued)">
+                        <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="QueueFlushCache" disabled="@(isFlushingCache || flushCacheQueued || isViewOnly)">
                             @if (isFlushingCache)
                             {
                                 <span>Queuing…</span>
@@ -480,6 +488,9 @@
 }
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private string activeDeviceSubTab = "devices";
 
     // Device Settings tab state
@@ -766,6 +777,7 @@
 
     private void StartEditTimeZone(DeviceRow d)
     {
+        if (isViewOnly) return;
         editingTimeZoneDeviceId = d.DeviceId;
         editingTimeZoneValue = d.TimeZone ?? "";
     }
@@ -826,6 +838,7 @@
 
     private void StartEditSite(DeviceRow d)
     {
+        if (isViewOnly) return;
         editingSiteDeviceId = d.DeviceId;
         editingSiteValue = d.SiteId?.ToString() ?? "";
     }
@@ -890,6 +903,7 @@
 
     private void StartEditName(DeviceRow d)
     {
+        if (isViewOnly) return;
         editingNameDeviceId = d.DeviceId;
         editingNameValue = d.Name ?? d.DeviceId;
     }
@@ -952,6 +966,7 @@
 
     private void StartEditDescription(DeviceRow d)
     {
+        if (isViewOnly) return;
         editingDeviceId = d.DeviceId;
         editingValue = d.Description ?? "";
     }

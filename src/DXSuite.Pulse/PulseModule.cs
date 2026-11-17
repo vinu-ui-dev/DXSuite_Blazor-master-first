@@ -24,7 +24,8 @@ public class PulseModule : IBlazorModule
 
     public IEnumerable<NavItem> GetNavItems()
     {
-        yield return new NavItem("Pulse", "/pulse", "bi-heart-pulse", 20);
+        yield return new NavItem("Pulse", "/pulse", "bi-heart-pulse", 20,
+            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.ShowPulseNav));
     }
 
     public IEnumerable<ConfigTab> GetConfigTabs()

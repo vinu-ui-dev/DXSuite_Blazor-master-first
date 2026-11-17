@@ -13,6 +13,7 @@ public enum CounterAllocationSaveOutcome
     Saved,
     Overlap,
     InvalidRange,
+    NotFound,
 }
 
 public sealed record CounterAllocationSaveResult(CounterAllocationSaveOutcome Outcome, int AllocationId = 0, string? ConflictingAirline = null);
@@ -63,6 +64,35 @@ public sealed class CounterAllocationService(IDbContextFactory<AviationDbContext
             CreatedBy = createdBy,
         };
         db.TblCounterAllocations.Add(row);
+        await db.SaveChangesAsync(ct);
+        return new CounterAllocationSaveResult(CounterAllocationSaveOutcome.Saved, row.CounterAllocationId);
+    }
+
+    /// <summary>Updates an existing allocation in place, re-running the same overlap check as
+    /// <see cref="CreateAsync"/> but excluding the row being edited from it.</summary>
+    public async Task<CounterAllocationSaveResult> UpdateAsync(int allocationId, CounterAllocationDraft draft, CancellationToken ct = default)
+    {
+        if (draft.EndUtc <= draft.StartUtc) return new CounterAllocationSaveResult(CounterAllocationSaveOutcome.InvalidRange);
+
+        await using var db = await dbFactory.CreateDbContextAsync(ct);
+
+        var overlapping = await db.TblCounterAllocations
+            .Where(a => a.CounterAllocationId != allocationId && a.Counter == draft.Counter && a.StartUtc < draft.EndUtc && a.EndUtc > draft.StartUtc)
+            .Select(a => a.AirlineCode)
+            .FirstOrDefaultAsync(ct);
+        if (overlapping is not null)
+            return new CounterAllocationSaveResult(CounterAllocationSaveOutcome.Overlap, ConflictingAirline: overlapping);
+
+        var row = await db.TblCounterAllocations.FirstOrDefaultAsync(a => a.CounterAllocationId == allocationId, ct);
+        if (row is null) return new CounterAllocationSaveResult(CounterAllocationSaveOutcome.NotFound);
+
+        row.Counter = draft.Counter;
+        row.AirlineCode = draft.AirlineCode;
+        row.AllocationType = draft.AllocationType;
+        row.Destination = draft.AllocationType == "Dedicated" ? draft.Destination : null;
+        row.FlightNumber = draft.AllocationType == "Dedicated" ? draft.FlightNumber : null;
+        row.StartUtc = draft.StartUtc;
+        row.EndUtc = draft.EndUtc;
         await db.SaveChangesAsync(ct);
         return new CounterAllocationSaveResult(CounterAllocationSaveOutcome.Saved, row.CounterAllocationId);
     }

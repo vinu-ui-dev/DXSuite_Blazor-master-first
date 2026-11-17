@@ -33,6 +33,22 @@ namespace DXSuite.Director.Entities
         DbSet<TblScheduleEvent> TblScheduleEvents { get; set; }
 
         DbSet<TblAirlineLocation> TblAirlineLocations { get; set; }
+        DbSet<TblAirlineAccount> TblAirlineAccounts { get; set; }
+        DbSet<TblAirlineTerminal> TblAirlineTerminals { get; set; }
+        DbSet<TblAlliance> TblAlliances { get; set; }
+        DbSet<TblAllianceLogo> TblAllianceLogos { get; set; }
+        DbSet<TblCounterPrepared> TblCounterPrepared { get; set; }
+        DbSet<TblCounterPublish> TblCounterPublish { get; set; }
+        DbSet<TblCounterPublishTarget> TblCounterPublishTargets { get; set; }
+        DbSet<TblCounterState> TblCounterStates { get; set; }
+        DbSet<TblCounterTemplate> TblCounterTemplates { get; set; }
+        DbSet<TblCounterTemplateAsset> TblCounterTemplateAssets { get; set; }
+        DbSet<TblCounterTemplateOutcome> TblCounterTemplateOutcomes { get; set; }
+        DbSet<TblCounterTemplateReplacement> TblCounterTemplateReplacements { get; set; }
+        DbSet<TblCounterTemplateText> TblCounterTemplateTexts { get; set; }
+        DbSet<TblDcsProvider> TblDcsProviders { get; set; }
+        DbSet<TblLogoRoleLibrary> TblLogoRoleLibraries { get; set; }
+        DbSet<TblTemplateSize> TblTemplateSizes { get; set; }
 
         DbSet<TblUserLocation> TblUserLocations { get; set; }
 
@@ -115,6 +131,12 @@ namespace DXSuite.Director.Entities
         DbSet<TblFloorPlanIconSchedule> TblFloorPlanIconSchedules { get; set; }
 
         DbSet<TblAccessSchedule> TblAccessSchedules { get; set; }
+
+        DbSet<TblActiveNode> TblActiveNodes { get; set; }
+        DbSet<TblBusinessRuleValue> TblBusinessRuleValues { get; set; }
+        DbSet<TblCuppsBannerDismissal> TblCuppsBannerDismissals { get; set; }
+        DbSet<TblCuppsLockout> TblCuppsLockouts { get; set; }
+        DbSet<TblCuppsSignInFailure> TblCuppsSignInFailures { get; set; }
 
         // Engage (Control Client) DbSets
         DbSet<TblControlClient> TblControlClients { get; set; }

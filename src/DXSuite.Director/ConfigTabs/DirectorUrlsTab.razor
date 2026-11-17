@@ -1,13 +1,19 @@
 @using DXSuite.Director.Entities
 @using DXSuite.Director.Services
+@using DXSuite.Shared.Authorization
 @using Microsoft.EntityFrameworkCore
 @inject IServiceScopeFactory scopeFactory
 @inject UrlHeartbeatService heartbeats
+@inject ISessionState SessionState
 @implements IDisposable
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
     <div class="dx-panel-header">
         <h4>Director URLs</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
             <input @bind="search" @bind:event="oninput"
                    class="dx-search-input"
@@ -56,7 +62,7 @@
                         <div style="font-family:monospace; font-size:0.8rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="@row.UrlKey">@row.UrlKey</div>
                         <div>@(row.LocationId?.ToString() ?? "—")</div>
                         <div>
-                            <select class="dx-form-control dx-form-control-sm" value="@(row.LinkedDeviceId ?? "")"
+                            <select class="dx-form-control dx-form-control-sm" disabled="@isViewOnly" value="@(row.LinkedDeviceId ?? "")"
                                     @onchange="e => SetDeviceAsync(row, e.Value?.ToString())">
                                 <option value="">— none —</option>
                                 @foreach (var d in devices)
@@ -66,18 +72,18 @@
                             </select>
                         </div>
                         <div>
-                            <input type="number" class="dx-form-control dx-form-control-sm no-spinner" min="60" step="30"
+                            <input type="number" class="dx-form-control dx-form-control-sm no-spinner" min="60" step="30" disabled="@isViewOnly"
                                    value="@row.ExpectedIntervalSeconds"
                                    @onchange="e => SetIntervalAsync(row, e.Value?.ToString())" />
                         </div>
                         <div style="text-align:center;">
-                            <input type="checkbox" class="dx-checkbox" checked="@row.IsMonitored"
+                            <input type="checkbox" class="dx-checkbox" disabled="@isViewOnly" checked="@row.IsMonitored"
                                    @onchange="e => SetMonitoredAsync(row, e.Value is true)" />
                         </div>
                         <div title="@EffectiveLastSeen(row).ToLocalTime().ToString("g")">@Relative(EffectiveLastSeen(row))</div>
                         <div>@row.FirstSeenUtc.ToLocalTime().ToString("g")</div>
                         <div style="text-align:center;">
-                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" title="Forget this URL"
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" title="Forget this URL" disabled="@isViewOnly"
                                     @onclick="() => ForgetAsync(row)">×</button>
                         </div>
                     </div>
@@ -102,6 +108,9 @@
 </div>
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private const string GridStyle =
         "grid-template-columns: 60px 160px minmax(260px, 1fr) 80px 220px 100px 90px 110px 140px 60px;";
 

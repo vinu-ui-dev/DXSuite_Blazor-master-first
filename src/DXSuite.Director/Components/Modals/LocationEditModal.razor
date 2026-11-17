@@ -20,7 +20,8 @@
             {
             <div class="lem-field">
                 <label class="lem-label">Location Name</label>
-                <input type="text" class="form-control" @bind="locationName" />
+                <input type="text" class="form-control" @bind="locationName" maxlength="50" />
+                <small class="text-muted">Max 50 characters (@locationName.Length/50)</small>
             </div>
 
             <hr />
@@ -764,6 +765,14 @@
             if (contentSourceMode != "disabled" && selectedConnectorId == 0)
             {
                 saveError = "Please select an Ink connector.";
+                return;
+            }
+
+            // tblLocation.LocationName is NVARCHAR(50); catch an over-length name here with a clear
+            // message instead of letting it reach SaveChangesAsync as a raw SQL truncation error.
+            if (!isOverrideContentLocation && locationName.Length > 50)
+            {
+                saveError = $"Location name is too long ({locationName.Length}/50 characters). Please shorten it.";
                 return;
             }
 

@@ -1,0 +1,796 @@
+@rendermode InteractiveServer
+@using DXSuite.Aviation.Entities
+@using DXSuite.Aviation.Services
+@using DXSuite.Shared.Services
+@using Microsoft.AspNetCore.Components.Forms
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.Extensions.Logging
+@inject IServiceProvider Services
+@inject IDbContextFactory<AviationDbContext> AviationDbFactory
+@inject ILogger<AddAirlineWizard> Logger
+@inject AirlineAudit AirlineAudit
+
+<div class="dx-panel-header">
+    <h4 style="margin:0;">Add Airline</h4>
+    <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="Cancel">CANCEL</button>
+</div>
+
+<div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
+    <div class="aaw-layout">
+        <div class="aaw-rail">
+            @for (var i = 0; i < Steps.Length; i++)
+            {
+                var idx = i;
+                <button class="aaw-rail-item @(idx == currentStep ? "active" : "")" @onclick="() => GoToStep(idx)">
+                    @RailIcon(idx)
+                    <span>
+                        <strong>@Steps[idx].Title</strong>
+                        <small>@Steps[idx].Subtitle</small>
+                    </span>
+                </button>
+            }
+        </div>
+
+        <div class="aaw-content">
+            @if (currentStep == 0)
+            {
+                <h5>Identity</h5>
+                <p class="dx-text-muted">How the airline is named, matched to counter allocations and flights, and which alliance its counters show.</p>
+
+                <div class="aaw-field-row">
+                    <div class="aaw-field">
+                        <label>Airline name (English)</label>
+                        <input class="form-control" @bind="data.NameEn" @bind:event="oninput" placeholder="e.g. Air Transat" />
+                    </div>
+                    <div class="aaw-field">
+                        <label>Airline name (French)</label>
+                        <input class="form-control" @bind="data.NameFr" @bind:event="oninput" placeholder="Same as English if blank" />
+                    </div>
+                </div>
+
+                <div class="aaw-field-row">
+                    <div class="aaw-field" style="max-width:160px;">
+                        <label>IATA code</label>
+                        <input class="form-control" @bind="data.Iata" @bind:event="oninput" maxlength="2" placeholder="TS" />
+                    </div>
+                    <div class="aaw-field" style="max-width:160px;">
+                        <label>ICAO code</label>
+                        <input class="form-control" @bind="data.Icao" @bind:event="oninput" maxlength="3" placeholder="TSC" />
+                    </div>
+                    <div class="aaw-field">
+                        <label>Name shown in CUPPS</label>
+                        <input class="form-control" @bind="data.CuppsName" @bind:event="oninput" placeholder="Defaults to the airline name" />
+                    </div>
+                </div>
+
+                <div class="aaw-field" style="max-width:420px;">
+                    <label>Alliance</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <select class="form-control" @bind="data.Alliance" style="flex:1;">
+                            @foreach (var alliance in Alliances)
+                            {
+                                <option value="@alliance">@alliance</option>
+                            }
+                        </select>
+                        <span class="aaw-alliance-pill">@data.Alliance</span>
+                    </div>
+                    <div class="dx-text-muted aaw-hint">Its footer logo shows in the upper left of the screen footer at every counter this airline holds.</div>
+                </div>
+
+                <div class="aaw-field">
+                    <label>Operates in</label>
+                    <div style="display:flex; gap:20px;">
+                        <label class="aaw-check"><input type="checkbox" @bind="data.Terminal1" /> Terminal 1</label>
+                        <label class="aaw-check"><input type="checkbox" @bind="data.Terminal3" /> Terminal 3</label>
+                    </div>
+                    <div class="dx-text-muted aaw-hint">Limits which counters and zones appear for this airline. Counters themselves come from the RMS allocation feed.</div>
+                </div>
+
+                <div class="aaw-field">
+                    <label>Status</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <label class="dx-toggle">
+                            <input type="checkbox" checked="@data.Active" @onchange="@(e => data.Active = (bool)e.Value!)" />
+                            <span class="dx-toggle-slider"></span>
+                        </label>
+                        <span>@(data.Active ? "Active. Available in CUPPS once a counter is allocated." : "Inactive. Hidden from CUPPS and counter allocation.")</span>
+                    </div>
+                </div>
+            }
+            else if (currentStep == 1)
+            {
+                <h5>Branding</h5>
+                <p class="dx-text-muted">The logos and colours the airline's Standard Counter templates are drawn with.</p>
+
+                @BrandingCard("Wordmark", false, "wordmark", "Drawn on Standard Counter templates.")
+
+                @BrandingCard("Square mark", true, "square", "Stored for later screens; no 1.2 screen draws it.")
+
+                @BrandingCard("Reversed wordmark", true, "reversed", "Stored for later screens; no 1.2 screen draws it.")
+
+                <div class="aaw-field" style="max-width:300px;">
+                    <label>Standard template background</label>
+                    <div style="display:flex; align-items:center; gap:10px;">
+                        <input type="color" @bind="data.BackgroundColor" style="width:40px; height:30px; padding:0; border:1px solid #ccc; border-radius:4px;" />
+                        <span>@data.BackgroundColor</span>
+                    </div>
+                    <div class="dx-text-muted aaw-hint">Used to draw Standard Counter templates until the airline sets its own.</div>
+                </div>
+            }
+            else if (currentStep == 2)
+            {
+                <h5>CUPPS options</h5>
+                <p class="dx-text-muted">What agents at this airline can show in CUPPS.</p>
+
+                <div class="aaw-field">
+                    <label class="aaw-section-label">Flag options agents can show</label>
+                    <div style="display:flex; gap:20px;">
+                        <label class="aaw-check"><input type="checkbox" @bind="data.FlagCanada" /> Canada</label>
+                        <label class="aaw-check"><input type="checkbox" @bind="data.FlagUs" /> United States</label>
+                        <label class="aaw-check"><input type="checkbox" @bind="data.FlagIntl" /> International</label>
+                    </div>
+                    <div class="dx-text-muted aaw-hint">"None" is always available.</div>
+                </div>
+
+                <label class="aaw-section-label" style="display:block; margin:18px 0 6px;">Features in CUPPS</label>
+
+                @CuppsToggle("International Sunflower option", "Agents can add the Sunflower symbol to the counter screen footer, after the alliance logo.", data.Sunflower, v => data.Sunflower = v)
+                @CuppsToggle("ASL videos", "Agents can turn on ASL videos. They play on full screen displays only.", data.AslVideos, v => data.AslVideos = v)
+                @CuppsToggle("Destination Zone", "Agents can enter a destination on dedicated counters. Where it is allowed is set in Business Rules.", data.DestinationZone, v => data.DestinationZone = v)
+
+                <div class="dx-text-muted aaw-hint" style="margin-top:10px;">
+                    Screens always show English and French. Who may post free text is a role permission, set on Settings &gt; Roles. Counter templates are set up on the airline's Counter templates tab after it is created.
+                </div>
+            }
+            else if (currentStep == 3)
+            {
+                <h5>DCS</h5>
+                <p class="dx-text-muted">Whether the airline checks passengers in itself or through a DCS provider.</p>
+
+                <div style="display:flex; gap:16px; flex-wrap:wrap;">
+                    <button class="aaw-choice-card @(data.DcsMode == "airline" ? "selected" : "")" @onclick='() => data.DcsMode = "airline"'>
+                        <strong>Airline</strong>
+                        <span>Agents sign in to CUPPS with this airline's accounts at the counters it holds.</span>
+                    </button>
+                    <button class="aaw-choice-card @(data.DcsMode == "provider" ? "selected" : "")" @onclick='() => data.DcsMode = "provider"'>
+                        <strong>Operates under a DCS provider</strong>
+                        <span>A ground handler such as Swissport checks passengers in. Its handlers act for this airline at the counters it holds.</span>
+                    </button>
+                </div>
+
+                @if (data.DcsMode == "provider")
+                {
+                    <div class="aaw-field" style="max-width:300px; margin-top:16px;">
+                        <label>DCS provider</label>
+                        <select class="form-control" @bind="data.DcsProvider">
+                            <option value="Swissport">Swissport</option>
+                            <option value="Menzies">Menzies</option>
+                            <option value="dnata">dnata</option>
+                        </select>
+                    </div>
+                }
+            }
+            else
+            {
+                var issues = Validate();
+                var errors = issues.Where(i => i.IsError).ToList();
+                var warnings = issues.Where(i => !i.IsError).ToList();
+
+                <h5>Review and create</h5>
+                <p class="dx-text-muted">Director checks the assets and details against GTAA requirements before the airline is created.</p>
+
+                @if (errors.Count > 0)
+                {
+                    <div class="dx-alert dx-alert-danger">
+                        <strong>Airline not created.</strong> Fix @errors.Count problem@(errors.Count == 1 ? "" : "s"), then check again.
+                        @if (warnings.Count > 0)
+                        {
+                            <text> There are also @warnings.Count warning@(warnings.Count == 1 ? "" : "s").</text>
+                        }
+                    </div>
+                }
+                else if (warnings.Count > 0)
+                {
+                    <div class="dx-alert dx-alert-info">
+                        Ready to create. There @(warnings.Count == 1 ? "is" : "are") @warnings.Count warning@(warnings.Count == 1 ? "" : "s") below.
+                    </div>
+                }
+                else
+                {
+                    <div class="dx-alert dx-alert-success">Ready to create. No problems found.</div>
+                }
+
+                @foreach (var issue in issues)
+                {
+                    <div class="aaw-issue">
+                        <span class="aaw-issue-icon @(issue.IsError ? "error" : "warn")">@(issue.IsError ? "⊗" : "!")</span>
+                        <div class="aaw-issue-body">
+                            <div class="aaw-issue-cat">@issue.Category</div>
+                            <div>@issue.Message</div>
+                        </div>
+                        <a href="javascript:void(0)" @onclick="() => GoToStep(issue.StepIndex)">Fix</a>
+                    </div>
+                }
+
+                <div class="dx-text-muted" style="margin:10px 0 16px;">Checked at @checkedAt.ToString("hh:mm:ss tt", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant()</div>
+
+                <div class="dx-alert dx-alert-info">
+                    <strong>Create will write one aviation.tblAirlineAccount row, @(data.Alliance == "None" ? "no alliance" : $"alliance {data.Alliance}"), and the group it owns</strong>, then:
+                    <ul style="margin:8px 0 0 18px; padding:0;">
+                        <li>create the Asset Library "Airline content" and give the group full access to it</li>
+                        <li>copy the default airline content chain onto that library</li>
+                        <li>add @LogoCount() logo@(LogoCount() == 1 ? "" : "s") to it, one aviation.tblAirlineLogo row per role, approved at once by bypass</li>
+                        <li>hold the Counter template defaults: airport-wide Standard templates shown, no default template, picker opens on Standard</li>
+                        <li>log one User Event</li>
+                    </ul>
+                </div>
+
+                <div class="aaw-summary-grid">
+                    <div class="aaw-summary-card">
+                        <div class="aaw-summary-head"><strong>Identity</strong><a href="javascript:void(0)" @onclick="() => GoToStep(0)">Edit</a></div>
+                        @SummaryRow("Name", string.IsNullOrWhiteSpace(data.NameEn) ? null : data.NameEn)
+                        @SummaryRow("French name", string.IsNullOrWhiteSpace(data.NameFr) ? "—" : data.NameFr, false)
+                        @SummaryRow("IATA / ICAO", $"{(string.IsNullOrWhiteSpace(data.Iata) ? "?" : data.Iata.ToUpperInvariant())} / {(string.IsNullOrWhiteSpace(data.Icao) ? "?" : data.Icao.ToUpperInvariant())}", false)
+                        @SummaryRow("CUPPS name", string.IsNullOrWhiteSpace(data.CuppsName) ? "—" : data.CuppsName, false)
+                        @SummaryRow("Alliance", data.Alliance, false)
+                        @SummaryRow("Terminals", TerminalsLabel(), false)
+                        @SummaryRow("Status", data.Active ? "Active" : "Inactive", false)
+                    </div>
+                    <div class="aaw-summary-card">
+                        <div class="aaw-summary-head"><strong>Branding</strong><a href="javascript:void(0)" @onclick="() => GoToStep(1)">Edit</a></div>
+                        @SummaryRow("Wordmark", data.HasWordmark ? "Uploaded" : null)
+                        @SummaryRow("Square mark", data.HasSquareMark ? "Uploaded" : "None", false)
+                        @SummaryRow("Reversed wordmark", data.HasReversedWordmark ? "Uploaded" : "None", false)
+                        <div class="aaw-summary-row">
+                            <span>Background</span>
+                            <span><span style="display:inline-block; width:14px; height:14px; border-radius:3px; background:@data.BackgroundColor; border:1px solid #ccc; vertical-align:-2px; margin-right:6px;"></span>@data.BackgroundColor</span>
+                        </div>
+                    </div>
+                    <div class="aaw-summary-card">
+                        <div class="aaw-summary-head"><strong>CUPPS options</strong><a href="javascript:void(0)" @onclick="() => GoToStep(2)">Edit</a></div>
+                        @SummaryRow("Flags", FlagsLabel(), false)
+                        @SummaryRow("Sunflower", data.Sunflower ? "On" : "Off", false)
+                        @SummaryRow("ASL videos", data.AslVideos ? "On" : "Off", false)
+                        @SummaryRow("Destination Zone", data.DestinationZone ? "On" : "Off", false)
+                    </div>
+                    <div class="aaw-summary-card">
+                        <div class="aaw-summary-head"><strong>DCS</strong><a href="javascript:void(0)" @onclick="() => GoToStep(3)">Edit</a></div>
+                        @SummaryRow("DCS", data.DcsMode == "airline" ? "Airline" : data.DcsProvider, false)
+                    </div>
+                </div>
+            }
+        </div>
+    </div>
+</div>
+
+<div class="aaw-footer">
+    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(currentStep == 0)" @onclick="GoBack">BACK</button>
+    <span class="dx-text-muted">Step @(currentStep + 1) of @Steps.Length</span>
+    @if (currentStep < Steps.Length - 1)
+    {
+        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="GoNext">NEXT: @Steps[currentStep + 1].Title.ToUpperInvariant()</button>
+    }
+    else
+    {
+        <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(Validate().Any(i => i.IsError) || isCreating)" @onclick="CreateAirline">@(isCreating ? "CREATING..." : "CREATE AIRLINE")</button>
+    }
+</div>
+
+@if (!string.IsNullOrEmpty(errorMessage))
+{
+    <div class="dx-alert dx-alert-danger" style="margin:10px 20px;">@errorMessage</div>
+}
+
+@if (pickerKind != null)
+{
+    <div class="aaw-modal-backdrop" @onclick="ClosePicker">
+        <div class="aaw-modal" @onclick:stopPropagation="true">
+            <div class="aaw-modal-head">
+                <strong>Choose a @RoleLabel(pickerKind).ToLowerInvariant() from @(libraryInfo?.Name)</strong>
+                <button class="aaw-modal-close" @onclick="ClosePicker" aria-label="Close">&times;</button>
+            </div>
+            <div class="aaw-modal-body">
+                <p class="dx-text-muted" style="font-size:0.85rem;">Approved files of the library. A file here is already approved, so it is linked on Save with no new approval. To add a new file, use Upload to library.</p>
+                @if (pickerLoading)
+                {
+                    <p class="dx-text-muted">Loading...</p>
+                }
+                else if (pickerFiles.Count == 0)
+                {
+                    <h6 class="dx-text-muted" style="margin:18px 0;">No approved files in this library yet.</h6>
+                }
+                else
+                {
+                    <div class="aaw-picker-grid">
+                        @foreach (var f in pickerFiles)
+                        {
+                            <button class="aaw-picker-item" @onclick="() => PickFile(f)">
+                                <span class="aaw-picker-thumb"><img src="@f.Path" alt="@f.Name" /></span>
+                                <span class="aaw-picker-name">@f.Name</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="aaw-modal-foot">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ClosePicker">CANCEL</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (logoLibrary != null && libraryInfo != null)
+{
+    <DynamicComponent Type="logoLibrary.UploaderComponentType" Parameters="uploaderParameters" @ref="uploaderHost" />
+}
+
+<style>
+    .aaw-layout { display:flex; min-height:100%; }
+    .aaw-rail { width:240px; flex-shrink:0; border-right:1px solid var(--dx-border-color,#eee); padding:16px 0; background:#f0f0f0; }
+    .aaw-rail-item { display:flex; align-items:flex-start; gap:10px; width:100%; text-align:left; background:none; border:none; padding:12px 18px; cursor:pointer; border-left:3px solid transparent; }
+    .aaw-rail-item:hover { background:#f7f9fc; }
+    .aaw-rail-item.active { background:#eef4ff; border-left-color:#0071bc; }
+    .aaw-rail-item strong { display:block; font-size:0.88rem; }
+    .aaw-rail-item small { display:block; color:var(--dx-text-muted,#777); font-size:0.75rem; }
+    .aaw-rail-icon { width:22px; height:22px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:0.72rem; font-weight:700; margin-top:1px; }
+    .aaw-rail-icon.current { border:2px solid #0071bc; color:#0071bc; }
+    .aaw-rail-icon.todo { border:2px solid #ccc; color:#999; }
+    .aaw-rail-icon.ok { background:#1e9e5a; color:#fff; }
+    .aaw-rail-icon.err { background:#d8332a; color:#fff; }
+
+    .aaw-content { flex:1; min-width:0; padding:20px 24px; max-width:860px; }
+    .aaw-field-row { display:flex; gap:20px; margin-bottom:16px; flex-wrap:wrap; }
+    .aaw-field { margin-bottom:16px; flex:1; min-width:200px; }
+    .aaw-field label { display:block; font-weight:600; font-size:0.85rem; margin-bottom:6px; }
+    .aaw-field .aaw-hint { font-size:0.8rem; margin-top:6px; }
+    .aaw-section-label { font-size:0.75rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--dx-text-muted,#777); font-weight:700; }
+    .aaw-check { display:flex; align-items:center; gap:6px; font-size:0.9rem; font-weight:400; }
+    .aaw-alliance-pill { background:#111; color:#fff; border-radius:16px; padding:5px 14px; font-size:0.8rem; white-space:nowrap; }
+
+    .aaw-choice-card { flex:1; min-width:260px; text-align:left; border:2px solid var(--dx-border-color,#dee2e6); border-radius:8px; padding:16px; background:#fff; cursor:pointer; display:flex; flex-direction:column; gap:6px; }
+    .aaw-choice-card strong { font-size:0.95rem; }
+    .aaw-choice-card span { font-size:0.85rem; color:var(--dx-text-muted,#666); }
+    .aaw-choice-card.selected { border-color:#0071bc; background:#f4f9ff; }
+
+    .aaw-issue { display:flex; align-items:flex-start; gap:10px; padding:10px 0; border-bottom:1px solid #f0f0f0; }
+    .aaw-issue-icon { width:20px; height:20px; border-radius:50%; flex-shrink:0; display:flex; align-items:center; justify-content:center; font-size:0.75rem; color:#fff; margin-top:2px; }
+    .aaw-issue-icon.error { background:#d8332a; }
+    .aaw-issue-icon.warn { background:#e2922b; }
+    .aaw-issue-body { flex:1; }
+    .aaw-issue-cat { font-size:0.7rem; text-transform:uppercase; letter-spacing:0.05em; color:var(--dx-text-muted,#777); font-weight:700; }
+
+    .aaw-summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(190px, 1fr)); gap:14px; margin-top:16px; }
+    .aaw-summary-card { border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:14px; background:#fafbfc; }
+    .aaw-summary-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+    .aaw-summary-row { display:flex; justify-content:space-between; gap:8px; font-size:0.82rem; padding:3px 0; }
+    .aaw-summary-row span:first-child { color:var(--dx-text-muted,#777); }
+    .aaw-summary-missing { color:#d8332a; }
+
+    .aaw-footer { display:flex; align-items:center; gap:14px; padding:12px 20px; border-top:1px solid var(--dx-border-color,#eee); flex-shrink:0; }
+    .aaw-footer span { flex:1; text-align:center; }
+
+    .aaw-logo-card { border:1px solid var(--dx-border-color,#dee2e6); border-radius:6px; padding:12px 12px 14px; margin-bottom:12px; background:#fff; }
+    .aaw-logo-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px; }
+    .aaw-logo-source { font-size:0.82rem; margin-bottom:10px; }
+    .aaw-logo-preview { width:200px; height:80px; border-radius:2px; display:flex; align-items:center; justify-content:center; color:#555; font-size:0.82rem; background:#ebebeb; }
+    .aaw-logo-preview.has-file { background:#0071bc; color:#fff; font-weight:700; }
+    .aaw-file-pill { background:#e8eaed; color:#333; border-radius:14px; padding:4px 12px; font-size:0.78rem; font-weight:600; }
+    .aaw-file-pill.chosen { background:#d7f0e1; color:#13693a; }
+    .aaw-lib-btn { font-size:0.72rem; font-weight:700; letter-spacing:0.02em; padding:6px 12px; border-radius:4px; border:1px solid #0071bc; cursor:pointer; }
+    .aaw-lib-btn.outline { background:#fff; color:#0071bc; }
+    .aaw-lib-btn.solid { background:#0071bc; color:#fff; }
+    .aaw-lib-btn:disabled, .aaw-lib-btn.disabled { opacity:0.5; cursor:not-allowed; }
+    .aaw-lib-btn { display:inline-flex; align-items:center; gap:4px; margin:0; }
+    .aaw-logo-preview img { max-width:100%; max-height:100%; object-fit:contain; }
+    .aaw-logo-preview.has-file { background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+
+    .aaw-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; display:flex; align-items:center; justify-content:center; }
+    .aaw-modal { background:#fff; border-radius:10px; width:min(720px, 92vw); max-height:80vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,0.35); }
+    .aaw-modal-head { background:#0071bc; color:#fff; padding:16px 22px; display:flex; justify-content:space-between; align-items:center; }
+    .aaw-modal-close { background:none; border:none; color:#fff; font-size:1.4rem; line-height:1; cursor:pointer; }
+    .aaw-modal-body { padding:18px 22px; overflow-y:auto; }
+    .aaw-modal-foot { padding:12px 22px; border-top:1px solid #eee; display:flex; justify-content:flex-end; }
+    .aaw-picker-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; margin-top:12px; }
+    .aaw-picker-item { border:1px solid #dee2e6; border-radius:6px; background:#fff; padding:8px; cursor:pointer; text-align:left; }
+    .aaw-picker-item:hover { border-color:#0071bc; background:#f4f9ff; }
+    .aaw-picker-thumb { display:flex; align-items:center; justify-content:center; height:64px; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+    .aaw-picker-thumb img { max-width:100%; max-height:100%; object-fit:contain; }
+    .aaw-picker-name { display:block; font-size:0.78rem; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+</style>
+
+@code {
+    [Parameter] public EventCallback OnCancel { get; set; }
+    [Parameter] public EventCallback<NewAirlineResult> OnCreated { get; set; }
+
+    public sealed record NewAirlineResult(
+        int RecordId, string Code, string Name, string? Icao, bool Active,
+        string Alliance, bool Terminal1, bool Terminal3,
+        bool DcsProvider, string DcsLabel, string BackgroundColor,
+        bool HasWordmark, bool HasSquareMark, bool HasReversedWordmark);
+
+    private sealed class WizardData
+    {
+        public string NameEn = "";
+        public string NameFr = "";
+        public string Iata = "";
+        public string Icao = "";
+        public string CuppsName = "";
+        public string Alliance = "None";
+        public bool Terminal1;
+        public bool Terminal3;
+        public bool Active = true;
+
+        public AirlineLogoFile? Wordmark;
+        public AirlineLogoFile? SquareMark;
+        public AirlineLogoFile? ReversedWordmark;
+        public bool HasWordmark => Wordmark != null;
+        public bool HasSquareMark => SquareMark != null;
+        public bool HasReversedWordmark => ReversedWordmark != null;
+        public string BackgroundColor = "#0071bc";
+
+        public bool FlagCanada = true;
+        public bool FlagUs = true;
+        public bool FlagIntl = true;
+        public bool Sunflower;
+        public bool AslVideos = true;
+        public bool DestinationZone = true;
+
+        public string DcsMode = "airline"; // airline | provider
+        public string DcsProvider = "Swissport";
+    }
+
+    private sealed record Issue(string Category, string Message, bool IsError, int StepIndex);
+
+    private static readonly string[] Alliances = { "None", "Star Alliance", "SkyTeam", "Oneworld" };
+
+    private readonly (string Title, string Subtitle)[] Steps =
+    {
+        ("Identity", "Names, codes and terminals"),
+        ("Branding", "Logos and Standard template colours"),
+        ("CUPPS options", "Flags agents can show"),
+        ("DCS", "Who checks passengers in"),
+        ("Review and create", "Check, then create"),
+    };
+
+    private static readonly string[] LogoExtensions = { ".png", ".svg" };
+
+    private IAirlineLogoLibrary? logoLibrary;
+    private AirlineLogoLibraryInfo? libraryInfo;
+    private string? pickerKind;
+    private bool pickerLoading;
+    private IReadOnlyList<AirlineLogoFile> pickerFiles = [];
+    private string? uploadKind;
+    private DynamicComponent? uploaderHost;
+    private Dictionary<string, object>? uploaderParameters;
+    private readonly Dictionary<string, string> logoErrors = new();
+
+    private WizardData data = new();
+    private int currentStep;
+    private readonly HashSet<int> visited = new() { 0 };
+    private DateTime checkedAt = DateTime.Now;
+    private bool isCreating;
+    private string errorMessage = "";
+
+    protected override async Task OnInitializedAsync()
+    {
+        logoLibrary = Services.GetService(typeof(IAirlineLogoLibrary)) as IAirlineLogoLibrary;
+        if (logoLibrary == null) return;
+        uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploaded) };
+        try { libraryInfo = await logoLibrary.GetLibraryAsync(); }
+        catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); }
+    }
+
+    private List<Issue> Validate()
+    {
+        checkedAt = DateTime.Now;
+        var list = new List<Issue>();
+
+        if (string.IsNullOrWhiteSpace(data.NameEn))
+            list.Add(new("IDENTITY", "Enter the airline name.", true, 0));
+
+        if (string.IsNullOrWhiteSpace(data.Iata) || data.Iata.Trim().Length != 2)
+            list.Add(new("IDENTITY", "Enter the two-character IATA code. Counter allocations and flights are matched on it.", true, 0));
+
+        if (!data.HasWordmark)
+            list.Add(new("BRANDING", "Choose or upload a wordmark. Drawn on Standard Counter templates.", true, 1));
+        else if (!data.Wordmark!.Approved)
+            list.Add(new("BRANDING", "The wordmark is waiting on the library's approval chain. Standard Counter templates cannot draw it until it is approved.", false, 1));
+
+        if (string.IsNullOrWhiteSpace(data.Icao))
+            list.Add(new("IDENTITY", "No ICAO code. Flight feeds that use ICAO codes will not match this airline.", false, 0));
+
+        if (!data.Terminal1 && !data.Terminal3)
+            list.Add(new("IDENTITY", "No terminal selected. The airline will not see any counters until one is.", false, 0));
+
+        if (!data.HasSquareMark)
+            list.Add(new("BRANDING", "No square mark. CUPPS will show the airline name instead.", false, 1));
+
+        return list;
+    }
+
+    private bool StepHasErrors(int step) => Validate().Any(i => i.IsError && (step == Steps.Length - 1 || i.StepIndex == step));
+
+    private RenderFragment RailIcon(int idx)
+    {
+        if (idx == currentStep)
+        {
+            return @<span class="aaw-rail-icon current">@(idx + 1)</span>;
+        }
+        if (idx == Steps.Length - 1 && !visited.Contains(idx))
+        {
+            return @<span class="aaw-rail-icon todo">@(idx + 1)</span>;
+        }
+        if (StepHasErrors(idx))
+        {
+            return @<span class="aaw-rail-icon err">&#10006;</span>;
+        }
+        return @<span class="aaw-rail-icon ok">&#10003;</span>;
+    }
+
+    private void GoNext()
+    {
+        visited.Add(currentStep);
+        if (currentStep < Steps.Length - 1) currentStep++;
+    }
+
+    private void GoBack()
+    {
+        if (currentStep > 0) currentStep--;
+    }
+
+    private void GoToStep(int i)
+    {
+        visited.Add(currentStep);
+        currentStep = i;
+    }
+
+    private int LogoCount() => (data.HasWordmark ? 1 : 0) + (data.HasSquareMark ? 1 : 0) + (data.HasReversedWordmark ? 1 : 0);
+
+    private string TerminalsLabel()
+    {
+        var terms = new List<string>();
+        if (data.Terminal1) terms.Add("Terminal 1");
+        if (data.Terminal3) terms.Add("Terminal 3");
+        return terms.Count == 0 ? "None" : string.Join(", ", terms);
+    }
+
+    private string FlagsLabel()
+    {
+        var flags = new List<string>();
+        if (data.FlagCanada) flags.Add("Canada");
+        if (data.FlagUs) flags.Add("United States");
+        if (data.FlagIntl) flags.Add("International");
+        return flags.Count == 0 ? "None" : string.Join(", ", flags);
+    }
+
+    private RenderFragment SummaryRow(string label, string? value, bool missingIfNull = true) =>
+        @<div class="aaw-summary-row">
+            <span>@label</span>
+            @if (value == null && missingIfNull)
+            {
+                <span class="aaw-summary-missing">Missing</span>
+            }
+            else
+            {
+                <span>@(value ?? "—")</span>
+            }
+        </div>;
+
+    private AirlineLogoFile? LogoFor(string kind) => kind switch
+    {
+        "wordmark" => data.Wordmark,
+        "square" => data.SquareMark,
+        _ => data.ReversedWordmark,
+    };
+
+    private void SetLogo(string kind, AirlineLogoFile? file)
+    {
+        switch (kind)
+        {
+            case "wordmark": data.Wordmark = file; break;
+            case "square": data.SquareMark = file; break;
+            case "reversed": data.ReversedWordmark = file; break;
+        }
+    }
+
+    private static string RoleLabel(string kind) => kind switch
+    {
+        "wordmark" => "Wordmark",
+        "square" => "Square mark",
+        _ => "Reversed wordmark",
+    };
+
+    private async Task OpenPicker(string kind)
+    {
+        if (logoLibrary == null) return;
+        pickerKind = kind;
+        pickerLoading = true;
+        pickerFiles = [];
+        logoErrors.Remove(kind);
+        try { pickerFiles = await logoLibrary.ListApprovedAsync(); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not list the airline logo library");
+            logoErrors[kind] = "The library could not be read. Try again.";
+            pickerKind = null;
+        }
+        finally { pickerLoading = false; }
+    }
+
+    private void ClosePicker() => pickerKind = null;
+
+    private void PickFile(AirlineLogoFile file)
+    {
+        if (pickerKind != null) SetLogo(pickerKind, file);
+        pickerKind = null;
+    }
+
+    private async Task OpenUpload(string kind)
+    {
+        if (uploaderHost?.Instance is not IAirlineLogoUploader uploader) return;
+        logoErrors.Remove(kind);
+        uploadKind = kind;
+        try
+        {
+            if (await uploader.OpenAsync() is { } problem) logoErrors[kind] = problem;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not open the logo uploader");
+            logoErrors[kind] = "The upload dialog could not be opened. Try again.";
+        }
+    }
+
+    private void OnLogoUploaded(AirlineLogoFile file)
+    {
+        if (uploadKind != null) SetLogo(uploadKind, file);
+        uploadKind = null;
+    }
+
+    private RenderFragment BrandingCard(string title, bool optional, string kind, string note) =>
+        @<div class="aaw-logo-card">
+            <div class="aaw-logo-head">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <strong>@title</strong>
+                    @if (optional)
+                    {
+                        <span class="dx-text-muted">(optional)</span>
+                    }
+                    <span class="aaw-file-pill @(LogoFor(kind) != null ? "chosen" : "")">@(LogoFor(kind) is { } chosen ? chosen.Name : "No file")</span>
+                    @if (LogoFor(kind) is { Approved: false })
+                    {
+                        <span class="aaw-file-pill">Awaiting approval</span>
+                    }
+                </div>
+                <div style="display:flex; gap:8px;">
+                    @if (LogoFor(kind) != null)
+                    {
+                        <button class="aaw-lib-btn outline" @onclick="() => SetLogo(kind, null)">REMOVE</button>
+                    }
+                    <button class="aaw-lib-btn outline" disabled="@(libraryInfo == null)" @onclick="() => OpenPicker(kind)"><i class="bi bi-collection"></i> CHOOSE FROM LIBRARY</button>
+                    <button class="aaw-lib-btn solid" disabled="@(libraryInfo == null)" @onclick="() => OpenUpload(kind)"><i class="bi bi-upload"></i> UPLOAD TO LIBRARY</button>
+                </div>
+            </div>
+            @if (libraryInfo != null)
+            {
+                <div class="aaw-logo-source"><i class="bi bi-collection"></i> Draws from <strong>@libraryInfo.Name</strong>@(libraryInfo.Width > 0 ? $", Aspect Ratio {libraryInfo.Width} x {libraryInfo.Height}" : ""), approved on that library's chain</div>
+            }
+            else
+            {
+                <div class="aaw-logo-source dx-text-muted"><i class="bi bi-collection"></i> No Airline wordmarks asset library found. Create one in Director to choose or upload logos.</div>
+            }
+            <div class="aaw-logo-preview @(LogoFor(kind) != null ? "has-file" : "")">
+                @if (LogoFor(kind) is { } file)
+                {
+                    <img src="@file.Path" alt="@title" />
+                }
+                else
+                {
+                    <span>No file</span>
+                }
+            </div>
+            @if (logoErrors.TryGetValue(kind, out var logoError))
+            {
+                <div class="aaw-summary-missing" style="font-size:0.8rem; margin-top:6px;">@logoError</div>
+            }
+            <div class="dx-text-muted" style="font-size:0.8rem; margin-top:8px;">@note</div>
+        </div>;
+
+    private RenderFragment CuppsToggle(string title, string description, bool value, Action<bool> setter) =>
+        @<div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; padding:12px 0; border-bottom:1px solid #f0f0f0;">
+            <div style="max-width:560px;">
+                <strong style="font-size:0.9rem;">@title</strong>
+                <div class="dx-text-muted" style="font-size:0.82rem; margin-top:2px;">@description</div>
+            </div>
+            <label class="dx-toggle">
+                <input type="checkbox" checked="@value" @onchange="@(e => setter((bool)e.Value!))" />
+                <span class="dx-toggle-slider"></span>
+            </label>
+        </div>;
+
+    private async Task CreateAirline()
+    {
+        if (Validate().Any(i => i.IsError)) return;
+
+        isCreating = true;
+        errorMessage = "";
+        try
+        {
+            var code = data.Iata.Trim().ToUpperInvariant();
+            var name = data.NameEn.Trim();
+            var icao = string.IsNullOrWhiteSpace(data.Icao) ? null : data.Icao.Trim().ToUpperInvariant();
+
+            await using var db = await AviationDbFactory.CreateDbContextAsync();
+
+            var exists = await db.TblAirlines.AnyAsync(a => a.AirlineCode == code);
+            if (exists)
+            {
+                errorMessage = $"An airline with IATA code {code} already exists.";
+                return;
+            }
+
+            // One transaction so a missing logo table cannot leave an airline row behind.
+            await using var tx = await db.Database.BeginTransactionAsync();
+
+            var logoPath = data.Wordmark?.Path;
+            await db.Database.ExecuteSqlInterpolatedAsync(
+                $"INSERT INTO dbo.tblAirline (Airline_Code, CarrierName, ICAO, DisplayWithinSettingsMenu, CarrierLogoPath) VALUES ({code}, {name}, {icao}, {data.Active}, {logoPath})");
+
+            var created = await db.TblAirlines
+                .Where(a => a.AirlineCode == code)
+                .Select(a => new { a.RecordId, a.AirlineCode, a.CarrierName, a.Icao, a.DisplayWithinSettingsMenu })
+                .FirstOrDefaultAsync();
+
+            if (created == null)
+            {
+                errorMessage = "The airline was not saved. Try again.";
+                return;
+            }
+
+            foreach (var (role, logo) in new[] { ("wordmark", data.Wordmark), ("square", data.SquareMark), ("reversed", data.ReversedWordmark) })
+            {
+                if (logo == null) continue;
+                db.TblAirlineLogos.Add(new TblAirlineLogo
+                {
+                    AirlineCode = code,
+                    Role = role,
+                    AssetId = logo.AssetId,
+                    AssetName = logo.Name,
+                    AssetPath = logo.Path,
+                    LinkedUtc = DateTime.UtcNow,
+                });
+            }
+            await db.SaveChangesAsync();
+            await tx.CommitAsync();
+
+            var dcsLabel = data.DcsMode == "airline" ? "Airline" : data.DcsProvider;
+            var result = new NewAirlineResult(
+                created.RecordId, created.AirlineCode, created.CarrierName ?? created.AirlineCode, created.Icao, created.DisplayWithinSettingsMenu,
+                data.Alliance, data.Terminal1, data.Terminal3,
+                data.DcsMode == "provider", dcsLabel, data.BackgroundColor,
+                data.HasWordmark, data.HasSquareMark, data.HasReversedWordmark);
+
+            await AirlineAudit.CreatedAsync(created.RecordId, created.AirlineCode, result.Name, new
+            {
+                alliance = data.Alliance,
+                terminals = TerminalsLabel(),
+                dcs = dcsLabel,
+                backgroundColor = data.BackgroundColor,
+                logos = new { wordmark = data.HasWordmark, square = data.HasSquareMark, reversed = data.HasReversedWordmark },
+            });
+
+            await OnCreated.InvokeAsync(result);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Error creating airline {Code}", data.Iata);
+            errorMessage = "Couldn't create the airline. Check the details and try again.";
+        }
+        finally
+        {
+            isCreating = false;
+        }
+    }
+
+    private async Task Cancel() => await OnCancel.InvokeAsync();
+}

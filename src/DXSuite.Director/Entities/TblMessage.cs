@@ -16,6 +16,7 @@ public partial class TblMessage
     public int MessageTypeId { get; set; }
 
     /// <summary>Null means the message is shared by every group.</summary>
+    [Column("OwningAirlineId")]
     public int? OwningUserGroupId { get; set; }
 
     [Required]

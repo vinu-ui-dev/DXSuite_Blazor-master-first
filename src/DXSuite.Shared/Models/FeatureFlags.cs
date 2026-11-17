@@ -43,4 +43,12 @@ public class FeatureFlags
     /// this flag is independent of <see cref="LocationBundles"/>.
     /// </summary>
     public bool Panels { get; set; }
+
+    /// <summary>
+    /// Controls visibility of Sentinel's device-ops Configuration tabs (Agents, Monitored
+    /// Devices, Device Models, Probe Profiles, Tasks, ITSM, Guardrail Policies) — not Pulse
+    /// Reporting, which stays visible whenever the Sentinel module itself is enabled.
+    /// Disable on deployments (e.g. GTAA/Aviation) that don't operate Sentinel-managed devices.
+    /// </summary>
+    public bool SentinelOpsConfigTabs { get; set; }
 }

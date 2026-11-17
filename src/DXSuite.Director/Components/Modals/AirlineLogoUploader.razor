@@ -1,0 +1,49 @@
+@implements IAirlineLogoUploader
+@inject AirlineLogoLibrary Library
+@inject ITenantMediaPathResolver MediaPaths
+@inject ISessionState SessionState
+
+<MediaAssetUploader @ref="uploader" OnAssetSubmit="OnSubmitted" />
+
+@code {
+    [Parameter] public EventCallback<AirlineLogoFile> OnUploaded { get; set; }
+
+    private MediaAssetUploader? uploader;
+    private int locationId;
+    private int lastAssetId;
+
+    public async Task<string?> OpenAsync()
+    {
+        var context = await Library.GetUploadContextAsync();
+        if (context is null)
+            return "The Airline wordmarks asset library or its resolution setting is missing in Director.";
+        if (uploader is null)
+            return "The upload dialog is not ready. Try again.";
+
+        locationId = context.LocationId;
+        lastAssetId = context.LastAssetId;
+        SessionState.LocationAccessMap.TryGetValue(context.LocationId, out var access);
+
+        await uploader.Open(new MediaUploadConfig
+        {
+            UploadFolder = MediaPaths.GetRoot(),
+            LocationId = context.LocationId,
+            ConstraintId = context.ConstraintId,
+            ExpectedWidth = context.Width,
+            ExpectedHeight = context.Height,
+            ResolutionMode = context.ResolutionMode,
+            AddToSql = true,
+            IsSchedulable = false,
+            EnableContentApproval = context.EnableContentApproval,
+            UserAccess = access,
+        });
+        return null;
+    }
+
+    // The uploader reports only that it finished, so the new file is the newest asset added since it opened.
+    private async Task OnSubmitted()
+    {
+        var file = await Library.FindUploadedSinceAsync(locationId, lastAssetId);
+        if (file != null) await OnUploaded.InvokeAsync(file);
+    }
+}

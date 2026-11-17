@@ -5,6 +5,7 @@
 @using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Services
 @inject IReadOnlyList<IBlazorModule> Modules
+@inject IConfiguration Config
 @inject ITenantContext TenantContext
 @inject ISessionState SessionState
 @inject IServiceScopeFactory ScopeFactory
@@ -16,12 +17,32 @@
 @{
     var availableModules = Modules.Where(m => m.IsAvailableForTenant(TenantContext)).ToList();
 
+    // These three modules can stay registered (so e.g. Sentinel's Pulse Reporting Configuration
+    // tab keeps working) while still being hidden from this dashboard, mirroring the same
+    // tenant-feature flags that hide their top-nav entries in MainLayout.
+    var tenantFeatures = TenantContext.Features;
+    // Pulse, Style Guide, SLC, Sentinel and Platform are hidden for every user by default (same as
+    // their top-nav entries in MainLayout); "Navigation:ShowAllModules": true brings them back.
+    // Design is hidden from this Active Modules table only (its nav entry is unchanged).
+    var showAllModules = Config.GetValue<bool>("Navigation:ShowAllModules");
+    string[] hiddenByDefault = ["Pulse", "Style Guide", "SLC", "Sentinel", "Platform", "Design"];
+    bool ModuleVisibleOnHome(IBlazorModule m) =>
+        (showAllModules || !hiddenByDefault.Contains(m.Name, StringComparer.OrdinalIgnoreCase)) && m.Name switch
+        {
+            "Platform" => tenantFeatures.ShowPlatformModuleCard,
+            "Sentinel" => tenantFeatures.ShowSentinelNav,
+            "Pulse" => tenantFeatures.ShowPulseNav,
+            _ => true,
+        };
+
     // Only surface modules with a user-facing presence (nav items or a home dashboard card).
     var summaryModules = availableModules
+        .Where(ModuleVisibleOnHome)
         .Where(m => m.GetNavItems().Any() || m.GetHomeDashboardComponent() != null)
         .ToList();
 
     var dashboardModules = availableModules
+        .Where(ModuleVisibleOnHome)
         .Where(m => m.GetHomeDashboardComponent() != null)
         .ToList();
 

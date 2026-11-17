@@ -31,16 +31,24 @@
 
 @code {
     private RenderFragment Mark(string airline, string cls = "") =>
-        @<span class="dx-airline-mark @cls" style="background:@Airlines[airline].Bg">@airline</span>;
+        @<span class="dx-airline-mark @cls" style="background:@AirlineInfo(airline).Bg">@airline</span>;
 
     // ---------- Screen render (Sent preview), after Diagrams 3 and 37 ----------
+    /// <summary>
+    /// Renders one half of the counter display (used both for a full single-page screen and, when the
+    /// screen is split between two counters, for each side). <paramref name="flair"/> forces the hard-coded
+    /// Flair filler page used on the "other" side when that counter is closed; otherwise a closed counter
+    /// (<paramref name="s"/> is null or not <c>Open</c>) shows a plain filler block. Otherwise the airline
+    /// logo plus the published template (<see cref="Tpl"/>) text/background is shown, with the ASL video
+    /// badge suppressed when rendering the compact "extra" (split-screen) half.
+    /// </summary>
     private RenderFragment Half(CounterSetup? s, bool extra = false, bool flair = false)
     {
         if (flair)
-            return @<div class="half" style="background:@Airlines["F8"].Bg"><div class="logo">FLAIR</div><div class="en">Check-In</div><div class="fr">Enregistrement</div></div>;
+            return @<div class="half" style="background:@AirlineInfo("F8").Bg"><div class="logo">FLAIR</div><div class="en">Check-In</div><div class="fr">Enregistrement</div></div>;
         if (s is not { Open: true })
             return @<div class="half filler">Filler</div>;
-        var a = Airlines[MyAirline];
+        var a = AirlineInfo(MyAirline);
         var t = Tpl(s.Page);
         var bg = t?.Kind == "Custom" ? t.Img : a.Bg;
         return @<div class="half" style="background:@bg">
@@ -56,13 +64,18 @@
         </div>;
     }
 
-    /// Destination and time show only while one page fills the screen; two halves drop both on each side.
+    /// <summary>
+    /// Renders the bottom info band under a counter's screen: the alliance mark/sunflower indicator on the
+    /// left, and (when there is only one page filling the whole screen, i.e. <paramref name="halves"/> is
+    /// false) the destination, scrolling canned-message ticker, and clock. Destination and clock are omitted
+    /// when the screen is split into two halves (<paramref name="halves"/> is true), since there isn't room.
+    /// </summary>
     private RenderFragment Band(CounterSetup? s, bool halves = false)
     {
         if (s is not { Open: true })
             return @<div></div>;
         var msgs = MessagesOf(s);
-        var al = Airlines[MyAirline].Alliance;
+        var al = AirlineInfo(MyAirline).Alliance;
         return @<div>
             <div class="brow">
                 <span class="alliance">@al@if (s.Sunflower) {<span class="cp-sunflower" style="width:1.6em;height:1.6em;"></span>}</span>
@@ -78,6 +91,13 @@
         </div>;
     }
 
+    /// <summary>
+    /// Builds the full on-screen display (area + band) for a counter, handling the three layout cases:
+    /// a single page filling the whole screen, a "two" layout split between this counter's own two pages,
+    /// and a screen physically shared with a neighbouring counter (<see cref="GetSplit"/>) - either showing
+    /// both counters' pages side by side when they belong to the same airline, or this counter's page next
+    /// to the Flair filler/placeholder otherwise.
+    /// </summary>
     private RenderFragment ScreenFor(CounterSetup? st, string size)
     {
         var si = GetSplit();
@@ -111,6 +131,11 @@
         return @<div class="cp-screen @size"><div class="area">@area</div><div class="band">@band</div></div>;
     }
 
+    /// <summary>
+    /// Renders the plain-text (non-visual) summary of what a counter's screen is showing - page, queued
+    /// canned/free-typed messages, ASL/Sunflower toggles, and destination. Used as an accessible/alternate
+    /// view alongside the graphical <see cref="ScreenFor"/> preview.
+    /// </summary>
     private RenderFragment TextSummary(CounterSetup? s)
     {
         if (s is not { Open: true })
@@ -126,10 +151,19 @@
     }
 
     // ---------- Shell pieces: bare CUPPS layout, as in Diagrams 31 and 32 ----------
+    /// <summary>Bare CUPPS top bar: brand on the left, and once signed in, the current user, their
+    /// airline mark, and a Sign Out button on the right. Sign Out is always enabled — there's no
+    /// scenario where a signed-in agent shouldn't be able to end their session.</summary>
     private RenderFragment Navbar()
     {
+        // A logged-in Airline Agent already has the app's own top bar and profile menu (with Log Out);
+        // this CUPPS brand/user/Sign out bar is not shown to them.
+        if (string.Equals(SessionState.ActualRoleName, "Airline Agent", StringComparison.OrdinalIgnoreCase))
+            return @<text></text>;
+
         var signedIn = screen is "app" or "rmu-pick";
         return @<div class="dx-navbar">
+            <div class="dx-navbar-left"><a class="dx-navbar-brand"><img src="images/branding/header.png" alt="DXSuite" style="height:40px;"></a><span class="cp-prod">CUPPS</span></div>
             <div class="dx-navbar-user">
                 @if (signedIn)
                 {
@@ -147,9 +181,9 @@
         var a = AllocFor(id, MyAirline)!;
         var w = IsWaiting;
         return @<div class="cp-band">
-            <h2>@id@if (Counters.First(c => c.Id == id).Ssbd) {<span style="font-size:1rem;font-weight:600;"> SSBD</span>}</h2>
+            <h2>@id@if (CounterInfo(id)?.Ssbd == true) {<span style="font-size:1rem;font-weight:600;"> SSBD</span>}</h2>
             <div>
-                <span class="cp-alloc">@Airlines[MyAirline].Name allocation (@Hm(a.From) to @Hm(a.To), @a.Type)</span>
+                <span class="cp-alloc">@AirlineInfo(MyAirline).Name allocation (@Hm(a.From) to @Hm(a.To), @a.Type)</span>
                 <span class="cp-left">@(w ? $"Starts in {Left(a.From - now)}" : $"{Left(a.To - now)} remaining")</span>
             </div>
         </div>;
@@ -159,7 +193,7 @@
         @if (acting is { } act)
         {
             <div class="dx-alert dx-alert-info" style="justify-content:space-between;align-items:center;">
-                <span><b>Acting for @Airlines[act.Airline].Name</b> at counter @act.Counter. What you publish is recorded as @Sc.Who acting for @Airlines[act.Airline].Name.</span>
+                <span><b>Acting for @AirlineInfo(act.Airline).Name</b> at counter @act.Counter. What you publish is recorded as @Sc.Who acting for @AirlineInfo(act.Airline).Name.</span>
                 <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="ChangeActing">Change airline or counter</button>
             </div>
         }
@@ -248,7 +282,7 @@
             }
             else if (open)
             {
-                <span class="cp-sent-page">@(t?.En ?? Airlines[MyAirline].Name)</span>
+                <span class="cp-sent-page">@(t?.En ?? AirlineInfo(MyAirline).Name)</span>
                 @ScreenFor(p, "cp-screen-sm")
             }
             else
@@ -300,7 +334,7 @@
                     <button class="cp-page @(draft.Page == t.Id ? "on" : "")" @onclick="() => draft.Page = t.Id">
                         <span>@t.En</span><span class="cp-fr">@t.Fr</span>
                         @if (t.EndsToday) { <span><span class="cp-ends">Ends today</span></span> }
-                        @if (t.Scope != "airport") { <span class="cp-kind">@Airlines[t.Scope].Name only</span> }
+                        @if (t.Scope != "airport") { <span class="cp-kind">@AirlineInfo(t.Scope).Name only</span> }
                     </button>
                 }
                 @for (var i = 0; i < empties; i++)
@@ -371,7 +405,11 @@
         return @<text>
             <div class="cp-msg-head"><span>Approved Messages</span><span>ACTIONS</span></div>
             <div class="cp-msgs">
-                @foreach (var m in CannedMessages)
+                @if (MessageList.Count == 0)
+                {
+                    <div class="dx-text-muted" style="padding:8px;">No approved Messages available.</div>
+                }
+                @foreach (var m in MessageList)
                 {
                     var i = draft.Msgs.IndexOf(m.Id);
                     <div class="cp-msg">
@@ -479,7 +517,7 @@
             return @<div class="cp-tile">
                 <span class="cp-tile-id" style="@(c.Id == Station ? "background:var(--dx-blue)" : null)">@label</span>
                 <div class="cp-tile-box @(open ? "" : "closed") @(isSel ? "sel" : "")" @onclick="() => ToggleSel(c.Id)">
-                    @(open ? t?.En ?? Airlines[code].Name : "Closed")
+                    @(open ? t?.En ?? AirlineInfo(code).Name : "Closed")
                     <input type="checkbox" class="dx-checkbox" checked="@isSel" disabled="@w" tabindex="-1" aria-label="Select @c.Id" style="pointer-events:none;">
                 </div>
                 <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@w" @onclick="() => changePage = c.Id">Change Page</button>
@@ -503,7 +541,7 @@
     {
         var code = MyAirline;
         var w = IsWaiting;
-        var groups = Counters.Where(c => (zone == "" || c.Zones.Contains(zone)) && AllocFor(c.Id, code) is not null)
+        var groups = CounterList.Where(c => (zone == "" || c.Zones.Contains(zone)) && AllocFor(c.Id, code) is not null)
             .GroupBy(c => c.Zones[1]).ToList();
         var n = sel.Count;
         return @<text>
@@ -524,13 +562,16 @@
                 }
                 <button class="dx-btn dx-btn-outline-red" disabled="@(n == 0 || w)" @onclick="BulkClose">Close selected</button>
                 <span class="dx-text-muted">@n selected</span><span class="grow"></span>
-                <select class="dx-form-control" aria-label="Display Zone" @bind="zone">
-                    <option value="">ZONE: ALL</option>
-                    @foreach (var z in Zones)
-                    {
-                        <option value="@z">ZONE: @z.ToUpperInvariant()</option>
-                    }
-                </select>
+                @if (ZoneList.Count > 0)
+                {
+                    <select class="dx-form-control" aria-label="Display Zone" @bind="zone">
+                        <option value="">ZONE: ALL</option>
+                        @foreach (var z in ZoneList)
+                        {
+                            <option value="@z">ZONE: @z.ToUpperInvariant()</option>
+                        }
+                    </select>
+                }
             </div>
             @foreach (var g in groups)
             {
@@ -568,11 +609,18 @@
     }
 
     // ---------- Screens ----------
+    /// <summary>
+    /// Main signed-in app shell (Diagram 1 "My Counter"): the counter band/header, alert banners, tab row,
+    /// and whichever tab body is selected (My Counter, All Counters, Flights, or Messages). Also hosts the
+    /// "view sent"/preview modal for the current counter's published (or draft, if unpublished) screen and
+    /// the idle sign-out warning modal.
+    /// </summary>
     private RenderFragment AppScreen()
     {
         var preview = InApp && tab == "mine" && IsDirty();
         var p = preview ? DraftPreview() : Pub(Station);
         return @<text>
+            @Navbar()
             @CounterBand()
             <div class="cp-wrap">
                 @Alerts()
@@ -607,9 +655,16 @@
         </text>;
     }
 
+    /// <summary>Shared DXSuite/CUPPS logo header shown at the top of every login-style card.</summary>
     private RenderFragment LoginBrand() =>
         @<div class="dx-login-brand"><img src="images/branding/header.png" alt="DXSuite"><div>CUPPS</div></div>;
 
+    /// <summary>
+    /// Renders the sign-in card for the current scenario (<see cref="Sc"/>): a Microsoft sign-in button for
+    /// "Individual" sign-in scenarios (where the airline/counter is picked afterwards via <see cref="RmuPick"/>),
+    /// or a local username/password form pre-bound to the counter for scenarios that sign straight into a
+    /// fixed station.
+    /// </summary>
     private RenderFragment LoginScreen()
     {
         var s = Sc;
@@ -630,9 +685,15 @@
         </div></div></div>;
     }
 
-    private List<Alloc> Held(string code) => Allocations.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
-    private List<Alloc> Later(string code) => Allocations.Where(x => x.Code == code && x.From > now).ToList();
+    private List<Alloc> Held(string code) => AllAllocs.Where(x => x.Code == code && x.From <= now && now < x.To).ToList();
+    private List<Alloc> Later(string code) => AllAllocs.Where(x => x.Code == code && x.From > now).ToList();
 
+    /// <summary>
+    /// One tile in the RMU "Select an airline" airline list (step 1 of 2 in <see cref="RmuPick"/>). Shows the
+    /// airline mark/name plus how many counters it currently has allocated (<see cref="Held"/>), or its next
+    /// upcoming allocation time (<see cref="Later"/>) if none are active now. Disabled when the airline has no
+    /// counters allocated at all today, since there would be nothing to sign into.
+    /// </summary>
     private RenderFragment AirlineTile(Airline x)
     {
         var n = Held(x.Code).Count;
@@ -643,12 +704,18 @@
         </button>;
     }
 
+    /// <summary>
+    /// One tile in the RMU "Select the counter you want to manage" grid (step 2 of 2 in <see cref="RmuPick"/>),
+    /// for a single allocation <paramref name="x"/>. Shows the counter id, its allocation window, and either
+    /// an open/closed status dot with the published page name (for allocations happening now) or an
+    /// "Available from" time when <paramref name="isLater"/> is true, in which case the tile is disabled.
+    /// </summary>
     private RenderFragment RmuCounterTile(Alloc x, bool isLater)
     {
         var p = Pub(x.CounterId);
         var open = p?.Open == true;
         var t = open ? Tpl(p!.Page) : null;
-        return @<button class="dx-pick-tile dx-counter-tile" disabled="@isLater" @onclick="() => PickRmuCounter(x.CounterId)">
+        return @<button class="dx-pick-tile dx-counter-tile" disabled="@isLater" @onclick="async () => await PickRmuCounter(x.CounterId)">
             <div class="dx-counter-id">@x.CounterId</div>
             <div class="dx-counter-meta">@Hm(x.From) to @Hm(x.To)@(isLater ? "" : $", {Left(x.To - now)} left")</div>
             <div class="dx-counter-meta">
@@ -665,14 +732,30 @@
         </button>;
     }
 
+    /// <summary>
+    /// RMU sign-in flow (Diagrams 31/32): a two-step wizard for picking an airline and then one of its
+    /// allocated counters. While <c>rmuAirline</c> is null, shows the airline list (<see cref="AirlineTile"/>),
+    /// split into airlines with a counter allocated right now vs. none, with a search box filter; once an
+    /// airline is chosen, shows its counters (<see cref="RmuCounterTile"/>) grouped by zone, plus a "Later
+    /// today" section for allocations that haven't started yet. Also surfaces loading/error states while the
+    /// live flight-data feed is fetching the airline list, and any <c>rmuNotice</c> banner.
+    /// </summary>
     private RenderFragment RmuPick()
     {
         var a = rmuAirline;
         RenderFragment body;
-        if (a is null)
+        if (liveLoading)
+        {
+            body = @<div class="dx-text-muted">Loading airlines...</div>;
+        }
+        else if (liveLoadFailed)
+        {
+            body = @<div class="dx-alert dx-alert-warning">Couldn't load airlines from Director airline accounts. <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button></div>;
+        }
+        else if (a is null)
         {
             var q = search.ToLowerInvariant();
-            var list = Airlines.Values.Where(x => q == "" || (x.Name + x.Code).ToLowerInvariant().Contains(q)).ToList();
+            var list = liveAirlines.Values.Where(x => q == "" || (x.Name + x.Code).ToLowerInvariant().Contains(q)).ToList();
             var withNow = list.Where(x => Held(x.Code).Count > 0).ToList();
             var none = list.Where(x => Held(x.Code).Count == 0).ToList();
             body = @<text>
@@ -681,18 +764,42 @@
                     <h3 style="margin:0;font-size:1.3rem;font-weight:600;">Select an airline</h3>
                     <input class="dx-search-input" placeholder="Search airlines..." @bind="search" @bind:event="oninput">
                 </div>
-                <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
-                @if (none.Count > 0)
+                @if (list.Count == 0)
                 {
-                    <div class="dx-group-label">No counters allocated right now</div>
-                    <div class="dx-pick-grid">@foreach (var x in none) { @AirlineTile(x) }</div>
+                    <div class="dx-text-muted">No active airlines are available.</div>
+                }
+                else
+                {
+                    @if (liveAllocLoadFailed)
+                    {
+                        <div class="dx-alert dx-alert-warning" style="margin-bottom:14px;justify-content:space-between;align-items:center;display:flex;">
+                            <span>Couldn't load counter allocations, so no airline can show what's allocated right now.</span>
+                            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="LoadLiveCuppsDataAsync">Retry</button>
+                        </div>
+                    }
+                    else if (withNow.Count == 0)
+                    {
+                        <div class="dx-alert dx-alert-warning" style="margin-bottom:14px;">
+                            No airline has a counter allocated right now.
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="dx-pick-grid">@foreach (var x in withNow) { @AirlineTile(x) }</div>
+                    }
+                    @if (none.Count > 0)
+                    {
+                        <div class="dx-group-label">No counters allocated right now</div>
+                        <div class="dx-pick-grid">@foreach (var x in none) { @AirlineTile(x) }</div>
+                    }
                 }
             </text>;
         }
         else
         {
-            var groups = Held(a).GroupBy(x => string.Join(", ", Counters.First(c => c.Id == x.CounterId).Zones)
-                .Replace("Terminal 3, T3 ", "Terminal 3, ").Replace("Terminal 1, T1 ", "Terminal 1, ")).ToList();
+            var groups = Held(a).GroupBy(x => CounterInfo(x.CounterId)?.Zones is { } zones
+                ? string.Join(", ", zones).Replace("Terminal 3, T3 ", "Terminal 3, ").Replace("Terminal 1, T1 ", "Terminal 1, ")
+                : "Other counters").ToList();
             var later = Later(a);
             body = @<text>
                 <div class="dx-step-label">Step 2 of 2</div>
@@ -701,7 +808,7 @@
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 12H5m6-7-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" /></svg>
                     </button>
                     @Mark(a)
-                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@Airlines[a].Name</h3>
+                    <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@AirlineInfo(a).Name</h3>
                 </div>
                 <p style="margin:10px 0 6px;font-size:1.15rem;font-weight:600;">Select the counter you want to manage</p>
                 @foreach (var g in groups)
@@ -729,6 +836,10 @@
         </text>;
     }
 
+    /// <summary>
+    /// Terminal "signed out" screen, reached after a sign-out or idle timeout (<c>endedReason</c> explains why).
+    /// Offers a button that re-enters the current scenario from its sign-in screen.
+    /// </summary>
     private RenderFragment EndedScreen() => @<text>
         @Navbar()
         <section class="dx-page-header"><div class="dx-page-header-flex"><h2>SIGNED OUT</h2></div></section>

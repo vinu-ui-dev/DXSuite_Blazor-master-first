@@ -1,4 +1,5 @@
 @using DXSuite.Sentinel.Services.Pulse
+@using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Multitenancy
 @inject PulseIssueLevelService levels
 @inject PulseGateway pulse
@@ -10,11 +11,15 @@
 <div class="dx-card dx-card-fill">
     <div class="dx-panel-header">
         <h4>Pulse Reporting</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
-            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(!IsDirty || isSaving)" @onclick="Discard">
+            <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(!IsDirty || isSaving || isViewOnly)" @onclick="Discard">
                 Discard
             </button>
-            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(!IsDirty || isSaving)" @onclick="SaveAsync">
+            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(!IsDirty || isSaving || isViewOnly)" @onclick="SaveAsync">
                 Save
             </button>
         </div>
@@ -75,7 +80,7 @@
                             <div class="dx-text-muted">@SeverityLabel(key)</div>
                             <div class="dx-col-break">
                                 <label class="dx-col-label">Level</label>
-                                <select class="dx-form-control dx-form-control-sm" aria-label="Level" value="@choice.Level" disabled="@isSaving"
+                                <select class="dx-form-control dx-form-control-sm" aria-label="Level" value="@choice.Level" disabled="@(isSaving || isViewOnly)"
                                         @onchange="e => SetLevel(key, e.Value?.ToString())">
                                     <option value="@PulseIssueLevelChoice.Inherit">Default (@LevelText(inherited.ErrorLevel))</option>
                                     @for (byte level = PulseIssueLevelService.MinLevel; level <= PulseIssueLevelService.MaxLevel; level++)
@@ -89,7 +94,7 @@
                                 <label class="dx-col-label">Monitor item</label>
                                 @if (ItemsEditable)
                                 {
-                                    <select class="dx-form-control dx-form-control-sm" aria-label="Monitor item" value="@choice.Item" disabled="@isSaving"
+                                    <select class="dx-form-control dx-form-control-sm" aria-label="Monitor item" value="@choice.Item" disabled="@(isSaving || isViewOnly)"
                                             @onchange="e => SetItem(key, e.Value?.ToString())">
                                         <option value="@PulseIssueLevelChoice.Inherit">Default (@ItemText(inherited.MonitorItemId))</option>
                                         @if (choice.MonitorItemId is { } own && !selectableItems.Any(i => i.MonitorItemId == own))
@@ -126,7 +131,7 @@
                                 }
                                 @if (saved.ContainsKey(key))
                                 {
-                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isSaving"
+                                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@(isSaving || isViewOnly)"
                                             title="Delete this override and return to the default"
                                             @onclick="() => ResetAsync(entry)">Reset</button>
                                 }
@@ -143,6 +148,9 @@
 </div>
 
 @code {
+    private bool isViewOnly =>
+        sessionState.RoleEnum != Roles.Role.Admin && sessionState.RoleEnum != Roles.Role.Architect;
+
     private const string GridStyle =
         "grid-template-columns: minmax(120px, 1fr) 75px minmax(195px, 1fr) minmax(160px, 1.2fr) 130px;";
 
@@ -254,6 +262,7 @@
 
     private async Task SaveAsync()
     {
+        if (isViewOnly) return;
         var dirty = PulseIssueCatalogue.Entries
             .Where(e => drafts[e.Key] != SavedChoice(e.Key))
             .ToDictionary(e => e.Key, e => drafts[e.Key]);
@@ -308,6 +317,7 @@
 
     private async Task ResetAsync(PulseCatalogueEntry entry)
     {
+        if (isViewOnly) return;
         isSaving = true;
         message = null;
         try

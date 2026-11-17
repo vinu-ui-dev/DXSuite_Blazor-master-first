@@ -9,6 +9,8 @@ using DXSuite.Shared.Models;
 using DXSuite.Shared.Multitenancy;
 using DXSuite.Shared.Services;
 using DXSuite.Shared.Services.Identity;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Authorization;
 
 namespace DXSuite.Host.Controllers;
 
@@ -53,6 +55,7 @@ public class AuthController : Controller
     [HttpGet("challenge/{provider}")]
     public IActionResult Challenge(string provider)
     {
+        _logger.LogInformation("AUTH challenge requested: provider={Provider}, tenant={Tenant}", provider, _tenantContext.Subdomain);
         var props = new AuthenticationProperties { RedirectUri = "/" };
 
         // Per-tenant scheme: if this tenant has an explicit OIDC config for the provider,
@@ -76,22 +79,34 @@ public class AuthController : Controller
     [HttpPost("local/login")]
     public async Task<IActionResult> LocalLogin([FromForm] string email, [FromForm] string password)
     {
+        _logger.LogInformation("AUTH local login attempt: email={Email}", email);
         if (!_authConfig.LocalAccounts.Enabled || _localAccountService == null)
+        {
+            _logger.LogWarning("AUTH local login rejected: local accounts not enabled");
             return BadRequest("Local accounts are not enabled.");
+        }
 
         if (string.IsNullOrWhiteSpace(email) || string.IsNullOrWhiteSpace(password))
+        {
+            _logger.LogWarning("AUTH local login rejected: missing credentials");
             return Redirect("/?error=missing-credentials");
+        }
 
         try
         {
             var user = await _localAccountService.ValidateCredentialsAsync(email, password);
             if (user == null)
+            {
+                _logger.LogWarning("AUTH local login failed: invalid credentials for {Email}", email);
                 return Redirect("/?error=invalid-credentials");
+            }
 
+            _logger.LogInformation("AUTH local login succeeded for {Email}", email);
             return await IssueAuthCookieAndRedirect(user, email);
         }
         catch (InvalidOperationException ex) when (ex.Message == "email-not-confirmed")
         {
+            _logger.LogWarning("AUTH local login failed: email not confirmed for {Email}", email);
             return Redirect("/?error=email-not-confirmed");
         }
     }
@@ -99,19 +114,30 @@ public class AuthController : Controller
     [HttpPost("ldap/login")]
     public async Task<IActionResult> LdapLogin([FromForm] string username, [FromForm] string password)
     {
+        _logger.LogInformation("AUTH ldap login attempt: username={Username}", username);
         var effectiveLdap = _tenantContext.AuthConfig.Ldap ?? _authConfig.Ldap;
         if (effectiveLdap == null || !effectiveLdap.Enabled || _ldapCredentialService == null)
+        {
+            _logger.LogWarning("AUTH ldap login rejected: LDAP not enabled");
             return BadRequest("LDAP authentication is not enabled.");
+        }
 
         if (string.IsNullOrWhiteSpace(username) || string.IsNullOrWhiteSpace(password))
+        {
+            _logger.LogWarning("AUTH ldap login rejected: missing credentials");
             return Redirect("/?error=missing-credentials");
+        }
 
         try
         {
             var user = await _ldapCredentialService.ValidateAsync(username, password, effectiveLdap);
             if (user == null)
+            {
+                _logger.LogWarning("AUTH ldap login failed: invalid credentials for {Username}", username);
                 return Redirect("/?error=ldap-invalid");
+            }
 
+            _logger.LogInformation("AUTH ldap login succeeded for {Username}", username);
             return await IssueAuthCookieAndRedirect(user, user.UserPrincipalName ?? username);
         }
         catch (InvalidOperationException ex)
@@ -202,20 +228,30 @@ public class AuthController : Controller
     /// Validates a signed JWT from an external platform, confirms with the external API,
     /// then issues an auth cookie and redirects to /.
     /// </summary>
+    /// 
+    [AllowAnonymous]
     [HttpGet("launch")]
     public async Task<IActionResult> Launch([FromQuery] string? token)
     {
+        _logger.LogInformation("AUTH launch called: tokenPresent={Present}", !string.IsNullOrWhiteSpace(token));
         if (!_extConfig.Enabled || _tokenValidationParams == null || _httpClientFactory == null)
+        {
+            _logger.LogWarning("AUTH launch rejected: external integration not enabled");
             return NotFound();
+        }
 
         if (string.IsNullOrWhiteSpace(token))
+        {
+            _logger.LogWarning("AUTH launch rejected: missing token");
             return Redirect("/?error=missing-token");
+        }
 
         try
         {
             // Validate JWT signature, issuer, audience, lifetime
             var handler = new JwtSecurityTokenHandler();
             var principal = handler.ValidateToken(token, _tokenValidationParams, out _);
+            _logger.LogInformation("AUTH launch: JWT signature/lifetime validated");
 
             var jti = principal.FindFirst(JwtRegisteredClaimNames.Jti)?.Value
                       ?? principal.FindFirst("jti")?.Value;
@@ -287,6 +323,7 @@ public class AuthController : Controller
                     ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
                 });
 
+            _logger.LogInformation("AUTH launch succeeded: cookie issued for {Email}", email);
             return Redirect("/");
         }
         catch (SecurityTokenExpiredException)
@@ -309,11 +346,13 @@ public class AuthController : Controller
     [HttpGet("logout")]
     public async Task<IActionResult> Logout()
     {
+        _logger.LogInformation("AUTH logout: user={User}", User.Identity?.Name);
         var bridgeHandle = User.FindFirst(DXSuite.Shared.Authorization.BridgeSessionClaimTypes.SessionHandle)?.Value;
         if (!string.IsNullOrEmpty(bridgeHandle) && _bridgeClient is not null)
             await _bridgeClient.EndAsync(bridgeHandle, HttpContext.RequestAborted);
 
         await HttpContext.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+        _logger.LogInformation("AUTH logout completed");
         return Redirect("/");
     }
 
@@ -340,6 +379,8 @@ public class AuthController : Controller
                 IsPersistent = true,
                 ExpiresUtc = DateTimeOffset.UtcNow.AddHours(12)
             });
+
+        _logger.LogInformation("AUTH cookie issued for {User}", user.UserPrincipalName ?? email);
 
         return Redirect("/");
     }

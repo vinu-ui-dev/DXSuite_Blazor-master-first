@@ -1,4 +1,5 @@
 using DXSuite.Director.Services.DistributedLock;
+using DXSuite.Shared.Multitenancy;
 
 namespace DXSuite.Director.Services;
 
@@ -7,7 +8,7 @@ namespace DXSuite.Director.Services;
 /// </summary>
 public class AutoHealBackgroundService : BackgroundService
 {
-    private readonly IServiceScopeFactory _scopeFactory;
+    private readonly IWorkerScopeFactory _workerScopeFactory;
     private readonly ILogger<AutoHealBackgroundService> _logger;
     private readonly IDistributedLockService _lockService;
 
@@ -15,11 +16,11 @@ public class AutoHealBackgroundService : BackgroundService
     private static readonly TimeSpan CheckInterval = TimeSpan.FromSeconds(30);
 
     public AutoHealBackgroundService(
-        IServiceScopeFactory scopeFactory,
+        IWorkerScopeFactory workerScopeFactory,
         ILogger<AutoHealBackgroundService> logger,
         IDistributedLockService lockService)
     {
-        _scopeFactory = scopeFactory;
+        _workerScopeFactory = workerScopeFactory;
         _logger = logger;
         _lockService = lockService;
     }
@@ -42,10 +43,25 @@ public class AutoHealBackgroundService : BackgroundService
 
                 if (distLock != null)
                 {
-                    using var scope = _scopeFactory.CreateScope();
-                    var autoHealService = scope.ServiceProvider.GetRequiredService<IAutoHealService>();
+                    foreach (var tenantSubdomain in _workerScopeFactory.WorkerTenants)
+                    {
+                        if (stoppingToken.IsCancellationRequested) break;
+                        try
+                        {
+                            using var scope = await _workerScopeFactory.CreateTenantScopeAsync(tenantSubdomain, stoppingToken);
+                            var autoHealService = scope.ServiceProvider.GetRequiredService<IAutoHealService>();
 
-                    await autoHealService.CheckAndHealDevicesAsync(stoppingToken);
+                            await autoHealService.CheckAndHealDevicesAsync(stoppingToken);
+                        }
+                        catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
+                        {
+                            throw;
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogError(ex, "Error in auto-heal check for tenant {Tenant}", tenantSubdomain);
+                        }
+                    }
                 }
                 else
                 {

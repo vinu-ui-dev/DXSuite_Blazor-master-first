@@ -20,6 +20,7 @@
 @inject ILocationMetadataRuleService locationMetadataRules
 @inject IBackgroundRenditionService renditionService
 @inject IPublicationInvalidator publicationInvalidator
+@inject IJSRuntime JS
 
 @if (isOpen)
 {
@@ -35,7 +36,8 @@
                 {
                     <div class="mb-3">
                         <label class="form-label fw-bold">Location Name</label>
-                        <input type="text" class="dx-form-control" @bind="locationName" placeholder="Enter location name" />
+                        <input type="text" class="dx-form-control" @bind="locationName" placeholder="Enter location name" maxlength="50" />
+                        <small class="text-muted">Max 50 characters (@locationName.Length/50)</small>
                     </div>
 
                     <div class="mb-3">
@@ -2148,6 +2150,16 @@
 
     private async Task CreateLocation()
     {
+        // tblLocation.LocationName is NVARCHAR(50); catch an over-length name here with a clear
+        // message instead of letting it reach SaveChangesAsync as a raw SQL truncation error.
+        // maxlength="50" on the input already stops normal typing, but this covers paste-and-edit
+        // paths the browser attribute can't.
+        if (locationName.Length > 50)
+        {
+            errorMessage = $"Location name is too long ({locationName.Length}/50 characters). Please shorten it.";
+            return;
+        }
+
         try
         {
             isCreating = true;
@@ -2213,6 +2225,10 @@
         {
             errorMessage = $"Failed to create location: {ex.Message}";
             Logger.LogError(ex, "Error creating location");
+            // ex.Message alone hides the real cause for a DbUpdateException ("See the inner
+            // exception for details"); dump the full chain to the browser console so it's visible
+            // without needing server log access.
+            await JS.InvokeVoidAsync("console.error", "CreateLocation failed:", ex.ToString());
         }
         finally
         {

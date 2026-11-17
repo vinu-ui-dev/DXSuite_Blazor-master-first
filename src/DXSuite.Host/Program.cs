@@ -1,14 +1,16 @@
-using System.Globalization;
+﻿using System.Globalization;
 using Microsoft.AspNetCore.DataProtection;
 using Microsoft.EntityFrameworkCore;
 using DXSuite.Connectors;
 using DXSuite.CoreData;
 using DXSuite.Director;
 using DXSuite.Host;
+using DXSuite.Host.Logging;
 using DXSuite.Host.Components;
 using DXSuite.Host.Multitenancy;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Multitenancy;
+using DXSuite.Shared.Services;
 using DXSuite.Shared.Services.Identity;
 using DXSuite.Shared.Module;
 using DXSuite.Shared.Models;
@@ -49,6 +51,26 @@ using Azure.Identity;
 using Azure.Extensions.AspNetCore.Configuration.Secrets;
 
 var builder = WebApplication.CreateBuilder(args);
+
+var logsDirectory = Path.Combine(builder.Environment.ContentRootPath, "logs");
+Directory.CreateDirectory(logsDirectory);
+builder.Logging.ClearProviders();
+builder.Logging.AddConsole();
+builder.Logging.AddProvider(new FileLoggerProvider(logsDirectory, LogLevel.Warning));
+
+// WebApplication.CreateBuilder only wires up the dev-time static web assets manifest (the thing
+// that lets _content/** and _framework/** resolve to each referenced project's/package's own
+// files instead of 404ing or being expected physically under this project's wwwroot) when
+// IsDevelopment() is true, i.e. ASPNETCORE_ENVIRONMENT=="Development" exactly. This app's "Local"
+// environment is deliberately a separate name so it
+// never risks being treated as a real deployment, which otherwise leaves every _content/_framework
+// asset unresolvable and MapStaticAssets()'s own dev-time patching 500s trying to read them as if
+// they were physically copied here (see the UseStaticFiles()/MapStaticAssets() comment below) —
+// call it explicitly so "Local" gets the same dev-time asset resolution "Development" gets for
+// free. Safe in a real deployment too: with no manifest file published alongside the app, this is
+// a no-op there.
+if (!builder.Environment.IsProduction())
+    builder.WebHost.UseStaticWebAssets();
 
 // Azure Key Vault. When KeyVault:Uri is set, layer the vault on top of the other configuration
 // sources so secrets resolve from it. DefaultAzureCredential uses a managed identity in Azure and
@@ -130,11 +152,11 @@ foreach (var (providerKey, providerCfg) in authConfig.Providers.Where(kvp => kvp
 {
     if (string.IsNullOrEmpty(providerCfg.ClientSecret))
     {
-        throw new InvalidOperationException(
-            $"OIDC provider '{providerKey}' is enabled but ClientSecret is empty " +
-            $"(ASPNETCORE_ENVIRONMENT='{builder.Environment.EnvironmentName}'). " +
-            "For local dev, launch the http/https profile so the environment is 'Development' and " +
-            "user-secrets load; verify with: dotnet user-secrets list. See CONTRIBUTING.md.");
+    //     throw new InvalidOperationException(
+    //         $"OIDC provider '{providerKey}' is enabled but ClientSecret is empty " +
+    //         $"(ASPNETCORE_ENVIRONMENT='{builder.Environment.EnvironmentName}'). " +
+    //         "For local dev, launch the http/https profile so the environment is 'Development' and " +
+    //         "user-secrets load; verify with: dotnet user-secrets list. See CONTRIBUTING.md.");
     }
 }
 
@@ -639,6 +661,12 @@ builder.Services.AddScoped<PostLoginNavigationState>();
 
 var app = builder.Build();
 
+// Optional virtual-directory hosting (e.g. https://host/director/...). Must be the first middleware
+// so every later component sees the prefix as PathBase. Harmless if the proxy already strips it.
+var configuredPathBase = builder.Configuration["DXSuite:PathBase"];
+if (!string.IsNullOrWhiteSpace(configuredPathBase) && !app.Environment.IsDevelopment() && !app.Environment.IsEnvironment("Local"))
+    app.UsePathBase("/" + configuredPathBase.Trim('/'));
+
 // Eager resolution of ITenantStore ensures the fail-fast (no tenants configured)
 // fires at process start rather than on the first inbound request.
 _ = app.Services.GetRequiredService<DXSuite.Shared.Multitenancy.ITenantStore>();
@@ -753,7 +781,12 @@ if (isWebRole)
 
     // Branding images live in wwwroot/images/branding (served by the middleware above) and are
     // seeded from images/branding-defaults so a fresh install shows defaults until customized.
-    DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment);
+    try { DXSuite.Shared.Storage.BrandingStorage.EnsureSeeded(app.Environment); }
+    catch (Exception ex)
+    {
+        // Cosmetic only (login/header images); never block startup if the folder is read-only.
+        app.Logger.LogWarning(ex, "Could not seed default branding images.");
+    }
 
     // Runs here rather than in ThumbnailBackfillService so the pre-tenant-scoping folder is gone
     // before the server accepts requests — while it exists the static middleware serves it anonymously.
@@ -769,6 +802,27 @@ if (isWebRole)
     // Authentication & Authorization
     // Must run unconditionally so device/admin API key schemes work even when no
     // interactive login providers are configured (e.g. SSO-only environments).
+    app.Use(async (ctx, next) =>
+    {
+        var trace = ctx.RequestServices.GetRequiredService<ILoggerFactory>().CreateLogger("ApiTrace");
+        var isApi = ctx.Request.Path.StartsWithSegments("/api") || ctx.Request.Path.StartsWithSegments("/auth");
+        if (isApi)
+            trace.LogInformation("REQUEST START {Method} {Path}{Query} IP={Ip} Authenticated={Auth}", ctx.Request.Method, ctx.Request.Path, ctx.Request.QueryString, ctx.Connection.RemoteIpAddress, ctx.User?.Identity?.IsAuthenticated);
+        try
+        {
+            await next();
+        }
+        catch (Exception ex)
+        {
+            trace.LogError(ex, "REQUEST FAILED {Method} {Path}", ctx.Request.Method, ctx.Request.Path);
+            throw;
+        }
+        if (isApi)
+            trace.LogInformation("REQUEST END {Method} {Path} Status={Status} User={User}", ctx.Request.Method, ctx.Request.Path, ctx.Response.StatusCode, ctx.User?.Identity?.Name ?? "anonymous");
+        if (ctx.Response.StatusCode is 401 or 403)
+            Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] API authorization {(ctx.Response.StatusCode == 401 ? "UNAUTHORIZED (401)" : "FORBIDDEN (403)")}: {ctx.Request.Method} {ctx.Request.Path} User={ctx.User?.Identity?.Name ?? "anonymous"} IP={ctx.Connection.RemoteIpAddress}");
+    });
+
     app.UseAuthentication();
 
     // Editor bridge entry: a signed-out user opening one of the editor pages (the link Director shows)

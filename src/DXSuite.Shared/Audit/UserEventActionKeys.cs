@@ -57,4 +57,9 @@ public static class UserEventActionKeys
     // Reports (shared across every report, AUD-14/AUD-15)
     public const string ReportExported = "report.exported";
     public const string ReportPrinted = "report.printed";
+
+    // Airlines (Aviation module)
+    public const string AirlineCreated = "airline.created";
+    public const string AirlineOnboarded = "airline.onboarded";
+    public const string AirlineRemovedFromActiveList = "airline.removed-from-active-list";
 }

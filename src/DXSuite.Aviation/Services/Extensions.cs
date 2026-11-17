@@ -1,5 +1,6 @@
 using DXSuite.Aviation.Entities;
 using DXSuite.Aviation.Services.CounterAllocation;
+using DXSuite.Aviation.Services.Cupps;
 using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Shared.Multitenancy;
 using DXSuite.Shared.Services;
@@ -31,7 +32,11 @@ public static class Extensions
                 : config.GetConnectionString("Aviation")
                   ?? throw new InvalidOperationException(
                       "No Aviation connection string in app config (background service path).");
-            options.UseSqlServer(connStr);
+            if (string.IsNullOrWhiteSpace(connStr))
+                connStr = config.GetConnectionString("Aviation");
+            if (string.IsNullOrWhiteSpace(connStr))
+                connStr = config.GetConnectionString("Director");
+            options.UseSqlServer(connStr!);
         }, ServiceLifetime.Scoped);
 
         // ──────────────────────────────────────────────────────────────────
@@ -47,6 +52,16 @@ public static class Extensions
         // ──────────────────────────────────────────────────────────────────
         services.AddSingleton<CounterAllocationOutageState>();
         services.AddScoped<CounterAllocationService>();
+
+        // ──────────────────────────────────────────────────────────────────
+        // CUPPS — live airline/counter data for the RMU picker (DXME-500)
+        // ──────────────────────────────────────────────────────────────────
+        services.AddScoped<CuppsLiveDataProvider>();
+
+        // ──────────────────────────────────────────────────────────────────
+        // Airlines — User Event audit trail for create/onboard/remove
+        // ──────────────────────────────────────────────────────────────────
+        services.AddAirlineAudit();
 
         return services;
     }

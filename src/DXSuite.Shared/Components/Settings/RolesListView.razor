@@ -238,6 +238,7 @@ else
             .Where(m => m.IsAvailableForTenant(tenantContext))
             .SelectMany(m => m.GetConfigTabs())
             .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
+            .Where(t => t.TenantFeature == null || typeof(TenantFeatureFlags).GetProperty(t.TenantFeature)?.GetValue(tenantFeatures) is true)
             .OrderBy(t => t.Order)
             .ToList();
 

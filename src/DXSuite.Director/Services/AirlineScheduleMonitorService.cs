@@ -81,6 +81,14 @@ public class AirlineScheduleMonitorService : BackgroundService
             return;
         }
 
+        // The touch-panel columns (TPEnabled1/2, CarrierStatus1/2) only exist in some DCMS_Core
+        // databases; without them there is nothing to monitor.
+        if (!await SchemaProbe.ColumnExistsAsync(aviationContext, "tblAirline", "TPEnabled1"))
+        {
+            _logger.LogDebug("tblAirline has no touch-panel columns in this database; airline schedule monitoring skipped.");
+            return;
+        }
+
         var currentDateTime = DateTime.Now;
         var currentTime = TimeOnly.FromDateTime(currentDateTime);
         var currentDate = DateOnly.FromDateTime(currentDateTime);

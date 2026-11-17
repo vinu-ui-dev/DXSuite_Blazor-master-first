@@ -1,14 +1,20 @@
 @using System.Threading
 @using Newtonsoft.Json.Linq
+@using DXSuite.Shared.Authorization
 @inject IDbContextFactory<DirectorDbContext> DbFactory
 @inject IDeviceMetadataService DeviceMetadataService
 @inject IMetadataDefinitionService MetadataDefinitionService
+@inject ISessionState SessionState
 @implements IDisposable
 @rendermode InteractiveServer
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%;">
     <div class="dx-panel-header">
         <h4>Content Channels</h4>
+        @if (isViewOnly)
+        {
+            <span class="dx-badge dx-badge-gray">View only</span>
+        }
         <div class="dx-panel-controls">
             <input @bind="searchFilter" @bind:event="oninput"
                    class="dx-search-input" placeholder="Search channels..." />
@@ -140,7 +146,7 @@
                     {
                         var idx = li;
                         <div style="display:flex; gap:6px; margin-bottom:6px;">
-                            <select class="dx-form-control" style="flex:1;"
+                            <select class="dx-form-control" style="flex:1;" disabled="@isViewOnly"
                                     value="@pixeraLayerPaths[idx]"
                                     @onchange="@(e => OnLayerPathChanged(idx, e))">
                                 <option value="">— None —</option>
@@ -157,11 +163,11 @@
                                     }
                                 }
                             </select>
-                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" style="flex-shrink:0;"
+                            <button class="dx-btn dx-btn-outline-red dx-btn-sm" style="flex-shrink:0;" disabled="@isViewOnly"
                                     @onclick="@(() => RemoveLayerPath(idx))">×</button>
                         </div>
                     }
-                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="AddLayerPath">+ Add Layer</button>
+                    <button class="dx-btn dx-btn-outline-blue dx-btn-sm" disabled="@isViewOnly" @onclick="AddLayerPath">+ Add Layer</button>
                     <span class="dx-form-hint" style="display:block; margin-top:4px;">Pixera composition layers this channel's active asset is pushed to. Add multiple layers to keep a wide wall in sync.</span>
                 </div>
 
@@ -169,7 +175,7 @@
                     <label class="dx-form-label">Send Transport Commands</label>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
                         <label class="dx-toggle">
-                            <input type="checkbox" @bind="pixeraTransportEnabled" />
+                            <input type="checkbox" disabled="@isViewOnly" @bind="pixeraTransportEnabled" />
                             <span class="dx-toggle-slider"></span>
                         </label>
                         <span class="dx-form-hint" style="margin:0;">@(pixeraTransportEnabled ? "Enabled" : "Disabled")</span>
@@ -181,14 +187,14 @@
                     <div class="dx-form-row">
                         <div class="dx-form-group">
                             <label class="dx-form-label">Transport Mode</label>
-                            <input type="number" class="dx-form-control" @bind="pixeraTransportMode" min="0" max="10" />
+                            <input type="number" class="dx-form-control" disabled="@isViewOnly" @bind="pixeraTransportMode" min="0" max="10" />
                             <span class="dx-form-hint">1 = Play, 2 = Pause, 3 = Stop</span>
                         </div>
                         <div class="dx-form-group">
                             <label class="dx-form-label">Loop Playback</label>
                             <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
                                 <label class="dx-toggle">
-                                    <input type="checkbox" @bind="pixeraTransportLoop" />
+                                    <input type="checkbox" disabled="@isViewOnly" @bind="pixeraTransportLoop" />
                                     <span class="dx-toggle-slider"></span>
                                 </label>
                                 <span class="dx-form-hint" style="margin:0;">@(pixeraTransportLoop ? "Enabled" : "Disabled")</span>
@@ -198,7 +204,7 @@
                 }
             </div>
             <div class="dx-modal-footer">
-                <button class="dx-btn dx-btn-blue" @onclick="SavePixeraSettings" disabled="@settingsSaving">
+                <button class="dx-btn dx-btn-blue" @onclick="SavePixeraSettings" disabled="@(settingsSaving || isViewOnly)">
                     @(settingsSaving ? "SAVING..." : "SAVE")
                 </button>
                 <button class="dx-btn dx-btn-gray" @onclick="ClosePixeraSettingsModal">Cancel</button>
@@ -230,7 +236,7 @@
                     <label class="dx-form-label">Timeline Control</label>
                     <div style="display:flex; align-items:center; gap:10px; margin-top:6px;">
                         <label class="dx-toggle">
-                            <input type="checkbox" @bind="timelineControlEnabled" />
+                            <input type="checkbox" disabled="@isViewOnly" @bind="timelineControlEnabled" />
                             <span class="dx-toggle-slider"></span>
                         </label>
                         <span class="dx-form-hint" style="margin:0;">@(timelineControlEnabled ? "Enabled" : "Disabled")</span>
@@ -244,7 +250,7 @@
                 </div>
             </div>
             <div class="dx-modal-footer">
-                <button class="dx-btn dx-btn-blue" @onclick="SaveTimelineSettings" disabled="@timelineSettingsSaving">
+                <button class="dx-btn dx-btn-blue" @onclick="SaveTimelineSettings" disabled="@(timelineSettingsSaving || isViewOnly)">
                     @(timelineSettingsSaving ? "SAVING..." : "SAVE")
                 </button>
                 <button class="dx-btn dx-btn-gray" @onclick="CloseTimelineSettingsModal">Cancel</button>
@@ -296,7 +302,7 @@
                                     </div>
                                     <div class="dx-truncate" style="align-self:center;">@rec.MetadataValue</div>
                                     <div style="display:flex; justify-content:center; align-self:center;">
-                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@isViewOnly"
                                                 @onclick="@(() => DeleteEngageMetadata(rec))">Delete</button>
                                     </div>
                                 </div>
@@ -310,7 +316,7 @@
                                     <div style="font-weight:500; align-self:center;">@rec.MetadataKey</div>
                                     <div class="dx-truncate" style="align-self:center;">@rec.MetadataValue</div>
                                     <div style="display:flex; justify-content:center; align-self:center;">
-                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm"
+                                        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@isViewOnly"
                                                 @onclick="@(() => DeleteInkMetadata(rec))">Delete</button>
                                     </div>
                                 </div>
@@ -353,7 +359,7 @@
                             <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
                                     style="height:var(--dx-meta-input-height); white-space:nowrap;"
                                     @onclick="AddEngageMetadata"
-                                    disabled="@metadataSaving">+ Add</button>
+                                    disabled="@(metadataSaving || isViewOnly)">+ Add</button>
                         </div>
                     </div>
                 }
@@ -381,7 +387,7 @@
                             <button class="dx-btn dx-btn-outline-blue dx-btn-sm"
                                     style="height:var(--dx-meta-input-height); white-space:nowrap;"
                                     @onclick="AddInkMetadata"
-                                    disabled="@metadataSaving">+ Add</button>
+                                    disabled="@(metadataSaving || isViewOnly)">+ Add</button>
                         </div>
                     </div>
                 }
@@ -394,6 +400,9 @@
 }
 
 @code {
+    private bool isViewOnly =>
+        SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect;
+
     private List<ChannelRow>? channels;
     private string searchFilter = "";
     private bool isLoading = true;
@@ -642,7 +651,7 @@
             return;
         }
         <div class="dx-col-break" style="padding: 0 8px;">
-            <select class="dx-form-control dx-cell-select"
+            <select class="dx-form-control dx-cell-select" disabled="@isViewOnly"
                     value="@ch.LocationId?.ToString()"
                     @onchange="async e => await OnLocationChanged(ch, e)">
                 <option value="">— None —</option>
@@ -666,7 +675,7 @@
             }
             else if (ch.LocationId.HasValue && IsLinkedToDisplay(ch.LocationId))
             {
-                <select class="dx-form-control dx-cell-select"
+                <select class="dx-form-control dx-cell-select" disabled="@isViewOnly"
                         value="@ch.DisplayId?.ToString()"
                         @onchange="async e => await OnDisplayChanged(ch, e)">
                     <option value="">— None —</option>

@@ -1,8 +1,23 @@
 @page "/Flight-Data-Editor"
 @using DXSuite.Shared.Multitenancy
+@using DXSuite.Shared.Authorization
 @attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
 @rendermode InteractiveServer
+@inject ISessionState sessionState
 
+@* FSD 1.1 FDE "Done means": opens only for a user with its permission. Each tab's own component
+   (FlightManagement.razor, CounterAllocations.razor) re-checks the same permission independently,
+   since both are also reachable by their own direct route, bypassing this shell entirely. *@
+@if (!accessResolved)
+{
+    <div class="dx-loading-overlay"><div class="dx-spinner"></div></div>
+}
+else if (!isAuthorized)
+{
+    <div class="dx-alert dx-alert-warning">You do not have permission to access the Flight Data Editor.</div>
+}
+else
+{
 <section class="dx-page-header"> <div class="dx-page-header-flex"> <h2>ADMIN</h2> </div> </section>
 <section class="dx-page-body">
 
@@ -32,6 +47,7 @@
 
     </div>
 </section>
+}
 @code
 {
     /// <summary>
@@ -46,4 +62,12 @@
 
     private IReadOnlyList<FlightDataEditorTab> settingsTabs = Tabs.OrderBy(t => t.Order).ToList();
     private string? activeTab = Tabs.OrderBy(t => t.Order).First().Key;
+    private bool accessResolved;
+    private bool isAuthorized;
+
+    protected override async Task OnInitializedAsync()
+    {
+        isAuthorized = await sessionState.HasPermissionAsync(PermissionKeys.PageFlightDataEditor);
+        accessResolved = true;
+    }
 }
