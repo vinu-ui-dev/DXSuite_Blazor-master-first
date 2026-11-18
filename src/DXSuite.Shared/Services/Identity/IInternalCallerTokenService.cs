@@ -20,9 +20,19 @@ public interface IInternalCallerTokenService
     /// ISessionState), since this service does no identity verification itself — it only signs the claim.</summary>
     string IssueToken(string username);
 
+    /// <summary>
+    /// As <see cref="IssueToken(string)"/>, also asserting the caller's built-in role name. Only for a caller with no
+    /// TblUser row (an Editor bridge session), so the receiving endpoint can authorize it by role instead of by a
+    /// database lookup that finds nobody.
+    /// </summary>
+    string IssueToken(string username, string? role);
+
     /// <summary>Validates a token minted by <see cref="IssueToken"/>. Returns the asserted username, or null
     /// if the token is missing, malformed, tampered with, or expired.</summary>
     string? ValidateToken(string? token);
+
+    /// <summary>As <see cref="ValidateToken(string?)"/>, also returning the role the token asserts (null when none).</summary>
+    string? ValidateToken(string? token, out string? role);
 }
 
 internal sealed class InternalCallerTokenService : IInternalCallerTokenService
@@ -37,15 +47,20 @@ internal sealed class InternalCallerTokenService : IInternalCallerTokenService
         _protector = dataProtectionProvider.CreateProtector(Purpose);
     }
 
-    public string IssueToken(string username)
+    public string IssueToken(string username) => IssueToken(username, null);
+
+    public string IssueToken(string username, string? role)
     {
         var expiresUtc = DateTime.UtcNow.Add(TokenLifetime);
-        var payload = $"{username}|{expiresUtc.Ticks}";
+        var payload = string.IsNullOrWhiteSpace(role) ? $"{username}|{expiresUtc.Ticks}" : $"{username}|{expiresUtc.Ticks}|{role}";
         return _protector.Protect(payload);
     }
 
-    public string? ValidateToken(string? token)
+    public string? ValidateToken(string? token) => ValidateToken(token, out _);
+
+    public string? ValidateToken(string? token, out string? role)
     {
+        role = null;
         if (string.IsNullOrWhiteSpace(token)) return null;
 
         string payload;
@@ -59,12 +74,14 @@ internal sealed class InternalCallerTokenService : IInternalCallerTokenService
             return null;
         }
 
-        var parts = payload.Split('|', 2);
-        if (parts.Length != 2) return null;
+        var parts = payload.Split('|', 3);
+        if (parts.Length < 2) return null;
         if (!long.TryParse(parts[1], out var expiresTicks)) return null;
         if (DateTime.UtcNow.Ticks > expiresTicks) return null;
 
         var username = parts[0];
-        return string.IsNullOrWhiteSpace(username) ? null : username;
+        if (string.IsNullOrWhiteSpace(username)) return null;
+        role = parts.Length == 3 && !string.IsNullOrWhiteSpace(parts[2]) ? parts[2] : null;
+        return username;
     }
 }

@@ -84,6 +84,30 @@ public sealed class MessageAuthoring
     }
 
     /// <summary>
+    /// The Message as screens show it now (its approved text, not a pending edit): name, type and one text per
+    /// language, for the read-only preview. Works for one-off Messages too. Null when the Message is gone or the user
+    /// may not open the Messages page.
+    /// </summary>
+    public async Task<MessagePreview?> PreviewAsync(int messageId, CancellationToken ct)
+    {
+        if (!await _session.HasPermissionAsync(PermissionKeys.PageMessages)) return null;
+
+        await using var db = await _dbFactory.CreateDbContextAsync(ct);
+        var message = await db.TblMessages.AsNoTracking().AsSplitQuery()
+            .Include(m => m.Texts)
+            .Include(m => m.MessageType).ThenInclude(t => t.Languages)
+            .FirstOrDefaultAsync(m => m.MessageId == messageId, ct);
+        if (message is null) return null;
+
+        var order = message.MessageType.Languages.OrderBy(l => l.SortOrder).Select(l => l.LanguageCode).ToList();
+        var codes = order.Concat(message.Texts.Select(t => t.LanguageCode)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var bodies = message.Texts.ToDictionary(t => t.LanguageCode, t => t.Body, StringComparer.OrdinalIgnoreCase);
+        var named = await _languages.NameAsync(codes.Where(bodies.ContainsKey));
+        return new MessagePreview(message.Name, message.MessageType.DisplayName,
+            named.Select(n => new MessagePreviewText(n.Name, bodies[n.Code])).ToList());
+    }
+
+    /// <summary>
     /// A detached copy of a live canned Message, or null when it is gone, retired or a one-off. Its texts and slots
     /// follow the type as configured now, so a language added to the type since shows as an empty box. An Approved
     /// Message with a pending revision opens on the revision, so a second edit builds on the first (MSG-13).

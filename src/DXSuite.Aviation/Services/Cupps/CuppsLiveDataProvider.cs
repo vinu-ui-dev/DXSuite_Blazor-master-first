@@ -6,6 +6,7 @@ using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Connectors.Services.CoreApi;
 using DXSuite.Connectors.Services.CoreApi.Models;
 using DXSuite.Shared.Authorization;
+using DXSuite.Shared.Logging;
 using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Components;
 
@@ -58,7 +59,18 @@ public sealed class CuppsLiveDataProvider(
 
         var client = AuthenticatedClient(username);
         var uri = new Uri(new Uri(navigationManager.BaseUri), "api/cupps/airlines");
-        var response = await client.PostAsJsonAsync(uri, request, ct);
+        AirlineFileLog.Write($"[CREATE-REQ] user='{username}' role='{sessionState.Role}' POST {uri} payload={JsonSerializer.Serialize(request)}");
+        HttpResponseMessage response;
+        try
+        {
+            response = await client.PostAsJsonAsync(uri, request, ct);
+        }
+        catch (Exception ex)
+        {
+            AirlineFileLog.Write($"[CREATE-REQ] EXCEPTION calling {uri}: {AirlineFileLog.Describe(ex)}");
+            throw;
+        }
+        AirlineFileLog.Write($"[CREATE-RES] {uri} -> {(int)response.StatusCode} {response.StatusCode}");
 
         if (response.IsSuccessStatusCode)
         {
@@ -69,7 +81,13 @@ public sealed class CuppsLiveDataProvider(
         }
 
         var error = await response.Content.ReadAsStringAsync(ct);
-        if (!string.IsNullOrWhiteSpace(error))
+        AirlineFileLog.Write($"[CREATE-RES] body: {AirlineFileLog.Trim(error)}");
+        if (error.TrimStart().StartsWith('<'))
+        {
+            // An HTML body is an app page (a redirect, 404 or error page), not this API's answer: never show it.
+            error = $"The server did not accept the request ({(int)response.StatusCode} {response.ReasonPhrase}).";
+        }
+        else if (!string.IsNullOrWhiteSpace(error))
         {
             try
             {
@@ -203,7 +221,9 @@ public sealed class CuppsLiveDataProvider(
     private HttpClient AuthenticatedClient(string username)
     {
         var client = httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username));
+        // The token carries the session's effective role: a bridge session has no TblUser to look it up from, and a
+        // custom role's own name says nothing about what it may do.
+        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username, sessionState.Role));
         return client;
     }
 

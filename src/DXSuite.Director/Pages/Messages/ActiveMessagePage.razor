@@ -50,7 +50,8 @@
                 {
                     <div id="am-row-@row.MessageActivationId" class="dx-table-row am-columns">
                         <div>
-                            @row.MessageName
+                            <a href="javascript:void(0)" id="am-preview-@row.MessageActivationId" class="am-name" title="Preview Message"
+                               @onclick="() => OpenPreviewAsync(row.MessageId)" @onclick:preventDefault="true">@row.MessageName</a>
                             @if (row.IsOneOff)
                             {
                                 <span class="dx-badge dx-badge-gray">One-off</span>
@@ -120,6 +121,7 @@
 
 <ManageMessageModal @ref="manageMessageModal" OnSaved="LoadAsync" />
 <MessageScheduleEditor @ref="messageScheduleEditor" OnClose="LoadAsync" />
+<MessagePreviewModal @ref="messagePreviewModal" />
 
 @code {
     private enum Removal { Retire, Delete }
@@ -133,6 +135,7 @@
     private bool canAuthor;
     private ManageMessageModal? manageMessageModal;
     private MessageScheduleEditor? messageScheduleEditor;
+    private MessagePreviewModal? messagePreviewModal;
     private ReportTimeZone viewer = ReportTimeZone.Utc;
 
     private IEnumerable<ActiveMessageRow> Filtered
@@ -185,6 +188,8 @@
     }
 
     private Task OpenEditAsync(int messageId) => manageMessageModal?.OpenAsync(messageId) ?? Task.CompletedTask;
+
+    private Task OpenPreviewAsync(int messageId) => messagePreviewModal?.OpenAsync(messageId) ?? Task.CompletedTask;
 
     private Task OpenScheduleAsync(int messageId) => messageScheduleEditor?.OpenAsync(messageId) ?? Task.CompletedTask;
 

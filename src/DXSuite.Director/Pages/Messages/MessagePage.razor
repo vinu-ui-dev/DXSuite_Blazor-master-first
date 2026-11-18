@@ -5,7 +5,7 @@
 @using DXSuite.Director.Services.Reports
 @using DXSuite.Director.Models.CoreAPI
 @using DXSuite.Shared.Authorization
-@inject IDirectorDBContext directorDBContext
+@inject IDbContextFactory<DirectorDbContext> dbFactory
 @inject ISessionState sessionState
 @inject MessageSending sending
 @inject MessageAuthoring authoring
@@ -247,7 +247,10 @@ else if (MessageType != null)
         if (MessageType is not null)
         {
             var typeId = MessageType.MessageTypeId;
-            messages = await directorDBContext.TblMessages.AsNoTracking()
+            // A context of its own per load: the circuit-wide scoped context is shared with every other component, and a
+            // second query on it while one is running throws ("A second operation was started on this context instance").
+            await using var db = await dbFactory.CreateDbContextAsync();
+            messages = await db.TblMessages.AsNoTracking()
                 .Where(m => !m.IsDeleted && m.IsCanned && m.MessageTypeId == typeId)
                 .Include(m => m.Texts)
                 .Include(m => m.Assets)
@@ -255,8 +258,8 @@ else if (MessageType != null)
                 .Include(m => m.Activations).ThenInclude(a => a.Targets).ThenInclude(t => t.Zone)
                 .AsSplitQuery()
                 .ToListAsync();
-            hasAslSlot = await directorDBContext.TblMessageTypeAssetLibraries.AnyAsync(l => l.MessageTypeId == typeId);
-            statuses = await displayTimeZones.StatusesAsync(directorDBContext.TblDevices,
+            hasAslSlot = await db.TblMessageTypeAssetLibraries.AnyAsync(l => l.MessageTypeId == typeId);
+            statuses = await displayTimeZones.StatusesAsync(db.TblDevices,
                 messages.SelectMany(m => m.Activations).ToList(), now, default);
         }
         // The Messages page passes the type's own languages, in its order (MSG-03).

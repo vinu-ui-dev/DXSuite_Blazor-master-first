@@ -126,3 +126,9 @@ public sealed record MessageSaveResult(
     int? MessageId = null,
     MessageStatus? Status = null,
     IReadOnlyDictionary<string, string>? Errors = null);
+
+/// <summary>One language's text in a <see cref="MessagePreview"/>.</summary>
+public sealed record MessagePreviewText(string LanguageName, string Body);
+
+/// <summary>A Message as screens show it now, read-only, for the Active Messages preview.</summary>
+public sealed record MessagePreview(string Name, string TypeName, IReadOnlyList<MessagePreviewText> Texts);

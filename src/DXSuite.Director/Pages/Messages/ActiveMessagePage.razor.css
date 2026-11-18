@@ -31,3 +31,14 @@
     justify-content: center;
     align-items: center;
 }
+
+.am-name {
+    color: inherit;
+    cursor: pointer;
+    text-decoration: none;
+}
+
+.am-name:hover {
+    color: var(--dx-blue, #0067b8);
+    text-decoration: underline;
+}

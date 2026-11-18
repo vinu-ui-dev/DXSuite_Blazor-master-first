@@ -1,7 +1,7 @@
 @page "/messages"
 @rendermode InteractiveServer
 @attribute [RequiresTenantFeature(nameof(TenantFeatureFlags.Messaging))]
-@inject IDirectorDBContext directorDBContext;
+@inject IDbContextFactory<DirectorDbContext> dbFactory
 @inject ISessionState sessionState
 @inject IMessageLanguageCatalogue languageCatalogue
 @inject IOptions<D02GtaaMessagingOptions> d02
@@ -93,7 +93,8 @@ else
 
     private async Task LoadDataAsync()
     {
-        messageTypes = await directorDBContext.TblMessageTypes.Include(x => x.Languages).Where(x => !x.IsDeleted).ToListAsync();
+        await using var db = await dbFactory.CreateDbContextAsync();
+        messageTypes = await db.TblMessageTypes.Include(x => x.Languages).Where(x => !x.IsDeleted).ToListAsync();
         languageNames = await languageCatalogue.NameAsync(messageTypes.SelectMany(t => t.Languages).Select(l => l.LanguageCode).Distinct());
         isLoading = false;
 
