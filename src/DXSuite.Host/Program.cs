@@ -907,6 +907,17 @@ if (isWebRole)
     app.MapGet("/session-timeout", async (HttpContext context) =>
     {
         await context.SignOutAsync(CookieAuthenticationDefaults.AuthenticationScheme);
+
+        // Deployed behind Director (editor bridge on): an expired session returns to Director's Angular
+        // login instead of this app's own login card (Director hash routing: https://site/#/home).
+        var bridge = context.RequestServices
+            .GetRequiredService<Microsoft.Extensions.Options.IOptions<DXSuite.Shared.Models.EditorBridgeClientOptions>>().Value;
+        if (bridge.Enabled && !authConfig.DemoMode && !string.IsNullOrWhiteSpace(bridge.DirectorUiBaseUrl))
+        {
+            context.Response.Redirect($"{bridge.DirectorUiBaseUrl.TrimEnd('/')}/#/home");
+            return;
+        }
+
         context.Response.Redirect($"{context.Request.PathBase}/");
     }).AllowAnonymous();
 
