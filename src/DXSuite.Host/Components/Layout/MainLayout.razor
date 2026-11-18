@@ -356,7 +356,7 @@
     // DXSuite role, the same way every other user's role is shown. Unknown names are shown as they are.
     private static string DirectorRoleLabel(string? role) => (role ?? "").Trim().ToUpperInvariant() switch
     {
-        "DIRECTOR_ADMIN" => "Admin",
+        "DIRECTOR_ADMIN" => "DIRECTOR_ADMIN",
         "CUSTOMERADMIN" => "Architect",
         "CUSTOMERUSER" => "Contributor",
         "NEWUSER" => "New User",

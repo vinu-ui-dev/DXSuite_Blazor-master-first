@@ -220,8 +220,11 @@ namespace DXSuite.Shared.Authorization
             UserInternal = null;
             _bridgePermissions = identity.Permissions;
             ActualRoleName = identity.RoleName;
+            // A Director admin is a full DXSuite Admin: every permission, nothing gated by explicit grants.
+            _bridgeIsAdmin = string.Equals(identity.RoleName, "DIRECTOR_ADMIN", StringComparison.OrdinalIgnoreCase);
             RoleEnum = identity.RoleName switch
             {
+                _ when _bridgeIsAdmin => Roles.Role.Admin,
                 "CustomerAdmin" => Roles.Role.Architect,
                 "CustomerUser" => Roles.Role.Contributor,
                 _ => Roles.Role.NewUser,
@@ -272,11 +275,13 @@ namespace DXSuite.Shared.Authorization
             LocationAccessChanged?.Invoke();
         }
 
+        private bool _bridgeIsAdmin;
+
         public Task<IReadOnlySet<string>> GetPermissionsAsync()
             => _bridgePermissions is not null ? Task.FromResult(_bridgePermissions) : _rolePermissionService.GetPermissionsForRoleAsync(ActualRoleId);
 
         public Task<bool> HasPermissionAsync(string permissionKey)
-            => _bridgePermissions is not null ? Task.FromResult(_bridgePermissions.Contains(permissionKey)) : _rolePermissionService.HasPermissionAsync(ActualRoleId, permissionKey);
+            => _bridgeIsAdmin ? Task.FromResult(true) : _bridgePermissions is not null ? Task.FromResult(_bridgePermissions.Contains(permissionKey)) : _rolePermissionService.HasPermissionAsync(ActualRoleId, permissionKey);
 
         /// <summary>
         /// Finds or creates the platform identity and tenant membership for the logged-in user.
