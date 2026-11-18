@@ -69,7 +69,12 @@ public sealed class CuppsLiveDataProvider(
         }
 
         var error = await response.Content.ReadAsStringAsync(ct);
-        if (!string.IsNullOrWhiteSpace(error))
+        if (error.TrimStart().StartsWith('<'))
+        {
+            // An HTML body is an app page (a redirect, 404 or error page), not this API's answer: never show it.
+            error = $"The server did not accept the request ({(int)response.StatusCode} {response.ReasonPhrase}).";
+        }
+        else if (!string.IsNullOrWhiteSpace(error))
         {
             try
             {
@@ -203,9 +208,9 @@ public sealed class CuppsLiveDataProvider(
     private HttpClient AuthenticatedClient(string username)
     {
         var client = httpClientFactory.CreateClient();
-        // A bridge session has no TblUser, so the server cannot look its role up: the token carries it instead.
-        var role = sessionState.User is null ? sessionState.Role : null;
-        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username, role));
+        // The token carries the session's effective role: a bridge session has no TblUser to look it up from, and a
+        // custom role's own name says nothing about what it may do.
+        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username, sessionState.Role));
         return client;
     }
 

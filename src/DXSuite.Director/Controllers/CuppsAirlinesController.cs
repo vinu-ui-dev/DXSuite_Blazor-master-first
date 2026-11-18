@@ -93,11 +93,17 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         // A signed-in Director user is judged by the role on file. An Editor bridge user has no row, so the role the
         // signed token carries (set from that session) decides instead.
-        var roleName = caller is null ? tokenRole : caller.Role?.RoleName;
-        var canCreate = string.Equals(roleName, "Admin", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(roleName, "Architect", StringComparison.OrdinalIgnoreCase);
-        if (!canCreate)
-            return Forbid();
+        // The role on file counts, and so does the signed token's: it carries the session's effective role, which for
+        // a custom role is the built-in role it is based on.
+        static bool CanCreate(string? role) =>
+            string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(role, "Architect", StringComparison.OrdinalIgnoreCase);
+        if (!CanCreate(caller?.Role?.RoleName) && !CanCreate(tokenRole))
+        {
+            // A plain Forbid() would redirect this caller (no cookie) to an HTML page; answer in JSON instead.
+            return StatusCode(StatusCodes.Status403Forbidden,
+                new { message = $"Only an Admin or Architect can create an airline (signed in as {tokenRole ?? caller?.Role?.RoleName ?? "an unknown role"})." });
+        }
 
         var code = (body.IataCode ?? string.Empty).Trim().ToUpperInvariant();
         if (code.Length != 2)
