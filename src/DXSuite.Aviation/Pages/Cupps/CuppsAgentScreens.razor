@@ -766,7 +766,19 @@
                     @Mark(a)
                     <h3 style="margin:0;font-size:1.3rem;font-weight:600;">@AirlineInfo(a).Name</h3>
                 </div>
-                <p style="margin:10px 0 6px;font-size:1.15rem;font-weight:600;">Select the counter you want to manage</p>
+                @if (groups.Count == 0 && later.Count == 0)
+                {
+                    <div class="dx-alert dx-alert-warning" style="margin-top:14px;">
+                        @(liveAllocLoadFailed
+                            ? "Counter allocations couldn't be loaded, so no counter can be shown. Ask GTAA to check the counter allocation data."
+                            : $"{AirlineInfo(a).Name} has no counter allocated right now.")
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" style="margin-left:10px;" @onclick="LoadLiveCuppsDataAsync">Retry</button>
+                    </div>
+                }
+                else
+                {
+                    <p style="margin:10px 0 6px;font-size:1.15rem;font-weight:600;">Select the counter you want to manage</p>
+                }
                 @foreach (var g in groups)
                 {
                     <div class="dx-group-label">@g.Key</div>

@@ -542,7 +542,7 @@
         // lookup (it hits the database and syncs defaults) so a database hiccup cannot 500 the login page.
         var perms = !IsAuthorized || sessionState.ActualRoleId == (int)Roles.Role.Admin ? null : await sessionState.GetPermissionsAsync();
         // Airline Agents only work in the CUPPS terminal: no other module links, Settings or Configuration.
-        var isAirlineAgent = string.Equals(sessionState.ActualRoleName, AirlineAgentRoleName, StringComparison.OrdinalIgnoreCase);
+        var isAirlineAgent = IsAirlineAgentRole(sessionState.ActualRoleName);
         showSettings = !isAirlineAgent && availableModules.SelectMany(m => m.GetSettingsTabs())
             .Any(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)));
         showConfig = !isAirlineAgent && availableModules.SelectMany(m => m.GetConfigTabs())
@@ -578,6 +578,11 @@
             .Any(p => n.Href.StartsWith(p, StringComparison.OrdinalIgnoreCase));
 
     private const string AirlineAgentRoleName = "Airline Agent";
+
+    // Accepts the DXSuite role name and the Director-bridge one ("Director Airline_Agent", "AIRLINE_AGENT").
+    private static bool IsAirlineAgentRole(string? role) =>
+        (role ?? "").Replace("Director", "", StringComparison.OrdinalIgnoreCase).Replace("_", "").Replace(" ", "")
+            .Equals(AirlineAgentRoleName.Replace(" ", ""), StringComparison.OrdinalIgnoreCase);
     private const string CuppsHref = "/cupps-agent-screens";
     private bool isAirlineAgent;
 
