@@ -64,22 +64,12 @@ else
     </label>
     <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="SetNowWindow">NOW -1 H TO +12 H</button>
     <button class="dx-btn dx-btn-sm" @onclick="SetTomorrowWindow">TOMORROW</button>
-    <button class="dx-btn @(showDummyData ? "dx-btn-blue" : "dx-btn-outline-blue") dx-btn-sm" @onclick="ToggleDummyDataAsync">
-        @(showDummyData ? "Viewing Sample Data" : "View Sample Data")
-    </button>
 </div>
 
 @if (outageState.IsOn)
 {
     <div class="dx-alert dx-alert-info">
         Manual mode is on. There is no live RMS/CoreAPI allocation feed yet, so every allocation below was entered by hand.
-    </div>
-}
-
-@if (showDummyData)
-{
-    <div class="dx-alert dx-alert-info">
-        Viewing sample data for layout review. These allocations are generated in memory, aren't saved anywhere, and can't be added, edited, copied or deleted — turn off Sample Data to manage real allocations.
     </div>
 }
 
@@ -98,9 +88,9 @@ else
         <span class="dx-text-muted">You have view-only access to Counter Allocation — you can look, but not add, change, copy or delete allocations.</span>
     }
     <div class="ca-actions-right">
-        <button class="dx-btn dx-btn-green dx-btn-sm" disabled="@(showDummyData || !canEdit)" @onclick="() => OpenAdd(null)">Add Allocation</button>
-        <button class="dx-btn dx-btn-sm" disabled="@(showDummyData || !canEdit || selected.Count == 0)" @onclick="OpenCopy">Copy@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
-        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(showDummyData || !canEdit || selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
+        <button class="dx-btn dx-btn-green dx-btn-sm" disabled="@(!canEdit)" @onclick="() => OpenAdd(null)">Add Allocation</button>
+        <button class="dx-btn dx-btn-sm" disabled="@(!canEdit || selected.Count == 0)" @onclick="OpenCopy">Copy@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
+        <button class="dx-btn dx-btn-outline-red dx-btn-sm" disabled="@(!canEdit || selected.Count == 0)" @onclick="DeleteSelectedAsync">Delete@(selected.Count > 0 ? $" ({selected.Count})" : "")</button>
     </div>
 </div>
 
@@ -336,20 +326,18 @@ else
     <div class="dx-modal-overlay">
         <div class="dx-modal" style="width:420px;">
             <div class="dx-modal-header">
-                <h3 style="margin:0;font-size:1.1rem;">Turn off allocation outage mode</h3>
+                <h3 style="margin:0;font-size:1.1rem;">Turn off allocation Outage mode</h3>
                 <button class="dx-modal-close" aria-label="Close" @onclick="CancelOutageOff">&times;</button>
             </div>
             <div class="dx-modal-body">
                 <p>
-                    Allocations already entered by hand stay exactly as they are &mdash; turning this off doesn't remove or
-                    change anything. This build has no live RMS/CoreAPI feed yet, so there's nothing to automatically
-                    return counters to; the "Update modified counters back to feed" button above stays disabled until
-                    that feed exists.
+                    Turning it off returns every counter to the RMS feed. Use UPDATE MODIFIED COUNTERS BACK TO FEED
+                    to review what changes first.
                 </p>
             </div>
             <div class="dx-modal-footer">
-                <button class="dx-btn" @onclick="CancelOutageOff">Cancel</button>
-                <button class="dx-btn dx-btn-blue" @onclick="ConfirmOutageOff">Turn off</button>
+                <button class="dx-btn dx-btn-gray" @onclick="CancelOutageOff">CANCEL</button>
+                <button class="dx-btn dx-btn-blue" @onclick="ConfirmOutageOff">REVIEW</button>
             </div>
         </div>
     </div>
