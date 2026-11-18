@@ -34,12 +34,13 @@ public class DirectorModule : IBlazorModule
         yield return new NavItem("Messages", "/messages", "bi-megaphone", 11, "Director",
             Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging),
             Permission: DXSuite.Shared.Authorization.PermissionKeys.PageMessages);
-        yield return new NavItem("Overrides", "/overrides", "bi-lightning", 12, "Director", Feature: "Overrides");
+        // Hidden from the menu for every user (pages stay routable):         // yield return new NavItem("Overrides", "/overrides", "bi-lightning", 12, "Director", Feature: "Overrides");
         yield return new NavItem("Approvals", "/approvals", "bi-check2-square", 13, "Director");
         yield return new NavItem("Counter Scheduler", "/ticket-counter-scheduler", "bi-grid-3x3", 14, "Director", Feature: "CounterScheduler");
-        yield return new NavItem("Content Log", "/content-log", "bi-journal-text", 15, "Director",
-            Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.ShowContentLogNav),
-            Permission: PermissionKeys.PageContentLog);
+        // Hidden from the menu for every user (page stays routable).
+        // yield return new NavItem("Content Log", "/content-log", "bi-journal-text", 15, "Director",
+        //     Feature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.ShowContentLogNav),
+        //     Permission: PermissionKeys.PageContentLog);
     }
 
     public IEnumerable<ConfigTab> GetConfigTabs()
@@ -48,12 +49,12 @@ public class DirectorModule : IBlazorModule
         yield return new ConfigTab("locations", "Locations", typeof(ConfigTabs.LocationsTab), 15);
         yield return new ConfigTab("sites", "Sites", typeof(ConfigTabs.SitesTab), 16);
         yield return new ConfigTab("content-channels", "Content Channels", typeof(ConfigTabs.ContentChannelsTab), 17);
-        yield return new ConfigTab("director-urls", "Director URLs", typeof(ConfigTabs.DirectorUrlsTab), 18);
+        // Hidden for every role: yield return new ConfigTab("director-urls", "Director URLs", typeof(ConfigTabs.DirectorUrlsTab), 18);
         yield return new ConfigTab("metadata", "Metadata", typeof(ConfigTabs.MetadataTab), 20);
-        yield return new ConfigTab("llm-providers", "LLM Providers", typeof(Components.Settings.LlmProvidersTab), 25);
+        // Hidden for every role: yield return new ConfigTab("llm-providers", "LLM Providers", typeof(Components.Settings.LlmProvidersTab), 25);
         yield return new ConfigTab("cloud-connectors", "Cloud Connectors", typeof(ConfigTabs.CloudConnectorsTab), 30);
-        yield return new ConfigTab("content-package", "Content Packages", typeof(ConfigTabs.ContentPackageTab), 35, Feature: "ContentPackage");
-        yield return new ConfigTab("location-bundles", "Location Bundles", typeof(ConfigTabs.LocationBundlesTab), 36, Feature: "LocationBundles");
+        // Hidden for every role: yield return new ConfigTab("content-package", "Content Packages", typeof(ConfigTabs.ContentPackageTab), 35, Feature: "ContentPackage");
+        // Hidden for every role: yield return new ConfigTab("location-bundles", "Location Bundles", typeof(ConfigTabs.LocationBundlesTab), 36, Feature: "LocationBundles");
         yield return new ConfigTab("panels", "Panels", typeof(ConfigTabs.PanelsTab), 37, Feature: "Panels");
         yield return new ConfigTab("message-types", "Message Types", typeof(ConfigTabs.MessageTypeTab), 40,
             TenantFeature: nameof(DXSuite.Shared.Multitenancy.TenantFeatureFlags.Messaging));

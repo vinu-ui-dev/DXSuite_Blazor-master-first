@@ -33,6 +33,6 @@ public class AviationModule : IBlazorModule
     public IEnumerable<ConfigTab> GetConfigTabs()
     {
         yield return new ConfigTab("airlines", "Airlines", typeof(ConfigTabs.AirlinesTab), 50);
-        yield return new ConfigTab("cities", "Cities", typeof(ConfigTabs.CitiesTab), 60);
+        // Hidden for every role: yield return new ConfigTab("cities", "Cities", typeof(ConfigTabs.CitiesTab), 60);
     }
 }
