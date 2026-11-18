@@ -29,6 +29,7 @@ public partial class CuppsAgentScreens : IDisposable
 
     private Dictionary<string, Airline> liveAirlines = [];
     private Dictionary<string, int> liveAirlineIds = [];
+    private Dictionary<string, int> liveHolders = [];
     private Dictionary<string, Counter> liveCounters = [];
     private List<Alloc> liveAllocations = [];
     private List<Flight> liveFlights = [];
@@ -292,11 +293,20 @@ public partial class CuppsAgentScreens : IDisposable
         var code = liveAirlines.Keys.First();
         rmuAirline = code;
 
+        // The airline's counters: those allocated right now, plus any the publish state says it holds.
+        // Open counters come first; if none is open, a closed one is shown. This also works when the
+        // allocation table can't be read, since open/closed and holder come from the publish state.
         var held = AllAllocs
             .Where(a => a.Code.Equals(code, StringComparison.OrdinalIgnoreCase) && a.From <= now && now < a.To)
-            .Select(a => a.CounterId).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        if (held.Count == 1)
-            await PickRmuCounter(held[0]);
+            .Select(a => a.CounterId).ToList();
+        if (liveAirlineIds.TryGetValue(code, out var airlineId))
+            held.AddRange(liveHolders.Where(kv => kv.Value == airlineId).Select(kv => kv.Key));
+        held = [.. held.Distinct(StringComparer.OrdinalIgnoreCase)];
+
+        var open = held.Where(c => published.TryGetValue(c, out var s) && s.Open).ToList();
+        var pick = open.Count > 0 ? open : held;
+        if (pick.Count >= 1 && (pick.Count == 1 || open.Count > 0))
+            await PickRmuCounter(pick[0]);
         else
             StateHasChanged();
     }
@@ -354,6 +364,7 @@ public partial class CuppsAgentScreens : IDisposable
         {
             var states = await LiveData.GetCounterStatesAsync();
             published = states.Published;
+            liveHolders = states.HolderAirlineIds;
             foreach (var (id, t) in states.Templates) templateCache[id] = t;
         }
         catch (Exception)
