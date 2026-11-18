@@ -8,28 +8,24 @@ namespace DXSuite.Director.Entities;
 public partial class TblCounterPublish
 {
     [Key]
-    public long PublishId { get; set; }
+    public int PublishId { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "datetime2")]
     public DateTime SentUtc { get; set; }
 
-    [StringLength(32)]
-    [Unicode(false)]
-    public string? ActorKind { get; set; }
+    public byte ActorKind { get; set; }
 
     public int? UserId { get; set; }
 
-    [StringLength(200)]
-    public string? ActorName { get; set; }
+    [StringLength(256)]
+    public string ActorName { get; set; } = null!;
 
-    [StringLength(32)]
-    [Unicode(false)]
-    public string? AccountKind { get; set; }
+    public byte? AccountKind { get; set; }
 
-    [StringLength(200)]
+    [StringLength(256)]
     public string? PersonName { get; set; }
 
-    [StringLength(32)]
+    [StringLength(50)]
     [Unicode(false)]
     public string? StationCounterId { get; set; }
 
@@ -40,23 +36,19 @@ public partial class TblCounterPublish
 
     public int? CounterTemplateId { get; set; }
 
-    [StringLength(32)]
-    [Unicode(false)]
-    public string? CounterTemplateKind { get; set; }
+    public byte? CounterTemplateKind { get; set; }
 
-    [StringLength(200)]
+    [StringLength(50)]
     public string? CounterTemplateName { get; set; }
 
-    public bool? Sunflower { get; set; }
+    public bool Sunflower { get; set; }
 
-    [StringLength(200)]
+    [StringLength(60)]
     public string? Destination { get; set; }
 
-    [StringLength(100)]
-    [Unicode(false)]
-    public string? SystemReason { get; set; }
+    public byte? SystemReason { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "datetime2")]
     public DateTime? FirstServedUtc { get; set; }
 
     public int? PageShowSeconds { get; set; }

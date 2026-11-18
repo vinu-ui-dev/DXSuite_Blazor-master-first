@@ -77,7 +77,7 @@ internal sealed class AirlineAccessScope(
         // API access always lines up with what the Configuration > Airlines UI already shows them.
         var allowed = await db.TblAirlineAccounts.AsNoTracking()
             .Where(a => a.RetiredUtc == null)
-            .Where(a => (a.UserGroupId != null && groupIds.Contains(a.UserGroupId.Value))
+            .Where(a => (a.UserGroupId > 0 && groupIds.Contains(a.UserGroupId))
                      || (a.NameEnglish != null && groupNames.Contains(a.NameEnglish))
                      || (a.CuppsName != null && groupNames.Contains(a.CuppsName)))
             .Select(a => a.AirlineId)

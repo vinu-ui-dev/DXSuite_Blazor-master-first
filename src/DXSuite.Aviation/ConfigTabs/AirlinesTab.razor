@@ -1,14 +1,14 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
 @using DXSuite.Aviation.Services
+@using DXSuite.Aviation.Services.Cupps
 @using DXSuite.Shared.Authorization
-@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
-@inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AirlinesTab> Logger
 @inject ISessionState SessionState
 @inject AirlineAudit AirlineAudit
 @inject DXSuite.Shared.Services.Identity.IUserGroupService UserGroupService
+@inject CuppsLiveDataProvider CuppsLiveData
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
 
@@ -26,7 +26,7 @@
             <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
                    value="@searchTerm" @oninput="OnSearchInput"
                    placeholder="Search @allAirlines.Count airlines to onboard..." />
-            @if (SessionState.RoleEnum == Roles.Role.Admin)
+            @if (canManageAirlineListActions)
             {
                 <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
             }
@@ -37,7 +37,7 @@
                     @foreach (var r in searchResults)
                     {
                         <button class="dx-typeahead-item" style="display:flex; justify-content:space-between; align-items:center;"
-                                @onclick="() => Onboard(r)">
+                                @onclick="() => OpenProfile(r, false)">
                             <span>@r.Name <span class="dx-text-muted">(@r.Code)</span></span>
                             @if (r.Shown)
                             {
@@ -204,38 +204,45 @@ else if (viewMode == "supervisor")
         }
     </div>
     <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
-        @if (isRealAirlineScope)
+        @if (supervisorTarget is null)
         {
-            @:Signed in as @(SessionState.User?.FriendlyName ?? SessionState.UserName). You see @supervisorTarget!.Name only, the airline whose user group you are in.
+            @:No assigned airline is available for this account.
+        }
+        else if (isRealAirlineScope)
+        {
+            @:Signed in as @(SessionState.User?.FriendlyName ?? SessionState.UserName). You see @supervisorTarget.Name only, the airline whose user group you are in.
         }
         else
         {
-            @:You see @supervisorTarget!.Name only, the airline whose user group you are in.
+            @:You see @supervisorTarget.Name only, the airline whose user group you are in.
         }
     </div>
     <div class="dx-panel-content" style="flex:1; min-height:0; overflow-y:auto; padding:0;">
-        <div class="dx-table" style="border-left:none; border-right:none;">
-            <div class="dx-table-header" style="@SupervisorGridCols">
-                <div>Airline</div>
-                <div>IATA</div>
-                <div>ICAO</div>
-                <div>Alliance</div>
-                <div>Status</div>
-                <div></div>
-            </div>
-            @{ var extraSup = ExtraFor(supervisorTarget.Code); }
-            <div class="dx-table-row" style="@SupervisorGridCols">
-                <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-                    <div class="al-tile" style="background:@ColorFor(supervisorTarget.Code);">@supervisorTarget.Code</div>
-                    <a href="javascript:void(0)" @onclick="() => OpenProfile(supervisorTarget, true)">@supervisorTarget.Name</a>
+        @if (supervisorTarget is not null)
+        {
+            <div class="dx-table" style="border-left:none; border-right:none;">
+                <div class="dx-table-header" style="@SupervisorGridCols">
+                    <div>Airline</div>
+                    <div>IATA</div>
+                    <div>ICAO</div>
+                    <div>Alliance</div>
+                    <div>Status</div>
+                    <div></div>
                 </div>
-                <div>@supervisorTarget.Code</div>
-                <div>@(supervisorTarget.Icao ?? "—")</div>
-                <div>@extraSup.Alliance</div>
-                <div><span class="dx-badge dx-badge-green">Active</span></div>
-                <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(supervisorTarget, true)">OPEN</button></div>
+                @{ var extraSup = ExtraFor(supervisorTarget.Code); }
+                <div class="dx-table-row" style="@SupervisorGridCols">
+                    <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+                        <div class="al-tile" style="background:@ColorFor(supervisorTarget.Code);">@supervisorTarget.Code</div>
+                        <a href="javascript:void(0)" @onclick="() => OpenProfile(supervisorTarget, true)">@supervisorTarget.Name</a>
+                    </div>
+                    <div>@supervisorTarget.Code</div>
+                    <div>@(supervisorTarget.Icao ?? "—")</div>
+                    <div>@extraSup.Alliance</div>
+                    <div><span class="dx-badge dx-badge-green">Active</span></div>
+                    <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(supervisorTarget, true)">OPEN</button></div>
+                </div>
             </div>
-        </div>
+        }
     </div>
 }
 else
@@ -244,18 +251,11 @@ else
     var extra = ExtraFor(profileAirline!.Code);
     <div class="dx-panel-header">
         <div style="display:flex; align-items:center; gap:12px;">
-            @if (!isRealAirlineScope)
-            {
-                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile">&larr;</button>
-            }
+            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile" title="Back to list" aria-label="Back to list">&larr;</button>
             <div class="al-tile al-tile-lg" style="background:@ColorFor(profileAirline.Code);">@profileAirline.Code</div>
             <h4 style="margin:0;">@profileAirline.Name</h4>
             <span class="dx-badge dx-badge-green">Active</span>
         </div>
-        @if (!isSupervisorPreview && !isRealAirlineScope && !isViewOnlyAirlines)
-        {
-            <button class="dx-btn dx-btn-outline-red dx-btn-sm" @onclick="Deactivate">Remove from active list</button>
-        }
     </div>
 
     @if (isViewOnlyAirlines)
@@ -1122,12 +1122,17 @@ else
     private bool canSeeProfileCuppsTab;
     private bool canSeeProfileDcsTab;
     private bool canSeeProfileUsersTab;
+    private const string AirlineSupervisorRoleName = "Airline Supervisor";
 
     // The full 6-tab profile (Identity, Branding, CUPPS options, DCS, Counter templates, Users) is
     // only for GTAA Admin/Architect browsing the real cross-airline list — not the demo supervisor
     // preview, a real airline-scoped supervisor, or RMU's view-only pass, which all keep the
     // existing restricted 2-tab (Branding, Counter templates) profile.
     private bool isAdminProfile => !isRealAirlineScope && !isSupervisorPreview && !isViewOnlyAirlines;
+
+    private bool canManageAirlineListActions =>
+        SessionState.RoleEnum == Roles.Role.Admin ||
+        SessionState.RoleEnum == Roles.Role.Architect;
 
     private bool CanUseAdminProfileTabs => isAdminProfile;
     private bool canShowAdminIdentityTab => CanUseAdminProfileTabs && canSeeProfileIdentityTab;
@@ -1164,12 +1169,42 @@ else
         if (SessionState.RoleEnum != Roles.Role.Admin && SessionState.RoleEnum != Roles.Role.Architect && SessionState.User is not null)
         {
             var myGroups = await UserGroupService.GetGroupsForUserAsync(SessionState.User.UserId);
+            var myGroupNames = myGroups
+                .Select(g => g.GroupName)
+                .Where(n => !string.IsNullOrWhiteSpace(n))
+                .ToList();
+
             var myAirline = onboarded.FirstOrDefault(a =>
-                myGroups.Any(g => string.Equals(g.GroupName, a.Name, StringComparison.OrdinalIgnoreCase)));
+                myGroupNames.Any(g => string.Equals(g, a.Name, StringComparison.OrdinalIgnoreCase)
+                                   || string.Equals(g, a.Code, StringComparison.OrdinalIgnoreCase)));
+
+            if (myAirline is null)
+            {
+                var normalizedGroups = myGroupNames.Select(NormalizeAirlineKey).ToHashSet(StringComparer.OrdinalIgnoreCase);
+                myAirline = onboarded.FirstOrDefault(a =>
+                    normalizedGroups.Contains(NormalizeAirlineKey(a.Name))
+                    || normalizedGroups.Contains(NormalizeAirlineKey(a.Code)));
+            }
+
+            var isAirlineSupervisor = string.Equals(SessionState.ActualRoleName, AirlineSupervisorRoleName, StringComparison.OrdinalIgnoreCase);
+            if (myAirline is null && isAirlineSupervisor && onboarded.Count == 1)
+            {
+                myAirline = onboarded[0];
+            }
+
             if (myAirline != null)
             {
                 isRealAirlineScope = true;
                 supervisorTarget = myAirline;
+                viewMode = "supervisor";
+            }
+            else if (isAirlineSupervisor)
+            {
+                isRealAirlineScope = true;
+                supervisorTarget = null;
+                onboarded.Clear();
+                allAirlines.Clear();
+                searchResults.Clear();
                 viewMode = "supervisor";
             }
             else
@@ -1184,21 +1219,31 @@ else
 
     private async Task LoadAirlines()
     {
-        await using var db = await AviationDbFactory.CreateDbContextAsync();
-
-        // Project only the real columns present on this database's tblAirline table.
-        // Several columns on the shared TblAirline entity (logo path, status flags,
-        // PIN fields) don't exist on this environment's table, so selecting the full
-        // entity throws. See CounterAllocations.razor.cs for the same pattern.
-        var rows = await db.TblAirlines
-            .Select(a => new { a.RecordId, a.AirlineCode, a.CarrierName, a.Icao, a.DisplayWithinSettingsMenu })
-            .ToListAsync();
+        var rows = await CuppsLiveData.GetOperatingAirlineAccountsAsync();
 
         allAirlines = rows
-            .Select(r => new AirlineRow(r.RecordId, r.AirlineCode, string.IsNullOrWhiteSpace(r.CarrierName) ? r.AirlineCode : r.CarrierName!, r.Icao, r.DisplayWithinSettingsMenu))
+            .Where(a => !string.IsNullOrWhiteSpace(a.Airline.Code))
+            .Select(a => new AirlineRow(
+                a.AirlineId,
+                a.Airline.Code.Trim().ToUpperInvariant(),
+                string.IsNullOrWhiteSpace(a.Airline.Name) ? a.Airline.Code.Trim().ToUpperInvariant() : a.Airline.Name.Trim(),
+                null,
+                true))
+            .DistinctBy(a => a.Code)
+            .OrderBy(a => a.Name)
             .ToList();
 
-        onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
+        onboarded = allAirlines.OrderBy(a => a.Name).ToList();
+    }
+
+    private static string NormalizeAirlineKey(string value)
+    {
+        var chars = value
+            .Trim()
+            .ToUpperInvariant()
+            .Where(char.IsLetterOrDigit)
+            .ToArray();
+        return new string(chars);
     }
 
     private AirlineExtra ExtraFor(string code)
@@ -1240,7 +1285,7 @@ else
 
     private async Task OpenAddAirline()
     {
-        if (SessionState.RoleEnum == Roles.Role.Admin)
+        if (canManageAirlineListActions)
         {
             viewMode = "wizard";
         }
@@ -1276,64 +1321,6 @@ else
         OpenProfile(row, false);
     }
 
-    private async Task Onboard(AirlineRow row)
-    {
-        statusMessage = "";
-        try
-        {
-            if (!row.Shown)
-            {
-                await using var db = await AviationDbFactory.CreateDbContextAsync();
-                await db.Database.ExecuteSqlInterpolatedAsync(
-                    $"UPDATE dbo.tblAirline SET DisplayWithinSettingsMenu = 1 WHERE RecordID = {row.RecordId}");
-
-                row = row with { Shown = true };
-                allAirlines = allAirlines.Select(a => a.RecordId == row.RecordId ? row : a).ToList();
-                onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
-                statusMessage = $"{row.Name} onboarded.";
-                statusIsError = false;
-
-                await AirlineAudit.OnboardedAsync(row.RecordId, row.Code, row.Name);
-            }
-
-            searchTerm = "";
-            searchResults.Clear();
-            OpenProfile(row, false);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error onboarding airline {Code}", row.Code);
-            statusMessage = $"Couldn't onboard {row.Name}.";
-            statusIsError = true;
-        }
-    }
-
-    private async Task Deactivate()
-    {
-        if (profileAirline == null) return;
-        try
-        {
-            await using var db = await AviationDbFactory.CreateDbContextAsync();
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"UPDATE dbo.tblAirline SET DisplayWithinSettingsMenu = 0 WHERE RecordID = {profileAirline.RecordId}");
-
-            var updated = profileAirline with { Shown = false };
-            allAirlines = allAirlines.Select(a => a.RecordId == updated.RecordId ? updated : a).ToList();
-            onboarded = allAirlines.Where(a => a.Shown).OrderBy(a => a.Name).ToList();
-            statusMessage = $"{updated.Name} removed from the active list.";
-            statusIsError = false;
-
-            await AirlineAudit.RemovedFromActiveListAsync(updated.RecordId, updated.Code, updated.Name);
-        }
-        catch (Exception ex)
-        {
-            Logger.LogError(ex, "Error deactivating airline {Code}", profileAirline.Code);
-            statusMessage = $"Couldn't remove {profileAirline.Name}.";
-            statusIsError = true;
-        }
-        CloseProfile();
-    }
-
     private void OpenProfile(AirlineRow row, bool supervisor)
     {
         profileAirline = row;
@@ -1344,7 +1331,7 @@ else
 
     private void CloseProfile()
     {
-        viewMode = isSupervisorPreview ? "supervisor" : "list";
+        viewMode = (isSupervisorPreview || isRealAirlineScope) ? "supervisor" : "list";
     }
 
     private void PreviewSupervisor()
@@ -1459,7 +1446,7 @@ else
                 <span class="dx-badge dx-badge-gray" style="font-size:0.65rem;">sample</span>
                 <span class="dx-badge dx-badge-orange" style="font-size:0.65rem;">wrong size</span>
             </div>
-            <input type="file" class="dx-form-control" disabled title="Demo preview — file upload isn't wired to real storage" />
+            <input type="file" class="dx-form-control" disabled="@isViewOnlyAirlines" title="@(isViewOnlyAirlines ? "View only" : "Demo preview — upload persistence is not wired yet")" />
         </div>;
 
     private static string AssetPath(string code, string lang, string size)

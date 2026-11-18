@@ -8,46 +8,39 @@ namespace DXSuite.Director.Entities;
 public partial class TblCounterState
 {
     [Key]
-    [StringLength(32)]
+    [StringLength(50)]
     [Unicode(false)]
     public string CounterId { get; set; } = null!;
 
-    public int? HolderAirlineId { get; set; }
+    public int HolderAirlineId { get; set; }
 
     public bool Open { get; set; }
 
     public int? CounterTemplateId { get; set; }
 
-    [StringLength(32)]
-    [Unicode(false)]
-    public string? CounterTemplateKind { get; set; }
+    public byte? CounterTemplateKind { get; set; }
 
-    public bool? Sunflower { get; set; }
+    public bool Sunflower { get; set; }
 
-    public bool? AslOn { get; set; }
+    public bool AslOn { get; set; }
 
-    [StringLength(200)]
+    [StringLength(60)]
     public string? Destination { get; set; }
 
-    [StringLength(32)]
-    [Unicode(false)]
-    public string? SplitChoice { get; set; }
+    public byte SplitChoice { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "datetime2")]
     public DateTime? AllocationEndUtc { get; set; }
 
-    [StringLength(64)]
-    [Unicode(false)]
-    public string? AllocationCounterType { get; set; }
+    public byte? AllocationCounterType { get; set; }
 
-    [StringLength(32)]
-    [Unicode(false)]
+    [StringLength(100)]
     public string? AllocationFlightNumber { get; set; }
 
-    [StringLength(200)]
+    [StringLength(100)]
     public string? AllocationDestination { get; set; }
 
-    public long? LastPublishId { get; set; }
+    public int? LastPublishId { get; set; }
 
     public int? FirstMessageActivationId { get; set; }
 

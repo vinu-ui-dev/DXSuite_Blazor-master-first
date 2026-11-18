@@ -10,22 +10,22 @@ public partial class TblCounterTemplate
     [Key]
     public int CounterTemplateId { get; set; }
 
-    [StringLength(200)]
+    [StringLength(50)]
     public string Name { get; set; } = null!;
 
-    public int AirlineId { get; set; }
+    public int? AirlineId { get; set; }
 
     public byte Kind { get; set; }
 
     public byte? ImageLayout { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "date")]
     public DateTime StartDate { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "date")]
     public DateTime? EndDate { get; set; }
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "datetime2")]
     public DateTime? RetiredUtc { get; set; }
 
     [InverseProperty(nameof(TblCounterTemplateAsset.CounterTemplate))]

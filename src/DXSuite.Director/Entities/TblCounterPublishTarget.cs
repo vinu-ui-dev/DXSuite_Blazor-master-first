@@ -7,7 +7,7 @@ namespace DXSuite.Director.Entities;
 [PrimaryKey(nameof(PublishId), nameof(CounterId), nameof(DisplayId), nameof(Half))]
 public partial class TblCounterPublishTarget
 {
-    public long PublishId { get; set; }
+    public int PublishId { get; set; }
 
     public string CounterId { get; set; } = null!;
 
@@ -17,10 +17,10 @@ public partial class TblCounterPublishTarget
 
     public string Half { get; set; } = null!;
 
-    [Column(TypeName = "datetime")]
+    [Column(TypeName = "datetime2")]
     public DateTime? UntilUtc { get; set; }
 
     public string? EndReason { get; set; }
 
-    public long? ReplacedByPublishId { get; set; }
+    public int? ReplacedByPublishId { get; set; }
 }

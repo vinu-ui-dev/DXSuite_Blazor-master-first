@@ -1,8 +1,10 @@
 using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
+using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
+using System.Text.RegularExpressions;
 
 namespace DXSuite.Director.Controllers;
 
@@ -19,13 +21,17 @@ namespace DXSuite.Director.Controllers;
 [AllowAnonymous]
 public sealed class CuppsAirlinesController : ControllerBase
 {
+    private static readonly Regex HexColorRegex = new("^[0-9A-F]{6}$", RegexOptions.Compiled);
+
     private readonly IDirectorDBContext _db;
     private readonly IAirlineAccessScope _accessScope;
+    private readonly IInternalCallerTokenService _tokenService;
 
-    public CuppsAirlinesController(IDirectorDBContext db, IAirlineAccessScope accessScope)
+    public CuppsAirlinesController(IDirectorDBContext db, IAirlineAccessScope accessScope, IInternalCallerTokenService tokenService)
     {
         _db = db;
         _accessScope = accessScope;
+        _tokenService = tokenService;
     }
 
     /// <summary>
@@ -73,6 +79,100 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         return Ok(result);
     }
+
+    [HttpPost]
+    public async Task<IActionResult> Create([FromBody] CuppsAirlineCreateRequest body, CancellationToken ct = default)
+    {
+        var username = _tokenService.ValidateToken(Request.Headers["X-Internal-Caller-Token"]);
+        if (username is null)
+            return Unauthorized(new { message = "Missing or invalid caller token." });
+
+        var caller = await _db.TblUsers.AsNoTracking()
+            .Include(u => u.Role)
+            .FirstOrDefaultAsync(u => u.UserPrincipalName == username, ct);
+
+        var canCreate = string.Equals(caller?.Role?.RoleName, "Admin", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(caller?.Role?.RoleName, "Architect", StringComparison.OrdinalIgnoreCase);
+        if (!canCreate)
+            return Forbid();
+
+        var code = (body.IataCode ?? string.Empty).Trim().ToUpperInvariant();
+        if (code.Length != 2)
+            return BadRequest(new { message = "IataCode must be exactly 2 characters." });
+
+        var nameEn = (body.NameEnglish ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(nameEn))
+            return BadRequest(new { message = "NameEnglish is required." });
+
+        var nameFr = string.IsNullOrWhiteSpace(body.NameFrench) ? nameEn : body.NameFrench.Trim();
+        var cuppsName = string.IsNullOrWhiteSpace(body.CuppsName) ? nameEn : body.CuppsName.Trim();
+        var icao = string.IsNullOrWhiteSpace(body.IcaoCode) ? null : body.IcaoCode.Trim().ToUpperInvariant();
+
+        var exists = await _db.TblAirlineAccounts.AsNoTracking()
+            .AnyAsync(a => a.IataCode != null && a.IataCode.ToUpper() == code, ct);
+
+        if (exists)
+            return Conflict(new { message = $"An airline with IATA code {code} already exists." });
+
+        var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
+
+        var entity = new TblAirlineAccount
+        {
+            NameEnglish = nameEn,
+            NameFrench = nameFr,
+            IataCode = code,
+            IcaoCode = icao,
+            CuppsName = cuppsName,
+            IsCanada = body.IsCanada,
+            IsUnitedStates = body.IsUnitedStates,
+            IsInternational = body.IsInternational,
+            StandardBackgroundColour = backgroundColor,
+            StandardTextColour = 0,
+            DcsProviderId = null,
+            AllianceId = null,
+            ShowAirportStandardTemplates = true,
+            DefaultCounterTemplateId = null,
+            PickerTab = 0,
+            UserGroupId = 12,
+            RetiredUtc = body.Active ? null : DateTime.UtcNow,
+            FullTemplateLibraryId = 12,
+            HalfTemplateLibraryId = 13,
+        };
+
+        _db.TblAirlineAccounts.Add(entity);
+        await _db.SaveChangesAsync(ct);
+
+        return Ok(new CuppsAirlineCreatedResponse(
+            entity.AirlineId,
+            entity.IataCode,
+            entity.CuppsName,
+            entity.StandardBackgroundColour));
+    }
+
+    private static string NormalizeBackgroundColour(string? input)
+    {
+        var raw = (input ?? string.Empty).Trim();
+        if (raw.StartsWith('#')) raw = raw[1..];
+        raw = raw.ToUpperInvariant();
+        return HexColorRegex.IsMatch(raw) ? $"#{raw}" : "#0071BC";
+    }
 }
 
 public sealed record CuppsAirlineDto(int AirlineId, string Code, string Name, string? Bg);
+public sealed record CuppsAirlineCreateRequest(
+    string NameEnglish,
+    string NameFrench,
+    string IataCode,
+    string? IcaoCode,
+    string CuppsName,
+    bool IsCanada,
+    bool IsUnitedStates,
+    bool IsInternational,
+    string StandardBackgroundColour,
+    bool Active = true);
+
+public sealed record CuppsAirlineCreatedResponse(
+    int AirlineId,
+    string Code,
+    string Name,
+    string BackgroundColor);

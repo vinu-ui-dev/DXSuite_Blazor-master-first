@@ -1,14 +1,14 @@
 @rendermode InteractiveServer
 @using DXSuite.Aviation.Entities
 @using DXSuite.Aviation.Services
+@using DXSuite.Aviation.Services.Cupps
 @using DXSuite.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
-@using Microsoft.EntityFrameworkCore
 @using Microsoft.Extensions.Logging
 @inject IServiceProvider Services
-@inject IDbContextFactory<AviationDbContext> AviationDbFactory
 @inject ILogger<AddAirlineWizard> Logger
 @inject AirlineAudit AirlineAudit
+@inject CuppsLiveDataProvider CuppsLiveData
 
 <div class="dx-panel-header">
     <h4 style="margin:0;">Add Airline</h4>
@@ -718,59 +718,39 @@
         {
             var code = data.Iata.Trim().ToUpperInvariant();
             var name = data.NameEn.Trim();
+            var nameFr = string.IsNullOrWhiteSpace(data.NameFr) ? name : data.NameFr.Trim();
             var icao = string.IsNullOrWhiteSpace(data.Icao) ? null : data.Icao.Trim().ToUpperInvariant();
 
-            await using var db = await AviationDbFactory.CreateDbContextAsync();
+            var create = await CuppsLiveData.CreateOperatingAirlineAccountAsync(new CuppsAirlineCreateRequest(
+                name,
+                nameFr,
+                code,
+                icao,
+                string.IsNullOrWhiteSpace(data.CuppsName) ? name : data.CuppsName.Trim(),
+                data.FlagCanada,
+                data.FlagUs,
+                data.FlagIntl,
+                data.BackgroundColor,
+                data.Active));
 
-            var exists = await db.TblAirlines.AnyAsync(a => a.AirlineCode == code);
-            if (exists)
+            if (!create.Success || create.Airline is null)
             {
-                errorMessage = $"An airline with IATA code {code} already exists.";
+                errorMessage = string.IsNullOrWhiteSpace(create.Error)
+                    ? "Couldn't create the airline. Check the details and try again."
+                    : create.Error;
                 return;
             }
 
-            // One transaction so a missing logo table cannot leave an airline row behind.
-            await using var tx = await db.Database.BeginTransactionAsync();
-
-            var logoPath = data.Wordmark?.Path;
-            await db.Database.ExecuteSqlInterpolatedAsync(
-                $"INSERT INTO dbo.tblAirline (Airline_Code, CarrierName, ICAO, DisplayWithinSettingsMenu, CarrierLogoPath) VALUES ({code}, {name}, {icao}, {data.Active}, {logoPath})");
-
-            var created = await db.TblAirlines
-                .Where(a => a.AirlineCode == code)
-                .Select(a => new { a.RecordId, a.AirlineCode, a.CarrierName, a.Icao, a.DisplayWithinSettingsMenu })
-                .FirstOrDefaultAsync();
-
-            if (created == null)
-            {
-                errorMessage = "The airline was not saved. Try again.";
-                return;
-            }
-
-            foreach (var (role, logo) in new[] { ("wordmark", data.Wordmark), ("square", data.SquareMark), ("reversed", data.ReversedWordmark) })
-            {
-                if (logo == null) continue;
-                db.TblAirlineLogos.Add(new TblAirlineLogo
-                {
-                    AirlineCode = code,
-                    Role = role,
-                    AssetId = logo.AssetId,
-                    AssetName = logo.Name,
-                    AssetPath = logo.Path,
-                    LinkedUtc = DateTime.UtcNow,
-                });
-            }
-            await db.SaveChangesAsync();
-            await tx.CommitAsync();
+            var created = create.Airline;
 
             var dcsLabel = data.DcsMode == "airline" ? "Airline" : data.DcsProvider;
             var result = new NewAirlineResult(
-                created.RecordId, created.AirlineCode, created.CarrierName ?? created.AirlineCode, created.Icao, created.DisplayWithinSettingsMenu,
+                created.AirlineId, created.Code, created.Name, icao, data.Active,
                 data.Alliance, data.Terminal1, data.Terminal3,
-                data.DcsMode == "provider", dcsLabel, data.BackgroundColor,
+                data.DcsMode == "provider", dcsLabel, created.BackgroundColor,
                 data.HasWordmark, data.HasSquareMark, data.HasReversedWordmark);
 
-            await AirlineAudit.CreatedAsync(created.RecordId, created.AirlineCode, result.Name, new
+            await AirlineAudit.CreatedAsync(created.AirlineId, created.Code, result.Name, new
             {
                 alliance = data.Alliance,
                 terminals = TerminalsLabel(),

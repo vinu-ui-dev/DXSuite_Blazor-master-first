@@ -24,14 +24,14 @@ public interface ICounterPublishService
 
 public sealed record CounterStateDto(
     string CounterId,
-    int? HolderAirlineId,
+    int HolderAirlineId,
     bool Open,
     int? CounterTemplateId,
-    string? CounterTemplateKind,
+    byte? CounterTemplateKind,
     string? CounterTemplateName,
     int? TemplateAirlineId,
-    bool? Sunflower,
-    bool? AslOn,
+    bool Sunflower,
+    bool AslOn,
     string? Destination,
     DateTime? SentUtc);
 
@@ -47,7 +47,7 @@ public sealed record CounterPublishRequest(
     int? PageShowSeconds = null,
     bool? AslOn = null);
 
-public sealed record CounterPublishResult(bool Success, string? Error, long? PublishId);
+public sealed record CounterPublishResult(bool Success, string? Error, int? PublishId);
 
 internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAccessScope accessScope) : ICounterPublishService
 {
@@ -62,15 +62,15 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
         var publish = new TblCounterPublish
         {
             SentUtc = DateTime.UtcNow,
-            ActorKind = "user",
+            ActorKind = 0,
             UserId = user?.UserId,
             ActorName = user?.FriendlyName ?? request.ActingUsername,
             ActingForAirlineId = request.AirlineId,
             StationCounterId = request.CounterId,
             CounterTemplateId = request.CounterTemplateId,
-            CounterTemplateKind = request.CounterTemplateKind,
+            CounterTemplateKind = ParseCounterTemplateKind(request.CounterTemplateKind),
             CounterTemplateName = request.CounterTemplateName,
-            Sunflower = request.Sunflower,
+            Sunflower = request.Sunflower ?? false,
             Destination = request.Destination,
             PageShowSeconds = request.PageShowSeconds,
         };
@@ -95,9 +95,9 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
         state.HolderAirlineId = request.AirlineId;
         state.Open = true;
         state.CounterTemplateId = request.CounterTemplateId;
-        state.CounterTemplateKind = request.CounterTemplateKind;
-        state.Sunflower = request.Sunflower;
-        state.AslOn = request.AslOn;
+        state.CounterTemplateKind = ParseCounterTemplateKind(request.CounterTemplateKind);
+        state.Sunflower = request.Sunflower ?? false;
+        state.AslOn = request.AslOn ?? false;
         state.Destination = request.Destination;
         state.LastPublishId = publish.PublishId;
 
@@ -112,7 +112,7 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
 
         // A counter with no recorded state (never published to through this path) has nothing airline-
         // scoped to check — allow the close through rather than block on a check that can't resolve.
-        if (airlineId is not null)
+        if (airlineId is > 0)
         {
             var denied = await CheckAccessAsync(actingUsername, airlineId.Value, ct);
             if (denied is not null) return denied;
@@ -121,11 +121,11 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
         if (state is not null)
         {
             state.Open = false;
-            state.HolderAirlineId = null;
+            state.HolderAirlineId = 0;
             state.CounterTemplateId = null;
             state.CounterTemplateKind = null;
-            state.Sunflower = null;
-            state.AslOn = null;
+            state.Sunflower = false;
+            state.AslOn = false;
             state.Destination = null;
             await db.SaveChangesAsync(ct);
         }
@@ -137,7 +137,7 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
     {
         var rows = await (
             from s in db.TblCounterStates.AsNoTracking()
-            join p in db.TblCounterPublish.AsNoTracking() on s.LastPublishId equals (long?)p.PublishId into pj
+            join p in db.TblCounterPublish.AsNoTracking() on s.LastPublishId equals (int?)p.PublishId into pj
             from p in pj.DefaultIfEmpty()
             join t in db.TblCounterTemplates.AsNoTracking() on s.CounterTemplateId equals (int?)t.CounterTemplateId into tj
             from t in tj.DefaultIfEmpty()
@@ -154,6 +154,16 @@ internal sealed class CounterPublishService(IDirectorDBContext db, IAirlineAcces
             r.CounterId, r.HolderAirlineId, r.Open, r.CounterTemplateId, r.CounterTemplateKind, r.TemplateName,
             r.TemplateAirlineId, r.Sunflower, r.AslOn, r.Destination,
             r.SentUtc is { } u ? DateTime.SpecifyKind(u, DateTimeKind.Utc) : null)).ToList();
+    }
+
+    private static byte? ParseCounterTemplateKind(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+
+        var kind = value.Trim();
+        if (string.Equals(kind, "standard", StringComparison.OrdinalIgnoreCase)) return 0;
+        if (string.Equals(kind, "custom", StringComparison.OrdinalIgnoreCase)) return 1;
+        return byte.TryParse(kind, out var parsed) ? parsed : null;
     }
 
     private async Task<CounterPublishResult?> CheckAccessAsync(string actingUsername, int airlineId, CancellationToken ct)

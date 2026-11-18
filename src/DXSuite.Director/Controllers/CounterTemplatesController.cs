@@ -73,7 +73,7 @@ public sealed class CounterTemplatesController : ControllerBase
         var templates = await _db.TblCounterTemplates
             .AsNoTracking()
             .Where(t => t.RetiredUtc == null)
-            .Where(t => t.AirlineId == airlineId || (includeAirportStandard && t.AirlineId == 0))
+            .Where(t => t.AirlineId == airlineId || (includeAirportStandard && (t.AirlineId == 0 || t.AirlineId == null)))
             .Where(t => t.EndDate == null || t.EndDate >= todayUtc)
             .Select(t => new
             {
@@ -106,8 +106,8 @@ public sealed class CounterTemplatesController : ControllerBase
             .Select(t => new CounterTemplatePageOptionDto(
                 t.CounterTemplateId,
                 t.Name,
-                t.AirlineId,
-                t.AirlineId == 0 ? "airport" : "airline",
+                t.AirlineId ?? 0,
+                t.AirlineId is 0 or null ? "airport" : "airline",
                 t.Kind == StandardKind ? "Standard" : t.Kind == CustomKind ? "Custom" : t.Kind.ToString(),
                 t.ImageLayout,
                 t.StartDate,

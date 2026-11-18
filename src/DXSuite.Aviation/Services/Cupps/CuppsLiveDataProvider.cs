@@ -1,4 +1,5 @@
 using System.Net.Http.Json;
+using System.Text.Json;
 using DXSuite.Aviation.Pages.Cupps;
 using DXSuite.Aviation.Services.CounterAllocation;
 using DXSuite.Aviation.Services.FlightDataEditor;
@@ -47,6 +48,44 @@ public sealed class CuppsLiveDataProvider(
 
     public async Task<IReadOnlyList<Airline>> GetOperatingAirlinesAsync(CancellationToken ct = default) =>
         (await GetOperatingAirlineAccountsAsync(ct)).Select(a => a.Airline).ToList();
+
+    public async Task<CuppsAirlineCreateResult> CreateOperatingAirlineAccountAsync(
+        CuppsAirlineCreateRequest request,
+        CancellationToken ct = default)
+    {
+        if (sessionState.UserName is not { } username)
+            return new CuppsAirlineCreateResult(false, null, "Not signed in.");
+
+        var client = AuthenticatedClient(username);
+        var uri = new Uri(new Uri(navigationManager.BaseUri), "api/cupps/airlines");
+        var response = await client.PostAsJsonAsync(uri, request, ct);
+
+        if (response.IsSuccessStatusCode)
+        {
+            var created = await response.Content.ReadFromJsonAsync<CuppsAirlineCreatedDto>(cancellationToken: ct);
+            return created is null
+                ? new CuppsAirlineCreateResult(false, null, "The airline was created but no response payload was returned.")
+                : new CuppsAirlineCreateResult(true, created, null);
+        }
+
+        var error = await response.Content.ReadAsStringAsync(ct);
+        if (!string.IsNullOrWhiteSpace(error))
+        {
+            try
+            {
+                var parsed = JsonSerializer.Deserialize<CuppsErrorResponse>(error);
+                if (!string.IsNullOrWhiteSpace(parsed?.Message))
+                    error = parsed.Message;
+            }
+            catch
+            {
+                // Keep raw response content.
+            }
+        }
+
+        return new CuppsAirlineCreateResult(false, null,
+            string.IsNullOrWhiteSpace(error) ? "Could not create airline account." : error.Trim());
+    }
 
     public async Task<(IReadOnlyList<Template> Templates, string? PickerTab)> GetPageOptionsAsync(int airlineId, string airlineCode,
         CancellationToken ct = default)
@@ -129,15 +168,15 @@ public sealed class CuppsLiveDataProvider(
             {
                 Open = r.Open,
                 Page = r.Open ? page : null,
-                Asl = r.AslOn == true,
-                Sunflower = r.Sunflower == true,
+                Asl = r.AslOn,
+                Sunflower = r.Sunflower,
                 Dest = r.Destination ?? "",
                 SentAt = r.SentUtc is { } sent ? MinutesSinceMidnight(sent, zone) : 0,
             };
-            if (r.HolderAirlineId is { } holder) holders[r.CounterId] = holder;
+            if (r.HolderAirlineId > 0) holders[r.CounterId] = r.HolderAirlineId;
             if (page is not null && !templates.ContainsKey(page))
             {
-                var kind = string.Equals(r.CounterTemplateKind, "custom", StringComparison.OrdinalIgnoreCase) ? "Custom" : "Standard";
+                var kind = r.CounterTemplateKind == 1 ? "Custom" : "Standard";
                 var name = string.IsNullOrWhiteSpace(r.CounterTemplateName) ? $"Template {page}" : r.CounterTemplateName!;
                 templates[page] = new Template(page, kind, r.TemplateAirlineId is 0 ? "airport" : "airline", name, name);
             }
@@ -287,18 +326,19 @@ public sealed class CuppsLiveDataProvider(
 
     private sealed record CounterStateRow(
         string CounterId,
-        int? HolderAirlineId,
+        int HolderAirlineId,
         bool Open,
         int? CounterTemplateId,
-        string? CounterTemplateKind,
+        byte? CounterTemplateKind,
         string? CounterTemplateName,
         int? TemplateAirlineId,
-        bool? Sunflower,
-        bool? AslOn,
+        bool Sunflower,
+        bool AslOn,
         string? Destination,
         DateTime? SentUtc);
 
     private sealed record CuppsAirlineDto(int? AirlineId, string Code, string Name, string? Bg);
+    private sealed record CuppsErrorResponse(string? Message);
 
     private sealed record CounterTemplatePageOptionsResponse(
         CounterTemplateAirlineDto Airline,
@@ -330,3 +370,26 @@ public sealed record CuppsCounterStates(
     Dictionary<string, int> HolderAirlineIds);
 
 public sealed record OperatingAirlineAccount(int AirlineId, Airline Airline);
+
+public sealed record CuppsAirlineCreateRequest(
+    string NameEnglish,
+    string NameFrench,
+    string IataCode,
+    string? IcaoCode,
+    string CuppsName,
+    bool IsCanada,
+    bool IsUnitedStates,
+    bool IsInternational,
+    string StandardBackgroundColour,
+    bool Active = true);
+
+public sealed record CuppsAirlineCreatedDto(
+    int AirlineId,
+    string Code,
+    string Name,
+    string BackgroundColor);
+
+public sealed record CuppsAirlineCreateResult(
+    bool Success,
+    CuppsAirlineCreatedDto? Airline,
+    string? Error);

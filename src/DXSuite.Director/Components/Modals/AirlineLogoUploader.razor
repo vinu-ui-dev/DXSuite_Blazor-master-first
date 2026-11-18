@@ -43,7 +43,15 @@
     // The uploader reports only that it finished, so the new file is the newest asset added since it opened.
     private async Task OnSubmitted()
     {
-        var file = await Library.FindUploadedSinceAsync(locationId, lastAssetId);
+        AirlineLogoFile? file = null;
+        var started = DateTime.UtcNow;
+        while ((DateTime.UtcNow - started).TotalMilliseconds < 2500)
+        {
+            file = await Library.FindUploadedSinceAsync(locationId, lastAssetId);
+            if (file != null) break;
+            await Task.Delay(200);
+        }
+
         if (file != null) await OnUploaded.InvokeAsync(file);
     }
 }
