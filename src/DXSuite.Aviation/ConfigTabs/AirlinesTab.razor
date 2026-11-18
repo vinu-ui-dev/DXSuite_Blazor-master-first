@@ -957,7 +957,7 @@ else
     </div>
 }
 
-@if (logoLibrary != null && libraryInfo != null)
+@if (logoLibrary != null)
 {
     <DynamicComponent Type="logoLibrary.UploaderComponentType" Parameters="uploaderParameters" @ref="uploaderHost" />
 }
@@ -1222,7 +1222,7 @@ else
         {
             uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploadedAsync) };
             try { libraryInfo = await logoLibrary.GetLibraryAsync(); }
-            catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); }
+            catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); DXSuite.Shared.Logging.AirlineFileLog.Write($"[LOGO-LIB] reading the library failed: {DXSuite.Shared.Logging.AirlineFileLog.Describe(ex)}"); }
         }
 
         canSeeDcsProvidersTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesDcsProvidersTab);
@@ -1508,9 +1508,27 @@ else
         }
     }
 
+    // No library yet: an Admin's first Choose or Upload creates it (Airline wordmarks, 1200 x 400); anyone else is told.
+    private async Task<bool> EnsureLibraryAsync(string kind)
+    {
+        if (libraryInfo != null) return true;
+        if (logoLibrary == null) return false;
+        try { libraryInfo = await logoLibrary.EnsureLibraryAsync(); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not create the airline logo library");
+            DXSuite.Shared.Logging.AirlineFileLog.Write($"[LOGO-LIB] creating the library failed: {DXSuite.Shared.Logging.AirlineFileLog.Describe(ex)}");
+        }
+        if (libraryInfo == null)
+            logoErrors[kind] = "No airline logo library exists yet, and only an Admin can create it. Ask an Admin to open this page once.";
+        return libraryInfo != null;
+    }
+
     private async Task OpenPickerAsync(string kind)
     {
         if (logoLibrary == null) return;
+        logoErrors.Remove(kind);
+        if (!await EnsureLibraryAsync(kind)) return;
         pickerKind = kind;
         pickerLoading = true;
         pickerFiles = [];
@@ -1536,12 +1554,13 @@ else
 
     private async Task OpenUploadAsync(string kind)
     {
+        logoErrors.Remove(kind);
+        if (!await EnsureLibraryAsync(kind)) return;
         if (uploaderHost?.Instance is not IAirlineLogoUploader uploader)
         {
             logoErrors[kind] = "The upload dialog is not ready. Try again.";
             return;
         }
-        logoErrors.Remove(kind);
         uploadKind = kind;
         try
         {
@@ -1715,8 +1734,8 @@ else
                     <span class="dx-badge @(status == "Approved" ? "dx-badge-green" : status == "Pending" ? "dx-badge-orange" : "dx-badge-gray")" style="margin-left:6px;">@status</span>
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(isViewOnlyAirlines || libraryInfo == null)" @onclick="() => OpenPickerAsync(kind)">@(isAdminProfile ? "CHOOSE FROM LIBRARY" : "CHOOSE AN EARLIER LOGO")</button>
-                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(isViewOnlyAirlines || libraryInfo == null)" @onclick="() => OpenUploadAsync(kind)">@(isAdminProfile ? "UPLOAD TO LIBRARY" : status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(isViewOnlyAirlines || logoLibrary == null)" @onclick="() => OpenPickerAsync(kind)">@(isAdminProfile ? "CHOOSE FROM LIBRARY" : "CHOOSE AN EARLIER LOGO")</button>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(isViewOnlyAirlines || logoLibrary == null)" @onclick="() => OpenUploadAsync(kind)">@(isAdminProfile ? "UPLOAD TO LIBRARY" : status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
                 </div>
             </div>
             <div class="dx-alert dx-alert-info" style="font-size:0.78rem; padding:8px 10px; margin-bottom:10px;">
@@ -1728,7 +1747,7 @@ else
                     }
                     else
                     {
-                        @:No Airline wordmarks asset library found. Create one in Director to choose or upload logos.
+                        @:No Airline wordmarks asset library yet. An Admin's first Choose or Upload creates it.
                     }
                 }
                 else
@@ -1799,7 +1818,7 @@ else
             {
                 <div class="dx-alert dx-alert-danger" style="font-size:0.8rem; padding:8px 10px; margin-top:10px;">@logoError</div>
             }
-            @if (libraryInfo == null)
+            @if (logoLibrary == null)
             {
             <div style="margin-top:10px;">
                 <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase; margin-bottom:4px;">Prototype uploads</div>

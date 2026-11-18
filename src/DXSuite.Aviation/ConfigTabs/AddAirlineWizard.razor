@@ -320,7 +320,7 @@
     </div>
 }
 
-@if (logoLibrary != null && libraryInfo != null)
+@if (logoLibrary != null)
 {
     <DynamicComponent Type="logoLibrary.UploaderComponentType" Parameters="uploaderParameters" @ref="uploaderHost" />
 }
@@ -478,7 +478,7 @@
         if (logoLibrary == null) return;
         uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploaded) };
         try { libraryInfo = await logoLibrary.GetLibraryAsync(); }
-        catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); }
+        catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); DXSuite.Shared.Logging.AirlineFileLog.Write($"[LOGO-LIB] reading the library failed: {DXSuite.Shared.Logging.AirlineFileLog.Describe(ex)}"); }
     }
 
     private List<Issue> Validate()
@@ -601,9 +601,27 @@
         _ => "Reversed wordmark",
     };
 
+    // No library yet: an Admin's first Choose or Upload creates it (Airline wordmarks, 1200 x 400); anyone else is told.
+    private async Task<bool> EnsureLibraryAsync(string kind)
+    {
+        if (libraryInfo != null) return true;
+        if (logoLibrary == null) return false;
+        try { libraryInfo = await logoLibrary.EnsureLibraryAsync(); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not create the airline logo library");
+            DXSuite.Shared.Logging.AirlineFileLog.Write($"[LOGO-LIB] creating the library failed: {DXSuite.Shared.Logging.AirlineFileLog.Describe(ex)}");
+        }
+        if (libraryInfo == null)
+            logoErrors[kind] = "No airline logo library exists yet, and only an Admin can create it. Ask an Admin to open this page once.";
+        return libraryInfo != null;
+    }
+
     private async Task OpenPicker(string kind)
     {
         if (logoLibrary == null) return;
+        logoErrors.Remove(kind);
+        if (!await EnsureLibraryAsync(kind)) return;
         pickerKind = kind;
         pickerLoading = true;
         pickerFiles = [];
@@ -628,8 +646,13 @@
 
     private async Task OpenUpload(string kind)
     {
-        if (uploaderHost?.Instance is not IAirlineLogoUploader uploader) return;
         logoErrors.Remove(kind);
+        if (!await EnsureLibraryAsync(kind)) return;
+        if (uploaderHost?.Instance is not IAirlineLogoUploader uploader)
+        {
+            logoErrors[kind] = "The upload dialog is not ready. Try again.";
+            return;
+        }
         uploadKind = kind;
         try
         {
@@ -668,8 +691,8 @@
                     {
                         <button class="aaw-lib-btn outline" @onclick="() => SetLogo(kind, null)">REMOVE</button>
                     }
-                    <button class="aaw-lib-btn outline" disabled="@(libraryInfo == null)" @onclick="() => OpenPicker(kind)"><i class="bi bi-collection"></i> CHOOSE FROM LIBRARY</button>
-                    <button class="aaw-lib-btn solid" disabled="@(libraryInfo == null)" @onclick="() => OpenUpload(kind)"><i class="bi bi-upload"></i> UPLOAD TO LIBRARY</button>
+                    <button class="aaw-lib-btn outline" disabled="@(logoLibrary == null)" @onclick="() => OpenPicker(kind)"><i class="bi bi-collection"></i> CHOOSE FROM LIBRARY</button>
+                    <button class="aaw-lib-btn solid" disabled="@(logoLibrary == null)" @onclick="() => OpenUpload(kind)"><i class="bi bi-upload"></i> UPLOAD TO LIBRARY</button>
                 </div>
             </div>
             @if (libraryInfo != null)
@@ -678,7 +701,7 @@
             }
             else
             {
-                <div class="aaw-logo-source dx-text-muted"><i class="bi bi-collection"></i> No Airline wordmarks asset library found. Create one in Director to choose or upload logos.</div>
+                <div class="aaw-logo-source dx-text-muted"><i class="bi bi-collection"></i> No Airline wordmarks asset library yet. An Admin's first Choose or Upload creates it.</div>
             }
             <div class="aaw-logo-preview @(LogoFor(kind) != null ? "has-file" : "")">
                 @if (LogoFor(kind) is { } file)

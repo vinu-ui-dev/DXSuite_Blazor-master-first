@@ -18,6 +18,12 @@ public interface IAirlineLogoLibrary
     /// <summary>Null when no matching asset library exists yet.</summary>
     Task<AirlineLogoLibraryInfo?> GetLibraryAsync(CancellationToken ct = default);
 
+    /// <summary>
+    /// The library, created when it does not exist yet. Only an Admin may create it: for anyone else, or when it cannot
+    /// be created, this returns null and the caller shows that no library is available.
+    /// </summary>
+    Task<AirlineLogoLibraryInfo?> EnsureLibraryAsync(CancellationToken ct = default);
+
     /// <summary>The library's approved, non-deleted files.</summary>
     Task<IReadOnlyList<AirlineLogoFile>> ListApprovedAsync(CancellationToken ct = default);
 
