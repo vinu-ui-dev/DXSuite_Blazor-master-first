@@ -1,4 +1,6 @@
+using Microsoft.Data.SqlClient;
 using Microsoft.EntityFrameworkCore;
+using DXSuite.Shared.Entities;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Multitenancy;
 
@@ -66,7 +68,7 @@ public class UserGroupService : IUserGroupService
         };
 
         _db.TblUserGroups.Add(group);
-        await _db.SaveChangesAsync();
+        await SaveGroupChangesAsync(groupName, "create");
         return group;
     }
 
@@ -83,7 +85,7 @@ public class UserGroupService : IUserGroupService
         group.LastEditDate = DateTime.UtcNow;
         group.LastEditUser = editUser;
 
-        await _db.SaveChangesAsync();
+        await SaveGroupChangesAsync(groupName, "save");
     }
 
     public async Task DeleteGroupAsync(int groupId)
@@ -92,7 +94,32 @@ public class UserGroupService : IUserGroupService
         if (group != null)
         {
             _db.TblUserGroups.Remove(group);
+            await SaveGroupChangesAsync(group.GroupName, "delete");
+        }
+    }
+
+    /// <summary>
+    /// Saves a group change and turns a database refusal into a message the user can act on. The context is shared for
+    /// the whole circuit, so a rejected change is detached: left tracked it would be retried, and fail again, on the
+    /// next save of anything.
+    /// </summary>
+    private async Task SaveGroupChangesAsync(string groupName, string action)
+    {
+        try
+        {
             await _db.SaveChangesAsync();
+        }
+        catch (DbUpdateException ex)
+        {
+            foreach (var entry in ex.Entries) entry.State = EntityState.Detached;
+
+            if (ex.IsUniqueViolation())
+                throw new InvalidOperationException($"A group named '{groupName}' already exists. Group names must be unique.", ex);
+            if (ex.InnerException is SqlException { Number: 547 })
+                throw new InvalidOperationException(action == "delete"
+                    ? $"'{groupName}' is still used by other records (for example Messages, approvals or access rules), so it cannot be deleted. Remove it from them first, or untick Active to switch it off."
+                    : $"'{groupName}' could not be saved because it conflicts with other records.", ex);
+            throw new InvalidOperationException($"Could not {action} '{groupName}': {ex.GetBaseException().Message}", ex);
         }
     }
 
