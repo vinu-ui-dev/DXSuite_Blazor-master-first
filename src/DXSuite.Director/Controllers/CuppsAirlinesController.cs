@@ -1,5 +1,6 @@
 using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
+using DXSuite.Shared.Logging;
 using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -84,8 +85,12 @@ public sealed class CuppsAirlinesController : ControllerBase
     public async Task<IActionResult> Create([FromBody] CuppsAirlineCreateRequest body, CancellationToken ct = default)
     {
         var username = _tokenService.ValidateToken(Request.Headers["X-Internal-Caller-Token"], out var tokenRole);
+        AirlineFileLog.Write($"[CREATE-API] received user='{username}' tokenRole='{tokenRole}' payload={System.Text.Json.JsonSerializer.Serialize(body)}");
         if (username is null)
+        {
+            AirlineFileLog.Write("[CREATE-API] 401: missing or invalid caller token");
             return Unauthorized(new { message = "Missing or invalid caller token." });
+        }
 
         var caller = await _db.TblUsers.AsNoTracking()
             .Include(u => u.Role)
@@ -101,17 +106,24 @@ public sealed class CuppsAirlinesController : ControllerBase
         if (!CanCreate(caller?.Role?.RoleName) && !CanCreate(tokenRole))
         {
             // A plain Forbid() would redirect this caller (no cookie) to an HTML page; answer in JSON instead.
+            AirlineFileLog.Write($"[CREATE-API] 403: role on file='{caller?.Role?.RoleName}', token role='{tokenRole}' is not Admin or Architect");
             return StatusCode(StatusCodes.Status403Forbidden,
                 new { message = $"Only an Admin or Architect can create an airline (signed in as {tokenRole ?? caller?.Role?.RoleName ?? "an unknown role"})." });
         }
 
         var code = (body.IataCode ?? string.Empty).Trim().ToUpperInvariant();
         if (code.Length != 2)
+        {
+            AirlineFileLog.Write($"[CREATE-API] 400: IataCode '{code}' is not 2 characters");
             return BadRequest(new { message = "IataCode must be exactly 2 characters." });
+        }
 
         var nameEn = (body.NameEnglish ?? string.Empty).Trim();
         if (string.IsNullOrWhiteSpace(nameEn))
+        {
+            AirlineFileLog.Write("[CREATE-API] 400: NameEnglish is empty");
             return BadRequest(new { message = "NameEnglish is required." });
+        }
 
         var nameFr = string.IsNullOrWhiteSpace(body.NameFrench) ? nameEn : body.NameFrench.Trim();
         var cuppsName = string.IsNullOrWhiteSpace(body.CuppsName) ? nameEn : body.CuppsName.Trim();
@@ -121,7 +133,10 @@ public sealed class CuppsAirlinesController : ControllerBase
             .AnyAsync(a => a.IataCode != null && a.IataCode.ToUpper() == code, ct);
 
         if (exists)
+        {
+            AirlineFileLog.Write($"[CREATE-API] 409: IATA code {code} already exists");
             return Conflict(new { message = $"An airline with IATA code {code} already exists." });
+        }
 
         var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
 
@@ -149,8 +164,21 @@ public sealed class CuppsAirlinesController : ControllerBase
         };
 
         _db.TblAirlineAccounts.Add(entity);
-        await _db.SaveChangesAsync(ct);
+        AirlineFileLog.Write($"[CREATE-API] inserting tblAirlineAccount row: {System.Text.Json.JsonSerializer.Serialize(new { entity.NameEnglish, entity.NameFrench, entity.IataCode, entity.IcaoCode, entity.CuppsName, entity.IsCanada, entity.IsUnitedStates, entity.IsInternational, entity.StandardBackgroundColour, entity.UserGroupId, entity.FullTemplateLibraryId, entity.HalfTemplateLibraryId, entity.RetiredUtc })}");
+        try
+        {
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // The real reason (a foreign key, column size or missing column) is in the inner exception: log it all.
+            var why = AirlineFileLog.Describe(ex);
+            AirlineFileLog.Write($"[CREATE-API] 500: saving the airline failed. {why}");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = $"The airline could not be saved: {ex.GetBaseException().Message}" });
+        }
 
+        AirlineFileLog.Write($"[CREATE-API] 200: created AirlineId={entity.AirlineId} code={entity.IataCode}");
         return Ok(new CuppsAirlineCreatedResponse(
             entity.AirlineId,
             entity.IataCode,
