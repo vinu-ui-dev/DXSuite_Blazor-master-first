@@ -3,12 +3,15 @@
 @using DXSuite.Aviation.Services
 @using DXSuite.Aviation.Services.Cupps
 @using DXSuite.Shared.Authorization
+@using DXSuite.Shared.Services
 @using Microsoft.Extensions.Logging
 @inject ILogger<AirlinesTab> Logger
 @inject ISessionState SessionState
 @inject AirlineAudit AirlineAudit
 @inject DXSuite.Shared.Services.Identity.IUserGroupService UserGroupService
 @inject CuppsLiveDataProvider CuppsLiveData
+@inject IServiceProvider Services
+@inject AirlineLogoLinks LogoLinks
 
 <div class="dx-card" style="display:flex; flex-direction:column; height:100%; overflow:hidden;">
 
@@ -287,7 +290,7 @@ else
         {
             <button class="dx-tab-btn @(profileTab == "identity" ? "active" : "")" @onclick="@(() => profileTab = "identity")">Identity</button>
         }
-        <button class="dx-tab-btn @(profileTab == "branding" ? "active" : "")" @onclick="@(() => profileTab = "branding")">Branding</button>
+        <button class="dx-tab-btn @(profileTab == "branding" ? "active" : "")" @onclick="@(() => OpenBrandingTab())">Branding</button>
         @if (canShowAdminCuppsTab)
         {
             <button class="dx-tab-btn @(profileTab == "cupps" ? "active" : "")" @onclick="@(() => profileTab = "cupps")">CUPPS options</button>
@@ -916,9 +919,64 @@ else
     </div>
 }
 
+@if (pickerKind != null)
+{
+    <div class="alp-modal-backdrop" @onclick="ClosePicker">
+        <div class="alp-modal" @onclick:stopPropagation="true">
+            <div class="alp-modal-head">
+                <strong>Choose a @RoleLabel(pickerKind).ToLowerInvariant() from @(libraryInfo?.Name)</strong>
+                <button class="alp-modal-close" @onclick="ClosePicker" aria-label="Close">&times;</button>
+            </div>
+            <div class="alp-modal-body">
+                <p class="dx-text-muted" style="font-size:0.85rem;">Approved files of the library. A file here is already approved, so it is linked with no new approval. To add a new file, use Upload to library.</p>
+                @if (pickerLoading)
+                {
+                    <p class="dx-text-muted">Loading...</p>
+                }
+                else if (pickerFiles.Count == 0)
+                {
+                    <h6 class="dx-text-muted" style="margin:18px 0;">No approved files in this library yet.</h6>
+                }
+                else
+                {
+                    <div class="alp-picker-grid">
+                        @foreach (var f in pickerFiles)
+                        {
+                            <button class="alp-picker-item" @onclick="() => PickFileAsync(f)">
+                                <span class="alp-picker-thumb"><img src="@f.Path" alt="@f.Name" /></span>
+                                <span class="alp-picker-name">@f.Name</span>
+                            </button>
+                        }
+                    </div>
+                }
+            </div>
+            <div class="alp-modal-foot">
+                <button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="ClosePicker">CANCEL</button>
+            </div>
+        </div>
+    </div>
+}
+
+@if (logoLibrary != null && libraryInfo != null)
+{
+    <DynamicComponent Type="logoLibrary.UploaderComponentType" Parameters="uploaderParameters" @ref="uploaderHost" />
+}
+
 </div>
 
 <style>
+    .alp-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:2000; display:flex; align-items:center; justify-content:center; }
+    .alp-modal { background:#fff; border-radius:10px; width:min(720px, 92vw); max-height:80vh; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 10px 40px rgba(0,0,0,0.35); }
+    .alp-modal-head { background:#0071bc; color:#fff; padding:16px 22px; display:flex; justify-content:space-between; align-items:center; }
+    .alp-modal-close { background:none; border:none; color:#fff; font-size:1.4rem; line-height:1; cursor:pointer; }
+    .alp-modal-body { padding:18px 22px; overflow-y:auto; }
+    .alp-modal-foot { padding:12px 22px; border-top:1px solid #eee; display:flex; justify-content:flex-end; }
+    .alp-picker-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(150px, 1fr)); gap:12px; margin-top:12px; }
+    .alp-picker-item { border:1px solid #dee2e6; border-radius:6px; background:#fff; padding:8px; cursor:pointer; text-align:left; }
+    .alp-picker-item:hover { border-color:#0071bc; background:#f4f9ff; }
+    .alp-picker-thumb { display:flex; align-items:center; justify-content:center; height:64px; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px; }
+    .alp-picker-thumb img { max-width:100%; max-height:100%; object-fit:contain; }
+    .alp-picker-name { display:block; font-size:0.78rem; margin-top:6px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
     .dx-typeahead-dropdown {
         position: absolute;
         top: 100%;
@@ -1115,6 +1173,13 @@ else
     private AirlineRow? profileAirline;
     private AirlineRow? supervisorTarget;
     private string profileTab = "branding";
+
+    // Approvals happen in Director, so the Branding tab re-reads the links each time it is opened.
+    private void OpenBrandingTab()
+    {
+        profileTab = "branding";
+        if (profileAirline is not null) _ = LoadSavedLogosAsync(profileAirline.Code);
+    }
     private bool isSupervisorPreview;
     private bool isRealAirlineScope;
     private bool isViewOnlyAirlines;
@@ -1152,6 +1217,14 @@ else
 
     protected override async Task OnInitializedAsync()
     {
+        logoLibrary = Services.GetService(typeof(IAirlineLogoLibrary)) as IAirlineLogoLibrary;
+        if (logoLibrary != null)
+        {
+            uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploadedAsync) };
+            try { libraryInfo = await logoLibrary.GetLibraryAsync(); }
+            catch (Exception ex) { Logger.LogError(ex, "Could not read the airline logo library"); }
+        }
+
         canSeeDcsProvidersTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesDcsProvidersTab);
         canSeeAlliancesTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesAlliancesTab);
         canSeeLogoLibrariesTab = await SessionState.HasPermissionAsync(PermissionKeys.AirlinesLogoLibrariesTab);
@@ -1328,6 +1401,7 @@ else
     private void OpenProfile(AirlineRow row, bool supervisor)
     {
         profileAirline = row;
+        _ = LoadSavedLogosAsync(row.Code);
         isSupervisorPreview = supervisor;
         viewMode = "profile";
         EnsureVisibleProfileTab();
@@ -1373,6 +1447,143 @@ else
         if (canShowAdminUsersTab && profileTab == "users") return;
 
         profileTab = "branding";
+    }
+
+    // ── Logos: the real Director asset library (choose an approved file, or upload into it) ──────────────────────────
+
+    private IAirlineLogoLibrary? logoLibrary;
+    private AirlineLogoLibraryInfo? libraryInfo;
+    private string? pickerKind;
+    private bool pickerLoading;
+    private IReadOnlyList<AirlineLogoFile> pickerFiles = [];
+    private string? uploadKind;
+    private DynamicComponent? uploaderHost;
+    private Dictionary<string, object>? uploaderParameters;
+    private readonly Dictionary<string, string> logoErrors = new();
+    private readonly Dictionary<(string Code, string Kind), AirlineLogoState> savedLogos = new();
+
+    private static string RoleLabel(string kind) => kind switch
+    {
+        "wordmark" => "Wordmark",
+        "square" => "Square mark",
+        _ => "Reversed wordmark",
+    };
+
+    private AirlineLogoState? SavedLogo(string kind) =>
+        profileAirline is not null && savedLogos.TryGetValue((profileAirline.Code, kind), out var state) ? state : null;
+
+    private static void SetLogoStatus(AirlineExtra extra, string kind, string status)
+    {
+        switch (kind)
+        {
+            case "wordmark": extra.WordmarkStatus = status; break;
+            case "square": extra.SquareMarkStatus = status; break;
+            case "reversed": extra.ReversedWordmarkStatus = status; break;
+        }
+    }
+
+    private static string StatusOf(AirlineLogoState state) =>
+        state.Pending is not null ? (state.PendingDeclined ? "Declined" : "Pending") : state.Live is not null ? "Approved" : "Not uploaded";
+
+    /// <summary>
+    /// The logos this airline has linked, so the Branding tab shows them after a reload. A new upload that Director
+    /// approved since is promoted to the logo on screen here.
+    /// </summary>
+    private async Task LoadSavedLogosAsync(string code)
+    {
+        try
+        {
+            var states = await LogoLinks.LoadAsync(code);
+            var extra = ExtraFor(code);
+            foreach (var (role, state) in states)
+            {
+                savedLogos[(code, role)] = state;
+                SetLogoStatus(extra, role, StatusOf(state));
+            }
+            await InvokeAsync(StateHasChanged);
+        }
+        catch (Exception ex)
+        {
+            Logger.LogWarning(ex, "Could not load the saved logos of airline {Code}", code);
+        }
+    }
+
+    private async Task OpenPickerAsync(string kind)
+    {
+        if (logoLibrary == null) return;
+        pickerKind = kind;
+        pickerLoading = true;
+        pickerFiles = [];
+        logoErrors.Remove(kind);
+        try { pickerFiles = await logoLibrary.ListApprovedAsync(); }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not list the airline logo library");
+            logoErrors[kind] = "The library could not be read. Try again.";
+            pickerKind = null;
+        }
+        finally { pickerLoading = false; }
+    }
+
+    private void ClosePicker() => pickerKind = null;
+
+    private async Task PickFileAsync(AirlineLogoFile file)
+    {
+        var kind = pickerKind;
+        pickerKind = null;
+        if (kind != null) await LinkLogoAsync(kind, file);
+    }
+
+    private async Task OpenUploadAsync(string kind)
+    {
+        if (uploaderHost?.Instance is not IAirlineLogoUploader uploader)
+        {
+            logoErrors[kind] = "The upload dialog is not ready. Try again.";
+            return;
+        }
+        logoErrors.Remove(kind);
+        uploadKind = kind;
+        try
+        {
+            if (await uploader.OpenAsync() is { } problem) logoErrors[kind] = problem;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not open the logo uploader");
+            logoErrors[kind] = "The upload dialog could not be opened. Try again.";
+        }
+    }
+
+    private async Task OnLogoUploadedAsync(AirlineLogoFile file)
+    {
+        var kind = uploadKind;
+        uploadKind = null;
+        if (kind != null) await LinkLogoAsync(kind, file);
+    }
+
+    /// <summary>
+    /// Points the airline's logo role at a library file. An approved file goes live at once; a new upload waits on the
+    /// library's approval chain (Director &gt; Approvals) and the logo on screen stays as it was until it is approved.
+    /// </summary>
+    private async Task LinkLogoAsync(string kind, AirlineLogoFile file)
+    {
+        if (profileAirline is null || isViewOnlyAirlines) return;
+        var code = profileAirline.Code;
+        try
+        {
+            await LogoLinks.LinkAsync(code, kind, file);
+            logoErrors.Remove(kind);
+            await LoadSavedLogosAsync(code);
+            statusMessage = file.Approved
+                ? $"{RoleLabel(kind)} set for {profileAirline.Name}."
+                : $"{RoleLabel(kind)} uploaded for {profileAirline.Name}. It is waiting for approval in Director > Approvals; the logo on screen stays until it is approved.";
+            statusIsError = false;
+        }
+        catch (Exception ex)
+        {
+            Logger.LogError(ex, "Could not link the {Role} logo of airline {Code}", kind, code);
+            logoErrors[kind] = "The logo could not be saved. Try again.";
+        }
     }
 
     private void SimulateUpload(string kind)
@@ -1504,21 +1715,58 @@ else
                     <span class="dx-badge @(status == "Approved" ? "dx-badge-green" : status == "Pending" ? "dx-badge-orange" : "dx-badge-gray")" style="margin-left:6px;">@status</span>
                 </div>
                 <div style="display:flex; gap:8px;">
-                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isViewOnlyAirlines" @onclick="() => SimulateUpload(kind)">@(isAdminProfile ? "CHOOSE FROM LIBRARY" : "CHOOSE AN EARLIER LOGO")</button>
-                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isViewOnlyAirlines" @onclick="() => SimulateUpload(kind)">@(isAdminProfile ? "UPLOAD TO LIBRARY" : status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
+                    <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@(isViewOnlyAirlines || libraryInfo == null)" @onclick="() => OpenPickerAsync(kind)">@(isAdminProfile ? "CHOOSE FROM LIBRARY" : "CHOOSE AN EARLIER LOGO")</button>
+                    <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(isViewOnlyAirlines || libraryInfo == null)" @onclick="() => OpenUploadAsync(kind)">@(isAdminProfile ? "UPLOAD TO LIBRARY" : status is "No file" or "Not uploaded" ? "UPLOAD" : "REPLACE")</button>
                 </div>
             </div>
             <div class="dx-alert dx-alert-info" style="font-size:0.78rem; padding:8px 10px; margin-bottom:10px;">
                 @if (isAdminProfile)
                 {
-                    @:Draws from @chainName (Asset Library 2301, ConstraintId 5301) &middot; approved on its chain (GTAA admins)
+                    if (libraryInfo != null)
+                    {
+                        @:Draws from @libraryInfo.Name@(libraryInfo.Width > 0 ? $", Aspect Ratio {libraryInfo.Width} x {libraryInfo.Height}" : "") &middot; approved on that library's chain (GTAA admins)
+                    }
+                    else
+                    {
+                        @:No Airline wordmarks asset library found. Create one in Director to choose or upload logos.
+                    }
                 }
                 else
                 {
                     @:Approved by GTAA on the @chainName chain (GTAA admins)<br />a library every airline uploads to; you see only your airline's files
                 }
             </div>
-            @if (status is not ("No file" or "Not uploaded"))
+            @if (SavedLogo(kind) is { } saved)
+            {
+                @if (saved.Live is { } live)
+                {
+                    <div style="height:90px; display:flex; align-items:center; justify-content:center; border-radius:4px; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px;">
+                        <img src="@live.Path" alt="@title" style="max-width:100%; max-height:100%; object-fit:contain;" />
+                    </div>
+                    <div class="dx-text-muted" style="font-size:0.75rem; margin-top:4px;">On screen now &middot; @live.Name</div>
+                    <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">
+                        @(customNote ?? $"Drawn on Standard Counter templates. The library's constraint: Aspect Ratio {dims}.")
+                    </div>
+                }
+                else
+                {
+                    <div style="height:90px; border:2px dashed #ccc; border-radius:4px; display:flex; align-items:center; justify-content:center; color:#999; font-size:0.85rem;">No logo on screen yet</div>
+                }
+                @if (saved.Pending is { } waiting)
+                {
+                    <div class="dx-alert @(saved.PendingDeclined ? "dx-alert-danger" : "dx-alert-warning")" style="font-size:0.8rem; padding:8px 10px; margin-top:10px;">
+                        @if (saved.PendingDeclined)
+                        {
+                            @:<strong>@waiting.Name</strong> was declined (or removed) in Director &gt; Approvals. Upload another file to replace it.
+                        }
+                        else
+                        {
+                            @:<strong>@waiting.Name</strong> is waiting for approval in Director &gt; Approvals. The logo on screen stays until it is approved.
+                        }
+                    </div>
+                }
+            }
+            else if (status is not ("No file" or "Not uploaded"))
             {
                 <div style="height:90px; background:@(ExtraFor(profileAirline!.Code).WordmarkColor); color:#fff; display:flex; align-items:center; justify-content:center; font-weight:800; border-radius:4px; text-align:center; padding:4px;">
                     @profileAirline!.Name.ToUpperInvariant()
@@ -1547,6 +1795,12 @@ else
                     @(customNote ?? $"The library's constraint: the same shape as {dims}, that size or larger. PNG or SVG with a transparent background, up to 5 MB.")
                 </div>
             }
+            @if (logoErrors.TryGetValue(kind, out var logoError))
+            {
+                <div class="dx-alert dx-alert-danger" style="font-size:0.8rem; padding:8px 10px; margin-top:10px;">@logoError</div>
+            }
+            @if (libraryInfo == null)
+            {
             <div style="margin-top:10px;">
                 <div class="dx-text-muted" style="font-size:0.72rem; text-transform:uppercase; margin-bottom:4px;">Prototype uploads</div>
                 <div style="display:flex; gap:6px; flex-wrap:wrap;">
@@ -1556,6 +1810,7 @@ else
                     }
                 </div>
             </div>
+            }
         </div>;
 
     private RenderFragment TemplateSlot(string title, string lang, string langCode, string badgeClass, string badgeStyle, string line1, string size, AirlineExtra extra) =>

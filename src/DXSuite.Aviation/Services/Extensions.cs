@@ -57,6 +57,7 @@ public static class Extensions
         // CUPPS — live airline/counter data for the RMU picker (DXME-500)
         // ──────────────────────────────────────────────────────────────────
         services.AddScoped<CuppsLiveDataProvider>();
+        services.AddScoped<AirlineLogoLinks>();
 
         // ──────────────────────────────────────────────────────────────────
         // Airlines — User Event audit trail for create/onboard/remove

@@ -6,6 +6,9 @@ public sealed record AirlineLogoLibraryInfo(string Name, int Width, int Height);
 /// <summary>A logo file in the library. Approved is false while it waits on the library's approval chain.</summary>
 public sealed record AirlineLogoFile(int AssetId, string Name, string Path, bool Approved);
 
+/// <summary>Where a library file stands on the library's approval chain.</summary>
+public enum LogoApprovalState { Pending, Approved, Declined, Gone }
+
 /// <summary>
 /// Cross-module contract so the Aviation module can pick and upload airline logos without referencing Director.
 /// Implemented by Director; absent when that module is not installed.
@@ -17,6 +20,12 @@ public interface IAirlineLogoLibrary
 
     /// <summary>The library's approved, non-deleted files.</summary>
     Task<IReadOnlyList<AirlineLogoFile>> ListApprovedAsync(CancellationToken ct = default);
+
+    /// <summary>
+    /// The approval state of each of <paramref name="assetIds"/>. An id the library no longer holds (deleted) is
+    /// <see cref="LogoApprovalState.Gone"/>. A file with no approval row predates the chain and counts as approved.
+    /// </summary>
+    Task<IReadOnlyDictionary<int, LogoApprovalState>> GetApprovalStatesAsync(IReadOnlyCollection<int> assetIds, CancellationToken ct = default);
 
     /// <summary>
     /// Director's own upload dialog for the library (resolution check, "uploading as", approval chain). Render it

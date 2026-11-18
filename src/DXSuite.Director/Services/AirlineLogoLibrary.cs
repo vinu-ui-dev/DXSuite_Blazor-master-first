@@ -57,6 +57,23 @@ public sealed class AirlineLogoLibrary : IAirlineLogoLibrary
         return assets.Select(a => new AirlineLogoFile(a.AssetId, a.AssetName ?? a.AssetPath, a.AssetPath, true)).ToList();
     }
 
+    public async Task<IReadOnlyDictionary<int, LogoApprovalState>> GetApprovalStatesAsync(IReadOnlyCollection<int> assetIds, CancellationToken ct = default)
+    {
+        if (assetIds.Count == 0) return new Dictionary<int, LogoApprovalState>();
+
+        var found = await _db.TblAssets.AsNoTracking()
+            .Where(a => assetIds.Contains(a.AssetId) && !a.IsDeleted)
+            .Select(a => new { a.AssetId, Status = (int?)a.AssetApproval!.ApprovalStatus })
+            .ToListAsync(ct);
+        var states = found.ToDictionary(a => a.AssetId, a => a.Status switch
+        {
+            null or 1 => LogoApprovalState.Approved,
+            2 => LogoApprovalState.Declined,
+            _ => LogoApprovalState.Pending,
+        });
+        return assetIds.Distinct().ToDictionary(id => id, id => states.TryGetValue(id, out var s) ? s : LogoApprovalState.Gone);
+    }
+
     /// <summary>What the uploader dialog needs, or null when the library or its resolution constraint is missing.</summary>
     public async Task<AirlineLogoUploadContext?> GetUploadContextAsync(CancellationToken ct = default)
     {

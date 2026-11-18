@@ -9,6 +9,7 @@
 @inject ILogger<AddAirlineWizard> Logger
 @inject AirlineAudit AirlineAudit
 @inject CuppsLiveDataProvider CuppsLiveData
+@inject AirlineLogoLinks LogoLinks
 
 <div class="dx-panel-header">
     <h4 style="margin:0;">Add Airline</h4>
@@ -742,6 +743,15 @@
             }
 
             var created = create.Airline;
+
+            // The logos were chosen or uploaded in the library already; now they are linked to the new airline. An
+            // upload still waiting on approval is linked as pending, so Director > Approvals decides when it goes live.
+            foreach (var (role, file) in new[] { ("wordmark", data.Wordmark), ("square", data.SquareMark), ("reversed", data.ReversedWordmark) })
+            {
+                if (file is null) continue;
+                try { await LogoLinks.LinkAsync(created.Code, role, file); }
+                catch (Exception ex) { Logger.LogError(ex, "Could not link the {Role} logo of new airline {Code}", role, created.Code); }
+            }
 
             var dcsLabel = data.DcsMode == "airline" ? "Airline" : data.DcsProvider;
             var result = new NewAirlineResult(
