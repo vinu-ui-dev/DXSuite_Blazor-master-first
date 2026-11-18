@@ -14,43 +14,6 @@
 
 @if (viewMode == "list")
 {
-    <div class="dx-panel-header">
-        <h4>Airlines</h4>
-        @if (isViewOnlyAirlines)
-        {
-            <span class="dx-badge dx-badge-gray">View only</span>
-        }
-        else
-        {
-        <div class="dx-panel-controls" style="position:relative;">
-            <input @ref="searchInputRef" type="text" class="dx-search-input" autocomplete="off"
-                   value="@searchTerm" @oninput="OnSearchInput"
-                   placeholder="Search @allAirlines.Count airlines to onboard..." />
-            @if (canManageAirlineListActions)
-            {
-                <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
-            }
-
-            @if (searchResults.Count > 0)
-            {
-                <div class="dx-typeahead-dropdown" style="top:40px; left:0; right:auto; width:340px;">
-                    @foreach (var r in searchResults)
-                    {
-                        <button class="dx-typeahead-item" style="display:flex; justify-content:space-between; align-items:center;"
-                                @onclick="() => OpenProfile(r, false)">
-                            <span>@r.Name <span class="dx-text-muted">(@r.Code)</span></span>
-                            @if (r.Shown)
-                            {
-                                <span class="dx-badge dx-badge-green">onboarded</span>
-                            }
-                        </button>
-                    }
-                </div>
-            }
-        </div>
-        }
-    </div>
-
     <div class="dx-tab-nav" style="border-radius:0; overflow:hidden; flex-shrink:0;">
         <button class="dx-tab-btn @(subTab == "airlines" ? "active" : "")" @onclick="@(() => subTab = "airlines")">Airlines</button>
         @if (canSeeDcsProvidersTab)
@@ -64,6 +27,7 @@
         @if (canSeeLogoLibrariesTab)
         {
             <button class="dx-tab-btn @(subTab == "logos" ? "active" : "")" @onclick="@(() => subTab = "logos")">Logo libraries</button>
+            <button class="dx-tab-btn @(subTab == "libdefaults" ? "active" : "")" @onclick="@(() => subTab = "libdefaults")">Library defaults</button>
         }
     </div>
 
@@ -71,55 +35,94 @@
 
     @if (subTab == "airlines")
     {
-        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
-            Airlines onboarded for this airport. Search above to onboard any of the @allAirlines.Count airlines in the master list.
-        </div>
+        var listed = onboarded.Where(a => showRetiredAirlines || a.Shown).ToList();
 
-        @if (!string.IsNullOrEmpty(statusMessage))
-        {
-            <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin:12px 20px;">@statusMessage</div>
-        }
-
-        @if (onboarded.Count == 0)
-        {
-            <div style="text-align:center; padding:40px 20px;">
-                <h5>No airlines onboarded yet</h5>
-                <p class="dx-text-muted">Search above and pick an airline to onboard it.</p>
-            </div>
-        }
-        else
-        {
-            <div class="dx-table" style="border-left:none; border-right:none;">
-                <div class="dx-table-header" style="@AirlineGridCols">
-                    <div>Airline</div>
-                    <div>IATA</div>
-                    <div>ICAO</div>
-                    <div>DCS</div>
-                    <div>Alliance</div>
-                    <div>Accounts</div>
-                    <div>Status</div>
-                    <div></div>
+        <div style="margin:16px 16px 0; background:#f1f1f1; border:1px solid var(--dx-border-color,#dee2e6);">
+            <div class="dx-panel-header" style="background:#c9c9c9; padding:14px 16px;">
+                <h4 style="margin:0; font-size:0.95rem;">Airlines</h4>
+                <div class="dx-panel-controls" style="display:flex; align-items:center; gap:16px;">
+                    <label style="font-size:0.85rem; display:flex; align-items:center; gap:6px; margin:0;">
+                        <input type="checkbox" @bind="showRetiredAirlines" /> Show retired
+                    </label>
+                    @if (isViewOnlyAirlines)
+                    {
+                        <span class="dx-badge dx-badge-gray">View only</span>
+                    }
+                    else if (canManageAirlineListActions)
+                    {
+                        <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="OpenAddAirline">+ ADD AIRLINE</button>
+                    }
                 </div>
-                @foreach (var a in onboarded)
-                {
-                    var extra = ExtraFor(a.Code);
-                    <div class="dx-table-row" style="@AirlineGridCols">
-                        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
-                            <div class="al-tile" style="background:@ColorFor(a.Code);">@a.Code</div>
-                            <a href="javascript:void(0)" @onclick="() => OpenProfile(a, false)">@a.Name</a>
-                        </div>
-                        <div>@a.Code</div>
-                        <div>@(a.Icao ?? "—")</div>
-                        <div>@extra.Dcs</div>
-                        <div>@extra.Alliance</div>
-                        <div>@extra.Accounts</div>
-                        <div><span class="dx-badge dx-badge-green">Active</span></div>
-                        <div style="text-align:right;"><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines ? "VIEW" : "EDIT")</button></div>
-                    </div>
-                }
             </div>
-            <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem;">@onboarded.Count airlines</div>
-        }
+
+            <div class="dx-text-muted" style="padding:8px 16px; font-size:0.78rem; background:#fff;">
+                Each airline owns a user group holding its accounts. Counters are allocated to it by its IATA code.
+            </div>
+
+            @if (!string.IsNullOrEmpty(statusMessage))
+            {
+                <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin:8px 16px;">@statusMessage</div>
+            }
+
+            @if (listed.Count == 0)
+            {
+                <div style="text-align:center; padding:40px 20px; background:#fff;">
+                    <h5>No airlines yet</h5>
+                    <p class="dx-text-muted">Use + Add airline to create one.</p>
+                </div>
+            }
+            else
+            {
+                <div class="dx-table" style="border-left:none; border-right:none; background:#fff;">
+                    <div class="dx-table-header" style="@AirlineGridCols">
+                        <div>Airline</div>
+                        <div>IATA</div>
+                        <div>ICAO</div>
+                        <div>DCS</div>
+                        <div>Alliance</div>
+                        <div style="text-align:right;">Accounts</div>
+                        <div>Actions</div>
+                    </div>
+                    @foreach (var a in listed)
+                    {
+                        var extra = ExtraFor(a.Code);
+                        <div class="dx-table-row" style="@AirlineGridCols">
+                            <div style="min-width:0;">
+                                <a href="javascript:void(0)" @onclick="() => OpenProfile(a, false)">@a.Name</a>
+                                @if (!a.Shown) { <span class="dx-badge dx-badge-gray" style="margin-left:6px;">Retired</span> }
+                            </div>
+                            <div style="font-weight:600;">@a.Code</div>
+                            <div style="font-weight:600;">@(a.Icao ?? "—")</div>
+                            <div>@(extra.Dcs == "—" ? "Airline" : extra.Dcs)</div>
+                            <div>@extra.Alliance</div>
+                            <div style="text-align:right; font-weight:700;">@extra.Accounts</div>
+                            <div><button class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenProfile(a, false)">@(isViewOnlyAirlines ? "VIEW" : "EDIT")</button></div>
+                        </div>
+                    }
+                </div>
+                <div class="dx-text-muted" style="padding:10px 16px; font-size:0.78rem; background:#fff;">
+                    @listed.Count airlines. A retired airline is listed only under Show retired.
+                </div>
+            }
+        </div>
+    }
+    else if (subTab == "libdefaults" && canSeeLogoLibrariesTab)
+    {
+        <div class="dx-text-muted" style="padding:10px 20px; font-size:0.85rem; border-bottom:1px solid var(--dx-border-color,#eee);">
+            Airport-wide defaults for the asset libraries every new airline starts with.
+        </div>
+        <div class="dx-table" style="border-left:none; border-right:none;">
+            <div class="dx-table-header" style="grid-template-columns: 2fr 1fr 1fr;">
+                <div>Library</div>
+                <div>Size</div>
+                <div>Language</div>
+            </div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr;"><div>Airline wordmarks</div><div>1200 x 400</div><div>Required</div></div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr;"><div>Airline square marks</div><div>512 x 512</div><div>Optional</div></div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr;"><div>Airline reversed wordmarks</div><div>1200 x 400</div><div>Optional</div></div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr;"><div>Counter templates, full</div><div>1920 x 980</div><div>Required</div></div>
+            <div class="dx-table-row" style="grid-template-columns: 2fr 1fr 1fr;"><div>Counter templates, half</div><div>960 x 980</div><div>Required</div></div>
+        </div>
     }
     else if (subTab == "dcs" && canSeeDcsProvidersTab)
     {
@@ -1055,6 +1058,7 @@ else
     };
 
     private bool showRetired;
+    private bool showRetiredAirlines;
     private CounterTemplateRow? viewTemplate;
     private CounterTemplateRow? editTemplate;
     private bool isCreatingTemplate;
@@ -1143,7 +1147,7 @@ else
     private string statusMessage = "";
     private bool statusIsError;
 
-    private const string AirlineGridCols = "grid-template-columns: 2fr 70px 70px 120px 140px 90px 90px 90px;";
+    private const string AirlineGridCols = "grid-template-columns: 2.4fr 80px 80px 1.2fr 1.6fr 100px 100px;";
     private const string SupervisorGridCols = "grid-template-columns: 2fr 70px 70px 160px 90px 90px;";
 
     protected override async Task OnInitializedAsync()
@@ -1355,7 +1359,7 @@ else
             subTab = "airlines";
         else if (subTab == "alliances" && !canSeeAlliancesTab)
             subTab = "airlines";
-        else if (subTab == "logos" && !canSeeLogoLibrariesTab)
+        else if ((subTab == "logos" || subTab == "libdefaults") && !canSeeLogoLibrariesTab)
             subTab = "airlines";
     }
 
