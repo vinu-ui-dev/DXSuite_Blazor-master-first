@@ -46,7 +46,10 @@ namespace DXSuite.Shared.Authorization
         // SessionState stores TblUser internally but exposes ICurrentUser via the interface
         public TblUser? UserInternal { get; set; }
         public ICurrentUser? User { get => UserInternal; set => UserInternal = value as TblUser; }
-        public string? UserName => UserInternal?.UserPrincipalName;
+        // A bridge session has no TblUser, so its sign-in name is held here; without it UserName is null and anything
+        // that needs "who is signed in" (e.g. creating an airline) reports "Not signed in".
+        private string? _bridgeUserName;
+        public string? UserName => UserInternal?.UserPrincipalName ?? _bridgeUserName;
         public string? Role => RoleEnum.ToString();
         public Roles.Role RoleEnum { get; set; } = Roles.Role.NewUser;
         public int ActualRoleId { get; private set; } = (int)Roles.Role.NewUser;
@@ -218,6 +221,7 @@ namespace DXSuite.Shared.Authorization
         public Task LoadBridgeIdentityAsync(BridgeSessionIdentity identity)
         {
             UserInternal = null;
+            _bridgeUserName = identity.UserName;
             _bridgePermissions = identity.Permissions;
             ActualRoleName = identity.RoleName;
             // A Director admin is a full DXSuite Admin: every permission, nothing gated by explicit grants.

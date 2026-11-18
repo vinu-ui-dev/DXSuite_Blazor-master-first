@@ -203,7 +203,9 @@ public sealed class CuppsLiveDataProvider(
     private HttpClient AuthenticatedClient(string username)
     {
         var client = httpClientFactory.CreateClient();
-        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username));
+        // A bridge session has no TblUser, so the server cannot look its role up: the token carries it instead.
+        var role = sessionState.User is null ? sessionState.Role : null;
+        client.DefaultRequestHeaders.Add("X-Internal-Caller-Token", tokenService.IssueToken(username, role));
         return client;
     }
 

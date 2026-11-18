@@ -83,7 +83,7 @@ public sealed class CuppsAirlinesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CuppsAirlineCreateRequest body, CancellationToken ct = default)
     {
-        var username = _tokenService.ValidateToken(Request.Headers["X-Internal-Caller-Token"]);
+        var username = _tokenService.ValidateToken(Request.Headers["X-Internal-Caller-Token"], out var tokenRole);
         if (username is null)
             return Unauthorized(new { message = "Missing or invalid caller token." });
 
@@ -91,8 +91,11 @@ public sealed class CuppsAirlinesController : ControllerBase
             .Include(u => u.Role)
             .FirstOrDefaultAsync(u => u.UserPrincipalName == username, ct);
 
-        var canCreate = string.Equals(caller?.Role?.RoleName, "Admin", StringComparison.OrdinalIgnoreCase)
-                        || string.Equals(caller?.Role?.RoleName, "Architect", StringComparison.OrdinalIgnoreCase);
+        // A signed-in Director user is judged by the role on file. An Editor bridge user has no row, so the role the
+        // signed token carries (set from that session) decides instead.
+        var roleName = caller is null ? tokenRole : caller.Role?.RoleName;
+        var canCreate = string.Equals(roleName, "Admin", StringComparison.OrdinalIgnoreCase)
+                        || string.Equals(roleName, "Architect", StringComparison.OrdinalIgnoreCase);
         if (!canCreate)
             return Forbid();
 
