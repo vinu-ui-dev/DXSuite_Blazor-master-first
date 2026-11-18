@@ -1,0 +1,35 @@
+/* Read-only Message preview: the name, then the text in each language. */
+.mpv-modal {
+    width: 560px;
+    max-width: 96vw;
+}
+
+.mpv-field {
+    margin-bottom: 16px;
+}
+
+.mpv-label {
+    font-size: 0.78rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    color: var(--dx-text-muted);
+    margin-bottom: 4px;
+}
+
+.mpv-name {
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.mpv-type {
+    font-size: 0.8rem;
+}
+
+.mpv-text {
+    padding: 10px 12px;
+    border: 1px solid var(--dx-border, #ddd);
+    border-radius: 4px;
+    background: #f8f8f8;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
