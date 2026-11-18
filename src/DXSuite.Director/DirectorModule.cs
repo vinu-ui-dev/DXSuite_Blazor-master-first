@@ -70,19 +70,12 @@ public class DirectorModule : IBlazorModule
         yield return new SettingsTab("branding", "Branding", typeof(DXSuite.Shared.Components.Settings.Branding), 30, TenantFeature: "BrandingManagement");
         yield return new SettingsTab("apikeys", "API Keys", typeof(Components.Settings.ApiKeys), 40);
         yield return new SettingsTab("smtp", "SMTP", typeof(Components.Settings.SmtpSettings), 50);
-        yield return new SettingsTab("devicepairing", "Device Pairing", typeof(Components.Settings.DevicePairing), 55, Feature: "Engage");
-        // Order 57 puts it between Device Pairing (55) and Player Updates (60), so the tab order
-        // reads as the real lifecycle: provision, pair, update.
-        yield return new SettingsTab("playerprovisioning", "Player Provisioning", typeof(Components.Settings.PlayerProvisioning), 57, Feature: "Engage");
-        yield return new SettingsTab("playerupdates", "Player Updates", typeof(Components.Settings.PlayerUpdates), 60, Feature: "Engage");
-        yield return new SettingsTab("playersync", "Player Sync", typeof(Components.Settings.PlayerSync), 62, Feature: "Engage");
+        // Engage and Aviation deployment-management tabs are intentionally not registered for
+        // this Director UI. Do not use role permissions for permanent feature removal: Admin
+        // bypasses permission checks, and customer UI scope is best represented in the tab registry.
         yield return new SettingsTab(PermissionKeys.CoreApiConnectionConfigTabKey, "CoreAPI Connection",
             typeof(DXSuite.Connectors.Components.CoreApi.CoreApiConnectionTab), 58,
             TenantFeature: nameof(TenantFeatureFlags.FlightDataEditor));
-        yield return new SettingsTab("airlines", "Airlines", typeof(Components.Settings.Airlines), 70, Module: "Aviation");
-        yield return new SettingsTab("cities", "Cities", typeof(Components.Settings.Cities), 80, Module: "Aviation");
-        yield return new SettingsTab("wayfinding", "Wayfinding", typeof(Components.Settings.Wayfinding), 90, Feature: "Wayfinding");
-        yield return new SettingsTab("content-package-envs", "Content Package Environments", typeof(Components.Settings.ContentPackageEnvironments), 95, Feature: "ContentPackage");
         yield return new SettingsTab("systeminfo", "System Info", typeof(Components.Settings.SystemInfo), 110);
         yield return new SettingsTab("vendoraccess", "Vendor Access Log", typeof(Components.Settings.VendorAccessLog), 120, RequiresPlatform: true);
 

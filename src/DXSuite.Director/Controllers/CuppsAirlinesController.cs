@@ -116,6 +116,26 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
 
+        // UserGroupId is a required database column because airline supervisor scope is resolved
+        // through tblUserGroupMembership. It is not an optional field in the Add Airline wizard,
+        // so create (or reuse) an airline-named Director group automatically.
+        var userGroup = await _db.TblUserGroups
+            .FirstOrDefaultAsync(g => g.GroupName == nameEn || g.GroupName == cuppsName, ct);
+
+        if (userGroup == null)
+        {
+            userGroup = new DXSuite.Shared.Entities.Identity.TblUserGroup
+            {
+                GroupName = nameEn,
+                Description = $"Airline supervisor scope for {nameEn}",
+                IsActive = true,
+                GroupType = "director",
+                CreateDate = DateTime.UtcNow,
+            };
+            _db.TblUserGroups.Add(userGroup);
+            await _db.SaveChangesAsync(ct);
+        }
+
         var entity = new TblAirlineAccount
         {
             NameEnglish = nameEn,
@@ -133,10 +153,10 @@ public sealed class CuppsAirlinesController : ControllerBase
             ShowAirportStandardTemplates = true,
             DefaultCounterTemplateId = null,
             PickerTab = 0,
-            UserGroupId = 12,
+            UserGroupId = userGroup.UserGroupId,
             RetiredUtc = body.Active ? null : DateTime.UtcNow,
-            FullTemplateLibraryId = 12,
-            HalfTemplateLibraryId = 13,
+            FullTemplateLibraryId = null,
+            HalfTemplateLibraryId = null,
         };
 
         _db.TblAirlineAccounts.Add(entity);
