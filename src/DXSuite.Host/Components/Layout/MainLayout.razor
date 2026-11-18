@@ -111,7 +111,7 @@
                                 @* Signed in from Director: no local user row, so show the Director name and role. *@
                                 <div class="dx-profile-dropdown-header">
                                     <span class="dx-profile-dropdown-name">@bridgeDisplayName</span>
-                                    <span class="dx-profile-dropdown-role">@sessionState.ActualRoleName</span>
+                                    <span class="dx-profile-dropdown-role">@DirectorRoleLabel(sessionState.ActualRoleName)</span>
                                 </div>
                                 <div class="dx-dropdown-divider"></div>
                             }
@@ -340,6 +340,25 @@
 
     private bool IsAuthorized;
     private string? bridgeDisplayName;
+
+    // DXSuite's role names: 1 Admin, 2 Architect, 3 Contributor, 4 New User, 5 Airline Agent, 6 Airline Supervisor,
+    // 7 RMU, 8 RMU Supervisor. A user signed in from Director carries Director's own role name; show it as the
+    // DXSuite role, the same way every other user's role is shown. Unknown names are shown as they are.
+    private static string DirectorRoleLabel(string? role) => (role ?? "").Trim().ToUpperInvariant() switch
+    {
+        "DIRECTOR_ADMIN" => "Admin",
+        "CUSTOMERADMIN" => "Architect",
+        "CUSTOMERUSER" => "Contributor",
+        "NEWUSER" => "New User",
+        "AIRLINE AGENT" or "AIRLINE_AGENT" => "Airline Agent",
+        "AIRLINE SUPERVISOR" or "AIRLINE_SUPERVISOR" => "Airline Supervisor",
+        "RMU" => "RMU",
+        "RMU SUPERVISOR" or "RMU_SUPERVISOR" => "RMU Supervisor",
+        "ADMIN" => "Admin",
+        "ARCHITECT" => "Architect",
+        "CONTRIBUTOR" => "Contributor",
+        _ => role ?? "",
+    };
     private bool idleTimeoutStarted;
     private bool sessionLoading = true;
     private bool showProfileDropdown;

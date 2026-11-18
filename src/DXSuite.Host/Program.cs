@@ -659,6 +659,9 @@ builder.Services.AddSingleton<IReadOnlyList<IBlazorModule>>(moduleRegistry);
 
 builder.Services.AddScoped<PostLoginNavigationState>();
 
+// Logs which tables the app expects but the connected database lacks (read-only; writes logs/missing-tables-*.txt/.sql).
+builder.Services.AddHostedService<DXSuite.Host.Diagnostics.SchemaCheckService>();
+
 var app = builder.Build();
 
 // Optional virtual-directory hosting (e.g. https://host/director/...). Must be the first middleware
@@ -924,6 +927,15 @@ if (isWebRole)
     // MapStaticAssets(): its dev-time hot-reload patcher resolves _content paths against
     // Host/wwwroot instead of the owning RCL's wwwroot and 500s on every request.
     app.UseStaticFiles();
+#if MODULE_AVIATION
+    // Fallback for the Aviation module's stylesheet: used only when the physical file is not under wwwroot (e.g. a
+    // deployment that copied the DLLs but not wwwroot/_content/DXSuite.Aviation), so CUPPS never loses its design.
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new Microsoft.Extensions.FileProviders.EmbeddedFileProvider(typeof(DXSuite.Aviation.AviationModule).Assembly),
+        RequestPath = "/_content/DXSuite.Aviation",
+    });
+#endif
     app.MapStaticAssets();
     app.MapControllers();
     app.MapHub<DXSuite.Director.Hubs.PlayerWakeHub>("/hubs/player-wake");

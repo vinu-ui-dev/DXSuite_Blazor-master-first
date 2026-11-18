@@ -15,6 +15,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Also embedded in the DLL: if a deployment copies the DLLs but not wwwroot/_content/DXSuite.Aviation, the host
+         still serves /_content/DXSuite.Aviation/css/cupps.css from here (see Program.cs). -->
+    <EmbeddedResource Include="wwwroot\css\cupps.css" LogicalName="DXSuite.Aviation.css.cupps.css" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore.SqlServer" Version="10.0.7" />
     <PackageReference Include="System.Security.Cryptography.Xml" Version="11.0.0-rc.3.26522.148" />
   </ItemGroup>
