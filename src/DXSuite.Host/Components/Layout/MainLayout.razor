@@ -187,7 +187,17 @@
                     @* An Airline Agent never gets another page's content, even by typing its URL. *@
                     @if (!isAirlineAgent || IsCuppsPath())
                     {
-                        @Body
+                        @* A page that throws shows this message instead of killing the whole circuit (which freezes
+                           every page). Keyed by URL so navigating away resets it. *@
+                        <ErrorBoundary @key="Navigation.Uri">
+                            <ChildContent>@Body</ChildContent>
+                            <ErrorContent Context="ex">
+                                <div class="dx-alert dx-alert-danger" style="margin:16px;">
+                                    This page hit an error and could not load: @ex.Message
+                                    <a href="@Navigation.Uri" class="reload">Try again</a>
+                                </div>
+                            </ErrorContent>
+                        </ErrorBoundary>
                     }
                 </div>
             </CascadingValue>

@@ -173,9 +173,17 @@ public partial class CounterAllocations
         canEdit = await sessionState.HasPermissionAsync(PermissionKeys.CounterAllocationEdit);
         zone = flightListClock.CurrentWindow().AirportTimeZone;
         SetNowWindowValues();
-        await LoadAirlinesAsync();
-        await LoadCountersAsync();
-        await RefreshAsync();
+        try
+        {
+            await LoadAirlinesAsync();
+            await LoadCountersAsync();
+            await RefreshAsync();
+        }
+        catch (Exception ex)
+        {
+            // Missing/outdated tables (e.g. tblAirline, tblCounterAllocation) must not kill the circuit.
+            error = "Counter allocation data could not be loaded (database tables may be missing): " + ex.Message;
+        }
 
         // No real allocations anywhere for this tenant (nothing seeded, no RMS/CoreAPI feed yet) — default to
         // the sample view instead of an empty grid. Switching the toggle off still shows the real (empty) grid.
@@ -267,8 +275,16 @@ public partial class CounterAllocations
             StateHasChanged();
             return;
         }
-        var rows = await allocationService.GetInRangeAsync(ToUtc(fromLocal), ToUtc(toLocal));
-        views = [.. rows.Select(r => new AllocView(r, ToLocal(r.StartUtc), ToLocal(r.EndUtc))).OrderBy(v => v.Row.Counter).ThenBy(v => v.StartLocal)];
+        try
+        {
+            var rows = await allocationService.GetInRangeAsync(ToUtc(fromLocal), ToUtc(toLocal));
+            views = [.. rows.Select(r => new AllocView(r, ToLocal(r.StartUtc), ToLocal(r.EndUtc))).OrderBy(v => v.Row.Counter).ThenBy(v => v.StartLocal)];
+        }
+        catch (Exception ex)
+        {
+            views = [];
+            error = "Could not load allocations: " + ex.Message;
+        }
         StateHasChanged();
     }
 
