@@ -5,6 +5,7 @@ using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Options;
 using Microsoft.IdentityModel.Tokens;
+using DXSuite.Host.Logging;
 using DXSuite.Shared.Models;
 using DXSuite.Shared.Multitenancy;
 using DXSuite.Shared.Services;
@@ -98,15 +99,17 @@ public class AuthController : Controller
             if (user == null)
             {
                 _logger.LogWarning("AUTH local login failed: invalid credentials for {Email}", email);
+                LoginAuditLog.LoginFailed("local", email, "invalid-credentials", HttpContext, $"tenant='{_tenantContext.Subdomain}'");
                 return Redirect($"{Request.PathBase}/?error=invalid-credentials");
             }
 
             _logger.LogInformation("AUTH local login succeeded for {Email}", email);
-            return await IssueAuthCookieAndRedirect(user, email);
+            return await IssueAuthCookieAndRedirect(user, email, "local");
         }
         catch (InvalidOperationException ex) when (ex.Message == "email-not-confirmed")
         {
             _logger.LogWarning("AUTH local login failed: email not confirmed for {Email}", email);
+            LoginAuditLog.LoginFailed("local", email, "email-not-confirmed", HttpContext);
             return Redirect($"{Request.PathBase}/?error=email-not-confirmed");
         }
     }
@@ -134,11 +137,12 @@ public class AuthController : Controller
             if (user == null)
             {
                 _logger.LogWarning("AUTH ldap login failed: invalid credentials for {Username}", username);
+                LoginAuditLog.LoginFailed("ldap", username, "invalid-credentials", HttpContext, $"tenant='{_tenantContext.Subdomain}'");
                 return Redirect($"{Request.PathBase}/?error=ldap-invalid");
             }
 
             _logger.LogInformation("AUTH ldap login succeeded for {Username}", username);
-            return await IssueAuthCookieAndRedirect(user, user.UserPrincipalName ?? username);
+            return await IssueAuthCookieAndRedirect(user, user.UserPrincipalName ?? username, "ldap");
         }
         catch (InvalidOperationException ex)
         {
@@ -195,7 +199,7 @@ public class AuthController : Controller
             else
             {
                 var user = await _localAccountService.CreateAccountAsync(email, password);
-                return await IssueAuthCookieAndRedirect(user, email);
+                return await IssueAuthCookieAndRedirect(user, email, "register");
             }
         }
         catch (InvalidOperationException ex)
@@ -323,6 +327,7 @@ public class AuthController : Controller
                     ExpiresUtc = DateTimeOffset.UtcNow.AddHours(8)
                 });
 
+            LoginAuditLog.LoginSucceeded("launch", email, HttpContext, tenant: _tenantContext.Subdomain, extra: $"name='{name}'");
             _logger.LogInformation("AUTH launch succeeded: cookie issued for {Email}", email);
             return Redirect($"{Request.PathBase}/");
         }
@@ -365,8 +370,10 @@ public class AuthController : Controller
         return Redirect($"{Request.PathBase}/");
     }
 
-    private async Task<IActionResult> IssueAuthCookieAndRedirect(DXSuite.Shared.Entities.Identity.TblUser user, string email)
+    private async Task<IActionResult> IssueAuthCookieAndRedirect(DXSuite.Shared.Entities.Identity.TblUser user, string email, string method)
     {
+        LoginAuditLog.LoginSucceeded(method, user.UserPrincipalName ?? email, HttpContext, tenant: _tenantContext.Subdomain,
+            extra: $"userId={user.UserId} friendlyName='{user.FriendlyName}'");
         var claims = new List<Claim>
         {
             new(ClaimTypes.Name, user.UserPrincipalName ?? email),

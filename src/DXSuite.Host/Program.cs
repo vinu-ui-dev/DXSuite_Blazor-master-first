@@ -305,6 +305,15 @@ if (isWebRole)
             options.Cookie.SameSite = SameSiteMode.Lax;
             options.SlidingExpiration = true;
             options.ExpireTimeSpan = TimeSpan.FromMinutes(builder.Configuration.GetValue<int>("Security:SessionTimeoutMinutes", 30));
+
+            // [Authorize]/Forbid() on the cookie scheme answers with a redirect to the access-denied path
+            // (a 302, not a 403), so the status-code check never sees it — record it here with the user's role.
+            var existingAccessDenied = options.Events.OnRedirectToAccessDenied;
+            options.Events.OnRedirectToAccessDenied = ctx =>
+            {
+                DXSuite.Host.Logging.LoginAuditLog.AccessRefused(403, ctx.HttpContext);
+                return existingAccessDenied(ctx);
+            };
         });
 
         // Register generic OIDC providers (Google, Okta, etc.)
@@ -822,7 +831,10 @@ if (isWebRole)
         }
         if (isApi)
             trace.LogInformation("REQUEST END {Method} {Path} Status={Status} User={User}", ctx.Request.Method, ctx.Request.Path, ctx.Response.StatusCode, ctx.User?.Identity?.Name ?? "anonymous");
-        if (ctx.Response.StatusCode is 401 or 403)
+        // Every 403 (e.g. an Airline Agent refused) goes to console + logs/login-yyyyMMdd.log with role/permissions.
+        if (ctx.Response.StatusCode == 403 || ctx.Request.Path.StartsWithSegments("/403") || ctx.Request.Path.StartsWithSegments("/access-denied"))
+            DXSuite.Host.Logging.LoginAuditLog.AccessRefused(403, ctx);
+        else if (ctx.Response.StatusCode == 401)
             Console.WriteLine($"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] API authorization {(ctx.Response.StatusCode == 401 ? "UNAUTHORIZED (401)" : "FORBIDDEN (403)")}: {ctx.Request.Method} {ctx.Request.Path} User={ctx.User?.Identity?.Name ?? "anonymous"} IP={ctx.Connection.RemoteIpAddress}");
     });
 

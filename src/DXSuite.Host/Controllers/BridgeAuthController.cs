@@ -105,6 +105,8 @@ public class BridgeAuthController(
                 "[BRIDGE] tenant '{TenantId}' cannot serve '{ReturnTo}' (found={Found}, enabled={Enabled}, aviation={Aviation}, director={Director}, flightDataEditor={Fde}, messaging={Messaging}).",
                 identity.TenantId, returnTo, tenant is not null, tenant?.IsEnabled, tenant?.Modules.Aviation,
                 tenant?.Modules.Director, tenant?.Features.FlightDataEditor, tenant?.Features.Messaging);
+            LoginAuditLog.LoginFailed("bridge", identity.UserName, "tenant-unavailable", HttpContext,
+                $"role='{identity.RoleName}' tenant='{identity.TenantId}' returnTo='{returnTo}' tenantFound={tenant is not null} enabled={tenant?.IsEnabled}");
             return false;
         }
 
@@ -136,6 +138,9 @@ public class BridgeAuthController(
             Expires = identity.ExpiresAt,
         });
 
+        LoginAuditLog.LoginSucceeded("bridge", identity.UserName, HttpContext, identity.RoleName, identity.TenantId,
+            identity.CustomerId, identity.Permissions, identity.Operations,
+            $"displayName='{identity.DisplayName}' redirectTo='{returnTo}' expires={identity.ExpiresAt:u}");
         logger.LogInformation("[BRIDGE] cookie issued for {User}; redirectTo={ReturnTo}", identity.UserName, returnTo);
         Trace($"OK sign-in cookie + tenant cookie issued: user='{identity.UserName}' role='{identity.RoleName}' tenant='{identity.TenantId}' customer='{identity.CustomerId}' permissions=[{string.Join(',', identity.Permissions)}] cookieExpires={identity.ExpiresAt:u} -> redirect {returnTo}");
         return true;
@@ -277,6 +282,7 @@ public class BridgeAuthController(
             var reason = saved is null ? (cookiePresent ? "cookie-unreadable" : "no-cookie")
                 : string.IsNullOrWhiteSpace(code) ? "no-code"
                 : string.IsNullOrWhiteSpace(state) ? "no-state" : "state-mismatch";
+            LoginAuditLog.LoginFailed("bridge", null, $"callback-{reason}", HttpContext);
             return Redirect($"{Request.PathBase}/?error=editor-sign-in-failed&reason={reason}");
         }
         Trace("4 callback: PKCE cookie valid and state matches; calling Director /redeem");
@@ -284,6 +290,8 @@ public class BridgeAuthController(
         var identity = await bridgeClient.RedeemAsync(code, saved.Verifier, ct);
         if (identity is null)
         {
+            // "http-403" here means Director itself refused the redeem (e.g. an Airline Agent role it will not hand an editor session to).
+            LoginAuditLog.LoginFailed("bridge", null, $"director-redeem-{bridgeClient.LastFailure ?? "failed"}", HttpContext);
             Trace("FAIL callback: Director /redeem returned no identity -> redirect editor-sign-in-failed (see the [BRIDGE-HTTP] lines just above for the HTTP status)");
             logger.LogWarning("[BRIDGE] callback: Director redeem returned no identity (ClientSecret mismatch, expired code, or RedirectUri mismatch).");
             return Redirect($"{Request.PathBase}/?error=editor-sign-in-failed&reason=redeem-{bridgeClient.LastFailure ?? "failed"}");
@@ -309,7 +317,11 @@ public class BridgeAuthController(
             return BadRequest(new { error = "missing-code-or-verifier" });
 
         var identity = await bridgeClient.RedeemAsync(body.Code, body.Verifier, ct);
-        if (identity is null) return Unauthorized(new { error = "exchange-failed" });
+        if (identity is null)
+        {
+            LoginAuditLog.LoginFailed("bridge-exchange", null, $"director-redeem-{bridgeClient.LastFailure ?? "failed"}", HttpContext);
+            return Unauthorized(new { error = "exchange-failed" });
+        }
 
         var returnTo = SafeLocalPath(body.ReturnTo);
         if (!await CompleteSignInAsync(identity, returnTo, ct))

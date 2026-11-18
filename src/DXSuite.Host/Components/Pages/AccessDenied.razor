@@ -1,8 +1,24 @@
 @page "/403"
 @page "/access-denied"
+@using DXSuite.Host.Logging
+@using DXSuite.Shared.Authorization
+@inject AuthenticationStateProvider AuthState
 
 <div class="dx-platform-page" style="max-width:480px; margin:4rem auto; text-align:center;">
     <h2>Access Denied</h2>
     <p class="dx-text-muted">You do not have permission to view this page.</p>
     <a href="./" class="dx-btn dx-btn-secondary dx-btn-sm">Return Home</a>
 </div>
+
+@code {
+    protected override async Task OnInitializedAsync()
+    {
+        // Pages that NavigateTo("403") never make a 403 HTTP response, so record the refusal here.
+        var user = (await AuthState.GetAuthenticationStateAsync()).User;
+        LoginAuditLog.Note("FORBIDDEN-403",
+            $"access-denied page shown user='{user.Identity?.Name ?? "anonymous"}' " +
+            $"role='{user.FindFirst(BridgeSessionClaimTypes.RoleName)?.Value}' " +
+            $"tenant='{user.FindFirst(BridgeSessionClaimTypes.TenantId)?.Value}' " +
+            $"permissions=[{user.FindFirst(BridgeSessionClaimTypes.Permissions)?.Value}]");
+    }
+}
