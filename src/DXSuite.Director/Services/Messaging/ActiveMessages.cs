@@ -75,7 +75,8 @@ public sealed class ActiveMessages
     /// </summary>
     public async Task<ActivationCancelResult> CancelAsync(IReadOnlyCollection<int> activationIds, CancellationToken ct)
     {
-        if (_session.User is not { } user || !await _session.HasPermissionAsync(PermissionKeys.PageMessages))
+        // An Editor bridge session has no TblUser row, so only the permission is required; the cancel stamp then has no user.
+        if (!await _session.HasPermissionAsync(PermissionKeys.PageMessages))
         {
             foreach (var id in activationIds)
                 await _events.TryWriteAsync(_logger, Cancelled(id, null) with { Outcome = UserEventOutcome.Refused });
@@ -94,7 +95,7 @@ public sealed class ActiveMessages
 
         try
         {
-            await WriteCancelAsync(db, activeOrScheduled, user.UserId, now, ct);
+            await WriteCancelAsync(db, activeOrScheduled, _session.User?.UserId, now, ct);
             await tx.CommitAsync(ct);
         }
         catch (Exception ex) when (ex is not OperationCanceledException)
@@ -149,7 +150,7 @@ public sealed class ActiveMessages
     /// The one write of a cancel, inside the caller's transaction: the Activations' cancel stamps and the delivery
     /// version (INK-09).
     /// </summary>
-    private static async Task WriteCancelAsync(DirectorDbContext db, IReadOnlyList<TblMessageActivation> activations, int userId,
+    private static async Task WriteCancelAsync(DirectorDbContext db, IReadOnlyList<TblMessageActivation> activations, int? userId,
         DateTime nowUtc, CancellationToken ct)
     {
         foreach (var activation in activations)

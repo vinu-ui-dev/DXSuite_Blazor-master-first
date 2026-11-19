@@ -28,16 +28,17 @@ namespace DXSuite.Director.Services.Messaging;
 public interface IMessageSendAccess
 {
     /// <summary>The Display Zones and displays the user may send the type to.</summary>
-    Task<MessageSendReach> ReachAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default);
+    /// <param name="isAdmin">True for a session that is an Admin without a user row (an Editor bridge session): it reaches everything, as an Admin user does.</param>
+    Task<MessageSendReach> ReachAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false);
 
     /// <summary>The live Display Zones the user may send the type to, in Display Zone list order.</summary>
-    Task<IReadOnlyList<SendableZone>> ZonesAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default);
+    Task<IReadOnlyList<SendableZone>> ZonesAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false);
 
     /// <summary>
     /// The displays the user may send the type to one at a time, grouped by location (location order, then name)
     /// with each location's displays by name. Locations with no such display are left out.
     /// </summary>
-    Task<IReadOnlyList<SendableLocation>> DisplaysAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default);
+    Task<IReadOnlyList<SendableLocation>> DisplaysAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false);
 }
 
 /// <summary>What one user may send one Message Type to.</summary>
@@ -63,16 +64,16 @@ public sealed record SendableDisplay(int DisplayId, string Name);
 
 internal sealed class MessageSendAccess(IDbContextFactory<DirectorDbContext> dbFactory) : IMessageSendAccess
 {
-    public async Task<MessageSendReach> ReachAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default)
+    public async Task<MessageSendReach> ReachAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        return await ReachAsync(db, userId, messageTypeId, oneOff, ct);
+        return await ReachAsync(db, userId, messageTypeId, oneOff, isAdmin, ct);
     }
 
-    public async Task<IReadOnlyList<SendableZone>> ZonesAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default)
+    public async Task<IReadOnlyList<SendableZone>> ZonesAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var reach = await ReachAsync(db, userId, messageTypeId, oneOff, ct);
+        var reach = await ReachAsync(db, userId, messageTypeId, oneOff, isAdmin, ct);
         if (reach.ZoneIds.Count == 0) return [];
 
         var ids = reach.ZoneIds.ToList();
@@ -83,10 +84,10 @@ internal sealed class MessageSendAccess(IDbContextFactory<DirectorDbContext> dbF
             .ToListAsync(ct);
     }
 
-    public async Task<IReadOnlyList<SendableLocation>> DisplaysAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default)
+    public async Task<IReadOnlyList<SendableLocation>> DisplaysAsync(int userId, int messageTypeId, bool oneOff, CancellationToken ct = default, bool isAdmin = false)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
-        var reach = await ReachAsync(db, userId, messageTypeId, oneOff, ct);
+        var reach = await ReachAsync(db, userId, messageTypeId, oneOff, isAdmin, ct);
         if (reach.IsEmpty) return [];
 
         var displays = db.TblDisplays.AsQueryable();
@@ -115,12 +116,12 @@ internal sealed class MessageSendAccess(IDbContextFactory<DirectorDbContext> dbF
             .ToList();
     }
 
-    private static async Task<MessageSendReach> ReachAsync(DirectorDbContext db, int userId, int messageTypeId, bool oneOff,
+    private static async Task<MessageSendReach> ReachAsync(DirectorDbContext db, int userId, int messageTypeId, bool oneOff, bool isAdmin,
         CancellationToken ct)
     {
         var liveZones = db.TblZones.Where(z => z.RetiredUtc == null).Select(z => z.ZoneId);
 
-        if (await db.TblUsers.AnyAsync(u => u.UserId == userId && u.RoleId == (int)Roles.Role.Admin, ct))
+        if (isAdmin || await db.TblUsers.AnyAsync(u => u.UserId == userId && u.RoleId == (int)Roles.Role.Admin, ct))
             return new MessageSendReach((await liveZones.ToListAsync(ct)).ToHashSet(), AnyDisplay: true);
 
         var groupIds = db.TblUserGroupMemberships.Where(m => m.UserId == userId).Select(m => m.UserGroupId);

@@ -434,7 +434,8 @@ public sealed class MessageAuthoring
     private async Task<MessageRemovalOutcome> RemoveAsync(int messageId, string actionKey,
         Func<DirectorDbContext, TblMessage, DateTime, CancellationToken, Task> remove, CancellationToken ct)
     {
-        if (_session.User is not { } user || !await CanAuthorAsync())
+        // An Editor bridge session has no TblUser row, so the author permission alone decides; the stamp then has no user.
+        if (!await CanAuthorAsync())
         {
             await _events.TryWriteAsync(_logger, new UserEvent(actionKey, MessagingEvents.Message(messageId, null), UserEventOutcome.Refused));
             return MessageRemovalOutcome.Forbidden;
@@ -455,7 +456,7 @@ public sealed class MessageAuthoring
 
         await remove(db, message, now, ct);
         message.ModifiedUtc = now;
-        message.ModifiedByUserId = user.UserId;
+        message.ModifiedByUserId = _session.User?.UserId;
         await _events.FailureLoggedAsync(_logger, removal, async () =>
         {
             await db.SaveChangesAsync(ct);

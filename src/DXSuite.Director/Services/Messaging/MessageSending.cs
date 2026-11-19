@@ -108,10 +108,10 @@ public sealed class MessageSending
     /// </summary>
     public async Task<bool> CanSendOneOffAsync(int messageTypeId, CancellationToken ct)
     {
-        if (_session.User is not { } user || !await _session.HasPermissionAsync(PermissionKeys.PageMessages)) return false;
+        if (!await _session.HasPermissionAsync(PermissionKeys.PageMessages)) return false;
         await using var db = await _dbFactory.CreateDbContextAsync(ct);
         if (await SendableTypeAsync(db, messageTypeId, ct) is null || !await TakesOneOffTextAsync(db, messageTypeId, ct)) return false;
-        return !(await _access.ReachAsync(user.UserId, messageTypeId, oneOff: true, ct)).IsEmpty;
+        return !(await _access.ReachAsync(SessionUserId, messageTypeId, oneOff: true, ct, SessionIsAdmin)).IsEmpty;
     }
 
     /// <summary>Why a type takes no one-off text, as the send refuses it.</summary>
@@ -263,6 +263,10 @@ public sealed class MessageSending
 
     private static readonly IReadOnlyDictionary<string, string> NoErrors = new Dictionary<string, string>();
 
+    // An Editor bridge session has no TblUser row: it is judged by its role (an Admin reaches everything), with no user id.
+    private int SessionUserId => _session.User?.UserId ?? 0;
+    private bool SessionIsAdmin => _session.RoleEnum == Roles.Role.Admin;
+
     private static IReadOnlyDictionary<int, string> ZoneIds(SendPlan plan) => plan.ScreenTimeZones.ToDictionary(z => z.Key, z => z.Value.Id);
 
     /// <summary>
@@ -295,9 +299,10 @@ public sealed class MessageSending
         int? senderUserId = null;
         if (apiCaller is null)
         {
-            if (_session.User is not { } user || !await _session.HasPermissionAsync(PermissionKeys.PageMessages))
+            if (!await _session.HasPermissionAsync(PermissionKeys.PageMessages))
                 return (MessageSendResult.Refused(MessageSendOutcome.NotAllowed, "You may not send Messages."), null);
-            senderUserId = user.UserId;
+            // An Editor bridge session has no TblUser row: the send carries no sender id, and its role decides the reach.
+            senderUserId = _session.User?.UserId;
         }
 
         var type = await SendableTypeAsync(db, request.MessageTypeId, ct);
@@ -345,7 +350,7 @@ public sealed class MessageSending
 
         if (errors.Count > 0) return (new MessageSendResult(MessageSendOutcome.Invalid, [], errors), null);
 
-        if (senderUserId is { } senderId && await NotCoveredAsync(db, senderId, type.MessageTypeId, request, ct) is { } notCovered)
+        if (apiCaller is null && await NotCoveredAsync(db, SessionUserId, type.MessageTypeId, request, ct) is { } notCovered)
             return (MessageSendResult.Refused(MessageSendOutcome.NotAllowed, notCovered), null);
 
         var screens = await ScreensAsync(db, request.Target, ct);
@@ -453,7 +458,7 @@ public sealed class MessageSending
     private async Task<string?> NotCoveredAsync(DirectorDbContext db, int userId, int messageTypeId, MessageSendRequest request,
         CancellationToken ct)
     {
-        var reach = await _access.ReachAsync(userId, messageTypeId, request.IsOneOff, ct);
+        var reach = await _access.ReachAsync(userId, messageTypeId, request.IsOneOff, ct, SessionIsAdmin);
         var withText = request.IsOneOff ? " with one-off text" : "";
         var target = request.Target;
 
@@ -545,10 +550,10 @@ public sealed class MessageSending
         IReadOnlyList<SendableZone> displayZones = [];
         IReadOnlyList<SendableLocation> locations = [];
         var canOverride = false;
-        if (_session.User is { } user && await _session.HasPermissionAsync(PermissionKeys.PageMessages))
+        if (await _session.HasPermissionAsync(PermissionKeys.PageMessages))
         {
-            displayZones = await _access.ZonesAsync(user.UserId, type.MessageTypeId, oneOff, ct);
-            locations = await _access.DisplaysAsync(user.UserId, type.MessageTypeId, oneOff, ct);
+            displayZones = await _access.ZonesAsync(SessionUserId, type.MessageTypeId, oneOff, ct, SessionIsAdmin);
+            locations = await _access.DisplaysAsync(SessionUserId, type.MessageTypeId, oneOff, ct, SessionIsAdmin);
             canOverride = await _session.HasPermissionAsync(PermissionKeys.MessagesPriorityOverride);
         }
 
