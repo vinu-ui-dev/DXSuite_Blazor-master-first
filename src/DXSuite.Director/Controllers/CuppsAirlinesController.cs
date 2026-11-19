@@ -1,5 +1,6 @@
 using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
+using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Logging;
 using DXSuite.Shared.Services.Identity;
 using Microsoft.AspNetCore.Authorization;
@@ -140,6 +141,45 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
 
+        // The airline owns a user group (named after it, which is how an Airline Supervisor is matched to it). Reuse
+        // the group of that name if there is one; otherwise create it. A fixed id would break on a database without it.
+        var groupName = nameEn.Length > 100 ? nameEn[..100] : nameEn;
+        int userGroupId;
+        try
+        {
+            var group = await _db.TblUserGroups.FirstOrDefaultAsync(g => g.GroupName == groupName, ct);
+            if (group is null)
+            {
+                group = new TblUserGroup
+                {
+                    GroupName = groupName,
+                    GroupType = "director",
+                    Description = $"Users of {nameEn}",
+                    IsActive = true,
+                    CreateDate = DateTime.UtcNow,
+                    LastEditUser = username.Length > 50 ? username[..50] : username,
+                };
+                _db.TblUserGroups.Add(group);
+                await _db.SaveChangesAsync(ct);
+                AirlineFileLog.Write($"[CREATE-API] created user group '{groupName}' (UserGroupId {group.UserGroupId}) for the airline");
+            }
+            else
+            {
+                AirlineFileLog.Write($"[CREATE-API] reusing user group '{groupName}' (UserGroupId {group.UserGroupId})");
+            }
+            userGroupId = group.UserGroupId;
+        }
+        catch (Exception ex)
+        {
+            AirlineFileLog.Write($"[CREATE-API] 500: creating the user group '{groupName}' failed. {AirlineFileLog.Describe(ex)}");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = $"The airline's user group could not be created: {ex.GetBaseException().Message}" });
+        }
+
+        // The template libraries are linked only if they exist in this database.
+        var fullLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 12, ct) ? 12 : (int?)null;
+        var halfLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 13, ct) ? 13 : (int?)null;
+
         var entity = new TblAirlineAccount
         {
             NameEnglish = nameEn,
@@ -157,10 +197,10 @@ public sealed class CuppsAirlinesController : ControllerBase
             ShowAirportStandardTemplates = true,
             DefaultCounterTemplateId = null,
             PickerTab = 0,
-            UserGroupId = 12,
+            UserGroupId = userGroupId,
             RetiredUtc = body.Active ? null : DateTime.UtcNow,
-            FullTemplateLibraryId = 12,
-            HalfTemplateLibraryId = 13,
+            FullTemplateLibraryId = fullLibraryId,
+            HalfTemplateLibraryId = halfLibraryId,
         };
 
         _db.TblAirlineAccounts.Add(entity);
