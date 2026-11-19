@@ -96,14 +96,21 @@ else if (MessageType != null)
                     }
                 </div>
                 <div class="mp-status">
-                    @* An Approved Message shows no badge of its own; its Activations say whether it is on screen. *@
-                    @if (message.Status != MessageStatus.Approved)
-                    {
-                        <span class="dx-badge @MessageStatusText.Badge(message.Status)">@MessageStatusText.Label(message.Status)</span>
-                    }
-                    else if (message.PendingRevision is not null)
+                    @* Every Message shows its approval status (Pending approval, Approved, Declined, Retired); its Activations
+                       then say whether it is on screen. *@
+                    <span class="dx-badge @MessageStatusText.Badge(message.Status)">@MessageStatusText.Label(message.Status)</span>
+                    @if (message.Status == MessageStatus.Approved && message.PendingRevision is not null)
                     {
                         <span class="dx-badge dx-badge-yellow">Edit pending approval</span>
+                    }
+                    else if (message.Status == MessageStatus.Approved && editRejections.TryGetValue(message.MessageId, out var rejectedOn)
+                             && rejectedOn >= (message.ModifiedUtc ?? DateTime.MinValue))
+                    {
+                        <span class="dx-badge dx-badge-red" title="The approvers rejected the last edit; the approved text is unchanged.">Edit rejected</span>
+                    }
+                    @if (rejectionNotes.TryGetValue(message.MessageId, out var rejectionNote) && message.Status == MessageStatus.Draft)
+                    {
+                        <div class="dx-text-muted mp-note">@rejectionNote</div>
                     }
                     @if (activeOrScheduled.Any(a => statuses[a.MessageActivationId] == ActivationStatus.Active))
                     {
@@ -200,6 +207,9 @@ else if (MessageType != null)
     private int? loadedTypeId;
     private DateTime now;
     private IReadOnlyDictionary<int, ActivationStatus> statuses = new Dictionary<int, ActivationStatus>();
+    // Messages whose approval request was rejected: when, and the approver's note. A rejected edit leaves the Message Approved.
+    private Dictionary<int, DateTime> editRejections = new();
+    private Dictionary<int, string> rejectionNotes = new();
     private ReportTimeZone viewer = ReportTimeZone.Utc;
     private (int MessageId, Removal Kind)? confirming;
     private string? problem;
@@ -258,6 +268,19 @@ else if (MessageType != null)
                 .Include(m => m.Activations).ThenInclude(a => a.Targets).ThenInclude(t => t.Zone)
                 .AsSplitQuery()
                 .ToListAsync();
+            var rejected = await db.TblApprovalRequests.AsNoTracking()
+                .Where(r => r.MessageId != null && r.Status == "declined" && r.CompletedDate != null
+                            && messages.Select(m => m.MessageId).Contains(r.MessageId!.Value))
+                .Select(r => new
+                {
+                    MessageId = r.MessageId!.Value,
+                    r.CompletedDate,
+                    Note = db.TblApprovalActions.Where(a => a.ApprovalRequestId == r.ApprovalRequestId && a.ActionType == "declined")
+                        .OrderByDescending(a => a.ActionDate).Select(a => a.Notes).FirstOrDefault()
+                })
+                .ToListAsync();
+            editRejections = rejected.ToDictionary(r => r.MessageId, r => r.CompletedDate!.Value);
+            rejectionNotes = rejected.Where(r => !string.IsNullOrWhiteSpace(r.Note)).ToDictionary(r => r.MessageId, r => "Reason: " + r.Note);
             hasAslSlot = await db.TblMessageTypeAssetLibraries.AnyAsync(l => l.MessageTypeId == typeId);
             statuses = await displayTimeZones.StatusesAsync(db.TblDevices,
                 messages.SelectMany(m => m.Activations).ToList(), now, default);

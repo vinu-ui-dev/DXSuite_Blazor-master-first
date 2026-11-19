@@ -9,7 +9,7 @@ namespace DXSuite.Director.Tests;
 public sealed class MessageStatusTextTests
 {
     [Theory]
-    [InlineData(MessageStatus.Draft, "Declined", "dx-badge-red")]
+    [InlineData(MessageStatus.Draft, "Rejected", "dx-badge-red")]
     [InlineData(MessageStatus.Pending, "Pending approval", "dx-badge-yellow")]
     [InlineData(MessageStatus.Approved, "Approved", "dx-badge-green")]
     [InlineData(MessageStatus.Retired, "Retired", "dx-badge-gray")]

@@ -10,7 +10,7 @@ public static class MessageStatusText
 {
     public static string Label(MessageStatus status) => status switch
     {
-        MessageStatus.Draft => "Declined",
+        MessageStatus.Draft => "Rejected",
         MessageStatus.Approved => "Approved",
         MessageStatus.Retired => "Retired",
         MessageStatus.Pending => "Pending approval",

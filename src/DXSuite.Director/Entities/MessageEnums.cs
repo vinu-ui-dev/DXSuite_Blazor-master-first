@@ -11,7 +11,7 @@ public enum MessageStatus : byte
 {
     /// <summary>
     /// A new Message its approval chain rejected: it cannot be sent, and its author's next save submits it again. Shown
-    /// as Declined (<c>MessageStatusText</c>).
+    /// as Rejected (<c>MessageStatusText</c>).
     /// </summary>
     Draft = 0,
     Approved = 1,
