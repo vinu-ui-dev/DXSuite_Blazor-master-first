@@ -57,7 +57,7 @@ public sealed class CounterPublishController : ControllerBase
             body.AslOn), ct);
 
         if (!result.Success)
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = result.Error ?? "Not authorized for this airline." });
 
         return Ok(new { publishId = result.PublishId });
     }
@@ -74,7 +74,7 @@ public sealed class CounterPublishController : ControllerBase
 
         var result = await _publishService.CloseAsync(body.CounterId, username, ct);
         if (!result.Success)
-            return Forbid();
+            return StatusCode(StatusCodes.Status403Forbidden, new { message = result.Error ?? "Not authorized for this airline." });
 
         return Ok();
     }

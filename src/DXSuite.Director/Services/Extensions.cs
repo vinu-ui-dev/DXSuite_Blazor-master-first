@@ -169,6 +169,8 @@ public static class Extensions
         services.AddSingleton<ScheduleEvaluator>();
         services.AddSingleton<IFloorPlanService, FloorPlanService>();
         services.AddScoped<IAirlineAccessScope, AirlineAccessScope>();
+        services.AddScoped<DXSuite.Director.Services.Airlines.AirlineProfileSchema>();
+        services.AddScoped<DXSuite.Director.Services.Airlines.AirlineCallerResolver>();
         services.AddScoped<ICounterPublishService, CounterPublishService>();
         services.AddScoped<IStatusSelectorService, StatusSelectorService>();
         services.AddScoped<IPublicationInvalidator, PublicationInvalidator>();

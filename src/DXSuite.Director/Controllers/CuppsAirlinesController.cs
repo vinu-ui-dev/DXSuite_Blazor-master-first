@@ -1,5 +1,6 @@
 using DXSuite.Director.Authorization;
 using DXSuite.Director.Entities;
+using DXSuite.Director.Services.Airlines;
 using DXSuite.Shared.Entities.Identity;
 using DXSuite.Shared.Logging;
 using DXSuite.Shared.Services.Identity;
@@ -27,13 +28,15 @@ public sealed class CuppsAirlinesController : ControllerBase
 
     private readonly IDirectorDBContext _db;
     private readonly IAirlineAccessScope _accessScope;
-    private readonly IInternalCallerTokenService _tokenService;
+    private readonly AirlineCallerResolver _callers;
+    private readonly AirlineProfileSchema _schema;
 
-    public CuppsAirlinesController(IDirectorDBContext db, IAirlineAccessScope accessScope, IInternalCallerTokenService tokenService)
+    public CuppsAirlinesController(IDirectorDBContext db, IAirlineAccessScope accessScope, AirlineCallerResolver callers, AirlineProfileSchema schema)
     {
         _db = db;
         _accessScope = accessScope;
-        _tokenService = tokenService;
+        _callers = callers;
+        _schema = schema;
     }
 
     /// <summary>
@@ -52,6 +55,18 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         if (allowedAirlineIds is not null)
             query = query.Where(a => allowedAirlineIds.Contains(a.AirlineId));
+
+        // An airline still waiting for approval, or declined, is not offered to CUPPS.
+        try
+        {
+            await _schema.EnsureAsync(ct);
+            var notApproved = _db.TblAirlineProfiles.Where(p => p.ApprovalStatus != TblAirlineProfile.Approved).Select(p => p.AirlineId);
+            query = query.Where(a => !notApproved.Contains(a.AirlineId));
+        }
+        catch (Exception ex)
+        {
+            AirlineFileLog.Write($"[CREATE-API] approval table unavailable, listing every airline: {AirlineFileLog.Describe(ex)}");
+        }
 
         var rows = await query
             .Select(a => new
@@ -85,31 +100,22 @@ public sealed class CuppsAirlinesController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CuppsAirlineCreateRequest body, CancellationToken ct = default)
     {
-        var username = _tokenService.ValidateToken(Request.Headers["X-Internal-Caller-Token"], out var tokenRole);
-        AirlineFileLog.Write($"[CREATE-API] received user='{username}' tokenRole='{tokenRole}' payload={System.Text.Json.JsonSerializer.Serialize(body)}");
-        if (username is null)
+        AirlineFileLog.Write($"[CREATE-API] received payload={System.Text.Json.JsonSerializer.Serialize(body)}");
+        var caller = await _callers.ResolveAsync(Request, ct);
+        if (caller is null)
         {
             AirlineFileLog.Write("[CREATE-API] 401: missing or invalid caller token");
             return Unauthorized(new { message = "Missing or invalid caller token." });
         }
+        var username = caller.Username;
+        AirlineFileLog.Write($"[CREATE-API] caller user='{username}' role='{caller.RoleName}'");
 
-        var caller = await _db.TblUsers.AsNoTracking()
-            .Include(u => u.Role)
-            .FirstOrDefaultAsync(u => u.UserPrincipalName == username, ct);
-
-        // A signed-in Director user is judged by the role on file. An Editor bridge user has no row, so the role the
-        // signed token carries (set from that session) decides instead.
-        // The role on file counts, and so does the signed token's: it carries the session's effective role, which for
-        // a custom role is the built-in role it is based on.
-        static bool CanCreate(string? role) =>
-            string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(role, "Architect", StringComparison.OrdinalIgnoreCase);
-        if (!CanCreate(caller?.Role?.RoleName) && !CanCreate(tokenRole))
+        // A plain Forbid() would redirect this caller (no cookie) to an HTML page; answer in JSON instead.
+        if (!caller.CanManage)
         {
-            // A plain Forbid() would redirect this caller (no cookie) to an HTML page; answer in JSON instead.
-            AirlineFileLog.Write($"[CREATE-API] 403: role on file='{caller?.Role?.RoleName}', token role='{tokenRole}' is not Admin or Architect");
+            AirlineFileLog.Write($"[CREATE-API] 403: role '{caller.RoleName}' is not Admin or Architect");
             return StatusCode(StatusCodes.Status403Forbidden,
-                new { message = $"Only an Admin or Architect can create an airline (signed in as {tokenRole ?? caller?.Role?.RoleName ?? "an unknown role"})." });
+                new { message = $"Only an Admin or Architect can create an airline (signed in as {caller.RoleName ?? "an unknown role"})." });
         }
 
         var code = (body.IataCode ?? string.Empty).Trim().ToUpperInvariant();
@@ -141,7 +147,20 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
 
-<<<<<<< HEAD
+        if (body.AllianceId is { } allianceId && !await _db.TblAlliances.AnyAsync(a => a.AllianceId == allianceId, ct))
+            return BadRequest(new { message = "That alliance does not exist." });
+        if (body.DcsProviderId is { } dcsId && !await _db.TblDcsProviders.AnyAsync(p => p.DcsProviderId == dcsId, ct))
+            return BadRequest(new { message = "That DCS provider does not exist." });
+
+        // The approval table must be there before anything is inserted, so a pending airline is never left unmarked.
+        try { await _schema.EnsureAsync(ct); }
+        catch (Exception ex)
+        {
+            AirlineFileLog.Write($"[CREATE-API] 500: approval table unavailable. {AirlineFileLog.Describe(ex)}");
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = "The airline approval table is missing and could not be created. Run db/migrations/director-airline-profile.sql." });
+        }
+
         // The airline owns a user group (named after it, which is how an Airline Supervisor is matched to it). Reuse
         // the group of that name if there is one; otherwise create it. A fixed id would break on a database without it.
         var groupName = nameEn.Length > 100 ? nameEn[..100] : nameEn;
@@ -181,28 +200,6 @@ public sealed class CuppsAirlinesController : ControllerBase
         var fullLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 12, ct) ? 12 : (int?)null;
         var halfLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 13, ct) ? 13 : (int?)null;
 
-=======
-        // UserGroupId is a required database column because airline supervisor scope is resolved
-        // through tblUserGroupMembership. It is not an optional field in the Add Airline wizard,
-        // so create (or reuse) an airline-named Director group automatically.
-        var userGroup = await _db.TblUserGroups
-            .FirstOrDefaultAsync(g => g.GroupName == nameEn || g.GroupName == cuppsName, ct);
-
-        if (userGroup == null)
-        {
-            userGroup = new DXSuite.Shared.Entities.Identity.TblUserGroup
-            {
-                GroupName = nameEn,
-                Description = $"Airline supervisor scope for {nameEn}",
-                IsActive = true,
-                GroupType = "director",
-                CreateDate = DateTime.UtcNow,
-            };
-            _db.TblUserGroups.Add(userGroup);
-            await _db.SaveChangesAsync(ct);
-        }
-
->>>>>>> 81a54281a199af0bc96f9356221ac8cc18f92954
         var entity = new TblAirlineAccount
         {
             NameEnglish = nameEn,
@@ -215,22 +212,15 @@ public sealed class CuppsAirlinesController : ControllerBase
             IsInternational = body.IsInternational,
             StandardBackgroundColour = backgroundColor,
             StandardTextColour = 0,
-            DcsProviderId = null,
-            AllianceId = null,
+            DcsProviderId = body.DcsProviderId,
+            AllianceId = body.AllianceId,
             ShowAirportStandardTemplates = true,
             DefaultCounterTemplateId = null,
             PickerTab = 0,
-<<<<<<< HEAD
             UserGroupId = userGroupId,
             RetiredUtc = body.Active ? null : DateTime.UtcNow,
             FullTemplateLibraryId = fullLibraryId,
             HalfTemplateLibraryId = halfLibraryId,
-=======
-            UserGroupId = userGroup.UserGroupId,
-            RetiredUtc = body.Active ? null : DateTime.UtcNow,
-            FullTemplateLibraryId = null,
-            HalfTemplateLibraryId = null,
->>>>>>> 81a54281a199af0bc96f9356221ac8cc18f92954
         };
 
         _db.TblAirlineAccounts.Add(entity);
@@ -248,12 +238,56 @@ public sealed class CuppsAirlinesController : ControllerBase
                 new { message = $"The airline could not be saved: {ex.GetBaseException().Message}" });
         }
 
-        AirlineFileLog.Write($"[CREATE-API] 200: created AirlineId={entity.AirlineId} code={entity.IataCode}");
+        // An Admin creates an airline with approval bypass (logged); an Architect's airline waits for an Admin to confirm it.
+        var status = caller.IsAdmin ? TblAirlineProfile.Approved : TblAirlineProfile.Pending;
+        try
+        {
+            _db.TblAirlineProfiles.Add(new TblAirlineProfile
+            {
+                AirlineId = entity.AirlineId,
+                ApprovalStatus = status,
+                RequestedBy = username.Length > 256 ? username[..256] : username,
+                RequestedUtc = DateTime.UtcNow,
+                DecidedBy = caller.IsAdmin ? (username.Length > 256 ? username[..256] : username) : null,
+                DecidedUtc = caller.IsAdmin ? DateTime.UtcNow : null,
+                DecisionNote = caller.IsAdmin ? "Created by an Admin (approval bypass)." : null,
+                SunflowerOption = body.Sunflower,
+                AslVideos = body.AslVideos,
+                DestinationZone = body.DestinationZone,
+            });
+
+            var wanted = (body.TerminalZoneIds ?? []).Distinct().ToList();
+            if (wanted.Count > 0)
+            {
+                var real = await _db.TblZones.AsNoTracking().Where(z => wanted.Contains(z.ZoneId)).Select(z => z.ZoneId).ToListAsync(ct);
+                foreach (var zoneId in real)
+                    _db.TblAirlineTerminals.Add(new TblAirlineTerminal { AirlineId = entity.AirlineId, ZoneId = zoneId });
+            }
+            await _db.SaveChangesAsync(ct);
+        }
+        catch (Exception ex)
+        {
+            // Without its approval row a new airline would count as approved: take it back out instead.
+            AirlineFileLog.Write($"[CREATE-API] 500: saving the approval state failed, removing airline {entity.AirlineId}. {AirlineFileLog.Describe(ex)}");
+            try
+            {
+                foreach (var entry in ((DirectorDbContext)_db).ChangeTracker.Entries().Where(e => e.Entity is TblAirlineProfile or TblAirlineTerminal).ToList())
+                    entry.State = Microsoft.EntityFrameworkCore.EntityState.Detached;
+                _db.TblAirlineAccounts.Remove(entity);
+                await _db.SaveChangesAsync(ct);
+            }
+            catch (Exception undo) { AirlineFileLog.Write($"[CREATE-API] could not remove airline {entity.AirlineId}: {AirlineFileLog.Describe(undo)}"); }
+            return StatusCode(StatusCodes.Status500InternalServerError,
+                new { message = $"The airline could not be saved: {ex.GetBaseException().Message}" });
+        }
+
+        AirlineFileLog.Write($"[CREATE-API] 200: created AirlineId={entity.AirlineId} code={entity.IataCode} approval={AirlineAdminController.StatusName(status)}");
         return Ok(new CuppsAirlineCreatedResponse(
             entity.AirlineId,
             entity.IataCode,
             entity.CuppsName,
-            entity.StandardBackgroundColour));
+            entity.StandardBackgroundColour,
+            AirlineAdminController.StatusName(status)));
     }
 
     private static string NormalizeBackgroundColour(string? input)
@@ -276,10 +310,17 @@ public sealed record CuppsAirlineCreateRequest(
     bool IsUnitedStates,
     bool IsInternational,
     string StandardBackgroundColour,
-    bool Active = true);
+    bool Active = true,
+    int? AllianceId = null,
+    int? DcsProviderId = null,
+    int[]? TerminalZoneIds = null,
+    bool Sunflower = false,
+    bool AslVideos = true,
+    bool DestinationZone = true);
 
 public sealed record CuppsAirlineCreatedResponse(
     int AirlineId,
     string Code,
     string Name,
-    string BackgroundColor);
+    string BackgroundColor,
+    string ApprovalStatus = "Approved");

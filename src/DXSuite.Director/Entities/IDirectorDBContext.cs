@@ -35,6 +35,7 @@ namespace DXSuite.Director.Entities
         DbSet<TblAirlineLocation> TblAirlineLocations { get; set; }
         DbSet<TblAirlineAccount> TblAirlineAccounts { get; set; }
         DbSet<TblAirlineTerminal> TblAirlineTerminals { get; set; }
+        DbSet<TblAirlineProfile> TblAirlineProfiles { get; set; }
         DbSet<TblAlliance> TblAlliances { get; set; }
         DbSet<TblAllianceLogo> TblAllianceLogos { get; set; }
         DbSet<TblCounterPrepared> TblCounterPrepared { get; set; }

@@ -58,6 +58,7 @@ public static class Extensions
         // ──────────────────────────────────────────────────────────────────
         services.AddScoped<CuppsLiveDataProvider>();
         services.AddScoped<AirlineLogoLinks>();
+        services.AddScoped<DXSuite.Aviation.Services.Cupps.AirlineAdminApi>();
 
         // ──────────────────────────────────────────────────────────────────
         // Airlines — User Event audit trail for create/onboard/remove

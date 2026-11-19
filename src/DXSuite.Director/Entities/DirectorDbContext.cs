@@ -20,6 +20,7 @@ public class DirectorDbContext : DbContext, IDirectorDBContext, IIdentityDbConte
     public virtual DbSet<TblAirlineLocation> TblAirlineLocations { get; set; }
     public virtual DbSet<TblAirlineAccount> TblAirlineAccounts { get; set; }
     public virtual DbSet<TblAirlineTerminal> TblAirlineTerminals { get; set; }
+    public virtual DbSet<TblAirlineProfile> TblAirlineProfiles { get; set; }
     public virtual DbSet<TblAlliance> TblAlliances { get; set; }
     public virtual DbSet<TblAllianceLogo> TblAllianceLogos { get; set; }
     public virtual DbSet<TblCounterPrepared> TblCounterPrepared { get; set; }

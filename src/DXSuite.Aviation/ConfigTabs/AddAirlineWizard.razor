@@ -2,6 +2,7 @@
 @using DXSuite.Aviation.Entities
 @using DXSuite.Aviation.Services
 @using DXSuite.Aviation.Services.Cupps
+@using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.Extensions.Logging
@@ -10,6 +11,8 @@
 @inject AirlineAudit AirlineAudit
 @inject CuppsLiveDataProvider CuppsLiveData
 @inject AirlineLogoLinks LogoLinks
+@inject AirlineAdminApi AirlineApi
+@inject ISessionState SessionState
 
 <div class="dx-panel-header">
     <h4 style="margin:0;">Add Airline</h4>
@@ -67,23 +70,34 @@
                 <div class="aaw-field" style="max-width:420px;">
                     <label>Alliance</label>
                     <div style="display:flex; align-items:center; gap:10px;">
-                        <select class="form-control" @bind="data.Alliance" style="flex:1;">
-                            @foreach (var alliance in Alliances)
+                        <select class="form-control" @bind="data.AllianceId" style="flex:1;">
+                            <option value="">None</option>
+                            @foreach (var alliance in lookups.Alliances)
                             {
-                                <option value="@alliance">@alliance</option>
+                                <option value="@alliance.Id">@alliance.Name</option>
                             }
                         </select>
-                        <span class="aaw-alliance-pill">@data.Alliance</span>
+                        <span class="aaw-alliance-pill">@AllianceLabel()</span>
                     </div>
                     <div class="dx-text-muted aaw-hint">Its footer logo shows in the upper left of the screen footer at every counter this airline holds.</div>
                 </div>
 
                 <div class="aaw-field">
                     <label>Operates in</label>
-                    <div style="display:flex; gap:20px;">
-                        <label class="aaw-check"><input type="checkbox" @bind="data.Terminal1" /> Terminal 1</label>
-                        <label class="aaw-check"><input type="checkbox" @bind="data.Terminal3" /> Terminal 3</label>
-                    </div>
+                    @if (lookups.Terminals.Count == 0)
+                    {
+                        <div class="dx-text-muted aaw-hint">No terminal zones exist yet. Add Display Zones named "Terminal 1", "Terminal 3" and so on, then they appear here.</div>
+                    }
+                    else
+                    {
+                        <div style="display:flex; gap:20px; flex-wrap:wrap;">
+                            @foreach (var terminal in lookups.Terminals)
+                            {
+                                var zoneId = terminal.Id;
+                                <label class="aaw-check"><input type="checkbox" checked="@data.TerminalZoneIds.Contains(zoneId)" @onchange="@(e => ToggleTerminal(zoneId, e.Value is true))" /> @terminal.Name</label>
+                            }
+                        </div>
+                    }
                     <div class="dx-text-muted aaw-hint">Limits which counters and zones appear for this airline. Counters themselves come from the RMS allocation feed.</div>
                 </div>
 
@@ -155,7 +169,7 @@
                     </button>
                     <button class="aaw-choice-card @(data.DcsMode == "provider" ? "selected" : "")" @onclick='() => data.DcsMode = "provider"'>
                         <strong>Operates under a DCS provider</strong>
-                        <span>A ground handler such as Swissport checks passengers in. Its handlers act for this airline at the counters it holds.</span>
+                        <span>A ground handler (a DCS provider) checks passengers in. Its handlers act for this airline at the counters it holds.</span>
                     </button>
                 </div>
 
@@ -163,11 +177,20 @@
                 {
                     <div class="aaw-field" style="max-width:300px; margin-top:16px;">
                         <label>DCS provider</label>
-                        <select class="form-control" @bind="data.DcsProvider">
-                            <option value="Swissport">Swissport</option>
-                            <option value="Menzies">Menzies</option>
-                            <option value="dnata">dnata</option>
-                        </select>
+                        @if (lookups.DcsProviders.Count == 0)
+                        {
+                            <div class="dx-text-muted aaw-hint">No DCS providers exist yet. Add them to aviation.tblDcsProvider first.</div>
+                        }
+                        else
+                        {
+                            <select class="form-control" @bind="data.DcsProviderId">
+                                <option value="">Choose a provider</option>
+                                @foreach (var provider in lookups.DcsProviders)
+                                {
+                                    <option value="@provider.Id">@provider.Name</option>
+                                }
+                            </select>
+                        }
                     </div>
                 }
             }
@@ -216,13 +239,19 @@
                 <div class="dx-text-muted" style="margin:10px 0 16px;">Checked at @checkedAt.ToString("hh:mm:ss tt", System.Globalization.CultureInfo.InvariantCulture).ToLowerInvariant()</div>
 
                 <div class="dx-alert dx-alert-info">
-                    <strong>Create will write one aviation.tblAirlineAccount row, @(data.Alliance == "None" ? "no alliance" : $"alliance {data.Alliance}"), and the group it owns</strong>, then:
+                    <strong>Create will write one aviation.tblAirlineAccount row, @(data.AllianceId is null ? "no alliance" : $"alliance {AllianceLabel()}"), and the user group it owns</strong>, then:
                     <ul style="margin:8px 0 0 18px; padding:0;">
-                        <li>create the Asset Library "Airline content" and give the group full access to it</li>
-                        <li>copy the default airline content chain onto that library</li>
-                        <li>add @LogoCount() logo@(LogoCount() == 1 ? "" : "s") to it, one aviation.tblAirlineLogo row per role, approved at once by bypass</li>
-                        <li>hold the Counter template defaults: airport-wide Standard templates shown, no default template, picker opens on Standard</li>
+                        <li>save the terminals, the DCS choice and the CUPPS options with the airline</li>
+                        <li>link @LogoCount() logo@(LogoCount() == 1 ? "" : "s"), one aviation.tblAirlineLogo row per role. A file still waiting on the library's approval is linked as pending.</li>
                         <li>log one User Event</li>
+                        @if (IsAdmin)
+                        {
+                            <li>approve the airline at once: you are an Admin, so approval is bypassed and logged</li>
+                        }
+                        else
+                        {
+                            <li>send the airline to an Admin to approve. It stays out of CUPPS until an Admin confirms it.</li>
+                        }
                     </ul>
                 </div>
 
@@ -233,7 +262,7 @@
                         @SummaryRow("French name", string.IsNullOrWhiteSpace(data.NameFr) ? "—" : data.NameFr, false)
                         @SummaryRow("IATA / ICAO", $"{(string.IsNullOrWhiteSpace(data.Iata) ? "?" : data.Iata.ToUpperInvariant())} / {(string.IsNullOrWhiteSpace(data.Icao) ? "?" : data.Icao.ToUpperInvariant())}", false)
                         @SummaryRow("CUPPS name", string.IsNullOrWhiteSpace(data.CuppsName) ? "—" : data.CuppsName, false)
-                        @SummaryRow("Alliance", data.Alliance, false)
+                        @SummaryRow("Alliance", AllianceLabel(), false)
                         @SummaryRow("Terminals", TerminalsLabel(), false)
                         @SummaryRow("Status", data.Active ? "Active" : "Inactive", false)
                     </div>
@@ -256,7 +285,7 @@
                     </div>
                     <div class="aaw-summary-card">
                         <div class="aaw-summary-head"><strong>DCS</strong><a href="javascript:void(0)" @onclick="() => GoToStep(3)">Edit</a></div>
-                        @SummaryRow("DCS", data.DcsMode == "airline" ? "Airline" : data.DcsProvider, false)
+                        @SummaryRow("DCS", DcsLabel(), false)
                     </div>
                 </div>
             }
@@ -403,11 +432,8 @@
     [Parameter] public EventCallback OnCancel { get; set; }
     [Parameter] public EventCallback<NewAirlineResult> OnCreated { get; set; }
 
-    public sealed record NewAirlineResult(
-        int RecordId, string Code, string Name, string? Icao, bool Active,
-        string Alliance, bool Terminal1, bool Terminal3,
-        bool DcsProvider, string DcsLabel, string BackgroundColor,
-        bool HasWordmark, bool HasSquareMark, bool HasReversedWordmark);
+    /// <summary>The airline as the server created it. <see cref="ApprovalStatus"/> is Approved, or Pending when an Admin must confirm it.</summary>
+    public sealed record NewAirlineResult(int RecordId, string Code, string Name, string ApprovalStatus);
 
     private sealed class WizardData
     {
@@ -416,9 +442,8 @@
         public string Iata = "";
         public string Icao = "";
         public string CuppsName = "";
-        public string Alliance = "None";
-        public bool Terminal1;
-        public bool Terminal3;
+        public int? AllianceId;
+        public HashSet<int> TerminalZoneIds = new();
         public bool Active = true;
 
         public AirlineLogoFile? Wordmark;
@@ -437,12 +462,25 @@
         public bool DestinationZone = true;
 
         public string DcsMode = "airline"; // airline | provider
-        public string DcsProvider = "Swissport";
+        public int? DcsProviderId;
     }
 
     private sealed record Issue(string Category, string Message, bool IsError, int StepIndex);
 
-    private static readonly string[] Alliances = { "None", "Star Alliance", "SkyTeam", "Oneworld" };
+    private AirlineLookupsDto lookups = AirlineLookupsDto.Empty;
+    private bool IsAdmin => SessionState.RoleEnum == Roles.Role.Admin;
+
+    private string AllianceLabel() =>
+        lookups.Alliances.FirstOrDefault(a => a.Id == data.AllianceId)?.Name ?? "None";
+
+    private string DcsLabel() =>
+        data.DcsMode == "airline" ? "Airline" : lookups.DcsProviders.FirstOrDefault(p => p.Id == data.DcsProviderId)?.Name ?? "No provider chosen";
+
+    private void ToggleTerminal(int zoneId, bool on)
+    {
+        if (on) data.TerminalZoneIds.Add(zoneId);
+        else data.TerminalZoneIds.Remove(zoneId);
+    }
 
     private readonly (string Title, string Subtitle)[] Steps =
     {
@@ -474,6 +512,8 @@
 
     protected override async Task OnInitializedAsync()
     {
+        lookups = await AirlineApi.GetLookupsAsync();
+
         logoLibrary = Services.GetService(typeof(IAirlineLogoLibrary)) as IAirlineLogoLibrary;
         if (logoLibrary == null) return;
         uploaderParameters = new() { ["OnUploaded"] = EventCallback.Factory.Create<AirlineLogoFile>(this, OnLogoUploaded) };
@@ -500,8 +540,11 @@
         if (string.IsNullOrWhiteSpace(data.Icao))
             list.Add(new("IDENTITY", "No ICAO code. Flight feeds that use ICAO codes will not match this airline.", false, 0));
 
-        if (!data.Terminal1 && !data.Terminal3)
+        if (data.TerminalZoneIds.Count == 0)
             list.Add(new("IDENTITY", "No terminal selected. The airline will not see any counters until one is.", false, 0));
+
+        if (data.DcsMode == "provider" && data.DcsProviderId is null)
+            list.Add(new("DCS", "Choose the DCS provider, or switch the airline to check passengers in itself.", true, 3));
 
         if (!data.HasSquareMark)
             list.Add(new("BRANDING", "No square mark. CUPPS will show the airline name instead.", false, 1));
@@ -549,9 +592,7 @@
 
     private string TerminalsLabel()
     {
-        var terms = new List<string>();
-        if (data.Terminal1) terms.Add("Terminal 1");
-        if (data.Terminal3) terms.Add("Terminal 3");
+        var terms = lookups.Terminals.Where(t => data.TerminalZoneIds.Contains(t.Id)).Select(t => t.Name).ToList();
         return terms.Count == 0 ? "None" : string.Join(", ", terms);
     }
 
@@ -755,7 +796,13 @@
                 data.FlagUs,
                 data.FlagIntl,
                 data.BackgroundColor,
-                data.Active));
+                data.Active,
+                data.AllianceId,
+                data.DcsMode == "provider" ? data.DcsProviderId : null,
+                data.TerminalZoneIds.ToArray(),
+                data.Sunflower,
+                data.AslVideos,
+                data.DestinationZone));
 
             if (!create.Success || create.Airline is null)
             {
@@ -776,19 +823,16 @@
                 catch (Exception ex) { Logger.LogError(ex, "Could not link the {Role} logo of new airline {Code}", role, created.Code); }
             }
 
-            var dcsLabel = data.DcsMode == "airline" ? "Airline" : data.DcsProvider;
-            var result = new NewAirlineResult(
-                created.AirlineId, created.Code, created.Name, icao, data.Active,
-                data.Alliance, data.Terminal1, data.Terminal3,
-                data.DcsMode == "provider", dcsLabel, created.BackgroundColor,
-                data.HasWordmark, data.HasSquareMark, data.HasReversedWordmark);
+            var dcsLabel = DcsLabel();
+            var result = new NewAirlineResult(created.AirlineId, created.Code, created.Name, created.ApprovalStatus);
 
             await AirlineAudit.CreatedAsync(created.AirlineId, created.Code, result.Name, new
             {
-                alliance = data.Alliance,
+                alliance = AllianceLabel(),
                 terminals = TerminalsLabel(),
                 dcs = dcsLabel,
                 backgroundColor = data.BackgroundColor,
+                approval = created.ApprovalStatus,
                 logos = new { wordmark = data.HasWordmark, square = data.HasSquareMark, reversed = data.HasReversedWordmark },
             });
 

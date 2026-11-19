@@ -401,13 +401,20 @@ public sealed record CuppsAirlineCreateRequest(
     bool IsUnitedStates,
     bool IsInternational,
     string StandardBackgroundColour,
-    bool Active = true);
+    bool Active = true,
+    int? AllianceId = null,
+    int? DcsProviderId = null,
+    int[]? TerminalZoneIds = null,
+    bool Sunflower = false,
+    bool AslVideos = true,
+    bool DestinationZone = true);
 
 public sealed record CuppsAirlineCreatedDto(
     int AirlineId,
     string Code,
     string Name,
-    string BackgroundColor);
+    string BackgroundColor,
+    string ApprovalStatus = "Approved");
 
 public sealed record CuppsAirlineCreateResult(
     bool Success,
