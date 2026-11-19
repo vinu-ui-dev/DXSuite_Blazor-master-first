@@ -12,13 +12,13 @@ namespace DXSuite.Director.Controllers;
 
 /// <summary>
 /// Everything the Configuration &gt; Airlines tab does to an airline after it exists: the admin list, the pick lists,
-/// editing, retiring, approval, and who is in the airline's user group.
+/// editing, retiring, and who is in the airline's user group. (Only logos go through approval; see the logo library.)
 /// </summary>
 /// <remarks>
 /// [AllowAnonymous] for the same loopback reason as <see cref="CuppsAirlinesController"/>: the Blazor circuit calls
 /// these over an internal HttpClient without the browser cookie. Every action here asks for the signed
 /// X-Internal-Caller-Token instead, and rejects the call without one. Admin and Architect manage airlines; only an
-/// Admin approves, declines, retires or reactivates one.
+/// Admin retires or reactivates one.
 /// </remarks>
 [Route("api/cupps/airlines")]
 [ApiController]
@@ -73,8 +73,8 @@ public sealed class AirlineAdminController : ControllerBase
     }
 
     /// <summary>
-    /// Every airline with its detail. Admin and Architect see all of them, retired and waiting ones too. Anyone else
-    /// sees the approved, active airlines their access scope allows.
+    /// Every airline with its detail. Admin and Architect see all of them, retired ones too. Anyone else sees the
+    /// active airlines their access scope allows.
     /// </summary>
     [HttpGet("admin")]
     public async Task<IActionResult> GetAdminList(CancellationToken ct)
@@ -96,9 +96,7 @@ public sealed class AirlineAdminController : ControllerBase
         {
             var allowed = await _scope.GetAllowedAirlineIdsForUserAsync(caller.Username, ct);
             if (allowed is not null) query = query.Where(a => allowed.Contains(a.AirlineId));
-            rows = (await ProjectAsync(query.Where(a => a.RetiredUtc == null), ct))
-                .Where(a => !profiles.TryGetValue(a.AirlineId, out var p) || p.ApprovalStatus == TblAirlineProfile.Approved)
-                .ToList();
+            rows = await ProjectAsync(query.Where(a => a.RetiredUtc == null), ct);
         }
 
         var ids = rows.Select(r => r.AirlineId).ToList();
@@ -123,8 +121,6 @@ public sealed class AirlineAdminController : ControllerBase
                 a.AllianceId, a.AllianceId is { } al && alliances.TryGetValue(al, out var an) ? an : null,
                 a.DcsProviderId, a.DcsProviderId is { } d && dcs.TryGetValue(d, out var dn) ? dn : null,
                 a.UserGroupId, memberCounts.GetValueOrDefault(a.UserGroupId),
-                StatusName(p?.ApprovalStatus ?? TblAirlineProfile.Approved),
-                p?.RequestedBy, p?.RequestedUtc, p?.DecidedBy, p?.DecidedUtc, p?.DecisionNote,
                 p?.SunflowerOption ?? false, p?.AslVideos ?? true, p?.DestinationZone ?? true,
                 terminals.Where(t => t.AirlineId == a.AirlineId).Select(t => t.ZoneId).OrderBy(z => z).ToList());
         }).OrderBy(a => a.NameEnglish, StringComparer.OrdinalIgnoreCase).ToList();
@@ -190,7 +186,7 @@ public sealed class AirlineAdminController : ControllerBase
             var profile = await _db.TblAirlineProfiles.FirstOrDefaultAsync(p => p.AirlineId == id, ct);
             if (profile is null)
             {
-                profile = new TblAirlineProfile { AirlineId = id, ApprovalStatus = TblAirlineProfile.Approved, RequestedUtc = DateTime.UtcNow };
+                profile = new TblAirlineProfile { AirlineId = id };
                 _db.TblAirlineProfiles.Add(profile);
             }
             profile.SunflowerOption = body.SunflowerOption;
@@ -225,44 +221,6 @@ public sealed class AirlineAdminController : ControllerBase
         airline.RetiredUtc = retire ? airline.RetiredUtc ?? DateTime.UtcNow : null;
         await _db.SaveChangesAsync(ct);
         AirlineFileLog.Write($"[AIRLINE-API] {caller!.Username} {(retire ? "retired" : "reactivated")} airline {airline.IataCode} (id {id})");
-        return Ok();
-    }
-
-    // ── Approval (Admin only) ────────────────────────────────────────────────────────────────────────────────────────
-
-    [HttpPost("{id:int}/approve")]
-    public Task<IActionResult> Approve(int id, [FromBody] AirlineDecisionRequest? body, CancellationToken ct) =>
-        DecideAsync(id, TblAirlineProfile.Approved, body?.Note, ct);
-
-    [HttpPost("{id:int}/decline")]
-    public Task<IActionResult> Decline(int id, [FromBody] AirlineDecisionRequest? body, CancellationToken ct) =>
-        DecideAsync(id, TblAirlineProfile.Declined, body?.Note, ct);
-
-    private async Task<IActionResult> DecideAsync(int id, byte status, string? note, CancellationToken ct)
-    {
-        var (caller, denied) = await RequireAsync(manage: false, ct);
-        if (denied is not null) return denied;
-
-        if (status == TblAirlineProfile.Declined && string.IsNullOrWhiteSpace(note))
-            return BadRequest(new { message = "Give a reason for declining the airline." });
-
-        var airline = await _db.TblAirlineAccounts.AsNoTracking().FirstOrDefaultAsync(a => a.AirlineId == id, ct);
-        if (airline is null) return NotFound(new { message = "That airline no longer exists." });
-
-        await _schema.EnsureAsync(ct);
-        var profile = await _db.TblAirlineProfiles.FirstOrDefaultAsync(p => p.AirlineId == id, ct);
-        if (profile is null)
-        {
-            profile = new TblAirlineProfile { AirlineId = id, RequestedUtc = DateTime.UtcNow };
-            _db.TblAirlineProfiles.Add(profile);
-        }
-        profile.ApprovalStatus = status;
-        profile.DecidedBy = Trim(caller!.Username, 256);
-        profile.DecidedUtc = DateTime.UtcNow;
-        profile.DecisionNote = string.IsNullOrWhiteSpace(note) ? null : Trim(note.Trim(), 500);
-        await _db.SaveChangesAsync(ct);
-
-        AirlineFileLog.Write($"[AIRLINE-API] {caller.Username} {(status == TblAirlineProfile.Approved ? "approved" : "declined")} airline {airline.IataCode} (id {id}) note='{profile.DecisionNote}'");
         return Ok();
     }
 
@@ -384,7 +342,7 @@ public sealed class AirlineAdminController : ControllerBase
         var allowed = manage ? caller.CanManage : caller.IsAdmin;
         if (!allowed)
         {
-            AirlineFileLog.Write($"[AIRLINE-API] 403: {caller.Username} ({caller.RoleName}) may not {(manage ? "manage" : "approve or retire")} airlines");
+            AirlineFileLog.Write($"[AIRLINE-API] 403: {caller.Username} ({caller.RoleName}) may not {(manage ? "manage" : "retire or reactivate")} airlines");
             return (caller, StatusCode(StatusCodes.Status403Forbidden, new
             {
                 message = manage
@@ -446,13 +404,6 @@ public sealed class AirlineAdminController : ControllerBase
         return HexColorRegex.IsMatch(raw) ? $"#{raw}" : "#0071BC";
     }
 
-    internal static string StatusName(byte status) => status switch
-    {
-        TblAirlineProfile.Pending => "Pending",
-        TblAirlineProfile.Declined => "Declined",
-        _ => "Approved",
-    };
-
     private static string Trim(string value, int max) => value.Length > max ? value[..max] : value;
 
     private sealed record TblAirlineAccountRow(
@@ -476,7 +427,6 @@ public sealed record AirlineDetail(
     int? AllianceId, string? AllianceName,
     int? DcsProviderId, string? DcsProviderName,
     int UserGroupId, int MemberCount,
-    string ApprovalStatus, string? RequestedBy, DateTime? RequestedUtc, string? DecidedBy, DateTime? DecidedUtc, string? DecisionNote,
     bool SunflowerOption, bool AslVideos, bool DestinationZone,
     IReadOnlyList<int> TerminalZoneIds);
 
@@ -494,8 +444,6 @@ public sealed record AirlineUpdateRequest(
     bool SunflowerOption,
     bool AslVideos,
     bool DestinationZone);
-
-public sealed record AirlineDecisionRequest(string? Note);
 
 public sealed record AirlineMember(int UserId, string Name, string Account, string Role);
 

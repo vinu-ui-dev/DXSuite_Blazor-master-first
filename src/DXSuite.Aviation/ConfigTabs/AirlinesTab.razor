@@ -94,8 +94,6 @@
                             <div style="min-width:0;">
                                 <a href="javascript:void(0)" @onclick="() => OpenProfile(a, false)">@a.Name</a>
                                 @if (!a.Shown) { <span class="dx-badge dx-badge-gray" style="margin-left:6px;">Retired</span> }
-                                @if (a.Detail.IsPending) { <span class="dx-badge dx-badge-orange" style="margin-left:6px;">Waiting for approval</span> }
-                                @if (a.Detail.IsDeclined) { <span class="dx-badge dx-badge-red" style="margin-left:6px;">Declined</span> }
                             </div>
                             <div style="font-weight:600;">@a.Code</div>
                             <div style="font-weight:600;">@(a.Icao ?? "—")</div>
@@ -276,8 +274,6 @@ else
             <div class="al-tile al-tile-lg" style="background:@ColorFor(profileAirline.Code);">@profileAirline.Code</div>
             <h4 style="margin:0;">@profileAirline.Name</h4>
             @if (detail.Retired) { <span class="dx-badge dx-badge-gray">Retired</span> }
-            else if (detail.IsPending) { <span class="dx-badge dx-badge-orange">Waiting for approval</span> }
-            else if (detail.IsDeclined) { <span class="dx-badge dx-badge-red">Declined</span> }
             else { <span class="dx-badge dx-badge-green">Active</span> }
         </div>
         @if (canEditProfile)
@@ -286,14 +282,6 @@ else
                 <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@isSavingProfile" @onclick="SaveProfileAsync">@(isSavingProfile ? "SAVING..." : "SAVE CHANGES")</button>
                 @if (isAdminUser)
                 {
-                    @if (detail.IsPending || detail.IsDeclined)
-                    {
-                        <button class="dx-btn dx-btn-green dx-btn-sm" disabled="@isSavingProfile" @onclick="ApproveAirlineAsync">APPROVE</button>
-                    }
-                    @if (detail.IsPending)
-                    {
-                        <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isSavingProfile" @onclick="() => decliningAirline = !decliningAirline">DECLINE</button>
-                    }
                     @if (detail.Retired)
                     {
                         <button class="dx-btn dx-btn-gray dx-btn-sm" disabled="@isSavingProfile" @onclick="ReactivateAirlineAsync">REACTIVATE</button>
@@ -310,25 +298,6 @@ else
     @if (!string.IsNullOrEmpty(statusMessage))
     {
         <div class="dx-alert @(statusIsError ? "dx-alert-danger" : "dx-alert-success")" style="margin:12px 20px 0;">@statusMessage</div>
-    }
-    @if (detail.IsPending)
-    {
-        <div class="dx-alert dx-alert-warning" style="margin:12px 20px 0;">
-            This airline is waiting for an Admin to approve it@(detail.RequestedBy is null ? "" : $" (requested by {detail.RequestedBy}{(detail.RequestedUtc is { } at ? $" on {at:yyyy-MM-dd}" : "")})"). It is not offered in CUPPS until it is approved.
-        </div>
-    }
-    else if (detail.IsDeclined)
-    {
-        <div class="dx-alert dx-alert-danger" style="margin:12px 20px 0;">
-            An Admin declined this airline@(detail.DecidedBy is null ? "" : $" ({detail.DecidedBy})")@(string.IsNullOrWhiteSpace(detail.DecisionNote) ? "." : $": {detail.DecisionNote}") It is not offered in CUPPS.
-        </div>
-    }
-    @if (decliningAirline && isAdminUser)
-    {
-        <div style="margin:12px 20px 0; display:flex; gap:8px; align-items:center;">
-            <input class="dx-form-control" style="max-width:420px;" maxlength="500" placeholder="Why is the airline declined?" @bind="declineNote" @bind:event="oninput" />
-            <button class="dx-btn dx-btn-blue dx-btn-sm" disabled="@(isSavingProfile || string.IsNullOrWhiteSpace(declineNote))" @onclick="DeclineAirlineAsync">CONFIRM DECLINE</button>
-        </div>
     }
 
     @if (isViewOnlyAirlines)
@@ -446,11 +415,10 @@ else
                     <label class="dx-form-label">Status</label>
                     <div>
                         @if (detail.Retired) { <span>Retired. Hidden from CUPPS and counter allocation.</span> }
-                        else if (!detail.IsApproved) { <span>@(detail.IsPending ? "Waiting for approval." : "Declined.") Not offered in CUPPS.</span> }
                         else { <span>Active. Available in CUPPS once a counter is allocated.</span> }
                         @if (!isAdminUser)
                         {
-                            <div class="dx-text-muted" style="font-size:0.78rem; margin-top:4px;">Only an Admin can retire, reactivate or approve an airline.</div>
+                            <div class="dx-text-muted" style="font-size:0.78rem; margin-top:4px;">Only an Admin can retire or reactivate an airline.</div>
                         }
                     </div>
                 </div>
@@ -927,8 +895,6 @@ else
 
     private bool showRetiredAirlines;
     private bool isSavingProfile;
-    private bool decliningAirline;
-    private string declineNote = "";
 
     private bool isAdminUser => SessionState.RoleEnum == Roles.Role.Admin;
     private bool canEditProfile => isAdminProfile && !isViewOnlyAirlines && canManageAirlineListActions;
@@ -1154,10 +1120,7 @@ else
 
     private string AllianceNameOf(int? id) => lookups.Alliances.FirstOrDefault(a => a.Id == id)?.Name ?? "None";
 
-    private string CreatedNote() =>
-        profileAirline?.Detail.RequestedUtc is { } at
-            ? $"Created {at:yyyy-MM-dd}. Changes apply to CUPPS when saved."
-            : "Changes apply to CUPPS when saved.";
+    private static string CreatedNote() => "Changes apply to CUPPS when saved.";
 
     private IEnumerable<(string Name, List<string> Airlines)> DcsGroups()
     {
@@ -1234,9 +1197,7 @@ else
     {
         await LoadAirlines();
 
-        statusMessage = string.Equals(result.ApprovalStatus, "Pending", StringComparison.OrdinalIgnoreCase)
-            ? $"{result.Name} was created and is waiting for an Admin to approve it. It stays out of CUPPS until then."
-            : $"{result.Name} created.";
+        statusMessage = $"{result.Name} created.";
         statusIsError = false;
 
         var row = allAirlines.FirstOrDefault(a => a.RecordId == result.RecordId);
@@ -1247,8 +1208,6 @@ else
     private void OpenProfile(AirlineRow row, bool supervisor)
     {
         profileAirline = row;
-        decliningAirline = false;
-        declineNote = "";
         memberError = null;
         members = new();
         candidates = new();
@@ -1460,7 +1419,7 @@ else
         }
     }
 
-    // ── Save, retire and approve ────────────────────────────────────────────────────────────────────────────────────
+    // ── Save, retire and reactivate ────────────────────────────────────────────────────────────────────────────────────
 
     private async Task SaveProfileAsync()
     {
@@ -1514,37 +1473,6 @@ else
             if (!result.Success) { Fail(result.Error ?? "The airline could not be reactivated."); return; }
             await ReloadAirlinesAsync();
             Succeed($"{profileAirline?.Name} is active again.");
-        }
-        finally { isSavingProfile = false; }
-    }
-
-    private async Task ApproveAirlineAsync()
-    {
-        if (profileAirline is null || !isAdminUser || isSavingProfile) return;
-        isSavingProfile = true;
-        try
-        {
-            var result = await AirlineApi.ApproveAsync(profileAirline.RecordId);
-            if (!result.Success) { Fail(result.Error ?? "The airline could not be approved."); return; }
-            decliningAirline = false;
-            await ReloadAirlinesAsync();
-            Succeed($"{profileAirline?.Name} approved. It is now offered in CUPPS.");
-        }
-        finally { isSavingProfile = false; }
-    }
-
-    private async Task DeclineAirlineAsync()
-    {
-        if (profileAirline is null || !isAdminUser || isSavingProfile || string.IsNullOrWhiteSpace(declineNote)) return;
-        isSavingProfile = true;
-        try
-        {
-            var result = await AirlineApi.DeclineAsync(profileAirline.RecordId, declineNote.Trim());
-            if (!result.Success) { Fail(result.Error ?? "The airline could not be declined."); return; }
-            decliningAirline = false;
-            declineNote = "";
-            await ReloadAirlinesAsync();
-            Succeed($"{profileAirline?.Name} declined.");
         }
         finally { isSavingProfile = false; }
     }

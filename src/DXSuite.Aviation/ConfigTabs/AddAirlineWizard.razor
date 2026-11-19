@@ -2,7 +2,6 @@
 @using DXSuite.Aviation.Entities
 @using DXSuite.Aviation.Services
 @using DXSuite.Aviation.Services.Cupps
-@using DXSuite.Shared.Authorization
 @using DXSuite.Shared.Services
 @using Microsoft.AspNetCore.Components.Forms
 @using Microsoft.Extensions.Logging
@@ -12,7 +11,6 @@
 @inject CuppsLiveDataProvider CuppsLiveData
 @inject AirlineLogoLinks LogoLinks
 @inject AirlineAdminApi AirlineApi
-@inject ISessionState SessionState
 
 <div class="dx-panel-header">
     <h4 style="margin:0;">Add Airline</h4>
@@ -244,14 +242,6 @@
                         <li>save the terminals, the DCS choice and the CUPPS options with the airline</li>
                         <li>link @LogoCount() logo@(LogoCount() == 1 ? "" : "s"), one aviation.tblAirlineLogo row per role. A file still waiting on the library's approval is linked as pending.</li>
                         <li>log one User Event</li>
-                        @if (IsAdmin)
-                        {
-                            <li>approve the airline at once: you are an Admin, so approval is bypassed and logged</li>
-                        }
-                        else
-                        {
-                            <li>send the airline to an Admin to approve. It stays out of CUPPS until an Admin confirms it.</li>
-                        }
                     </ul>
                 </div>
 
@@ -432,8 +422,8 @@
     [Parameter] public EventCallback OnCancel { get; set; }
     [Parameter] public EventCallback<NewAirlineResult> OnCreated { get; set; }
 
-    /// <summary>The airline as the server created it. <see cref="ApprovalStatus"/> is Approved, or Pending when an Admin must confirm it.</summary>
-    public sealed record NewAirlineResult(int RecordId, string Code, string Name, string ApprovalStatus);
+    /// <summary>The airline as the server created it.</summary>
+    public sealed record NewAirlineResult(int RecordId, string Code, string Name);
 
     private sealed class WizardData
     {
@@ -468,7 +458,6 @@
     private sealed record Issue(string Category, string Message, bool IsError, int StepIndex);
 
     private AirlineLookupsDto lookups = AirlineLookupsDto.Empty;
-    private bool IsAdmin => SessionState.RoleEnum == Roles.Role.Admin;
 
     private string AllianceLabel() =>
         lookups.Alliances.FirstOrDefault(a => a.Id == data.AllianceId)?.Name ?? "None";
@@ -824,7 +813,7 @@
             }
 
             var dcsLabel = DcsLabel();
-            var result = new NewAirlineResult(created.AirlineId, created.Code, created.Name, created.ApprovalStatus);
+            var result = new NewAirlineResult(created.AirlineId, created.Code, created.Name);
 
             await AirlineAudit.CreatedAsync(created.AirlineId, created.Code, result.Name, new
             {
@@ -832,7 +821,6 @@
                 terminals = TerminalsLabel(),
                 dcs = dcsLabel,
                 backgroundColor = data.BackgroundColor,
-                approval = created.ApprovalStatus,
                 logos = new { wordmark = data.HasWordmark, square = data.HasSquareMark, reversed = data.HasReversedWordmark },
             });
 

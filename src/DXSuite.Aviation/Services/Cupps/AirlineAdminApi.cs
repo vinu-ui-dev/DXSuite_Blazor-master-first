@@ -18,7 +18,7 @@ public sealed record AirlineLookupsDto(
     public static AirlineLookupsDto Empty { get; } = new([], [], [], []);
 }
 
-/// <summary>One airline as the Airlines tab shows it (the airline account plus approval and CUPPS options).</summary>
+/// <summary>One airline as the Airlines tab shows it (the airline account plus its CUPPS options).</summary>
 public sealed record AirlineDetailDto(
     int AirlineId, string Code, string NameEnglish, string NameFrench, string? Icao, string CuppsName,
     bool IsCanada, bool IsUnitedStates, bool IsInternational, string BackgroundColour,
@@ -26,14 +26,8 @@ public sealed record AirlineDetailDto(
     int? AllianceId, string? AllianceName,
     int? DcsProviderId, string? DcsProviderName,
     int UserGroupId, int MemberCount,
-    string ApprovalStatus, string? RequestedBy, DateTime? RequestedUtc, string? DecidedBy, DateTime? DecidedUtc, string? DecisionNote,
     bool SunflowerOption, bool AslVideos, bool DestinationZone,
-    IReadOnlyList<int> TerminalZoneIds)
-{
-    public bool IsApproved => string.Equals(ApprovalStatus, "Approved", StringComparison.OrdinalIgnoreCase);
-    public bool IsPending => string.Equals(ApprovalStatus, "Pending", StringComparison.OrdinalIgnoreCase);
-    public bool IsDeclined => string.Equals(ApprovalStatus, "Declined", StringComparison.OrdinalIgnoreCase);
-}
+    IReadOnlyList<int> TerminalZoneIds);
 
 public sealed record AirlineUpdateDto(
     string NameEnglish,
@@ -108,12 +102,6 @@ public sealed class AirlineAdminApi(
 
     public Task<AirlineApiResult> ReactivateAsync(int airlineId, CancellationToken ct = default) =>
         SendAsync(c => c.PostAsync(Url($"/{airlineId}/reactivate"), null, ct), "reactivate", ct);
-
-    public Task<AirlineApiResult> ApproveAsync(int airlineId, string? note = null, CancellationToken ct = default) =>
-        SendAsync(c => c.PostAsJsonAsync(Url($"/{airlineId}/approve"), new { note }, ct), "approve", ct);
-
-    public Task<AirlineApiResult> DeclineAsync(int airlineId, string note, CancellationToken ct = default) =>
-        SendAsync(c => c.PostAsJsonAsync(Url($"/{airlineId}/decline"), new { note }, ct), "decline", ct);
 
     public async Task<IReadOnlyList<AirlineMemberDto>> GetMembersAsync(int airlineId, CancellationToken ct = default)
     {

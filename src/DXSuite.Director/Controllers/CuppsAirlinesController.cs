@@ -56,18 +56,6 @@ public sealed class CuppsAirlinesController : ControllerBase
         if (allowedAirlineIds is not null)
             query = query.Where(a => allowedAirlineIds.Contains(a.AirlineId));
 
-        // An airline still waiting for approval, or declined, is not offered to CUPPS.
-        try
-        {
-            await _schema.EnsureAsync(ct);
-            var notApproved = _db.TblAirlineProfiles.Where(p => p.ApprovalStatus != TblAirlineProfile.Approved).Select(p => p.AirlineId);
-            query = query.Where(a => !notApproved.Contains(a.AirlineId));
-        }
-        catch (Exception ex)
-        {
-            AirlineFileLog.Write($"[CREATE-API] approval table unavailable, listing every airline: {AirlineFileLog.Describe(ex)}");
-        }
-
         var rows = await query
             .Select(a => new
             {
@@ -152,13 +140,13 @@ public sealed class CuppsAirlinesController : ControllerBase
         if (body.DcsProviderId is { } dcsId && !await _db.TblDcsProviders.AnyAsync(p => p.DcsProviderId == dcsId, ct))
             return BadRequest(new { message = "That DCS provider does not exist." });
 
-        // The approval table must be there before anything is inserted, so a pending airline is never left unmarked.
+        // The options table must be there before anything is inserted.
         try { await _schema.EnsureAsync(ct); }
         catch (Exception ex)
         {
-            AirlineFileLog.Write($"[CREATE-API] 500: approval table unavailable. {AirlineFileLog.Describe(ex)}");
+            AirlineFileLog.Write($"[CREATE-API] 500: options table unavailable. {AirlineFileLog.Describe(ex)}");
             return StatusCode(StatusCodes.Status500InternalServerError,
-                new { message = "The airline approval table is missing and could not be created. Run db/migrations/director-airline-profile.sql." });
+                new { message = "The airline options table is missing and could not be created. Run db/migrations/director-airline-profile.sql." });
         }
 
         // The airline owns a user group (named after it, which is how an Airline Supervisor is matched to it). Reuse
@@ -238,19 +226,12 @@ public sealed class CuppsAirlinesController : ControllerBase
                 new { message = $"The airline could not be saved: {ex.GetBaseException().Message}" });
         }
 
-        // An Admin creates an airline with approval bypass (logged); an Architect's airline waits for an Admin to confirm it.
-        var status = caller.IsAdmin ? TblAirlineProfile.Approved : TblAirlineProfile.Pending;
+        // The airline is active at once: only logos go through approval. Its CUPPS options and terminals are saved with it.
         try
         {
             _db.TblAirlineProfiles.Add(new TblAirlineProfile
             {
                 AirlineId = entity.AirlineId,
-                ApprovalStatus = status,
-                RequestedBy = username.Length > 256 ? username[..256] : username,
-                RequestedUtc = DateTime.UtcNow,
-                DecidedBy = caller.IsAdmin ? (username.Length > 256 ? username[..256] : username) : null,
-                DecidedUtc = caller.IsAdmin ? DateTime.UtcNow : null,
-                DecisionNote = caller.IsAdmin ? "Created by an Admin (approval bypass)." : null,
                 SunflowerOption = body.Sunflower,
                 AslVideos = body.AslVideos,
                 DestinationZone = body.DestinationZone,
@@ -267,8 +248,8 @@ public sealed class CuppsAirlinesController : ControllerBase
         }
         catch (Exception ex)
         {
-            // Without its approval row a new airline would count as approved: take it back out instead.
-            AirlineFileLog.Write($"[CREATE-API] 500: saving the approval state failed, removing airline {entity.AirlineId}. {AirlineFileLog.Describe(ex)}");
+            // The airline is only half saved without its options and terminals: take it back out instead.
+            AirlineFileLog.Write($"[CREATE-API] 500: saving the airline options failed, removing airline {entity.AirlineId}. {AirlineFileLog.Describe(ex)}");
             try
             {
                 foreach (var entry in ((DirectorDbContext)_db).ChangeTracker.Entries().Where(e => e.Entity is TblAirlineProfile or TblAirlineTerminal).ToList())
@@ -281,13 +262,12 @@ public sealed class CuppsAirlinesController : ControllerBase
                 new { message = $"The airline could not be saved: {ex.GetBaseException().Message}" });
         }
 
-        AirlineFileLog.Write($"[CREATE-API] 200: created AirlineId={entity.AirlineId} code={entity.IataCode} approval={AirlineAdminController.StatusName(status)}");
+        AirlineFileLog.Write($"[CREATE-API] 200: created AirlineId={entity.AirlineId} code={entity.IataCode}");
         return Ok(new CuppsAirlineCreatedResponse(
             entity.AirlineId,
             entity.IataCode,
             entity.CuppsName,
-            entity.StandardBackgroundColour,
-            AirlineAdminController.StatusName(status)));
+            entity.StandardBackgroundColour));
     }
 
     private static string NormalizeBackgroundColour(string? input)
@@ -322,5 +302,4 @@ public sealed record CuppsAirlineCreatedResponse(
     int AirlineId,
     string Code,
     string Name,
-    string BackgroundColor,
-    string ApprovalStatus = "Approved");
+    string BackgroundColor);

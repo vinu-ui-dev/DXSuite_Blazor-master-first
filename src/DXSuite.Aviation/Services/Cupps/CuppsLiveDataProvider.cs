@@ -413,8 +413,7 @@ public sealed record CuppsAirlineCreatedDto(
     int AirlineId,
     string Code,
     string Name,
-    string BackgroundColor,
-    string ApprovalStatus = "Approved");
+    string BackgroundColor);
 
 public sealed record CuppsAirlineCreateResult(
     bool Success,
