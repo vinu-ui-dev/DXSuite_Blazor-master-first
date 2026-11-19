@@ -8,6 +8,12 @@
     <UserSecretsId>917825ee-1d47-491a-aa93-767863cc76d2</UserSecretsId>
   </PropertyGroup>
 
+  <!-- The static web assets compression task crashes (exit code -1073740791 / 0xC0000409,
+       MSB6006) on large asset sets. Skip it for non-Release builds; Release/publish still compresses. -->
+  <PropertyGroup Condition="'$(Configuration)' != 'Release'">
+    <CompressionEnabled>false</CompressionEnabled>
+  </PropertyGroup>
+
   <!--
     Module inclusion flags. Set any of these to false at publish time to strip that
     module's DLL from the output entirely (no code compiled, no assembly shipped).

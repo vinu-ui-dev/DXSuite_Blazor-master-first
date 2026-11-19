@@ -141,6 +141,7 @@ public sealed class CuppsAirlinesController : ControllerBase
 
         var backgroundColor = NormalizeBackgroundColour(body.StandardBackgroundColour);
 
+<<<<<<< HEAD
         // The airline owns a user group (named after it, which is how an Airline Supervisor is matched to it). Reuse
         // the group of that name if there is one; otherwise create it. A fixed id would break on a database without it.
         var groupName = nameEn.Length > 100 ? nameEn[..100] : nameEn;
@@ -180,6 +181,28 @@ public sealed class CuppsAirlinesController : ControllerBase
         var fullLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 12, ct) ? 12 : (int?)null;
         var halfLibraryId = await _db.TblLocations.AsNoTracking().AnyAsync(l => l.LocationId == 13, ct) ? 13 : (int?)null;
 
+=======
+        // UserGroupId is a required database column because airline supervisor scope is resolved
+        // through tblUserGroupMembership. It is not an optional field in the Add Airline wizard,
+        // so create (or reuse) an airline-named Director group automatically.
+        var userGroup = await _db.TblUserGroups
+            .FirstOrDefaultAsync(g => g.GroupName == nameEn || g.GroupName == cuppsName, ct);
+
+        if (userGroup == null)
+        {
+            userGroup = new DXSuite.Shared.Entities.Identity.TblUserGroup
+            {
+                GroupName = nameEn,
+                Description = $"Airline supervisor scope for {nameEn}",
+                IsActive = true,
+                GroupType = "director",
+                CreateDate = DateTime.UtcNow,
+            };
+            _db.TblUserGroups.Add(userGroup);
+            await _db.SaveChangesAsync(ct);
+        }
+
+>>>>>>> 81a54281a199af0bc96f9356221ac8cc18f92954
         var entity = new TblAirlineAccount
         {
             NameEnglish = nameEn,
@@ -197,10 +220,17 @@ public sealed class CuppsAirlinesController : ControllerBase
             ShowAirportStandardTemplates = true,
             DefaultCounterTemplateId = null,
             PickerTab = 0,
+<<<<<<< HEAD
             UserGroupId = userGroupId,
             RetiredUtc = body.Active ? null : DateTime.UtcNow,
             FullTemplateLibraryId = fullLibraryId,
             HalfTemplateLibraryId = halfLibraryId,
+=======
+            UserGroupId = userGroup.UserGroupId,
+            RetiredUtc = body.Active ? null : DateTime.UtcNow,
+            FullTemplateLibraryId = null,
+            HalfTemplateLibraryId = null,
+>>>>>>> 81a54281a199af0bc96f9356221ac8cc18f92954
         };
 
         _db.TblAirlineAccounts.Add(entity);

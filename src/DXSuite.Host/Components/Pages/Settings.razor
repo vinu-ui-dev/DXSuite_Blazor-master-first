@@ -69,6 +69,18 @@ else
     private SettingsTab[] settingsTabs = Array.Empty<SettingsTab>();
     private string? activeTab;
 
+    private static readonly HashSet<string> HiddenSettingsTabKeys = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "devicepairing",
+        "playerprovisioning",
+        "playerupdates",
+        "playersync",
+        "airlines",
+        "cities",
+        "wayfinding",
+        "content-package-envs"
+    };
+
     protected override async Task OnParametersSetAsync()
     {
         if (!sessionState.SessionLoaded.Task.IsCompleted)
@@ -89,6 +101,10 @@ else
 
         settingsTabs = Modules
             .SelectMany(m => m.GetSettingsTabs())
+            // Customer UI exclusions: these tabs are intentionally unavailable in this deployment.
+            // This is an explicit rendering boundary, independent of role permissions and module
+            // registration, so stale/cross-module registrations cannot bring them back into Settings.
+            .Where(t => !HiddenSettingsTabKeys.Contains(t.Key))
             .Where(t => perms == null || t.Key == PermissionKeys.CoreApiConnectionConfigTabKey || perms.Contains(PermissionKeys.ForSettingsTab(t.Key)))
             .Where(t => t.Feature == null || typeof(FeatureFlags).GetProperty(t.Feature)?.GetValue(featureFlags) is true)
             .Where(t => t.TenantFeature == null || typeof(TenantFeatureFlags).GetProperty(t.TenantFeature)?.GetValue(tenantFeatures) is true)
