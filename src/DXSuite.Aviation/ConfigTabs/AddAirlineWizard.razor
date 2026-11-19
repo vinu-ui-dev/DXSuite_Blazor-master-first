@@ -325,7 +325,7 @@
                         @foreach (var f in pickerFiles)
                         {
                             <button class="aaw-picker-item" @onclick="() => PickFile(f)">
-                                <span class="aaw-picker-thumb"><img src="@f.Path" alt="@f.Name" /></span>
+                                <span class="aaw-picker-thumb"><LogoPreview Src="@f.Path" Alt="@f.Name" /></span>
                                 <span class="aaw-picker-name">@f.Name</span>
                             </button>
                         }
@@ -423,7 +423,7 @@
     [Parameter] public EventCallback<NewAirlineResult> OnCreated { get; set; }
 
     /// <summary>The airline as the server created it.</summary>
-    public sealed record NewAirlineResult(int RecordId, string Code, string Name);
+    public sealed record NewAirlineResult(int RecordId, string Code, string Name, string? Warning = null);
 
     private sealed class WizardData
     {
@@ -736,7 +736,7 @@
             <div class="aaw-logo-preview @(LogoFor(kind) != null ? "has-file" : "")">
                 @if (LogoFor(kind) is { } file)
                 {
-                    <img src="@file.Path" alt="@title" />
+                    <LogoPreview Src="@file.Path" Alt="@title" />
                 }
                 else
                 {
@@ -805,15 +805,22 @@
 
             // The logos were chosen or uploaded in the library already; now they are linked to the new airline. An
             // upload still waiting on approval is linked as pending, so Director > Approvals decides when it goes live.
+            var notLinked = new List<string>();
             foreach (var (role, file) in new[] { ("wordmark", data.Wordmark), ("square", data.SquareMark), ("reversed", data.ReversedWordmark) })
             {
                 if (file is null) continue;
                 try { await LogoLinks.LinkAsync(created.Code, role, file); }
-                catch (Exception ex) { Logger.LogError(ex, "Could not link the {Role} logo of new airline {Code}", role, created.Code); }
+                catch (Exception ex)
+                {
+                    Logger.LogError(ex, "Could not link the {Role} logo of new airline {Code}", role, created.Code);
+                    DXSuite.Shared.Logging.AirlineFileLog.Write($"[LOGO-LINK] linking the {role} logo of {created.Code} failed: {DXSuite.Shared.Logging.AirlineFileLog.Describe(ex)}");
+                    notLinked.Add(RoleLabel(role).ToLowerInvariant());
+                }
             }
 
             var dcsLabel = DcsLabel();
-            var result = new NewAirlineResult(created.AirlineId, created.Code, created.Name);
+            var result = new NewAirlineResult(created.AirlineId, created.Code, created.Name,
+                notLinked.Count == 0 ? null : $"The airline was created, but its {string.Join(" and ", notLinked)} could not be linked. Open the airline's Branding tab and choose the file again.");
 
             await AirlineAudit.CreatedAsync(created.AirlineId, created.Code, result.Name, new
             {

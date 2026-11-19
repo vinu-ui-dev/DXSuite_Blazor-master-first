@@ -1,0 +1,67 @@
+@* A logo image that copes with a file that is not served yet: it asks once more after a moment (an upload is moved into the
+   media folder as the last step), and if the file still is not there it says so and shows the path, instead of a broken icon. *@
+@if (failed)
+{
+    <span class="lp-missing" title="@current">
+        Preview unavailable
+        <small>@Shown</small>
+    </span>
+}
+else if (!string.IsNullOrEmpty(current))
+{
+    <img src="@current" alt="@Alt" style="@Style" @onerror="OnError" />
+}
+
+<style>
+    .lp-missing { display:flex; flex-direction:column; align-items:center; justify-content:center; text-align:center; font-size:0.72rem; color:#b02a37; padding:4px; max-width:100%; }
+    .lp-missing small { color:#777; font-size:0.62rem; word-break:break-all; max-height:2.4em; overflow:hidden; }
+</style>
+
+@code {
+    /// <summary>The file's web path, as the library stored it (for example <c>/MediaAssets/12/3/logo.png</c>).</summary>
+    [Parameter] public string? Src { get; set; }
+    [Parameter] public string Alt { get; set; } = "";
+    [Parameter] public string? Style { get; set; }
+
+    private string baseSrc = "";
+    private string current = "";
+    private bool failed;
+    private int attempts;
+
+    private string Shown => baseSrc;
+
+    protected override void OnParametersSet()
+    {
+        var normalized = Normalize(Src);
+        if (normalized == baseSrc) return;
+        baseSrc = normalized;
+        current = normalized;
+        failed = false;
+        attempts = 0;
+    }
+
+    private async Task OnError()
+    {
+        if (attempts == 0)
+        {
+            attempts = 1;
+            await Task.Delay(1500);
+            current = baseSrc + (baseSrc.Contains('?') ? "&" : "?") + "v=" + DateTime.UtcNow.Ticks;
+            return;
+        }
+        failed = true;
+    }
+
+    /// <summary>A web path with forward slashes and a leading slash, so it never resolves against the page's own URL.</summary>
+    private static string Normalize(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path)) return "";
+        var value = path.Trim().Replace('\\', '/');
+        if (value.StartsWith("http://", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith("data:", StringComparison.OrdinalIgnoreCase)
+            || value.StartsWith('/'))
+            return value;
+        return "/" + value;
+    }
+}

@@ -181,7 +181,7 @@
                     <div style="height:70px; background:@extra.WordmarkColor; color:#fff; display:flex; align-items:center; justify-content:center; font-weight:700; text-align:center; padding:4px;">
                         @if (wordmark?.Live is { } live)
                         {
-                            <img src="@live.Path" alt="@a.Name" style="max-width:100%; max-height:100%; object-fit:contain;" />
+                            <LogoPreview Src="@live.Path" Alt="@a.Name" Style="max-width:100%; max-height:100%; object-fit:contain;" />
                         }
                         else
                         {
@@ -268,13 +268,15 @@ else
     @* ---- Airline profile ---- *@
     var extra = ExtraFor(profileAirline!.Code);
     var detail = profileAirline.Detail;
-    <div class="dx-panel-header">
-        <div style="display:flex; align-items:center; gap:12px;">
-            <button class="dx-btn dx-btn-blue dx-btn-sm" @onclick="CloseProfile" title="Back to list" aria-label="Back to list">&larr;</button>
+    <div class="dx-panel-header al-profile-head">
+        <div class="al-head">
+            <button class="al-back" @onclick="CloseProfile" title="Back to list" aria-label="Back to list"><i class="bi bi-arrow-left"></i></button>
             <div class="al-tile al-tile-lg" style="background:@ColorFor(profileAirline.Code);">@profileAirline.Code</div>
-            <h4 style="margin:0;">@profileAirline.Name</h4>
-            @if (detail.Retired) { <span class="dx-badge dx-badge-gray">Retired</span> }
-            else { <span class="dx-badge dx-badge-green">Active</span> }
+            <div class="al-head-title">
+                <h4>@profileAirline.Name</h4>
+                @if (detail.Retired) { <span class="dx-badge dx-badge-gray">Retired</span> }
+                else { <span class="dx-badge dx-badge-green">Active</span> }
+            </div>
         </div>
         @if (canEditProfile)
         {
@@ -749,7 +751,7 @@ else
                         @foreach (var f in pickerFiles)
                         {
                             <button class="alp-picker-item" @onclick="() => PickFileAsync(f)">
-                                <span class="alp-picker-thumb"><img src="@f.Path" alt="@f.Name" /></span>
+                                <span class="alp-picker-thumb"><LogoPreview Src="@f.Path" Alt="@f.Name" /></span>
                                 <span class="alp-picker-name">@f.Name</span>
                             </button>
                         }
@@ -831,11 +833,36 @@ else
     }
 
     .al-tile-lg {
-        width: 44px;
-        height: 44px;
-        font-size: 1rem;
-        border-radius: 10px;
+        width: 40px;
+        height: 40px;
+        font-size: 0.9rem;
+        letter-spacing: 0.02em;
+        border-radius: 8px;
     }
+
+    /* The profile header: back button and airline tile are the same size and sit on one centre line. */
+    .al-profile-head { align-items: center; min-height: 64px; padding-top: 12px; padding-bottom: 12px; }
+    .al-head { display: flex; align-items: center; gap: 14px; min-width: 0; }
+    .al-head-title { display: flex; align-items: center; gap: 10px; min-width: 0; }
+    .al-head-title h4 { margin: 0; line-height: 1.2; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .al-back {
+        width: 40px;
+        height: 40px;
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border: none;
+        border-radius: 8px;
+        background: #0071bc;
+        color: #fff;
+        font-size: 1.15rem;
+        cursor: pointer;
+        padding: 0;
+        transition: background 0.15s;
+    }
+    .al-back:hover { background: #005a96; }
+    .al-back:focus-visible { outline: 2px solid #0071bc; outline-offset: 2px; }
 </style>
 
 @code {
@@ -1197,8 +1224,8 @@ else
     {
         await LoadAirlines();
 
-        statusMessage = $"{result.Name} created.";
-        statusIsError = false;
+        statusMessage = result.Warning ?? $"{result.Name} created.";
+        statusIsError = result.Warning is not null;
 
         var row = allAirlines.FirstOrDefault(a => a.RecordId == result.RecordId);
         if (row is null) { viewMode = "list"; return; }
@@ -1608,7 +1635,7 @@ else
                 @if (saved.Live is { } live)
                 {
                     <div style="height:90px; display:flex; align-items:center; justify-content:center; border-radius:4px; background:repeating-conic-gradient(#f3f3f3 0% 25%, #fff 0% 50%) 50% / 16px 16px;">
-                        <img src="@live.Path" alt="@title" style="max-width:100%; max-height:100%; object-fit:contain;" />
+                        <LogoPreview Src="@live.Path" Alt="@title" Style="max-width:100%; max-height:100%; object-fit:contain;" />
                     </div>
                     <div class="dx-text-muted" style="font-size:0.75rem; margin-top:4px;">On screen now &middot; @live.Name</div>
                     <div class="dx-text-muted" style="font-size:0.8rem; margin-top:6px;">

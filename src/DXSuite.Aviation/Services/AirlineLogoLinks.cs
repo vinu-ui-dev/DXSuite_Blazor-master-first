@@ -1,4 +1,5 @@
 using DXSuite.Aviation.Entities;
+using DXSuite.Shared.Logging;
 using DXSuite.Shared.Services;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -33,10 +34,53 @@ public sealed class AirlineLogoLinks(
     private const string PendingSuffix = "-pending";
     private const int NameLength = 255;
 
+    private static readonly SemaphoreSlim SchemaGate = new(1, 1);
+    private static bool _schemaReady;
+
+    // The same script as db/migrations/aviation-airline-logo.sql, so the links save on a database nobody ran it on.
+    private const string SchemaScript = """
+        IF OBJECT_ID(N'dbo.tblAirlineLogo', N'U') IS NULL
+        BEGIN
+            CREATE TABLE dbo.tblAirlineLogo (
+                AirlineLogoId INT IDENTITY(1,1) NOT NULL CONSTRAINT PK_tblAirlineLogo PRIMARY KEY,
+                AirlineCode   VARCHAR(3)    NOT NULL,
+                [Role]        VARCHAR(20)   NOT NULL,
+                AssetId       INT           NOT NULL,
+                AssetName     NVARCHAR(255) NULL,
+                AssetPath     VARCHAR(255)  NOT NULL,
+                LinkedUtc     DATETIME2     NOT NULL
+            );
+            CREATE UNIQUE INDEX IX_tblAirlineLogo_Airline_Role ON dbo.tblAirlineLogo (AirlineCode, [Role]);
+        END
+        """;
+
+    private async Task EnsureSchemaAsync(AviationDbContext db, CancellationToken ct)
+    {
+        if (_schemaReady) return;
+        await SchemaGate.WaitAsync(ct);
+        try
+        {
+            if (_schemaReady) return;
+            await db.Database.ExecuteSqlRawAsync(SchemaScript, ct);
+            _schemaReady = true;
+        }
+        catch (Exception ex)
+        {
+            AirlineFileLog.Write($"[LOGO-LINK] tblAirlineLogo is missing and could not be created: {AirlineFileLog.Describe(ex)}");
+            throw;
+        }
+        finally
+        {
+            SchemaGate.Release();
+        }
+    }
+
     /// <summary>Links <paramref name="file"/> to the airline's <paramref name="role"/>: live when approved, otherwise as the pending upload.</summary>
     public async Task LinkAsync(string code, string role, AirlineLogoFile file, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await EnsureSchemaAsync(db, ct);
+        AirlineFileLog.Write($"[LOGO-LINK] {code} {role} -> asset {file.AssetId} '{file.Name}' path='{file.Path}' approved={file.Approved}");
         var rows = await db.TblAirlineLogos
             .Where(l => l.AirlineCode == code && (l.Role == role || l.Role == role + PendingSuffix))
             .ToListAsync(ct);
@@ -61,6 +105,7 @@ public sealed class AirlineLogoLinks(
     public async Task<IReadOnlyDictionary<string, AirlineLogoState>> LoadAsync(string code, CancellationToken ct = default)
     {
         await using var db = await dbFactory.CreateDbContextAsync(ct);
+        await EnsureSchemaAsync(db, ct);
         var rows = await db.TblAirlineLogos.Where(l => l.AirlineCode == code).ToListAsync(ct);
         if (rows.Count == 0) return new Dictionary<string, AirlineLogoState>();
 
