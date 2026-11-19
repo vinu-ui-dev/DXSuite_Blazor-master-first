@@ -31,6 +31,15 @@
     gap: 6px;
 }
 
+/* The Status column is centred under its header; a row's badges sit on the cell's centre line. */
+.mp-center {
+    text-align: center;
+}
+
+.mp-status.mp-center {
+    justify-content: center;
+}
+
 .mp-pill {
     cursor: pointer;
 }

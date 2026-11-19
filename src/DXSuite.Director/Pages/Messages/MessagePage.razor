@@ -65,7 +65,7 @@ else if (MessageType != null)
                     }
                 </div>
                 <div>Target</div>
-                <div> Status </div>
+                <div class="mp-center">Status</div>
                 <div> Activation Time</div>
                 <div>Actions</div>
 
@@ -94,8 +94,12 @@ else if (MessageType != null)
                     {
                         <span class="@(targetLabels[t].Active ? "mp-target-active" : "")">@targetLabels[t].Label@(t < targetLabels.Count - 1 ? ", " : "")</span>
                     }
+                    @if (targetLabels.Count == 0)
+                    {
+                        <span class="dx-text-muted" title="Not scheduled to any Display Zone yet">&mdash;</span>
+                    }
                 </div>
-                <div class="mp-status">
+                <div class="mp-status mp-center">
                     @* Every Message shows its approval status (Pending approval, Approved, Declined, Retired); its Activations
                        then say whether it is on screen. *@
                     <span class="dx-badge @MessageStatusText.Badge(message.Status)">@MessageStatusText.Label(message.Status)</span>
@@ -126,7 +130,11 @@ else if (MessageType != null)
                     }
                 </div>
                 <div>
-                    @if (activeOrScheduled.Count > 0)
+                    @if (activeOrScheduled.Count == 0)
+                    {
+                        <span class="dx-text-muted" title="Not scheduled yet. Use Schedule to send it.">&mdash;</span>
+                    }
+                    else
                     {
                         var when = ActivationWhen.Of(activeOrScheduled[0]);
                         @when.StartText(viewer)
