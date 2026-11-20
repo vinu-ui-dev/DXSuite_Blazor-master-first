@@ -3,6 +3,8 @@ using DXSuite.Aviation.Entities;
 using DXSuite.Aviation.Services.CounterAllocation;
 using DXSuite.Aviation.Services.FlightDataEditor;
 using DXSuite.Shared.Authorization;
+using DXSuite.Shared.Services;
+using Microsoft.Extensions.Logging;
 using Microsoft.AspNetCore.Components;
 using Microsoft.AspNetCore.Components.Web;
 using Microsoft.EntityFrameworkCore;
@@ -19,6 +21,7 @@ public partial class CounterAllocations
     [Inject] private CounterAllocationService allocationService { get; set; } = null!;
     [Inject] private CounterAllocationOutageState outageState { get; set; } = null!;
     [Inject] private ISessionState sessionState { get; set; } = null!;
+    [Inject] private ILogger<CounterAllocations> Logger { get; set; } = null!;
     [Inject] private IFlightListClock flightListClock { get; set; } = null!;
     [Inject] private IDbContextFactory<AviationDbContext> AviationDbFactory { get; set; } = null!;
 
@@ -116,8 +119,9 @@ public partial class CounterAllocations
         }
         catch (Exception ex)
         {
-            // Missing/outdated tables (e.g. tblAirline, tblCounterAllocation) must not kill the circuit.
-            error = "Counter allocation data could not be loaded (database tables may be missing): " + ex.Message;
+            // A database that is missing or out of date must not kill the circuit; the detail goes to the log, not the screen.
+            Logger.LogError(ex, "Counter allocation data could not be loaded");
+            error = "Counter allocation data could not be loaded right now. Please try again, or contact your administrator if it continues.";
         }
     }
 
@@ -199,7 +203,8 @@ public partial class CounterAllocations
         catch (Exception ex)
         {
             views = [];
-            error = "Could not load allocations: " + ex.Message;
+            Logger.LogError(ex, "Counter allocations could not be loaded");
+            error = "The allocations could not be loaded right now. Please try again, or contact your administrator if it continues.";
         }
         StateHasChanged();
     }

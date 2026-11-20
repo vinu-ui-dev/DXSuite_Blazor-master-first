@@ -1085,7 +1085,7 @@ else
         catch (Exception ex)
         {
             Logger.LogError(ex, "Could not load the airlines");
-            statusMessage = ex.Message;
+            statusMessage = DXSuite.Shared.Services.UserFacingError.From(ex, "The airlines could not be loaded right now. Please try again.");
             statusIsError = true;
         }
 
@@ -1520,7 +1520,7 @@ else
         }
         catch (Exception ex)
         {
-            memberError = ex.Message;
+            memberError = DXSuite.Shared.Services.UserFacingError.From(ex, "The members could not be loaded right now. Please try again.");
         }
         finally
         {
