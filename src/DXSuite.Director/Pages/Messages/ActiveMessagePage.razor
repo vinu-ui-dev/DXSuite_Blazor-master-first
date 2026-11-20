@@ -8,6 +8,33 @@
 @* The fixed Active Messages tab (FSD 1.1 MSG-18): every Activation that is active or scheduled, and on request the
    most recent ones that are over. The Messages page has already checked page:messages; the service checks it again. *@
 
+@* Grid and action-button layout ride with the component, not the scoped-style bundle, so a stale bundle cannot undo them. *@
+<style>
+    .dx-table-header.amx-columns,
+    .dx-table-row.amx-columns {
+        grid-template-columns: minmax(160px, 2fr) 120px minmax(120px, 1.3fr) 135px 135px 110px 410px;
+    }
+
+    .dx-table-row.amx-columns > div { min-width: 0; }
+
+    .dx-cell-actions.amx-actions {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        align-content: center;
+        justify-content: flex-start;
+        gap: 6px;
+    }
+
+    .amx-actions .dx-btn {
+        min-width: 76px;
+        text-align: center;
+        justify-content: center;
+    }
+
+    .amx-actions .am-ask { flex: 0 0 100%; }
+</style>
+
 <div class="dx-card dx-card-fill">
     <div class="dx-panel-header">
         Active Messages
@@ -33,7 +60,7 @@
         else
         {
             <div class="dx-table">
-                <div class="dx-table-header am-columns">
+                <div class="dx-table-header amx-columns">
                     <div>Message</div>
                     <div>Type</div>
                     <div>Target</div>
@@ -48,7 +75,7 @@
                 }
                 @foreach (var row in Filtered)
                 {
-                    <div id="am-row-@row.MessageActivationId" class="dx-table-row am-columns">
+                    <div id="am-row-@row.MessageActivationId" class="dx-table-row amx-columns">
                         <div>
                             <a href="javascript:void(0)" id="am-preview-@row.MessageActivationId" class="am-name" title="Preview Message"
                                @onclick="() => OpenPreviewAsync(row.MessageId)" @onclick:preventDefault="true">@row.MessageName</a>
@@ -65,7 +92,7 @@
                         <div>@row.Target <span class="dx-text-muted am-by">(@row.ScreenCount)</span></div>
                         <ActivationWhenCells When="row.When" Viewer="viewer" />
                         <div class="am-status"><span class="dx-status-dot @Dot(row.Status)"></span>@row.Status</div>
-                        <div class="dx-cell-actions am-actions">
+                        <div class="dx-cell-actions amx-actions">
                             @if (!row.IsOneOff && canAuthor)
                             {
                                 <button id="am-edit-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenEditAsync(row.MessageId)">Edit</button>

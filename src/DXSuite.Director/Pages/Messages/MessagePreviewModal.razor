@@ -5,25 +5,104 @@
 @* A read-only preview of a Message from the Active Messages tab: its name, its type and the text it shows in each language,
    on the Message's own colours, as a screen shows it. *@
 
+@* The styles ride with the component, not the scoped-style bundle, so a stale bundle can never leave the popup unstyled. *@
+<style>
+    /* Read-only Message preview: the name and type, then the text in each language as a screen shows it. */
+    .pvw-modal {
+        width: 620px;
+        max-width: 96vw;
+    }
+
+    .pvw-body {
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+        padding: 22px 24px;
+    }
+
+    .pvw-head {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--dx-border, #e0e0e0);
+    }
+
+    .pvw-name {
+        margin: 0;
+        font-size: 1.45rem;
+        font-weight: 700;
+        line-height: 1.25;
+        color: #1d2b3a;
+    }
+
+    .pvw-type {
+        align-self: flex-start;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 12px;
+        border-radius: 999px;
+        background: #e8f1fa;
+        color: #0071bc;
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+    }
+
+    .pvw-card {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .pvw-lang {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        font-size: 0.8rem;
+        font-weight: 700;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--dx-text-muted, #6b7785);
+    }
+
+    /* The Message as a screen shows it: its own colours (inline), a strong accent bar and large bold text. */
+    .pvw-screen {
+        padding: 20px 22px;
+        border-left: 6px solid #0071bc;
+        border-radius: 6px;
+        background: #f1f5f9;
+        color: #14202c;
+        font-size: 1.2rem;
+        font-weight: 700;
+        line-height: 1.45;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
+    }
+</style>
+
 @if (preview is not null)
 {
-    <div class="dx-modal-overlay mpv-dialog" @onclick="Close">
-        <div class="dx-modal mpv-modal" role="dialog" aria-label="Message preview" @onclick:stopPropagation="true">
+    <div class="dx-modal-overlay pvw-dialog" @onclick="Close">
+        <div class="dx-modal pvw-modal" role="dialog" aria-label="Message preview" @onclick:stopPropagation="true">
             <div class="dx-modal-header">
                 <span>Message Preview</span>
-                <button id="mpv-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
+                <button id="pvw-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
             </div>
-            <div class="dx-modal-body mpv-body">
-                <div class="mpv-head">
-                    <h3 id="mpv-name" class="mpv-name">@preview.Name</h3>
-                    <span class="mpv-type"><i class="bi bi-megaphone-fill"></i> @preview.TypeName</span>
+            <div class="dx-modal-body pvw-body">
+                <div class="pvw-head">
+                    <h3 id="pvw-name" class="pvw-name">@preview.Name</h3>
+                    <span class="pvw-type"><i class="bi bi-megaphone-fill"></i> @preview.TypeName</span>
                 </div>
 
                 @foreach (var text in preview.Texts)
                 {
-                    <div class="mpv-card">
-                        <div class="mpv-lang"><i class="bi bi-translate"></i> @text.LanguageName</div>
-                        <div class="mpv-screen" style="@ScreenStyle">@text.Body</div>
+                    <div class="pvw-card">
+                        <div class="pvw-lang"><i class="bi bi-translate"></i> @text.LanguageName</div>
+                        <div class="pvw-screen" style="@ScreenStyle">@text.Body</div>
                     </div>
                 }
                 @if (preview.Texts.Count == 0)
@@ -32,7 +111,7 @@
                 }
             </div>
             <div class="dx-modal-footer">
-                <button id="mpv-ok" type="button" class="dx-btn dx-btn-gray" @onclick="Close">Close</button>
+                <button id="pvw-ok" type="button" class="dx-btn dx-btn-gray" @onclick="Close">Close</button>
             </div>
         </div>
     </div>
