@@ -1,3 +1,4 @@
+@using DXSuite.Aviation.Components
 @page "/Flight-Data-Editor/Counter-Allocation"
 @attribute [RequiresTenantFeature(AviationFeatureFlags.FlightDataEditorFeature)]
 @rendermode InteractiveServer
@@ -51,8 +52,8 @@ else
 </div>
 
 <div class="ca-filters">
-    <label class="ca-filter-label">From <input type="datetime-local" class="dx-form-control" @bind="fromLocal" @bind:after="RefreshAsync" /></label>
-    <label class="ca-filter-label">To <input type="datetime-local" class="dx-form-control" @bind="toLocal" @bind:after="RefreshAsync" /></label>
+    <label class="ca-filter-label">From <DateTime24Input Value="fromLocal" ValueChanged="SetFromAsync" /></label>
+    <label class="ca-filter-label">To <DateTime24Input Value="toLocal" ValueChanged="SetToAsync" /></label>
     <label class="ca-filter-label">Zone
         <select class="dx-form-select" @bind="selectedZone">
             <option value="">All zones</option>
@@ -205,11 +206,11 @@ else
 
                 <div class="dx-form-group">
                     <label class="dx-form-label">Start</label>
-                    <input type="datetime-local" class="dx-form-control" @bind="modal.Start" />
+                    <DateTime24Input Value="modal.Start" ValueChanged="SetModalStart" />
                 </div>
                 <div class="dx-form-group">
                     <label class="dx-form-label">End</label>
-                    <input type="datetime-local" class="dx-form-control" @bind="modal.End" />
+                    <DateTime24Input Value="modal.End" ValueChanged="SetModalEnd" />
                 </div>
 
                 <div class="dx-form-group">

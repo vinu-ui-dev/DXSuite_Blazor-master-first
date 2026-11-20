@@ -1,0 +1,118 @@
+@using System.Globalization
+
+@* A date and time field that always shows the time in 24-hour format (HH:mm). The browser's own date-and-time box follows the
+   viewer's regional setting and can show AM/PM, so the date is picked in a date box and the time typed as HH:mm. *@
+
+<div class="dt24" id="@Id">
+    <input type="date" class="dx-form-control dt24-date @Class" value="@dateText" min="@MinDate" max="@MaxDate" disabled="@Disabled"
+           aria-label="Date" @onchange="OnDateChanged" @onblur="RaiseBlur" />
+    <input type="text" class="dx-form-control dt24-time @Class" value="@timeText" placeholder="HH:mm" maxlength="5" inputmode="numeric"
+           autocomplete="off" disabled="@Disabled" aria-label="Time (24-hour)" @onchange="OnTimeChanged" @onblur="RaiseBlur" />
+</div>
+
+@code {
+    [Parameter] public DateTime? Value { get; set; }
+    [Parameter] public EventCallback<DateTime?> ValueChanged { get; set; }
+    [Parameter] public DateTime? Min { get; set; }
+    [Parameter] public DateTime? Max { get; set; }
+    [Parameter] public string? Class { get; set; }
+    [Parameter] public string? Id { get; set; }
+    [Parameter] public bool Disabled { get; set; }
+    [Parameter] public EventCallback OnBlur { get; set; }
+
+    private string dateText = "";
+    private string timeText = "";
+    private DateTime? shownValue;
+    private bool synced;
+
+    private string? MinDate => Min?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+    private string? MaxDate => Max?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture);
+
+    protected override void OnParametersSet()
+    {
+        // Follow the bound value only when it changed from outside; a half-typed entry is left alone otherwise.
+        if (synced && Value == shownValue) return;
+        synced = true;
+        shownValue = Value;
+        dateText = Value?.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "";
+        timeText = Value?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? "";
+    }
+
+    private async Task OnDateChanged(ChangeEventArgs e)
+    {
+        dateText = e.Value?.ToString() ?? "";
+        if (dateText.Length == 0)
+        {
+            await Emit(null);
+            return;
+        }
+        if (timeText.Length == 0) timeText = "00:00";
+        await EmitFromTexts();
+    }
+
+    private async Task OnTimeChanged(ChangeEventArgs e)
+    {
+        var typed = (e.Value?.ToString() ?? "").Trim();
+        if (typed.Length == 0)
+        {
+            timeText = "";
+            await Emit(null);
+            return;
+        }
+        if (!TryParseTime(typed, out var time))
+        {
+            // Not a time: put back what was there.
+            timeText = Value?.ToString("HH:mm", CultureInfo.InvariantCulture) ?? timeText;
+            return;
+        }
+        timeText = time.ToString("HH:mm", CultureInfo.InvariantCulture);
+        await EmitFromTexts();
+    }
+
+    private async Task EmitFromTexts()
+    {
+        if (DateTime.TryParseExact(dateText, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out var date)
+            && TimeOnly.TryParseExact(timeText, "HH:mm", CultureInfo.InvariantCulture, DateTimeStyles.None, out var time))
+            await Emit(date.Date + time.ToTimeSpan());
+    }
+
+    private async Task Emit(DateTime? value)
+    {
+        shownValue = value;
+        await ValueChanged.InvokeAsync(value);
+    }
+
+    private Task RaiseBlur() => OnBlur.InvokeAsync();
+
+    /// <summary>Accepts 9:05, 09:05, 0905 and 9 (the hour alone).</summary>
+    private static bool TryParseTime(string text, out TimeOnly time)
+    {
+        time = default;
+        int hours, minutes;
+        var digits = text.Replace(":", "");
+        if (!digits.All(char.IsAsciiDigit)) return false;
+
+        if (text.Contains(':'))
+        {
+            var parts = text.Split(':');
+            if (parts.Length != 2 || parts[0].Length is < 1 or > 2 || parts[1].Length != 2) return false;
+            hours = int.Parse(parts[0], CultureInfo.InvariantCulture);
+            minutes = int.Parse(parts[1], CultureInfo.InvariantCulture);
+        }
+        else if (digits.Length is 1 or 2)
+        {
+            hours = int.Parse(digits, CultureInfo.InvariantCulture);
+            minutes = 0;
+        }
+        else if (digits.Length is 3 or 4)
+        {
+            hours = int.Parse(digits[..^2], CultureInfo.InvariantCulture);
+            minutes = int.Parse(digits[^2..], CultureInfo.InvariantCulture);
+        }
+        else return false;
+
+        if (hours > 23 || minutes > 59) return false;
+        time = new TimeOnly(hours, minutes);
+        return true;
+    }
+}

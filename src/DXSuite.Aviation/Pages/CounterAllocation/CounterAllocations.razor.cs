@@ -209,6 +209,31 @@ public partial class CounterAllocations
         StateHasChanged();
     }
 
+    // The 24-hour date-time fields hand back a nullable value; a cleared field leaves the window as it was.
+    private async Task SetFromAsync(DateTime? value)
+    {
+        if (value is not { } from) return;
+        fromLocal = from;
+        await RefreshAsync();
+    }
+
+    private async Task SetToAsync(DateTime? value)
+    {
+        if (value is not { } to) return;
+        toLocal = to;
+        await RefreshAsync();
+    }
+
+    private void SetModalStart(DateTime? value)
+    {
+        if (value is { } start) modal!.Start = start;
+    }
+
+    private void SetModalEnd(DateTime? value)
+    {
+        if (value is { } end) modal!.End = end;
+    }
+
     private void SetNowWindowValues()
     {
         var now = ToLocal(flightListClock.Time.GetUtcNow().UtcDateTime);

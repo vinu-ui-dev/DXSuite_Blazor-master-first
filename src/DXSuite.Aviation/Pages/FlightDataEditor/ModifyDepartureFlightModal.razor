@@ -13,7 +13,7 @@
                 @* Row Layout Div *@
                 <div class="dx-modal-header">
                     @* row div Flight# and Close button *@
-                    <span>Manage Flight (Scheduling Window: @(((DateTime)homePage!.feedWindow.WindowStart!).ToString("HH:mm MMM dd")) to @(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("HH:mm MMM dd")))</span>
+                    <span>Manage Flight (Departure)</span>
                     <button class="dx-modal-close" type="button" @onclick="() => showDialog = false">&times;</button>
                 </div>
                 <div class="dx-modal-body" style="padding-top:0; margin-top:20px">
@@ -35,7 +35,7 @@
                             <div class="item" style="display: flex;
                                 flex-direction: column;
                                 justify-content: center;">
-                                <div class="dx-form-label">Scheduled Time (STD) </div><div>@departureFlight.ScheduledTime</div>
+                                <div class="dx-form-label">Scheduled Time (STD) </div><div>@departureFlight.ScheduledTime?.ToString("yyyy-MM-dd HH:mm")</div>
                             </div>
                         </div>
                     </div>
@@ -45,12 +45,12 @@
                             <div class="item">
                                 <div class="dx-form-label">Departing Time (ETD)</div>
                                 @if (open.EstimatedTime) {
-                                    <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" class="dx-form-control fde-et @(etdErr ? "invalid" : "")" style="width:100%" @bind="estimated" onblur="@(() => { etdErr = false; etdErrMsg = ""; })" />
+                                    <DateTime24Input Min="@homePage!.feedWindow.WindowStart" Max="@(homePage!.feedWindow.WindowEnd!.Value.AddSeconds(-1))" Class="@(etdErr ? "fde-et invalid" : "fde-et")" @bind-Value="estimated" OnBlur="@(() => { etdErr = false; etdErrMsg = ""; })" />
                                     @if (etdErr) {
                                         <span class="dx-form-validation">@etdErrMsg</span>
                                     }
                                 } else {
-                                    <div>@estimated </div>
+                                    <div>@estimated?.ToString("yyyy-MM-dd HH:mm")</div>
                                 }
                             </div>
                         </div>
@@ -79,12 +79,12 @@
                             <div class="item">
                                 <div class="dx-form-label">Actual Time (ATD)</div>
                                 @if (open.ActualTime) {
-                                    <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" class="dx-form-control fde-at @(atdErr ? "invalid" : "")" @bind="actual" style="width: 100%;" onblur="@(() => { atdErr = false; atdErrMsg = ""; })" />
+                                    <DateTime24Input Min="@homePage!.feedWindow.WindowStart" Max="@(homePage!.feedWindow.WindowEnd!.Value.AddSeconds(-1))" Class="@(atdErr ? "fde-at invalid" : "fde-at")" @bind-Value="actual" OnBlur="@(() => { atdErr = false; atdErrMsg = ""; })" />
                                     @if (atdErr) {
                                         <span class="dx-form-validation">@atdErrMsg</span>
                                     }
                                 } else {
-                                    <div>@actual </div>
+                                    <div>@actual?.ToString("yyyy-MM-dd HH:mm")</div>
                                 }
                             </div>
                         </div>
@@ -131,38 +131,14 @@
                     <div class="dx-text-muted" style="margin: 0px 10px 10px 10px">
                         Uncheck to roll off
                     </div>
-                    @* row div Public checkbox, baggage checkbox, staff checkbox, throw checkbox*@
+                    @* Only Staff is shown for now; Public, Baggage and Throw keep the values the flight has. *@
                     <div class="dx-form-row">
-                        <div class="item">
-                            Public
-                            @if (open.Public) {
-                                <InputCheckbox class="dx-checkbox fde-public" @bind-Value="publicCheckbox" />
-                            } else {
-                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Public" disabled />
-                            }
-                        </div>
-                        <div class="item">
-                            Baggage
-                            @if (open.Baggage) {
-                                <InputCheckbox class="dx-checkbox fde-baggage" @bind-Value="baggageCheckbox" />
-                            } else {
-                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Baggage" disabled />
-                            }
-                        </div>
                         <div class="item">
                             Staff
                             @if (open.Staff) {
                                 <InputCheckbox class="dx-checkbox fde-staff" @bind-Value="staffCheckbox" />
                             } else {
                                 <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Staff" disabled />
-                            }
-                        </div>
-                        <div class="item">
-                            Throw
-                            @if (open.Throw) {
-                                <InputCheckbox class="dx-checkbox fde-throw" @bind-Value="throwCheckbox" />
-                            } else {
-                                <input type="checkbox" class="dx-checkbox" checked="@rollOpened.Throw" disabled />
                             }
                         </div>
                     </div>

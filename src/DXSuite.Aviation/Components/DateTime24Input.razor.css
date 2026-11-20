@@ -1,0 +1,17 @@
+.dt24 {
+    display: flex;
+    gap: 8px;
+    width: 100%;
+}
+
+.dt24-date {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.dt24-time {
+    flex: 0 0 84px;
+    width: 84px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}

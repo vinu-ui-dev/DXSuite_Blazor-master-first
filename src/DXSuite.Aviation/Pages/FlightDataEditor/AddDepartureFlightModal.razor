@@ -58,7 +58,7 @@
                     <div class="dx-form-group">
                         <div class="item">
                             <div class="dx-form-label">Scheduled Time (STD)</div>
-                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="scheduledInput" class="dx-form-control @(stdErr ? "invalid" : "")" style="width:100%" @bind="departureFlight.ScheduledTime" onblur="@(() => { stdErr = false; stdErrMsg = ""; })" />
+                            <DateTime24Input Min="@homePage!.feedWindow.WindowStart" Max="@(homePage!.feedWindow.WindowEnd!.Value.AddSeconds(-1))" Id="scheduledInput" Class="@(stdErr ? "invalid" : "")" @bind-Value="departureFlight.ScheduledTime" OnBlur="@(() => { stdErr = false; stdErrMsg = ""; })" />
                             @if (stdErr) {
                                 <span class="dx-form-validation">@stdErrMsg</span>
                             }
@@ -70,7 +70,7 @@
                     <div class="dx-form-group">
                         <div class="item">
                             <div class="dx-form-label">Departing Time (ETD)</div>
-                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="estimatedInput" class="dx-form-control @(etdErr ? "invalid" : "")" style="width:100%" @bind="departureFlight.EstimatedTime" onblur="@(() => { etdErr = false; etdErrMsg = ""; })" />
+                            <DateTime24Input Min="@homePage!.feedWindow.WindowStart" Max="@(homePage!.feedWindow.WindowEnd!.Value.AddSeconds(-1))" Id="estimatedInput" Class="@(etdErr ? "invalid" : "")" @bind-Value="departureFlight.EstimatedTime" OnBlur="@(() => { etdErr = false; etdErrMsg = ""; })" />
                             @if (etdErr) {
                                 <span class="dx-form-validation">@etdErrMsg</span>
                             }
@@ -96,7 +96,7 @@
                     <div class="dx-form-group">
                         <div class="item">
                             <div class="dx-form-label">Actual Time (ATD)</div>
-                            <input type="datetime-local" min="@(((DateTime)homePage!.feedWindow.WindowStart!).ToString("yyyy-MM-ddTHH:mm"))" max="@(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("yyyy-MM-ddTHH:mm"))" id="actualInput" class="dx-form-control @(atdErr ? "invalid" : "")" style="width:100%" @bind="departureFlight.ActualTime" onblur="@(() => { atdErr = false; atdErrMsg = ""; })" />
+                            <DateTime24Input Min="@homePage!.feedWindow.WindowStart" Max="@(homePage!.feedWindow.WindowEnd!.Value.AddSeconds(-1))" Id="actualInput" Class="@(atdErr ? "invalid" : "")" @bind-Value="departureFlight.ActualTime" OnBlur="@(() => { atdErr = false; atdErrMsg = ""; })" />
                             @if (atdErr) {
                                 <span class="dx-form-validation">@atdErrMsg</span>
                             }
