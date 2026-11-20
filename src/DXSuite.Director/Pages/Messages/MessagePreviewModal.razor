@@ -90,11 +90,11 @@
         <div class="dx-modal pvw-modal" role="dialog" aria-label="Message preview" @onclick:stopPropagation="true">
             <div class="dx-modal-header">
                 <span>Message Preview</span>
-                <button id="pvw-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
+                <button id="mpv-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
             </div>
             <div class="dx-modal-body pvw-body">
                 <div class="pvw-head">
-                    <h3 id="pvw-name" class="pvw-name">@preview.Name</h3>
+                    <h3 id="mpv-name" class="pvw-name">@preview.Name</h3>
                     <span class="pvw-type"><i class="bi bi-megaphone-fill"></i> @preview.TypeName</span>
                 </div>
 
@@ -111,7 +111,7 @@
                 }
             </div>
             <div class="dx-modal-footer">
-                <button id="pvw-ok" type="button" class="dx-btn dx-btn-gray" @onclick="Close">Close</button>
+                <button id="mpv-ok" type="button" class="dx-btn dx-btn-gray" @onclick="Close">Close</button>
             </div>
         </div>
     </div>
