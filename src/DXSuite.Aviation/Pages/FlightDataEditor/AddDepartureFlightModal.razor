@@ -14,7 +14,7 @@
             @* Row Layout Div *@
             <div class="dx-modal-header">
                 @* row div Flight# and Close button *@
-                <span>Add Flight (Scheduling Window: @(((DateTime)homePage!.feedWindow.WindowStart!).ToString("HH:mm MMM dd")) to @(((DateTime)homePage!.feedWindow.WindowEnd!).AddSeconds(-1).ToString("HH:mm MMM dd")))</span>
+                <span>Add Flight (Departure)</span>
                 <button class="dx-modal-close" type="button" @onclick="() => showDialog = false">&times;</button>
             </div>
             <div class="dx-modal-body" style="padding-top:0; margin-top:20px">
@@ -156,23 +156,11 @@
                 <div class="dx-text-muted" style="margin: 0px 10px 10px 10px">
                     Uncheck to roll off
                 </div>
-                @* row div Public checkbox, baggage checkbox, staff checkbox, throw checkbox*@
+                @* Only Staff is shown for now; Public, Baggage and Throw keep their default values. *@
                 <div class="dx-form-row">
-                    <div class="item">
-                        Public
-                        <InputCheckbox class="dx-checkbox" @bind-Value="publicCheckbox" />
-                    </div>
-                    <div class="item">
-                        Baggage
-                        <InputCheckbox class="dx-checkbox" @bind-Value="baggageCheckbox" />
-                    </div>
                     <div class="item">
                         Staff
                         <InputCheckbox class="dx-checkbox" @bind-Value="staffCheckbox" />
-                    </div>
-                    <div class="item">
-                        Throw
-                        <InputCheckbox class="dx-checkbox" @bind-Value="throwCheckbox" />
                     </div>
                 </div>
                 @* row div Code Share and Flight # label*@
