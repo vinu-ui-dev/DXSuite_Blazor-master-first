@@ -1,5 +1,5 @@
 .mp-cols {
-    grid-template-columns: 50px 4fr 1fr 1fr 1fr 360px;
+    grid-template-columns: 50px 4fr 1fr 1fr 1fr 400px;
 }
 
 /* The text columns share one grid cell, so any number of languages fits without a style per count. */

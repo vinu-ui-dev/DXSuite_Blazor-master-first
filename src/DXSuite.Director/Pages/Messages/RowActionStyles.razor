@@ -1,0 +1,44 @@
+@* Layout of the Actions cell on the Messages page's tabs: icon buttons of one size in fixed slots, so a row that lacks a button
+   leaves a gap and the buttons of every row line up. Colours stay those of the .dx-btn variants.
+   The styles ride with the component, not the scoped-style bundle, so a stale bundle cannot undo them. *@
+<style>
+    /* One line: the buttons never drop to a second row. A row being confirmed shows only its question, so it fits too. */
+    .ra-actions {
+        display: flex;
+        flex-wrap: nowrap;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 6px;
+    }
+
+    /* The Actions header sits over the buttons, at the right edge. */
+    .dx-table-header > div.ra-head { text-align: right; }
+
+    .ra-btn,
+    .ra-slot {
+        box-sizing: border-box;
+        height: 30px;
+        min-width: 32px;
+    }
+
+    .ra-btn {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        gap: 6px;
+        padding: 0 8px;
+        line-height: 1;
+        white-space: nowrap;
+    }
+
+    .ra-btn i { font-size: 14px; line-height: 1; }
+
+    /* Icon with its word, for the two actions that are worth naming on screen. */
+    .ra-btn.ra-text { padding: 0 12px; }
+
+    .ra-slot { display: inline-block; visibility: hidden; }
+    .ra-slot.ra-schedule, .ra-btn.ra-schedule { min-width: 96px; }
+    .ra-slot.ra-deactivate, .ra-btn.ra-deactivate { min-width: 112px; }
+
+    .ra-ask { font-weight: 600; white-space: nowrap; }
+</style>

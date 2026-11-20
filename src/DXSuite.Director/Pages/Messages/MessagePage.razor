@@ -16,6 +16,12 @@
 @* One Message Type's tab of the Messages page: its canned Messages. One-off Messages are typed at send and are seen,
    with every other Activation, on the Active Messages tab (MSG-18). *@
 
+<RowActionStyles />
+<style>
+    .dx-table .dx-table-header.mp-cols,
+    .dx-table .dx-table-row.mp-cols { grid-template-columns: 50px 4fr 1fr 1fr 1fr 400px; }
+</style>
+
 @if (isLoading)
 {
     <div class="mp-loading">
@@ -67,7 +73,7 @@ else if (MessageType != null)
                 <div>Target</div>
                 <div class="mp-center">Status</div>
                 <div> Activation Time</div>
-                <div>Actions</div>
+                <div class="ra-head">Actions</div>
 
             </div>
 
@@ -144,41 +150,68 @@ else if (MessageType != null)
                         }
                     }
                 </div>
-                <div class="dx-cell-actions">
-                    @if (canAuthor && !retired)
+                <div class="dx-cell-actions ra-actions">
+                    @if (confirming == (message.MessageId, Removal.Retire))
                     {
-                        <button id="mp-edit-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => manageMessageModal.OpenAsync(message.MessageId)">Edit</button>
+                        <span class="mp-ask ra-ask">Retire?</span>
+                        <button id="mp-confirm-retire-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text" @onclick="() => RemoveAsync(message.MessageId, Removal.Retire)">Retire</button>
+                        <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn ra-text" @onclick="() => confirming = null">Keep</button>
                     }
-                    @if (activeOrScheduled.Count > 0)
+                    else if (confirming == (message.MessageId, Removal.Delete))
                     {
-                        <button id="mp-deactivate-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => OpenActivationsAsync(message)">Deactivate</button>
+                        <span class="mp-ask ra-ask">Delete?</span>
+                        <button id="mp-confirm-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text" @onclick="() => RemoveAsync(message.MessageId, Removal.Delete)">Delete</button>
+                        <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn ra-text" @onclick="() => confirming = null">Keep</button>
                     }
-                    @* Only Approved canned Messages can be sent (MSG-12). *@
-                    @if (message.Status == MessageStatus.Approved)
+                    else
                     {
-                        <button id="mp-schedule-@message.MessageId" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => messageScheduleEditor.OpenAsync(message.MessageId)">Schedule</button>
-                    }
-                    @if (canAuthor)
-                    {
-                        @if (confirming == (message.MessageId, Removal.Retire))
+                        @* Buttons in fixed slots, in this order: Schedule, Deactivate, Edit, Retire, Delete. A slot the row lacks stays blank
+                           so the rest line up; hover a button to read what it does. *@
+                        @* Only Approved canned Messages can be sent (MSG-12). *@
+                        @if (message.Status == MessageStatus.Approved)
                         {
-                            <span class="mp-ask">Retire?</span>
-                            <button id="mp-confirm-retire-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(message.MessageId, Removal.Retire)">Retire</button>
-                            <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
-                        }
-                        else if (confirming == (message.MessageId, Removal.Delete))
-                        {
-                            <span class="mp-ask">Delete?</span>
-                            <button id="mp-confirm-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(message.MessageId, Removal.Delete)">Delete</button>
-                            <button id="mp-keep-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
+                            <button id="mp-schedule-@message.MessageId" class="dx-btn dx-btn-outline-blue dx-btn-sm ra-btn ra-text ra-schedule" title="Schedule" aria-label="Schedule"
+                                    @onclick="() => messageScheduleEditor.OpenAsync(message.MessageId)"><i class="bi bi-clock"></i> Schedule</button>
                         }
                         else
                         {
-                            @if (!retired)
-                            {
-                                <button id="mp-retire-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = (message.MessageId, Removal.Retire)">Retire</button>
-                            }
-                            <button id="mp-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirming = (message.MessageId, Removal.Delete)">Delete</button>
+                            <span class="ra-slot ra-schedule"></span>
+                        }
+                        @if (activeOrScheduled.Count > 0)
+                        {
+                            <button id="mp-deactivate-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text ra-deactivate" title="Deactivate" aria-label="Deactivate"
+                                    @onclick="() => OpenActivationsAsync(message)"><i class="bi bi-slash-circle"></i> Deactivate</button>
+                        }
+                        else
+                        {
+                            <span class="ra-slot ra-deactivate"></span>
+                        }
+                        @if (canAuthor && !retired)
+                        {
+                            <button id="mp-edit-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn" title="Edit" aria-label="Edit"
+                                    @onclick="() => manageMessageModal.OpenAsync(message.MessageId)"><i class="bi bi-pencil-square"></i></button>
+                        }
+                        else
+                        {
+                            <span class="ra-slot"></span>
+                        }
+                        @if (canAuthor && !retired)
+                        {
+                            <button id="mp-retire-@message.MessageId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn" title="Retire" aria-label="Retire"
+                                    @onclick="() => confirming = (message.MessageId, Removal.Retire)"><i class="bi bi-archive"></i></button>
+                        }
+                        else
+                        {
+                            <span class="ra-slot"></span>
+                        }
+                        @if (canAuthor)
+                        {
+                            <button id="mp-delete-@message.MessageId" class="dx-btn dx-btn-red dx-btn-sm ra-btn" title="Delete" aria-label="Delete"
+                                    @onclick="() => confirming = (message.MessageId, Removal.Delete)"><i class="bi bi-trash"></i></button>
+                        }
+                        else
+                        {
+                            <span class="ra-slot"></span>
                         }
                     }
                 </div>

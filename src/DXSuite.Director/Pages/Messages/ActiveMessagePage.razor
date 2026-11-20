@@ -8,32 +8,20 @@
 @* The fixed Active Messages tab (FSD 1.1 MSG-18): every Activation that is active or scheduled, and on request the
    most recent ones that are over. The Messages page has already checked page:messages; the service checks it again. *@
 
-@* Grid and action-button layout ride with the component, not the scoped-style bundle, so a stale bundle cannot undo them. *@
+@* The grid rides with the component, not the scoped-style bundle, so a stale bundle cannot undo it. *@
 <style>
     .dx-table-header.amx-columns,
     .dx-table-row.amx-columns {
-        grid-template-columns: minmax(160px, 2fr) 120px minmax(120px, 1.3fr) 135px 135px 110px 410px;
+        grid-template-columns: minmax(160px, 2fr) 100px minmax(120px, 1.3fr) 140px 140px 100px 360px;
     }
 
     .dx-table-row.amx-columns > div { min-width: 0; }
 
-    .dx-cell-actions.amx-actions {
-        display: flex;
-        flex-wrap: wrap;
-        align-items: center;
-        align-content: center;
-        justify-content: flex-start;
-        gap: 6px;
-    }
-
-    .amx-actions .dx-btn {
-        min-width: 76px;
-        text-align: center;
-        justify-content: center;
-    }
-
-    .amx-actions .am-ask { flex: 0 0 100%; }
+    /* Actions sit against the right edge, under their right-aligned header. */
+    
+    .amx-actions .am-ask { flex: 0 0 auto; }
 </style>
+<RowActionStyles />
 
 <div class="dx-card dx-card-fill">
     <div class="dx-panel-header">
@@ -67,7 +55,7 @@
                     <div>Start</div>
                     <div>End</div>
                     <div>Status</div>
-                    <div>Actions</div>
+                    <div class="ra-head">Actions</div>
                 </div>
                 @if (!rows.Any(r => r.CanCancel))
                 {
@@ -92,46 +80,57 @@
                         <div>@row.Target <span class="dx-text-muted am-by">(@row.ScreenCount)</span></div>
                         <ActivationWhenCells When="row.When" Viewer="viewer" />
                         <div class="am-status"><span class="dx-status-dot @Dot(row.Status)"></span>@row.Status</div>
-                        <div class="dx-cell-actions amx-actions">
-                            @if (!row.IsOneOff && canAuthor)
+                        <div class="dx-cell-actions ra-actions amx-actions">
+                            @if (confirming == row.MessageActivationId)
                             {
-                                <button id="am-edit-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenEditAsync(row.MessageId)">Edit</button>
+                                <span class="am-ask ra-ask">Deactivate?</span>
+                                <button id="am-confirm-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text" @onclick="() => CancelAsync(row.MessageActivationId)">Deactivate</button>
+                                <button id="am-keep-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn ra-text" @onclick="() => confirming = null">Keep</button>
                             }
-                            @if (!row.IsOneOff)
+                            else if (confirmingRemoval == (row.MessageId, Removal.Delete))
                             {
-                                <button id="am-schedule-@row.MessageActivationId" class="dx-btn dx-btn-outline-blue dx-btn-sm" @onclick="() => OpenScheduleAsync(row.MessageId)">Schedule</button>
+                                <span class="am-ask ra-ask">Delete?</span>
+                                <button id="am-confirm-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text" @onclick="() => RemoveAsync(row.MessageId, Removal.Delete)">Delete</button>
+                                <button id="am-keep-delete-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn ra-text" @onclick="() => confirmingRemoval = null">Keep</button>
                             }
-                            @if (!row.IsOneOff && canAuthor)
+                            else
                             {
-                                @if (confirmingRemoval == (row.MessageId, Removal.Retire))
+                                @* Fixed slots, in this order: Schedule, Deactivate, Edit, Delete. A slot the row lacks stays blank so the rest line up. *@
+                                @if (!row.IsOneOff)
                                 {
-                                    <span class="am-ask">Retire?</span>
-                                    <button id="am-confirm-retire-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(row.MessageId, Removal.Retire)">Retire</button>
-                                    <button id="am-keep-retire-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = null">Keep</button>
-                                }
-                                else if (confirmingRemoval == (row.MessageId, Removal.Delete))
-                                {
-                                    <span class="am-ask">Delete?</span>
-                                    <button id="am-confirm-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => RemoveAsync(row.MessageId, Removal.Delete)">Delete</button>
-                                    <button id="am-keep-delete-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = null">Keep</button>
+                                    <button id="am-schedule-@row.MessageActivationId" class="dx-btn dx-btn-outline-blue dx-btn-sm ra-btn ra-text ra-schedule" title="Schedule" aria-label="Schedule"
+                                            @onclick="() => OpenScheduleAsync(row.MessageId)"><i class="bi bi-clock"></i> Schedule</button>
                                 }
                                 else
                                 {
-                                    <button id="am-retire-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirmingRemoval = (row.MessageId, Removal.Retire)">Retire</button>
-                                    <button id="am-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirmingRemoval = (row.MessageId, Removal.Delete)">Delete</button>
+                                    <span class="ra-slot ra-schedule"></span>
                                 }
-                            }
-                            @if (row.CanCancel)
-                            {
-                                if (confirming == row.MessageActivationId)
+                                @if (row.CanCancel)
                                 {
-                                    <span class="am-ask">Deactivate?</span>
-                                    <button id="am-confirm-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => CancelAsync(row.MessageActivationId)">Deactivate</button>
-                                    <button id="am-keep-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => confirming = null">Keep</button>
+                                    <button id="am-deactivate-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm ra-btn ra-text ra-deactivate" title="Deactivate" aria-label="Deactivate"
+                                            @onclick="() => confirming = row.MessageActivationId"><i class="bi bi-slash-circle"></i> Deactivate</button>
                                 }
                                 else
                                 {
-                                    <button id="am-deactivate-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm" @onclick="() => confirming = row.MessageActivationId">Deactivate</button>
+                                    <span class="ra-slot ra-deactivate"></span>
+                                }
+                                @if (!row.IsOneOff && canAuthor)
+                                {
+                                    <button id="am-edit-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm ra-btn" title="Edit" aria-label="Edit"
+                                            @onclick="() => OpenEditAsync(row.MessageId)"><i class="bi bi-pencil-square"></i></button>
+                                }
+                                else
+                                {
+                                    <span class="ra-slot"></span>
+                                }
+                                @if (!row.IsOneOff && canAuthor)
+                                {
+                                    <button id="am-delete-@row.MessageActivationId" class="dx-btn dx-btn-red dx-btn-sm ra-btn" title="Delete" aria-label="Delete"
+                                            @onclick="() => confirmingRemoval = (row.MessageId, Removal.Delete)"><i class="bi bi-trash"></i></button>
+                                }
+                                else
+                                {
+                                    <span class="ra-slot"></span>
                                 }
                             }
                         </div>
