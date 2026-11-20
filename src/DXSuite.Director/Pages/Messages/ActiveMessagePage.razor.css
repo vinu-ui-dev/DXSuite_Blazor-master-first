@@ -1,5 +1,23 @@
 .am-columns {
-    grid-template-columns: 2fr 130px 1.4fr 140px 140px 120px 220px;
+    grid-template-columns: minmax(160px, 2fr) 120px minmax(120px, 1.3fr) 135px 135px 110px 410px;
+}
+
+/* Actions: one tidy row of equal-width buttons, left-aligned under the header; a confirm step wraps below instead of stretching the row. */
+.am-actions {
+    flex-wrap: wrap;
+    justify-content: flex-start;
+    align-content: center;
+    gap: 6px;
+}
+
+.am-actions .dx-btn {
+    min-width: 76px;
+    justify-content: center;
+    text-align: center;
+}
+
+.am-actions .am-ask {
+    flex: 0 0 100%;
 }
 
 .am-filter {

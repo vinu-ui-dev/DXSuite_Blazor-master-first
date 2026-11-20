@@ -104,7 +104,8 @@ public sealed class MessageAuthoring
         var bodies = message.Texts.ToDictionary(t => t.LanguageCode, t => t.Body, StringComparer.OrdinalIgnoreCase);
         var named = await _languages.NameAsync(codes.Where(bodies.ContainsKey));
         return new MessagePreview(message.Name, message.MessageType.DisplayName,
-            named.Select(n => new MessagePreviewText(n.Name, bodies[n.Code])).ToList());
+            named.Select(n => new MessagePreviewText(n.Name, bodies[n.Code])).ToList(),
+            message.TextColor, message.BackgroundColor);
     }
 
     /// <summary>

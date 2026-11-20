@@ -1,35 +1,75 @@
-/* Read-only Message preview: the name, then the text in each language. */
+/* Read-only Message preview: the name and type, then the text in each language as a screen shows it. */
 .mpv-modal {
-    width: 560px;
+    width: 620px;
     max-width: 96vw;
 }
 
-.mpv-field {
-    margin-bottom: 16px;
+.mpv-body {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+    padding: 22px 24px;
 }
 
-.mpv-label {
-    font-size: 0.78rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    color: var(--dx-text-muted);
-    margin-bottom: 4px;
+.mpv-head {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--dx-border, #e0e0e0);
 }
 
 .mpv-name {
-    font-size: 1.1rem;
-    font-weight: 600;
+    margin: 0;
+    font-size: 1.45rem;
+    font-weight: 700;
+    line-height: 1.25;
+    color: #1d2b3a;
 }
 
 .mpv-type {
-    font-size: 0.8rem;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 12px;
+    border-radius: 999px;
+    background: #e8f1fa;
+    color: #0071bc;
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
 }
 
-.mpv-text {
-    padding: 10px 12px;
-    border: 1px solid var(--dx-border, #ddd);
-    border-radius: 4px;
-    background: #f8f8f8;
+.mpv-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.mpv-lang {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--dx-text-muted, #6b7785);
+}
+
+/* The Message as a screen shows it: its own colours (inline), a strong accent bar and large bold text. */
+.mpv-screen {
+    padding: 20px 22px;
+    border-left: 6px solid #0071bc;
+    border-radius: 6px;
+    background: #f1f5f9;
+    color: #14202c;
+    font-size: 1.2rem;
+    font-weight: 700;
+    line-height: 1.45;
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
 }

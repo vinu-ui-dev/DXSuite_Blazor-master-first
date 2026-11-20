@@ -1,7 +1,9 @@
+@using System.Text.RegularExpressions
 @using DXSuite.Director.Services.Messaging
 @inject MessageAuthoring authoring
 
-@* A read-only preview of a Message from the Active Messages tab: its name and the text it shows in each language. *@
+@* A read-only preview of a Message from the Active Messages tab: its name, its type and the text it shows in each language,
+   on the Message's own colours, as a screen shows it. *@
 
 @if (preview is not null)
 {
@@ -11,18 +13,17 @@
                 <span>Message Preview</span>
                 <button id="mpv-close" class="dx-modal-close" type="button" aria-label="Close" @onclick="Close">&times;</button>
             </div>
-            <div class="dx-modal-body">
-                <div class="mpv-field">
-                    <div class="mpv-label">Message Name</div>
-                    <div id="mpv-name" class="mpv-name">@preview.Name</div>
-                    <div class="dx-text-muted mpv-type">@preview.TypeName</div>
+            <div class="dx-modal-body mpv-body">
+                <div class="mpv-head">
+                    <h3 id="mpv-name" class="mpv-name">@preview.Name</h3>
+                    <span class="mpv-type"><i class="bi bi-megaphone-fill"></i> @preview.TypeName</span>
                 </div>
 
                 @foreach (var text in preview.Texts)
                 {
-                    <div class="mpv-field">
-                        <div class="mpv-label">@text.LanguageName</div>
-                        <div class="mpv-text">@text.Body</div>
+                    <div class="mpv-card">
+                        <div class="mpv-lang"><i class="bi bi-translate"></i> @text.LanguageName</div>
+                        <div class="mpv-screen" style="@ScreenStyle">@text.Body</div>
                     </div>
                 }
                 @if (preview.Texts.Count == 0)
@@ -38,7 +39,21 @@
 }
 
 @code {
+    private static readonly Regex HexColour = new("^#[0-9a-fA-F]{3,8}$", RegexOptions.Compiled);
+
     private MessagePreview? preview;
+
+    // Only a plain hex colour reaches the style attribute; anything else falls back to the stylesheet's own colours.
+    private string ScreenStyle
+    {
+        get
+        {
+            var style = "";
+            if (preview?.BackgroundColor is { } background && HexColour.IsMatch(background)) style += $"background:{background};";
+            if (preview?.TextColor is { } colour && HexColour.IsMatch(colour)) style += $"color:{colour};";
+            return style;
+        }
+    }
 
     /// <summary>Opens the preview for a Message; does nothing when the Message is gone.</summary>
     public async Task OpenAsync(int messageId)

@@ -65,7 +65,7 @@
                         <div>@row.Target <span class="dx-text-muted am-by">(@row.ScreenCount)</span></div>
                         <ActivationWhenCells When="row.When" Viewer="viewer" />
                         <div class="am-status"><span class="dx-status-dot @Dot(row.Status)"></span>@row.Status</div>
-                        <div class="dx-cell-actions">
+                        <div class="dx-cell-actions am-actions">
                             @if (!row.IsOneOff && canAuthor)
                             {
                                 <button id="am-edit-@row.MessageActivationId" class="dx-btn dx-btn-gray dx-btn-sm" @onclick="() => OpenEditAsync(row.MessageId)">Edit</button>
